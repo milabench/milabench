@@ -20,9 +20,9 @@ def _exec(cmd, default):
 
 def retrieve_git_versions(tag="<tag>", commit="<commit>", date="<date>"):
     return {
-        "tag": _exec("git describe --always --tags", tag),
-        "commit": _exec("git rev-parse HEAD", commit),
-        "date": _exec("git show -s --format=%ci", date),
+        "tag": _exec("git describe --always --tags", tag).replace('"', ''),
+        "commit": _exec("git rev-parse HEAD", commit).replace('"', ''),
+        "date": _exec("git show -s --format=%ci", date).replace('"', ''),
     }
 
 

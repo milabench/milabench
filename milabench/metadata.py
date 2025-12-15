@@ -9,8 +9,6 @@ import cpuinfo
 import voir.instruments.gpu as gpu
 
 
-
-from ._version import __commit__, __date__, __tag__
 from .utils import error_guard
 
 
@@ -48,11 +46,26 @@ def fetch_torch_version(pack):
         print(result.stdout)
         return {}
 
+
+def milabench_version():
+    from .scripts.vcs import retrieve_git_versions
+    try:
+        from ._version import __commit__, __date__, __tag__
+        return retrieve_git_versions(
+                __tag__,
+                __commit__,
+                __date__,
+            )
+    except:
+        traceback.print_exc()
+        return retrieve_git_versions()
+
+
 @functools.cache
 @error_guard({})
 def machine_metadata(pack=None):
     """Retrieve machine metadata"""
-    from .scripts.vcs import retrieve_git_versions
+    
     import milabench.scripts.torchversion as torchversion
 
     uname = os.uname()
@@ -78,11 +91,7 @@ def machine_metadata(pack=None):
         },
         "accelerators": gpus,
         "date": datetime.datetime.utcnow().timestamp(),
-        "milabench": retrieve_git_versions(
-            __tag__,
-            __commit__,
-            __date__,
-        ),
+        "milabench": milabench_version(),
         "pytorch": torchv,
     }
 

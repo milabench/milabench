@@ -1,0 +1,57 @@
+include:
+  - all.yaml
+
+#
+# Reduce the runtime to something
+#
+_defaults:
+  enabled: false
+  max_duration: 3600
+  voir:
+    options:
+      stop: 10
+      interval: "1s"
+
+  validation:
+    usage:
+      gpu_load_threshold: 0.5
+      gpu_mem_threshold: 0.5
+
+
+llama:
+  voir:
+    options:
+      stop: 10
+      interval: "1s"
+
+resnet50:
+  voir:
+    options:
+      stop: 10
+      gpu_poll: 0.1
+
+resnet50-noio:
+  voir:
+    options:
+      stop: 10
+      interval: "1s"
+
+resnet152-ddp-gpus:
+    options:
+      stop: 10
+      gpu_poll: 0.1
+
+_bert-base:
+  voir:
+    options:
+      stop: 10
+
+_llm:
+  voir:
+    options:
+      stop: 10
+
+llm-full-mp-gpus:
+  voir:
+    options:
+      stop: 10

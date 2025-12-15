@@ -1,0 +1,39 @@
+
+
+
+external_bench:
+  # milabench git clone to the benchmark folder
+  definition: git://git@github.com:milabench/external_bench.git#/
+
+  # 
+  argv:
+    --max_train_steps: 100
+    --dataset_name: "wikitext"
+    --dataset_config_name: "wikitext-103-v1"
+    --dataset_rev: "b08601e"
+    --validation_split_percentage: 5
+    --per_gpu_batch_size: "auto_batch(1)"
+    --cpus_per_gpu: "auto({n_worker}, 8)"
+    --cache: "{milabench_cache}"
+
+  tags:
+    - nlp
+    - language-modeling
+    - transformer
+    - huggingface
+    - llm
+
+  plan:
+    method: njobs
+    n: 1
+  
+  url: https://huggingface.co/meta-llama/Llama-2-7b/tree/main
+  
+external_suite:
+  definition: git://https://github.com/milabench/external_suite#/bench_1
+
+external_suite:
+  definition: git://https://github.com/milabench/external_suite#/bench_2
+
+external_suite:
+  definition: git://https://github.com/milabench/external_suite#/bench_3

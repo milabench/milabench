@@ -1,6 +1,6 @@
 _defaults:
   enabled: false
-  max_duration: 600
+  max_duration: 6000
   voir:
     options:
       stop: 60
@@ -158,6 +158,28 @@ _accelerate_opt:
   # Accelerate Args
   use_deepspeed: true
   num_machines: 1
+
+
+fp8:
+  inherits: _flops
+
+  argv:
+    --number: 30
+    --repeat: 90
+    --m: 8192
+    --n: 8192
+    --dtype: fp8
+
+fp4:
+  inherits: _flops
+
+  argv:
+    --number: 30
+    --repeat: 90
+    --m: 8192
+    --n: 8192
+    --dtype: fp4
+
 
 fp16:
   inherits: _flops

@@ -98,7 +98,6 @@ class Sizer:
         self.path = config
         self.sizer_override = sizer
         
-        
         if config is None:
             config = SizerOptions.instance().config
             
@@ -325,6 +324,16 @@ class BenchStats:
     def has_stopped_early(self):
         return len(self.early_stopped) > 0 and self.early_stopped[-1]
 
+
+
+def _should_copy():
+    if SizerOptions.instance().save is not None:
+        file_exists = os.path.exists(SizerOptions.instance().save)
+        save_is_same = SizerOptions.instance().save == SizerOptions.instance().config
+        return file_exists and save_is_same
+
+    return False
+
 class MemoryUsageExtractor(ValidationLayer):
     """Extract max memory usage per benchmark to populate the memory model"""
 
@@ -336,7 +345,7 @@ class MemoryUsageExtractor(ValidationLayer):
         if self.filepath and os.path.exists(self.filepath):
             with open(self.filepath, "r") as fp:
                 self.memory = yaml.safe_load(fp) or {}
-        elif SizerOptions.instance().save == SizerOptions.instance().config:
+        elif _should_copy():
             self.memory = deepcopy(sizer.scaling_config)
         else:
             self.memory = {}

@@ -1,4 +1,4 @@
---extra-index-url https://flashinfer.ai/whl/cu129
+--extra-index-url https://flashinfer.ai/whl/cu130
 
 voir>=0.2.19,<0.3
 torch
@@ -8,4 +8,4 @@ vllm[audio]
 flashinfer-python
 flashinfer-cubin
 flashinfer-jit-cache
-torchcodec<=0.7
+# torchcodec<=0.7

@@ -1,5 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cu129
---extra-index-url https://flashinfer.ai/whl/cu129
+--extra-index-url https://download.pytorch.org/whl/cu130
+--extra-index-url https://flashinfer.ai/whl/cu130
 
 #
 #

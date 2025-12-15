@@ -5,13 +5,13 @@ FROM nvcr.io/nvidia/pytorch:25.10-py3
 
 # Use ofed_info -s to get your local version
 ARG MOFED_VERSION=5.4-3.4.0.0
-ARG CONFIG=standard.yaml
+ARG CONFIG=all.yaml
 ARG ARCH=cuda
 
 ENV MILABENCH_GPU_ARCH=$ARCH
 ENV MILABENCH_CONFIG_NAME=$CONFIG
 ENV MILABENCH_DOCKER=1
-ENV TORCH_CUDA_ARCH_LIST="10.0;12.0"
+ENV TORCH_CUDA_ARCH_LIST="10.0;12.0;12.1"
 
 # Paths
 # -----
@@ -36,5 +36,5 @@ RUN cd $HOME                                                            &&\
     source /milabench/env/bin/activate                                  &&\
     /milabench/env/bin/pip install -e /milabench/milabench              &&\
     bash /milabench/milabench/docker/scripts/install.sh                 &&\
-    milabench install --variant unpinned --use-current-env              &&\
+    milabench install --variant unpinned --use-current-env --exclude vjepa-gpus,vjepa-single              &&\
     /milabench/env/bin/pip cache purge

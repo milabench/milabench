@@ -34,6 +34,8 @@ vllm-dense-physics-gpus:
     method: njobs
     n: 1
 
+  url: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503
+
   client:
     argv:
       --dataset-name: hf
@@ -63,6 +65,8 @@ vllm-moe-code-gpus:
   plan:
     method: njobs
     n: 1
+
+  url: https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E
 
   client:
     argv:
