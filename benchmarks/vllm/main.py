@@ -35,6 +35,12 @@ def calculate_metrics(
     Returns:
         A tuple of the benchmark metrics and the actual output lengths.
     """
+    from benchmate.timeline import timeline, sample_global_throughput
+    import json
+    with open("data.json", "w") as fp:
+        dat = sample_global_throughput(timeline(outputs))
+        json.dump(dat, fp)
+
     actual_output_lens: list[int] = []
     total_input = 0
     completed = 0

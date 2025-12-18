@@ -41,8 +41,9 @@ vllm-dense-physics-gpus:
       --dataset-name: hf
       --dataset-path: hendrydong/gpqa_diamond
       --hf-name: hendrydong/gpqa_diamond
-      --num-prompts: 500
+      --num-prompts: 128
       --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
+      --max-concurrency: "64"
 
   server:
    argv:
@@ -54,6 +55,7 @@ vllm-dense-physics-gpus:
       --tool-call-parser: mistral
       --enable-auto-tool-choice: true
       --limit-mm-per-prompt: '{"image":10}' 
+      --max-num-seqs: "64"
   
 vllm-moe-code-gpus:
   inherits: _vllm
