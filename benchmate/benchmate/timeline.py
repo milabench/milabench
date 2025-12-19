@@ -64,6 +64,7 @@ class JobAdapter:
         self.end = self.start + self.data["latency"]
         self.pct = None
         self.worker = None
+        self.accounted = 0
 
     def completion_percentage(self, start, end):
         total_time = self.end - self.start
@@ -103,49 +104,121 @@ class TimelineProcessor:
         self.total = 0
         self.step = 0
         self.output = []
+        self.avg = 0
+        self.avg_instant = 0
 
     def _on_time_change(self, now, workers):
-        next_sample_time = self.samples[self.k]
+        while self.k < len(self.samples) and self.samples[self.k] <= now:
+            start = self.step * self.k
+            end   = start + self.step
 
-        if next_sample_time < now:
             token = 0
             elapsed = self.step
-            for job in self.finished_jobs:
-                token += job.total_token()
 
-            # for w in workers:
-            #     if w.active_job:
-            #         pct = w.active_job.completion_percentage(max(now - elapsed, 0), now)
-            #         tok = w.active_job.total_token()
-            #         token += tok * pct
-            #         w.active_job.pct = 1 - pct
-            
+            # Sort by job end time
+            self.finished_jobs.sort(key=lambda job: job.end)
+
+            # Consume jobs that ended inside this bucket
+            while self.finished_jobs and self.finished_jobs[0].end <= end:
+                job = self.finished_jobs.pop(0)
+                token += job.total_token()
+                job.accounted = True
+
+            # Instant throughput (running jobs)
             instant = 0
             for w in workers:
                 if w.active_job:
                     instant += w.active_job.token_per_second()
 
+            throughput = token / elapsed if elapsed > 0 else 0
 
-            throughput = token / elapsed
+            self.avg += throughput
+            self.avg_instant += instant
 
-            self.k += 1
-            self.total += len(self.finished_jobs)
-            self.finished_jobs = []
             self.output.append({
                 "rate": throughput,
-                "time": now,
+                "time": self.samples[self.k],
                 "instant": instant,
             })
 
+            self.k += 1
+
     def _on_job_ended(self, job, workers):
-        self.finished_jobs.append(job)
-        self._on_time_change(job.end, workers)
+        if job is None:
+            end_time = self.end
+        else:
+            end_time = job.end
+            self.finished_jobs.append(job)
+
+        self._on_time_change(end_time, workers)
 
     def _sample(self, number):
-        self.step = (self.end - self.start) / (number + 1)
+        self.step = (self.end - self.start) / (number)
         self.samples = [self.start + self.step * (i + 1) for i in range(number)]
 
+    def method_2(self, outputs: list[RequestFuncOutput], number=30):
+        @dataclass
+        class Bucket:
+            start: float
+            end: float
+            jobs: list = None
+            tokens: int = 0
+
+        @dataclass
+        class PartialJob:
+            job: None
+            pct: float
+    
+        jobs = [JobAdapter(convert(l)) for l in outputs]
+        jobs.sort(key=lambda item: item.start)
+
+        start = jobs[0].start
+        for job in jobs:
+            job.start -= start
+            job.end -= start
+
+            self.start = min(job.start, self.start)
+            self.end = max(job.end, self.end)
+
+        self._sample(number)
+
+        buckets = []
+        for i in range(number):
+            buckets.append(Bucket(i * self.step, (i + 1) * self.step, []))
+
+        for job in jobs:
+            for bucket in buckets:
+                # print(bucket.start <= job.start <= bucket.end, bucket.start, job.start,  bucket.end)
+                if job.start <= bucket.end and job.end >= bucket.start:
+                    total = job.end - job.start
+                    overlap = max(0, min(job.end, bucket.end) - max(job.start, bucket.start))
+                    bucket.jobs.append(PartialJob(job, overlap/total))
+
+        for bucket in buckets:
+            for partial in bucket.jobs:
+                bucket.tokens += partial.job.total_token() * partial.pct
+                partial.job.accounted += partial.pct
+
+        for job in jobs:
+            if job.accounted < 0.9999999:
+                print("HERE", job.accounted, job.start, job.end)
+
+        self.output = []
+        self.avg = 0
+        for bucket in buckets:
+            rate = bucket.tokens / (bucket.end - bucket.start)
+            self.avg += rate
+            self.output.append({
+                "time": bucket.end,
+                "rate": rate
+            })
+        
+        return self.output
+
     def __call__(self, outputs: list[RequestFuncOutput], number=30):
+        return self.method_1(outputs, number)
+
+    def method_1(self, outputs: list[RequestFuncOutput], number):
         jobs = [JobAdapter(convert(l)) for l in outputs]
         jobs.sort(key=lambda item: item.start)
 
@@ -167,7 +240,8 @@ class TimelineProcessor:
             for worker in workers:
                 # worker is going to finish 
                 if worker.end() < job.start:
-                    self._on_job_ended(worker.active_job, workers)
+                    jb = worker.active_job
+                    self._on_job_ended(jb, workers)
                     worker.set_job(job)
                     break
 
@@ -178,8 +252,16 @@ class TimelineProcessor:
 
         workers.sort(key=lambda w: w.end())
         for worker in workers:
-            self._on_job_ended(worker.active_job, workers)
+            jb = worker.active_job
+            self._on_job_ended(jb, workers)
             worker.set_job(None)
+        
+        self._on_job_ended(None, workers)
+            
+
+        for job in jobs:
+            if job.accounted < 0.999:
+                print("MISSING")
 
         return jobs
 
@@ -187,6 +269,8 @@ class TimelineProcessor:
 def timeline(outputs):
     proc = TimelineProcessor()
     proc(outputs)
+    print(proc.avg / len(proc.output))
+    print(proc.avg_instant / len(proc.output))
     return proc.output
 
 
@@ -231,6 +315,7 @@ if __name__ == "__main__":
         import json
         obj = json.load(fp)
 
-    # ab = timeline(obj)
     for p in (timeline(obj)):
-        print(p)
+        for k, v in p.items():
+            print(f"{k},{v},", end="")
+        print()
