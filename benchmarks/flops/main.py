@@ -178,7 +178,7 @@ def main():
 
     accelerator.set_enable_tf32(args.tf32)
 
-    log, monitor = setupvoir()
+    log, monitor = setupvoir(interval=0.1)
 
     f(args.number, args.repeat, args.m, args.n, TERA, dtypes[args.dtype], log)
 

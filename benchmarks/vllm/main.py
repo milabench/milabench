@@ -10,6 +10,7 @@ import numpy as np
 import torchcompat.core as accelerator
 from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, PreTrainedTokenizerBase, BenchmarkMetrics, MILLISECONDS_TO_SECONDS_CONVERSION
 import vllm.benchmarks.datasets as datasets
+from benchmate.timeline import timeline
 
 push_metric = None
 
@@ -35,11 +36,8 @@ def calculate_metrics(
     Returns:
         A tuple of the benchmark metrics and the actual output lengths.
     """
-    from benchmate.timeline import timeline, sample_global_throughput
-    import json
-    with open("data.json", "w") as fp:
-        dat = sample_global_throughput(timeline(outputs))
-        json.dump(dat, fp)
+    for sampled_obs in timeline(outputs, 30):
+        push_metric(**sampled_obs)
 
     actual_output_lens: list[int] = []
     total_input = 0
@@ -79,18 +77,18 @@ def calculate_metrics(
             ttfts.append(outputs[i].ttft)
             e2els.append(outputs[i].latency)
 
-            push_metric(ttfts=outputs[i].ttft, unit="ms")
-            push_metric(e2els=outputs[i].latency, unit="ms")
+            push_metric(ttfts=outputs[i].ttft, unit="s")
+            push_metric(e2els=outputs[i].latency, unit="s")
             
             if len(outputs[i].itl) > 0:
-                push_metric(itl=sum(outputs[i].itl)/len(outputs[i].itl), unit="ms")
+                push_metric(itl=sum(outputs[i].itl)/len(outputs[i].itl), unit="s")
 
-            push_metric(tpot=outputs[i].tpot, unit="ms")
+            # push_metric(tpot=outputs[i].tpot, unit="ms")
             push_metric(input_tok=input_requests[i].prompt_len, unit="count")
             push_metric(output_tok=output_len, unit="count")
 
             tok_s = (input_requests[i].prompt_len + output_len) / outputs[i].latency
-            push_metric(rate=tok_s, unit="tok/s")
+            push_metric(request_rate=tok_s, unit="tok/s")
             
             completed += 1
         else:
@@ -285,6 +283,15 @@ def split_args(argv):
     
     server_argv = argv[1:i]
     bench_argv = argv[(i + 1):]
+
+    args = []
+    for arg in server_argv:
+        # Voir already has a --config argument so we have to rename it
+        if arg == "--wth-config":
+            args.append("--config")
+        else:
+            args.append(arg)
+    server_argv = args
 
     return server_argv, bench_argv
 
