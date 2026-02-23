@@ -189,7 +189,10 @@ def report_combine():
     # Print the full df
     all_reports = pd.concat(reports, ignore_index=True)
 
+    all_reports = all_reports[all_reports["fail"] <= 0]
     all_reports.to_csv("big_beautiful_report.csv", index=False)
+
+    
 
     print(pandas_to_string(all_reports))
 

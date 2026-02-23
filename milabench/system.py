@@ -482,7 +482,7 @@ def build_system_config(config_file, defaults=None, gpu=True):
         system["gpu"] = {"capacity": f"{int(get_gpu_capacity())} MiB"}
 
     if system.get("sshkey") is not None:
-        system["sshkey"] = str(XPath(system["sshkey"]).resolve())
+        system["sshkey"] = str(XPath(system["sshkey"]).expanduser().resolve())
 
     check_node_config(system["nodes"])
 
