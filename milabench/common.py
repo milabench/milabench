@@ -223,7 +223,9 @@ def assemble_config(runname, config_filepath, base_path, overrides=None, system_
         gpu=True
     )
 
-    system_config["packs"] = build_config(base_defaults, config_filepath, overrides)
+    packs = build_config(base_defaults, config_filepath, overrides)
+
+    system_config["packs"] = packs
 
     system_config = OmegaConf.to_object(OmegaConf.create(system_config))
 

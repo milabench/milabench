@@ -335,6 +335,8 @@ class WorkingDir(WrapperCommand):
             f"XDG_CACHE_HOME={str(cmd.pack.dirs.cache)}",
             f"HF_HOME={str(cmd.pack.dirs.cache)}",
             f"TORCH_HOME={str(cmd.pack.dirs.cache)}",
+            "GLOO_SOCKET_IFNAME=enP7s7",
+            "NCCL_SOCKET_IFNAME=enP7s7",
             #  "TORCH_DISTRIBUTED_DEBUG=DETAIL"
         ]
         super().__init__(cmd, *args)
@@ -870,7 +872,7 @@ class RayMultiNode(ListCommand):
             "--pipeline-parallel-size", f"{PIPELINE_PARALLEL_SIZE}"
         )
        
-       return SSHCommand(
+        return SSHCommand(
             host=node_address(node),
             user=node["user"],
             key=key,
