@@ -84,7 +84,7 @@ ENV PIP_DEFAULT_TIMEOUT=800
 # https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#gpu-feature-list
 #
 #       7.5
-# A100: 8.0,8.6 
+# A100: 8.0,8.6
 #       8.9
 # H100: 9.0
 # B100: 10.0,10.1,12

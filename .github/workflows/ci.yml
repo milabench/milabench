@@ -5,7 +5,7 @@ on:
     inputs:
       config:
         description: "Benchmark config file to use"
-        default: "config/all.yaml"
+        default: "all.yaml"
         type: string
       exclude_tags:
         description: "Comma-separated tags to exclude (e.g. multinode,gated)"
@@ -24,8 +24,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  MILABENCH_CONFIG: ${{ inputs.config || 'config/all.yaml' }}
-  MILABENCH_CONFIG_DOCKER: /milabench/milabench/${{ inputs.config || 'config/all.yaml' }}
+  MILABENCH_CONFIG: config/${{ inputs.config || 'all.yaml' }}
+  MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'all.yaml' }}
   EXCLUDE_TAGS: ${{ inputs.exclude_tags || 'multinode' }}
 
 concurrency:
@@ -94,19 +94,18 @@ jobs:
           ARCH=$(uname -m)
           echo "arch=$ARCH" >> "$GITHUB_OUTPUT"
           if [ "$ARCH" = "aarch64" ]; then
-            echo "variant=unpinned" >> "$GITHUB_OUTPUT"
+            echo "dockerfile=docker/Dockerfile-ngc" >> "$GITHUB_OUTPUT"
           else
-            echo "variant=" >> "$GITHUB_OUTPUT"
+            echo "dockerfile=docker/Dockerfile-cuda" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Docker image for group
         run: |
           GROUP_HASH=$(echo "${{ matrix.group }}" | md5sum | cut -c1-8)
           docker build \
-            -f docker/Dockerfile-cuda \
+            -f "${{ steps.arch.outputs.dockerfile }}" \
             --build-arg CONFIG=$(basename "$MILABENCH_CONFIG") \
             --build-arg SELECT="${{ matrix.group }}" \
-            --build-arg VARIANT="${{ steps.arch.outputs.variant }}" \
             -t "$IMAGE_TAG-$GROUP_HASH" \
             .
 
