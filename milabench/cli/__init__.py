@@ -32,6 +32,7 @@ from .multirun import cli_multirun
 from .replay import cli_replay
 from .global_patch import cli_global_patch
 from .tunnel import cli_port_forwarding
+from .ci import cli_ci
 
 from benchmate.progress import timed_flush
 
@@ -138,6 +139,10 @@ class Main:
 
     def tunnel():
         cli_port_forwarding()
+
+    def ci():
+        """Output benchmark groups as JSON for CI matrix generation."""
+        cli_ci()
 
 
 def main(argv=None):

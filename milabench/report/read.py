@@ -829,24 +829,26 @@ if __name__ == "__main__":
         # "vllm-dense-physics-gpus",
         # "vllm-moe-code-gpus",
         # "whisper-transcribe-single",
-        "txt-to-image-gpus",
+        # "txt-to-image-gpus",
         # "llm-chat-completion",
 
-        # "vllm-sweep-conc512-mxbt4096-moe",
+        "vllm-sweep-conc512-mxbt4096-moe",
         # "vllm-sweep-conc64-mxbt4096-moe",
-        # "vllm-sweep-conc8-mxbt4096-moe",
+        # vllm-sweep-conc8-mxbt4096-moe",
 
-        # "vllm-sweep-dense-conc512",
+       # "vllm-sweep-dense-conc512",
         # "vllm-sweep-dense-conc64",
         # "vllm-sweep-dense-conc8",
         # "llm-lora-mp-gpus",
+
+        # "fp8",
     )
 
     # selected = ("fp8",) # "fp8")
 
     powers = ('700', '600', '480', '420', '360', '300')
-    p1s = ('hgx', 'sxm')
-    clocks = ('1980',)
+    p1s = ('nvl', 'wvl')
+    clocks = ('1980', '1785')
     obss = ("350",)
     
     def accept_file(file, meta):
@@ -854,10 +856,22 @@ if __name__ == "__main__":
         bench = meta["bench"]
         p1 = meta["p1"]
         power = meta.get("power")
-        clock = meta.get("clock")
+        clock = meta.get("clock", "1785")
         obs = meta.get("observation")
 
-        return bench in selected and power in powers and p1 in p1s and clock in clocks and obs in obss
+        r = (
+            bench in selected and 
+            power in powers and 
+            p1 in p1s and 
+            clock in clocks and 
+            obs in obss
+        )
+
+        if r:
+            print(meta)
+        
+        return r
+
 
         if bench in selected:
             print(meta)
@@ -913,7 +927,7 @@ if __name__ == "__main__":
     df["time_bin"] = (df["time_norm"] / bin_size).round() * bin_size
     df = (
         df
-        .groupby(["time_bin", "power", "p1", "bench", "metric", "p3"])
+        .groupby(["time_bin", "power", "p1", "bench", "metric", "run_id"])
         .agg({"value": "mean"})   # or sum / max / median
         .reset_index()
     )
@@ -929,8 +943,10 @@ if __name__ == "__main__":
     ]
 
     df["p1"] = df["p1"].replace({
-        "hgx": "immersion",
-        "sxm": "air"
+        "hgx": "SXM immersion",
+        "sxm": "SXM air",
+        "wvl": "PCIe immersion",
+        "nvl": "PCIe air",
     })
 
     df.to_csv("timeseries.csv", index=False)
