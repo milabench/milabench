@@ -31,6 +31,9 @@ COPY . /milabench/milabench/
 
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV VIRTUAL_ENV=/milabench/env
+ENV PATH="/milabench/env/bin:${PATH}"
+
 RUN cd $HOME                                                            &&\
     rm -rf /milabench/env                                               &&\
     pip install virtualenv                                              &&\

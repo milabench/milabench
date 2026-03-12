@@ -69,7 +69,7 @@ jobs:
   # 2. For each group, build a Docker image with only that group's
   #    benchmarks installed, then prepare and run them on GPU.
   # ------------------------------------------------------------------
-  benchmark:
+  bench:
     needs: groups
     runs-on: [self-hosted]
 
@@ -95,8 +95,10 @@ jobs:
           echo "arch=$ARCH" >> "$GITHUB_OUTPUT"
           if [ "$ARCH" = "aarch64" ]; then
             echo "dockerfile=docker/Dockerfile-ngc" >> "$GITHUB_OUTPUT"
+            echo "extra_args=--use-current-env" >> "$GITHUB_OUTPUT"
           else
             echo "dockerfile=docker/Dockerfile-cuda" >> "$GITHUB_OUTPUT"
+            echo "extra_args=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build Docker image for group
@@ -112,20 +114,22 @@ jobs:
       - name: Prepare benchmarks
         run: |
           GROUP_HASH=$(echo "${{ matrix.group }}" | md5sum | cut -c1-8)
-          docker run --rm --gpus all \
+          docker run --rm --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus all \
             "$IMAGE_TAG-$GROUP_HASH" \
             milabench prepare \
               --config "$MILABENCH_CONFIG_DOCKER" \
-              --select "${{ matrix.group }}"
+              --select "${{ matrix.group }}" \
+              ${{ steps.arch.outputs.extra_args }}
 
       - name: Run benchmarks
         run: |
           GROUP_HASH=$(echo "${{ matrix.group }}" | md5sum | cut -c1-8)
-          docker run --rm --gpus all \
+          docker run --rm --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus all \
             "$IMAGE_TAG-$GROUP_HASH" \
             milabench run \
               --config "$MILABENCH_CONFIG_DOCKER" \
-              --select "${{ matrix.group }}"
+              --select "${{ matrix.group }}" \
+              ${{ steps.arch.outputs.extra_args }}
 
       - name: Cleanup Docker image
         if: always()
@@ -138,7 +142,7 @@ jobs:
   #    benchmarks and publish it to GitHub Container Registry.
   # ------------------------------------------------------------------
   publish:
-    needs: benchmark
+    needs: bench
     runs-on: ubuntu-latest
 
     permissions:
