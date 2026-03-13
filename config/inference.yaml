@@ -1,3 +1,6 @@
+include:
+  - _defaults.yaml
+
 _vllm:
   inherits: _defaults
   definition: ../benchmarks/vllm
@@ -171,3 +174,34 @@ llm-chat-completion:
 #     --split: "test"
 #     # --dataset: wikitext/wikitext-103-v1
 #     --batch_size: 1
+
+
+
+llama:
+  inherits: _defaults
+  definition: ../benchmarks/llama
+  group: llm
+  install_group: torch
+  max_duration: 3600
+  url: https://huggingface.co/meta-llama/Llama-2-7b/tree/main
+  tags:
+    - nlp
+    - llm
+    - inference
+    - monogpu
+    - nobatch
+    - gated
+
+  voir:
+    options:
+      stop: 30
+      interval: "1s"
+    
+  plan:
+    method: per_gpu
+
+  # Note: when NOT using pretrained model
+  # the benchmark becomes much harder as no end token is ever outputted by the model
+  # which makes inference much slower
+  argv:
+   --pretrained: true
