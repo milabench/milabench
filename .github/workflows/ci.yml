@@ -5,7 +5,7 @@ on:
     inputs:
       config:
         description: "Benchmark config file to use"
-        default: "all.yaml"
+        default: "ci.yaml"
         type: string
       exclude_tags:
         description: "Comma-separated tags to exclude (e.g. multinode,gated)"
@@ -24,8 +24,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  MILABENCH_CONFIG: config/${{ inputs.config || 'all.yaml' }}
-  MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'all.yaml' }}
+  MILABENCH_CONFIG: config/${{ inputs.config || 'ci.yaml' }}
+  MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'ci.yaml' }}
   EXCLUDE_TAGS: ${{ inputs.exclude_tags || 'multinode' }}
 
 concurrency:
@@ -47,9 +47,9 @@ jobs:
     outputs:
       matrix: ${{ steps.groups.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -88,7 +88,7 @@ jobs:
       MILABENCH_BASE: ${{ vars.MILABENCH_BASE || '/opt/milabench/' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Ensure host directories exist
         run: |
@@ -180,7 +180,7 @@ jobs:
           build-mount-path: /home/runner/work/milabench/
           root-reserve-mb: 30000
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
