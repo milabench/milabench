@@ -119,8 +119,19 @@ def get_benchmark_groups(config_path, exclude_tags=None):
 
 
 def format_groups_for_ci(groups):
-    """Return a sorted list of comma-separated benchmark name strings."""
-    return sorted(",".join(names) for names in groups.values())
+    """Return a sorted list of {name, select} objects for the CI matrix.
+
+    ``name`` is the definition folder basename (e.g. "torchvision").
+    ``select`` is the comma-separated list of benchmark names for --select.
+    """
+    result = []
+    for definition, names in groups.items():
+        folder_name = Path(definition).name
+        result.append({
+            "name": folder_name,
+            "select": ",".join(sorted(names)),
+        })
+    return sorted(result, key=lambda g: g["name"])
 
 
 # -- milabench CLI integration ------------------------------------------------
