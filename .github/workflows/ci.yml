@@ -111,17 +111,15 @@ jobs:
 
       - name: Build Docker image for group
         run: |
-          GROUP_HASH=$(echo "${{ matrix.group.name }}" | md5sum | cut -c1-8)
           docker build                                                \
             -f "${{ steps.arch.outputs.dockerfile }}"                 \
             --build-arg CONFIG=$(basename "$MILABENCH_CONFIG")        \
             --build-arg SELECT="${{ matrix.group.select }}"           \
-            -t "$IMAGE_TAG-$GROUP_HASH"                               \
+            -t "$IMAGE_TAG-${{ matrix.group.name }}"                  \
             .
 
       - name: Prepare benchmarks
         run: |
-          GROUP_HASH=$(echo "${{ matrix.group.name }}" | md5sum | cut -c1-8)
           docker run --rm --gpus all                                \
             --ipc=host --ulimit memlock=-1 --ulimit stack=67108864  \
             --network=host                                          \
@@ -130,7 +128,7 @@ jobs:
             -v "$MILABENCH_BASE/data:/milabench/results/data"       \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
             -v "$MILABENCH_BASE/runs:/milabench/results/runs"       \
-            "$IMAGE_TAG-$GROUP_HASH"                                \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                   \
             milabench prepare                                       \
               --config "$MILABENCH_CONFIG_DOCKER"                   \
               --select "${{ matrix.group.select }}"                 \
@@ -138,7 +136,6 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          GROUP_HASH=$(echo "${{ matrix.group.name }}" | md5sum | cut -c1-8)
           docker run --rm --gpus all                                \
             --ipc=host --ulimit memlock=-1 --ulimit stack=67108864  \
             --network=host                                          \
@@ -150,7 +147,7 @@ jobs:
             -v "$MILABENCH_BASE/data:/milabench/results/data"       \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
             -v "$MILABENCH_BASE/runs:/milabench/results/runs"       \
-            "$IMAGE_TAG-$GROUP_HASH"                                \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                   \
             milabench run                                           \
               --config "$MILABENCH_CONFIG_DOCKER"                   \
               --select "${{ matrix.group.select }}"                 \
@@ -159,8 +156,7 @@ jobs:
       - name: Cleanup Docker image
         if: always()
         run: |
-          GROUP_HASH=$(echo "${{ matrix.group.name }}" | md5sum | cut -c1-8)
-          docker rmi "$IMAGE_TAG-$GROUP_HASH" || true
+          docker rmi "$IMAGE_TAG-${{ matrix.group.name }}" || true
 
   # ------------------------------------------------------------------
   # 3. Once every group passes, build a single image with ALL
