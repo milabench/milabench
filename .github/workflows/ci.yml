@@ -27,6 +27,7 @@ env:
   MILABENCH_CONFIG: config/${{ inputs.config || 'all.yaml' }}
   MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'all.yaml' }}
   EXCLUDE_TAGS: ${{ inputs.exclude_tags || 'multinode' }}
+  MILABENCH_REPORT_LEAN: 1
 
 concurrency:
   group: "ci-${{ github.workflow }}-${{ github.ref }}"
@@ -84,9 +85,16 @@ jobs:
 
     env:
       IMAGE_TAG: milabench-ci:${{ github.sha }}
+      MILABENCH_BASE: ${{ vars.MILABENCH_BASE || '/opt/milabench/' }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure host directories exist
+        run: |
+          mkdir -p "$MILABENCH_BASE/data"
+          mkdir -p "$MILABENCH_BASE/cache"
+          mkdir -p "$MILABENCH_BASE/runs"
 
       - name: Detect architecture
         id: arch
@@ -114,7 +122,14 @@ jobs:
       - name: Prepare benchmarks
         run: |
           GROUP_HASH=$(echo "${{ matrix.group }}" | md5sum | cut -c1-8)
-          docker run --rm --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus all \
+          docker run --rm --gpus all \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+            --network=host \
+            --security-opt=label=disable \
+            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }} \
+            -v "$MILABENCH_BASE/data:/milabench/envs/data" \
+            -v "$MILABENCH_BASE/cache:/milabench/envs/cache" \
+            -v "$MILABENCH_BASE/runs:/milabench/envs/runs" \
             "$IMAGE_TAG-$GROUP_HASH" \
             milabench prepare \
               --config "$MILABENCH_CONFIG_DOCKER" \
@@ -124,7 +139,14 @@ jobs:
       - name: Run benchmarks
         run: |
           GROUP_HASH=$(echo "${{ matrix.group }}" | md5sum | cut -c1-8)
-          docker run --rm --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus all \
+          docker run --rm --gpus all \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+            --network=host \
+            --security-opt=label=disable \
+            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }} \
+            -v "$MILABENCH_BASE/data:/milabench/envs/data" \
+            -v "$MILABENCH_BASE/cache:/milabench/envs/cache" \
+            -v "$MILABENCH_BASE/runs:/milabench/envs/runs" \
             "$IMAGE_TAG-$GROUP_HASH" \
             milabench run \
               --config "$MILABENCH_CONFIG_DOCKER" \

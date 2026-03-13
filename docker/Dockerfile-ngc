@@ -34,12 +34,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV VIRTUAL_ENV=/milabench/env
 ENV PATH="/milabench/env/bin:${PATH}"
 
+# bash /milabench/milabench/docker/scripts/install.sh                 &&\
+
 RUN cd $HOME                                                            &&\
     rm -rf /milabench/env                                               &&\
     pip install virtualenv                                              &&\
     virtualenv --system-site-packages /milabench/env                    &&\
     source /milabench/env/bin/activate                                  &&\
     /milabench/env/bin/pip install -e /milabench/milabench              &&\
-    bash /milabench/milabench/docker/scripts/install.sh                 &&\
     milabench install --variant unpinned --use-current-env ${MILABENCH_SELECT:+--select $MILABENCH_SELECT} &&\
     /milabench/env/bin/pip cache purge
