@@ -238,7 +238,11 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         if os.getenv("MILABENCH_PREPARE") == "1":
             return 
 
+
         import torchcompat.core as acc
+        print(self.distributed_backend)
+        # self.distributed_backend = "nccl"
+        # cuda:nccl,cpu:gloo
         acc.init_process_group(backend=self.distributed_backend)
 
     def _update_recipe_state(self, ckpt_dict: Dict[str, Any]) -> None:

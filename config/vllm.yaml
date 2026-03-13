@@ -1,6 +1,6 @@
 include:
   - inference.yaml
-  - standard.yaml
+  - training.yaml
 
 _defaults:
   enabled: true

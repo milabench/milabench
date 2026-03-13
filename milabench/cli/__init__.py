@@ -32,6 +32,8 @@ from .multirun import cli_multirun
 from .replay import cli_replay
 from .global_patch import cli_global_patch
 from .tunnel import cli_port_forwarding
+from .ci import cli_ci
+from .prefer_system import cli_prefer_system
 
 from benchmate.progress import timed_flush
 
@@ -138,6 +140,14 @@ class Main:
 
     def tunnel():
         cli_port_forwarding()
+
+    def ci():
+        """Output benchmark groups as JSON for CI matrix generation."""
+        cli_ci()
+
+    def prefer_system():
+        """Uninstall local packages that shadow system-provided ones."""
+        cli_prefer_system()
 
 
 def main(argv=None):
