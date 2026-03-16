@@ -26,7 +26,8 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   MILABENCH_CONFIG: config/${{ inputs.config || 'ci.yaml' }}
   MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'ci.yaml' }}
-  EXCLUDE_TAGS: ${{ inputs.exclude_tags || 'multinode' }}
+  MILABENCH_SYSTEM: /opt/milabench/data/system.yaml
+  EXCLUDE_TAGS: ${{ inputs.exclude_tags }}
 
 concurrency:
   group: "ci-${{ github.workflow }}-${{ github.ref }}"
@@ -92,9 +93,10 @@ jobs:
 
       - name: Ensure host directories exist
         run: |
+          whoami
           mkdir -p "$MILABENCH_BASE/data"
           mkdir -p "$MILABENCH_BASE/cache"
-          mkdir -p "$MILABENCH_BASE/runs"
+          mkdir -p "$MILABENCH_BASE/runs/${{ github.sha }}"
 
       - name: Detect architecture
         id: arch
@@ -127,7 +129,7 @@ jobs:
             -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}           \
             -v "$MILABENCH_BASE/data:/milabench/results/data"       \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
-            -v "$MILABENCH_BASE/runs:/milabench/results/runs"       \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \
             "$IMAGE_TAG-${{ matrix.group.name }}"                   \
             milabench prepare                                       \
               --config "$MILABENCH_CONFIG_DOCKER"                   \
@@ -146,12 +148,24 @@ jobs:
             -e BENCHMATE_POLL_INTERVAL=5                            \
             -v "$MILABENCH_BASE/data:/milabench/results/data"       \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
-            -v "$MILABENCH_BASE/runs:/milabench/results/runs"       \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \
             "$IMAGE_TAG-${{ matrix.group.name }}"                   \
             milabench run                                           \
               --config "$MILABENCH_CONFIG_DOCKER"                   \
+              --system /milabench/results/data/system.yaml          \
               --select "${{ matrix.group.select }}"                 \
               ${{ steps.arch.outputs.extra_args }}
+
+      - name: report
+        run: |
+          docker run --rm --gpus all                                              \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864                \
+            --network=host                                                        \
+            --security-opt=label=disable                                          \
+            -e MILABENCH_REPORT_LEAN=1                                            \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"   \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                                 \
+            milabench report --runs /milabench/results/runs
 
       - name: Cleanup Docker image
         if: always()
