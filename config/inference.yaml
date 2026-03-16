@@ -121,7 +121,7 @@ whisper-transcribe-single:
     --batch_size: "auto_batch(64)"
 
 
-txt-to-image-gpus:
+txt-to-image-single:
   inherits: _inference
   tags:
     - monogpu
@@ -134,6 +134,21 @@ txt-to-image-gpus:
     --model: black-forest-labs/FLUX.1-dev
     --dataset: jackyhate/text-to-image-2M
     --batch_size: "auto_batch(16)"
+
+# txt-to-image-gpus:
+#   inherits: _inference
+#   tags:
+#     - multigpu
+#   plan:
+#     method: n_jobs
+#     n: 1
+  
+#   url: https://huggingface.co/black-forest-labs/FLUX.1-dev
+#   argv:
+#     --mode: flux
+#     --model: black-forest-labs/FLUX.1-dev
+#     --dataset: jackyhate/text-to-image-2M
+#     --batch_size: "auto_batch(16)"
   
 
 llm-chat-completion:

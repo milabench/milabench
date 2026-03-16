@@ -149,6 +149,9 @@ def get_default_system(base, run_name="none", arch="none"):
                 "main": True,
             }
         ],
+        "gpu": {
+            "count": 0
+        },
         "run_name": run_name,
         "base": base,
         "dirs": {

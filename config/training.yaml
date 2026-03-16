@@ -33,6 +33,9 @@ _torchvision_ddp:
     --num-workers: "auto({n_worker}, 8)"
     --loader: pytorch
     --data: "{milabench_data}/FakeImageNet"
+  
+  requires_capabilities:
+    - "gpu['count'] > 1"
 
 _flops:
   inherits: _defaults
@@ -624,10 +627,14 @@ llm-lora-mp-gpus:
   url: https://huggingface.co/meta-llama/Llama-3.1-70B
   tags:
     - multigpu
+
   plan:
     method: njobs
     n: 1
 
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  
   argv:
     # "{milabench_code}/bench/lora_finetune_distributed.py": true
     bench/lora_finetune_distributed.py: true
@@ -656,6 +663,9 @@ llm-full-mp-gpus:
   plan:
     method: njobs
     n: 1
+
+  requires_capabilities:
+    - "gpu['count'] > 1"
 
   argv:
     # "{milabench_code}/bench/full_finetune_distributed.py": true

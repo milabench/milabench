@@ -25,7 +25,7 @@ vllm-moe-code-gpus:
 whisper-transcribe-single:
   enabled: true
 
-txt-to-image-gpus:
+txt-to-image-single:
   enabled: true
 
 llm-chat-completion:

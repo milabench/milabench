@@ -186,7 +186,7 @@ whisper-transcribe-single:
     options:
       stop: 5
 
-txt-to-image-gpus:
+txt-to-image-single:
   voir:
     options:
       stop: 5
