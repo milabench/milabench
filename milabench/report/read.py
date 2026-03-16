@@ -6,6 +6,7 @@ The MetricExtractor generate a flat structure so we can directly process the res
 import multiprocessing as mp
 import queue
 import traceback
+from datetime import datetime
 import json
 import re
 from collections import defaultdict
@@ -291,8 +292,15 @@ def insert_path(job_meta, name, entry):
 def extract_meta_from_run_folder(entry, meta):
     """Keep the folder path to the data file as it might be information"""
     run_meta = dict(extract_tags(entry.name, run_tags))
-    job_meta = {**meta, **run_meta}
+
+    match = re.search(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})', entry.name)
+    if match:
+        run_meta["date"] = datetime.strptime(match.group(1), "%Y-%m-%d_%H-%M-%S")
+
+    job_meta = {**meta, **run_meta} 
+
     insert_path(job_meta, "p", entry)
+
     return job_meta
 
 
@@ -832,16 +840,24 @@ if __name__ == "__main__":
         # "txt-to-image-gpus",
         # "llm-chat-completion",
 
-        "vllm-sweep-conc512-mxbt4096-moe",
+       # "vllm-sweep-conc512-mxbt4096-moe",
         # "vllm-sweep-conc64-mxbt4096-moe",
-        # vllm-sweep-conc8-mxbt4096-moe",
+        # "vllm-sweep-conc64-mxbt4096-moe",
 
        # "vllm-sweep-dense-conc512",
         # "vllm-sweep-dense-conc64",
         # "vllm-sweep-dense-conc8",
         # "llm-lora-mp-gpus",
 
-        # "fp8",
+        "fp8",
+        "bf16",
+
+        # "bert-tf32-fp16",
+        # "diffusion-gpus",
+        # "resnet152-ddp-gpus"
+        # "llm-lora-ddp-gpus",
+
+        # "llm-lora-mp-gpus",
     )
 
     # selected = ("fp8",) # "fp8")
@@ -892,6 +908,23 @@ if __name__ == "__main__":
 
     df = pd.DataFrame(data)
 
+    print(list(df.columns))
+    # df = df[df[metric_cols].count(axis=1) >= 10]
+
+    # DROP the run without enough observation
+    run_counts = df.groupby('run_id').size()
+    valid_runs = run_counts[run_counts >= 10].index
+    df = df[df['run_id'].isin(valid_runs)]
+
+    # Use latest run
+    latest_runs = (
+        df
+        .sort_values('date', ascending=False)
+        .drop_duplicates(subset=['bench', 'p1', 'clock', 'power', 'observation'], keep='first')
+        ['run_id']
+    )
+
+    df = df[df['run_id'].isin(latest_runs)]
 
     df.to_csv("timeseries_raw.csv", index=False)
 
@@ -1039,13 +1072,15 @@ if __name__ == "__main__":
         ).save("all.png")
 
 
-    max_per_bench = (
-        df[df["metric"] == "gpudata.power"]
-        .groupby(["bench", "p1"])["value"]
-        .max()
-        .reset_index()
-    )
-    print(max_per_bench)
+    # max_per_bench = (
+    #     df[df["metric"].isin(["gpudata.power", "gpudata.temperature", "rate"])]
+    #     .groupby(["bench", "p1", "power"])["value"]
+    #     .median()
+    #     .reset_index()
+    # )
+    # print(max_per_bench)
+
+    pd.pivot()
     
     # p = "/home/delaunao/workspace/benchdevenv/projects/hypertec/sxm_runs/"
     # p = "/home/delaunao/workspace/benchdevenv/projects/hypertec/sxm_runs/p600.o500.2025-12-26_07-20-23"

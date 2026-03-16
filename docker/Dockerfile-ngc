@@ -14,6 +14,7 @@ ENV MILABENCH_CONFIG_NAME=$CONFIG
 ENV MILABENCH_DOCKER=1
 ENV MILABENCH_SELECT=$SELECT
 ENV TORCH_CUDA_ARCH_LIST="10.0;12.0;12.1"
+ENV CUDA_HOME=/usr/local/cuda/
 
 # Paths
 # -----
@@ -36,12 +37,21 @@ ENV PATH="/milabench/env/bin:${PATH}"
 
 # bash /milabench/milabench/docker/scripts/install.sh                 &&\
 
+ENV I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1
+
 RUN cd $HOME                                                            &&\
     rm -rf /milabench/env                                               &&\
     pip install virtualenv                                              &&\
     virtualenv --system-site-packages /milabench/env                    &&\
     source /milabench/env/bin/activate                                  &&\
     /milabench/env/bin/pip install -e /milabench/milabench              &&\
-    milabench install --variant unpinned --use-current-env ${MILABENCH_SELECT:+--select $MILABENCH_SELECT} &&\
-    milabench prefer_system                                               &&\
+    echo "torchcodec"                                                   &&\
+    apt-get update                                                      &&\
+    apt-get install -y pybind11-dev pkg-config ffmpeg libavdevice-dev libavfilter-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev &&\
+    pip install "git+https://github.com/pytorch/torchcodec.git@release/0.7" --no-build-isolation           &&\
+    milabench install --variant unpinned --use-current-env ${MILABENCH_SELECT:+--select $MILABENCH_SELECT}  &&\
+    milabench prefer_system                                             &&\
+    echo "torchao"                                                      &&\
+    pip uninstall torchao                                               &&\
+    pip install 'torchao<0.16.0' --no-build-isolation                   &&\
     /milabench/env/bin/pip cache purge

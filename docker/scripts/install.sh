@@ -52,3 +52,8 @@ cd /tmp/pytorch_cluster
 $VENV_BIN/pip install --no-build-isolation --no-deps -v --force-reinstall .
 
 rm -rf /tmp/pytorch_cluster
+
+
+
+sudo apt-get install pybind11-dev ffmpeg
+I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1 pip install "git+https://github.com/pytorch/torchcodec.git@release/0.10" --no-build-isolation
