@@ -190,6 +190,8 @@ txt-to-image-single:
   voir:
     options:
       stop: 5
+  argv:
+    --batch_size: "auto_batch(1)"
 
 llm-chat-completion:
   voir:

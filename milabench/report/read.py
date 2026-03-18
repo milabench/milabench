@@ -835,7 +835,7 @@ if __name__ == "__main__":
     # 
     selected = (
         # "vllm-dense-physics-gpus",
-        # "vllm-moe-code-gpus",
+        "vllm-moe-code-gpus",
         # "whisper-transcribe-single",
         # "txt-to-image-gpus",
         # "llm-chat-completion",
@@ -849,8 +849,8 @@ if __name__ == "__main__":
         # "vllm-sweep-dense-conc8",
         # "llm-lora-mp-gpus",
 
-        "fp8",
-        "bf16",
+        # "fp8",
+        # "bf16",
 
         # "bert-tf32-fp16",
         # "diffusion-gpus",

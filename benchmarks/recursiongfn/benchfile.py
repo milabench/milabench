@@ -37,7 +37,8 @@ class Recursiongfn(Package):
         # In the case of compiling pytorch geometric
         # we want to compile for conda support even if no GPUs are availble
         env = {
-            "FORCE_CUDA": "1"
+            "FORCE_CUDA": "1",
+            "CUDA_HOME": os.getenv("CUDA_HOME", '/usr/local/cuda/')
         }
 
         return env
