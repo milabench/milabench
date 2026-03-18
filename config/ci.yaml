@@ -8,7 +8,7 @@ include:
 # - max_duration capped to 300s
 # - epochs / steps / repeats reduced to minimum
 # - inference prompts reduced
-# - multinode benchmarks disabled (single-machine CI)
+# - multinode benchmarks can be excluded via CI workflow_dispatch exclude_tags
 #
 
 _defaults:
@@ -198,19 +198,19 @@ llm-chat-completion:
     options:
       stop: 5
 
-# ---- disable multinode (CI is single-machine) ----
+# ---- multinode ----
 
 diffusion-nodes:
-  enabled: false
+  enabled: true
 
 llm-lora-ddp-nodes:
-  enabled: false
+  enabled: true
 
 llm-full-mp-nodes:
   enabled: false
 
 dinov2-giant-nodes:
-  enabled: false
+  enabled: true
 
 # ---- cleanrljax (already disabled in standard) ----
 

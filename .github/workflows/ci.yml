@@ -9,7 +9,7 @@ on:
         type: string
       exclude_tags:
         description: "Comma-separated tags to exclude (e.g. multinode,gated)"
-        default: "multinode"
+        default: ""
         type: string
 
   push:
@@ -54,13 +54,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install milabench
+        run: pip install .
 
       - name: Compute benchmark groups
         id: groups
         run: |
-          matrix=$(python milabench/cli/ci.py \
+          matrix=$(python -m milabench.cli.ci \
             --config "$MILABENCH_CONFIG" \
             --exclude-tags "$EXCLUDE_TAGS")
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
@@ -122,18 +122,19 @@ jobs:
 
       - name: Prepare benchmarks
         run: |
-          docker run --rm --gpus all                                \
-            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864  \
-            --network=host                                          \
-            --security-opt=label=disable                            \
-            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}           \
-            -v "$MILABENCH_BASE/data:/milabench/results/data"       \
-            -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
+          docker run --rm --gpus all                                      \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864        \
+            --network=host                                                \
+            --security-opt=label=disable                                  \
+            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"  \
+            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}                 \
+            -v "$MILABENCH_BASE/data:/milabench/results/data"             \
+            -v "$MILABENCH_BASE/cache:/milabench/results/cache"           \
             -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \
-            "$IMAGE_TAG-${{ matrix.group.name }}"                   \
-            milabench prepare                                       \
-              --config "$MILABENCH_CONFIG_DOCKER"                   \
-              --select "${{ matrix.group.select }}"                 \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                         \
+            milabench prepare                                             \
+              --config "$MILABENCH_CONFIG_DOCKER"                         \
+              --select "${{ matrix.group.select }}"                       \
               ${{ steps.arch.outputs.extra_args }}
 
       - name: Run benchmarks
@@ -146,6 +147,7 @@ jobs:
             -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}           \
             -e BENCHMATE_OBSERVATION_COUNT=10                       \
             -e BENCHMATE_POLL_INTERVAL=5                            \
+            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"  \
             -v "$MILABENCH_BASE/data:/milabench/results/data"       \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
             -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \

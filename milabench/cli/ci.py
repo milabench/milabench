@@ -1,9 +1,6 @@
 """CI helpers for milabench.
 
-Can be run standalone (only requires PyYAML):
-    python -m milabench.cli.ci --config config/standard.yaml
-
-Or as a milabench subcommand:
+Usage as a milabench subcommand:
     milabench ci --config config/standard.yaml
 """
 
@@ -13,77 +10,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import yaml
-
-
-def _resolve_includes(config_file):
-    """Recursively load YAML config files, resolving 'include' directives."""
-    config_file = Path(config_file).resolve()
-    config_base = config_file.parent
-
-    with open(config_file) as f:
-        raw = yaml.safe_load(f) or {}
-
-    includes = raw.pop("include", [])
-    if isinstance(includes, str):
-        includes = [includes]
-
-    merged = {}
-    for inc in includes:
-        inc_path = (config_base / inc).resolve()
-        layer = _resolve_includes(inc_path)
-        merged = _merge(merged, layer)
-
-    merged = _merge(merged, raw)
-    return merged
-
-
-def _merge(base, override):
-    """Deep merge two dicts (override wins for leaf values)."""
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def _resolve_inheritance(name, defn, all_configs, _seen=None):
-    """Walk the inherits chain and merge parent configs."""
-    if _seen is None:
-        _seen = set()
-
-    if defn is None:
-        defn = {}
-
-    inherit = defn.get("inherits")
-    if not inherit or inherit in _seen:
-        result = dict(defn)
-        result.pop("inherits", None)
-        return result
-
-    _seen.add(inherit)
-    parent_raw = all_configs.get(inherit) or {}
-    parent = _resolve_inheritance(inherit, parent_raw, all_configs, _seen)
-
-    tags = sorted({*parent.get("tags", []), *defn.get("tags", [])})
-    result = _merge(parent, defn)
-    result.pop("inherits", None)
-    if tags:
-        result["tags"] = tags
-    return result
-
-
-def load_config(config_path):
-    """Load the full config with includes and inheritance resolved."""
-    raw = _resolve_includes(config_path)
-
-    resolved = {}
-    for name, defn in raw.items():
-        resolved[name] = _resolve_inheritance(name, defn, raw)
-
-    return resolved
+from ..config import build_config
 
 
 def get_benchmark_groups(config_path, exclude_tags=None):
@@ -91,7 +18,7 @@ def get_benchmark_groups(config_path, exclude_tags=None):
 
     Returns a dict mapping definition path to a sorted list of benchmark names.
     """
-    config = load_config(config_path)
+    config = build_config(config_path)
 
     if exclude_tags is None:
         exclude_tags = set()
@@ -99,9 +26,6 @@ def get_benchmark_groups(config_path, exclude_tags=None):
     groups = defaultdict(list)
 
     for name, defn in config.items():
-        if name.startswith("_") or name == "*":
-            continue
-
         definition = defn.get("definition")
         if not definition:
             continue
