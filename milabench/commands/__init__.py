@@ -369,7 +369,7 @@ class DockerRunCommand(WrapperCommand):
 
     def as_container_path(self, path):
         # replace local output path with docker path
-        base = self.pack.dirs.base
+        base = self.pack.config["system"]["base"]
         path = path.replace(str(base), "/milabench/envs")
 
         # Replace local installation path with docker path

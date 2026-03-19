@@ -111,6 +111,11 @@ jobs:
             echo "extra_args=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Make System File
+        run: |
+          export MILABENCH_IMAGE="$IMAGE_TAG-${{ matrix.group.name }}"
+          envsubst '$MILABENCH_IMAGE' < "$MILABENCH_BASE/data/system.yaml.in" > "$MILABENCH_BASE/data/system.yaml"
+
       - name: Build Docker image for group
         run: |
           docker build                                                \
