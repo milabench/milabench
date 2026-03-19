@@ -13,6 +13,8 @@ from argparse import Namespace as NS
 import functools
 from sys import version_info as pyv
 from typing import Sequence
+from contextlib import contextmanager
+import tempfile
 
 from nox.sessions import Session, SessionRunner
 
@@ -42,6 +44,7 @@ def no_build_isolation(build_isolation):
         return ["--no-build-isolation"]
     return []
 
+
 @functools.cache
 def is_editable_install():
     import json
@@ -57,6 +60,102 @@ def is_editable_install():
         return False
     except:
         return False
+
+
+
+@functools.cache
+def fetch_system_packages(venv_dir):
+    import subprocess
+
+    script = os.path.join(os.path.dirname(__file__), "scripts", "system_packages.py")
+    venv_python = os.path.join(venv_dir, "bin", "python")
+
+    result = subprocess.run(
+        [venv_python, script],
+        capture_output=True,
+        text=True,
+    )
+
+    return result.stdout.strip().splitlines() if result.returncode == 0 else []
+
+
+@contextmanager
+def exclude_system_packages(pack, enabled=True):
+    """Generate an exclude file to not install packages already on the system
+    
+    Notes
+    -----
+
+    This seems like a duplicate of `filter_system_packages` but the `--exclude` arguments does not seem to work
+    ALL the time despite looking to be the more elegant way of doing it.
+    """
+
+    if not enabled:
+        yield []
+        return
+
+    packages = fetch_system_packages(str(pack.dirs.venv))
+    
+    if not packages:
+        yield []
+        return
+
+    fd, exclude_filepath = tempfile.mkstemp(suffix=".txt", prefix="exclude_pkgs_")
+    try:
+        with os.fdopen(fd, "w") as exclude_file:
+            for pkg in packages:
+                exclude_file.write(pkg + "\n")
+
+        yield ["--excludes", exclude_filepath]
+    finally:
+        os.unlink(exclude_filepath)
+
+
+@contextmanager
+def filter_system_packages(pack, requirements_file, enabled=True):
+    """"Generate a new requirements file that filter out packages already on the system
+    
+    Notes
+    ----
+
+    This seems like a duplicate of `exclude_system_packages` but it does not work as expected 
+    so we are reduced to filter those packages ourselves
+    """
+    if not enabled:
+        yield requirements_file
+        return
+
+    sys_packages = fetch_system_packages(str(pack.dirs.venv))
+
+    if not sys_packages:
+        yield requirements_file
+        return
+
+    import re
+
+    normalize = lambda name: re.sub(r"[-_.]+", "-", name).lower()
+    sys_names = {normalize(p) for p in sys_packages}
+
+    filtered = []
+    with open(requirements_file, "r") as fp:
+        for line in fp:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+                filtered.append(line)
+                continue
+            pkg_name = re.split(r"[><=!~;\[\s]", stripped, maxsplit=1)[0]
+            if normalize(pkg_name) not in sys_names:
+                filtered.append(line)
+
+    fd, filtered_filepath = tempfile.mkstemp(suffix=".txt", prefix="filtered_req_")
+    try:
+        with os.fdopen(fd, "w") as filtered_file:
+            for pkg in filtered:
+                filtered_file.write(pkg + "\n")
+
+        yield filtered_filepath
+    finally:
+        os.unlink(filtered_filepath)
 
 
 installed_benchmate = {}
@@ -236,27 +335,30 @@ class BasePackage:
         of requirements.
         """
         args = [str(x) for x in args]
+
         if self.constraints:
             self.constraints.write_text("\n".join(self.config["pip"]["constraints"]))
             args += ["-c", str(self.constraints)]
+       
         for line in self.config.get("pip", {}).get("args", []):
             args += line.split(" ")
 
-        if should_use_uv(use_uv_override):
-            pip_install_cmd = ["uv", "pip", "install"] + no_build_isolation(build_isolation) + [ "--index-strategy", "unsafe-best-match", *args]
-        else:
-            pip_install_cmd = ["pip", "install"] + no_build_isolation(build_isolation) + [*args]
+        with exclude_system_packages(self, enabled=should_use_uv(use_uv_override)) as exclude_args:
+            if should_use_uv(use_uv_override):
+                pip_install_cmd = ["uv", "pip", "install"] + exclude_args + no_build_isolation(build_isolation) + [ "--index-strategy", "unsafe-best-match", *args]
+            else:
+                pip_install_cmd = ["pip", "install"] + no_build_isolation(build_isolation) + [*args]
 
-        await run(
-            pip_install_cmd,
-            info={"pack": self},
-            env={
-                **self.core._nox_session.env,
-                **self.make_env(),
-                **self.config.get("env", {}),
-            },
-            constructor=BenchLogEntry,
-        )
+            await run(
+                pip_install_cmd,
+                info={"pack": self},
+                env={
+                    **self.core._nox_session.env,
+                    **self.make_env(),
+                    **self.config.get("env", {}),
+                },
+                constructor=BenchLogEntry,
+            )
 
     def conda_install(self, *args, **kwargs):
         """Install a package using conda."""
@@ -445,7 +547,8 @@ class Package(BasePackage):
 
         for reqs in self.requirements_files(self.config.get("install_variant", None)):
             if reqs.exists():
-                await self.pip_install("-r", reqs)
+                with filter_system_packages(self, reqs) as filtered_reqs:
+                    await self.pip_install("-r", filtered_reqs)
             else:
                 raise FileNotFoundError(f"Requirements file not found: {reqs}")
 

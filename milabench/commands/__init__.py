@@ -370,11 +370,11 @@ class DockerRunCommand(WrapperCommand):
     def as_container_path(self, path):
         # replace local output path with docker path
         base = self.pack.config["system"]["base"]
-        path = path.replace(str(base), "/milabench/envs")
+        path = str(path).replace(str(base), "/milabench/envs")
 
         # Replace local installation path with docker path
         install_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        path = path.replace(str(install_path), "/milabench/milabench")
+        path = str(path).replace(str(install_path), "/milabench/milabench")
 
         return path
 

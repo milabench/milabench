@@ -35,9 +35,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV VIRTUAL_ENV=/milabench/env
 ENV PATH="/milabench/env/bin:${PATH}"
 
-# bash /milabench/milabench/docker/scripts/install.sh                 &&\
+# 
 
-ENV I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1
 
 RUN cd $HOME                                                            &&\
     rm -rf /milabench/env                                               &&\
@@ -45,18 +44,8 @@ RUN cd $HOME                                                            &&\
     virtualenv --system-site-packages /milabench/env                    &&\
     source /milabench/env/bin/activate                                  &&\
     /milabench/env/bin/pip install -e /milabench/milabench              &&\
-    echo "torchcodec"                                                   &&\
-    apt-get update                                                      &&\
-    apt-get install -y pybind11-dev pkg-config ffmpeg libavdevice-dev libavfilter-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev &&\
-    pip install "git+https://github.com/pytorch/torchcodec.git@release/0.7" --no-build-isolation           &&\
+    bash /milabench/milabench/docker/scripts/aa_before_install.sh       &&\
     milabench install --variant unpinned --use-current-env ${MILABENCH_SELECT:+--select $MILABENCH_SELECT}  &&\
     milabench prefer_system                                             &&\
-    echo "torchao"                                                      &&\
-    pip uninstall torchao                                               &&\
-    pip install 'torchao<0.16.0' --no-build-isolation                   &&\
+    bash /milabench/milabench/docker/scripts/bb_after_install.sh        &&\
     /milabench/env/bin/pip cache purge
-
-
-
-# pip install 'huggingface-hub<1.0'                                   &&\
-# pip install https://github.com/vllm-project/vllm/releases/download/v0.17.1/vllm-0.17.1+cu130-cp38-abi3-manylinux_2_35_aarch64.whl &&\

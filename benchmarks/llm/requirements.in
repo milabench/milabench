@@ -9,4 +9,8 @@ torchtune
 # Prepare
 accelerate
 transformers
--r requirements.txt
+
+torch
+fairscale
+fire
+blobfile
