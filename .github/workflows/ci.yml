@@ -142,6 +142,10 @@ jobs:
               --select "${{ matrix.group.select }}"                             \
               ${{ steps.arch.outputs.extra_args }}
 
+      - name: Push Container
+        run: |
+          docker save "$IMAGE_TAG-${{ matrix.group.name }}" | ssh spark2 'docker load'
+  
       - name: Run benchmarks
         run: |
           docker run --rm --gpus all                                            \
@@ -177,7 +181,10 @@ jobs:
       - name: Cleanup Docker image
         if: always()
         run: |
-          docker rmi "$IMAGE_TAG-${{ matrix.group.name }}" || true
+          IMAGE="$IMAGE_TAG-${{ matrix.group.name }}"
+
+          docker rmi "$IMAGE" || true
+          ssh spark2 "docker rmi '$IMAGE'" || true
 
   # ------------------------------------------------------------------
   # 3. Once every group passes, build a single image with ALL
