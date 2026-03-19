@@ -122,51 +122,51 @@ jobs:
 
       - name: Prepare benchmarks
         run: |
-          docker run --rm --gpus all                                      \
-            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864        \
-            --network=host                                                \
-            --security-opt=label=disable                                  \
-            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"  \
-            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}                 \
-            -v "$MILABENCH_BASE/data:/milabench/results/data"             \
-            -v "$MILABENCH_BASE/cache:/milabench/results/cache"           \
-            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \
-            "$IMAGE_TAG-${{ matrix.group.name }}"                         \
-            milabench prepare                                             \
-              --config "$MILABENCH_CONFIG_DOCKER"                         \
-              --select "${{ matrix.group.select }}"                       \
+          docker run --rm --gpus all                                            \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+            --network=host                                                      \
+            --security-opt=label=disable                                        \
+            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"        \
+            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}                       \
+            -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+            -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs" \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                               \
+            milabench prepare                                                   \
+              --config "$MILABENCH_CONFIG_DOCKER"                               \
+              --select "${{ matrix.group.select }}"                             \
               ${{ steps.arch.outputs.extra_args }}
 
       - name: Run benchmarks
         run: |
-          docker run --rm --gpus all                                \
-            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864  \
-            --network=host                                          \
-            --security-opt=label=disable                            \
-            -e MILABENCH_REPORT_LEAN=1                              \
-            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}           \
-            -e BENCHMATE_OBSERVATION_COUNT=10                       \
-            -e BENCHMATE_POLL_INTERVAL=5                            \
-            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"  \
-            -v "$MILABENCH_BASE/data:/milabench/results/data"       \
-            -v "$MILABENCH_BASE/cache:/milabench/results/cache"     \
-            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"       \
-            "$IMAGE_TAG-${{ matrix.group.name }}"                   \
-            milabench run                                           \
-              --config "$MILABENCH_CONFIG_DOCKER"                   \
-              --system /milabench/results/data/system.yaml          \
-              --select "${{ matrix.group.select }}"                 \
+          docker run --rm --gpus all                                            \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+            --network=host                                                      \
+            --security-opt=label=disable                                        \
+            -e MILABENCH_REPORT_LEAN=1                                          \
+            -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}                       \
+            -e BENCHMATE_OBSERVATION_COUNT=10                                   \
+            -e BENCHMATE_POLL_INTERVAL=5                                        \
+            -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"        \
+            -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+            -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs" \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                               \
+            milabench run                                                       \
+              --config "$MILABENCH_CONFIG_DOCKER"                               \
+              --system /milabench/results/data/system.yaml                      \
+              --select "${{ matrix.group.select }}"                             \
               ${{ steps.arch.outputs.extra_args }}
 
       - name: report
         run: |
-          docker run --rm --gpus all                                              \
-            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864                \
-            --network=host                                                        \
-            --security-opt=label=disable                                          \
-            -e MILABENCH_REPORT_LEAN=1                                            \
-            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs"   \
-            "$IMAGE_TAG-${{ matrix.group.name }}"                                 \
+          docker run --rm --gpus all                                            \
+            --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+            --network=host                                                      \
+            --security-opt=label=disable                                        \
+            -e MILABENCH_REPORT_LEAN=1                                          \
+            -v "$MILABENCH_BASE/runs/${{ github.sha }}:/milabench/results/runs" \
+            "$IMAGE_TAG-${{ matrix.group.name }}"                               \
             milabench report --runs /milabench/results/runs
 
       - name: Cleanup Docker image

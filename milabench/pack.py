@@ -359,7 +359,7 @@ class Package(BasePackage):
     @property
     def working_directory(self):
         return self.dirs.code
-    
+
     def make_env(self):
         """Return a dict of environment variables to use for prepare/run.
 
@@ -378,14 +378,14 @@ class Package(BasePackage):
         from .sizer import resolve_placeholder
 
         env = {
-            f"MILABENCH_DIR_{name.upper()}": path 
+            f"MILABENCH_DIR_{name.upper()}": path
                 for name, path in self.config["dirs"].items()
         }
 
         env["OMP_NUM_THREADS"] = resolve_placeholder(self, "{cpu_per_gpu}")
 
         env["MILABENCH_CONFIG"] = json.dumps(self.config)
-        
+
         if self.phase == "prepare" or self.phase == "run":
             # XDG_CACHE_HOME controls basically all caches (pip, torch, huggingface,
             # etc.). HOWEVER, we do not want pip's cache to be in self.dirs.cache,
@@ -443,7 +443,7 @@ class Package(BasePackage):
 
         await install_requires(self)
 
-        for reqs in self.requirements_files(self.config.get("install-variant", None)):
+        for reqs in self.requirements_files(self.config.get("install_variant", None)):
             if reqs.exists():
                 await self.pip_install("-r", reqs)
             else:
@@ -477,7 +477,7 @@ class Package(BasePackage):
         """
         if working_dir is None:
             working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    
+
         ivar = self.config.get("install_variant", None)
 
         if ivar == "unpinned":
@@ -497,8 +497,8 @@ class Package(BasePackage):
             grp = self.config["group"]
             constraint_path = XPath(".pin") / f"tmp-constraints-{ivar}-{grp}.txt"
             constraint_files = make_constraints_file(
-                constraint_path, 
-                constraints, 
+                constraint_path,
+                constraints,
                 working_dir,
                 requirements=requirements,
             )
