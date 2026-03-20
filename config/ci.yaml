@@ -210,7 +210,11 @@ llm-full-mp-nodes:
   enabled: false
 
 dinov2-giant-nodes:
-  enabled: true
+  #
+  # dinov2 uses voir which is not compatible with multi node running
+  # dinov2 also overide a lot of things using voir so we need to modify it
+  #
+  enabled: false
 
 # ---- cleanrljax (already disabled in standard) ----
 

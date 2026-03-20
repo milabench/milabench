@@ -10,6 +10,6 @@ xformers>=0.0.27.post2
 
 
 # Torch geometric (does not exist yet)
---find-links https://data.pyg.org/whl/torch-2.9.0+cu130.html
+--find-links https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 nvidia-ml-py
