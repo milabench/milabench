@@ -1,5 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 --extra-index-url https://flashinfer.ai/whl/cu130
+--find-links https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 #
 # 
@@ -21,7 +22,7 @@ navix >= 0.7.1
 gymnax >= 0.0.8
 
 # All those need to match
-flashinfer-python==0.6.6+cu130
-flashinfer-cubin==0.6.6+cu130
-flashinfer-jit-cache==0.6.6+cu130
+flashinfer-python==0.6.6
+flashinfer-cubin==0.6.6
+flashinfer-jit-cache==0.6.6
 

@@ -630,6 +630,7 @@ class Package(BasePackage):
             "compile",
             "--emit-index-url",
             "--emit-find-links",
+            "--no-build-isolation",
             "-o",
             relativize(requirements_file, working_dir),
             *argv,
