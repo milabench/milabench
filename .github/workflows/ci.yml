@@ -110,11 +110,11 @@ jobs:
           mkdir -p "$MILABENCH_BASE/cache"
           mkdir -p "$MILABENCH_BASE/runs/${{ github.sha }}"
       
-      - name: Pin Dependencies
-        run: |
-          pip install -e .
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-          UV_TORCH_BACKEND=cu130 MILABENCH_GPU_ARCH=cuda milabench pin --from-scratch --variant cuda
+      # - name: Pin Dependencies
+      #   run: |
+      #     pip install -e .
+      #     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+      #     UV_TORCH_BACKEND=cu130 MILABENCH_GPU_ARCH=cuda milabench pin --from-scratch --variant cuda
 
       - name: Detect architecture and Dockerfile
         id: arch

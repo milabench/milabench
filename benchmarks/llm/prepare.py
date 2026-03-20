@@ -85,6 +85,8 @@ def load_dataset(recipe, cfg):
     from torchtune import config
     sys.path.append(os.path.join(os.path.dirname(__file__), "bench"))
 
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
     os.environ["MILABENCH_PREPARE"] = "1"
     os.environ["RANK"] = "0"
     os.environ["WORLD_SIZE"] = "1"

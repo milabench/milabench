@@ -4,7 +4,8 @@ PyYAML
 argklass
 fairscale
 torchao
-torchtune
+# torchtune
+torchtune @ git+https://github.com/meta-pytorch/torchtune.git@50a2b8f
 
 # Prepare
 accelerate
