@@ -8,7 +8,7 @@ voir >= 0.2.19
 torchcompat >= 1.0.0
 
 # https://github.com/pytorch/ao/issues/2919
-torch < 2.11
+torch > 2.10
 torchao < 0.17.0
 
 # https://github.com/meta-pytorch/torchcodec?tab=readme-ov-file#installing-torchcodec
