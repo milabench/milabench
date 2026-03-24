@@ -1,0 +1,5 @@
+run_id,description,file,phase,n_samples,mean_items_s,median_items_s,stdev_items_s,min_items_s,max_items_s,memory_mib,notes
+baseline_run2,FP32 baseline,baseline_run2.txt,learning,17,90338.8,90635.1,862.1,88342.2,91032.6,638.9,Pre-optimization; LOG_EVERY_N=10 timing
+fp16_learn_run1,FP16 learning only,fp16_learn_only_run1.txt,learning,17,158000,158000,,,,638.9,Approximate; FP16 in _learn_phase only
+opt2_fp16buf_run2,FP16 learn + FP16 buffer,opt2_fp16buf_run2.txt,learning,17,167058.7,169967.0,6623.8,155853.1,173480.0,324.2,Both optimizations applied
+opt_final_run1,FP16 learn + FP16 buffer (final confirm),opt_final_run1.txt,learning,17,162791.9,,7762.8,155091.8,172196.8,324.2,Confirmed; speedup 1.80x over baseline

@@ -89,7 +89,9 @@ def make_train(config):
         _action = basic_env.action_space().sample(rng)
         _, _env_state = env.reset(rng, env_params)
         _obs, _, _reward, _done, _ = env.step(rng, _env_state, _action, env_params)
-        _timestep = TimeStep(obs=_obs, action=_action, reward=_reward, done=_done)
+        # Store observations as FP16 in buffer: MinAtar obs are 0/1 booleans
+        # (exact in FP16), halving buffer memory and sampling bandwidth.
+        _timestep = TimeStep(obs=_obs.astype(jnp.float16), action=_action, reward=_reward, done=_done)
         buffer_state = buffer.init(_timestep)
 
         # INIT NETWORK AND OPTIMIZER
@@ -157,8 +159,8 @@ def make_train(config):
                 timesteps=train_state.timesteps + config["NUM_ENVS"]
             )  # update timesteps count
 
-            # BUFFER UPDATE
-            timestep = TimeStep(obs=last_obs, action=action, reward=reward, done=done)
+            # BUFFER UPDATE: cast obs to FP16 to halve buffer memory and gather bandwidth
+            timestep = TimeStep(obs=last_obs.astype(jnp.float16), action=action, reward=reward, done=done)
             buffer_state = buffer.add(buffer_state, timestep)
 
             # NETWORKS UPDATE
