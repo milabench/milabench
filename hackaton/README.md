@@ -46,12 +46,12 @@ If unsure whether something counts as intervention, **log it anyway**.
 
 ### Benchmarking
 - 1 warmup run (discard)
-- Then 3–5 measured runs
+- Then 5 measured runs
 - Report median/min/max
 - Record: steps/sec + reward snapshot + peak GPU memory (if possible)
 
 ### Reward / correctness
-- At least a quick reward check for any candidate improvement
+- At least a quick reward check for any candidate improvement (mean over 5 runs)
 - If a change could be semantic (async env, batch size, rollout logic, etc.), require stronger eval
 
 ---
@@ -66,7 +66,7 @@ If unsure whether something counts as intervention, **log it anyway**.
 
 ## Comparison metrics (what we’ll use)
 Primary:
-- Throughput gain (%) at preserved reward (median-of-runs)
+- Throughput gain (%) at preserved reward (mean-of-runs)
 
 Secondary:
 - Time to first measurable win
