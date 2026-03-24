@@ -9,7 +9,14 @@ import argklass
 import torch  # This is a bit of a trick to make jax use torch's packaged libs
 
 from dqn import add_dqn_command, main as dqn_main
-from ppo import add_ppo_command, main as ppo_main
+
+try:
+    from ppo import add_ppo_command, main as ppo_main
+    PPO_IMPORT_ERROR = None
+except Exception as exc:  # Keep DQN usable when PPO deps are incompatible.
+    add_ppo_command = None
+    ppo_main = None
+    PPO_IMPORT_ERROR = exc
 
 
 def main():
@@ -17,14 +24,19 @@ def main():
     subparser = parser.add_subparsers(title="Benchmark", dest="benchmark")
 
     add_dqn_command(subparser)
-    add_ppo_command(subparser)
+    if add_ppo_command is not None:
+        add_ppo_command(subparser)
 
     bench = {
         "dqn": dqn_main,
-        "ppo": ppo_main
     }
+    if ppo_main is not None:
+        bench["ppo"] = ppo_main
 
     args = parser.parse_args()
+
+    if args.benchmark == "ppo" and PPO_IMPORT_ERROR is not None:
+        raise RuntimeError("PPO is unavailable in this environment") from PPO_IMPORT_ERROR
 
     if benchmark := bench.get(args.benchmark):
         benchmark(args)

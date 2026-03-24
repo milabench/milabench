@@ -53,6 +53,7 @@ def make_train(config):
     from benchmate.jaxmem import memory_peak_fetcher
     step_timer = StepTimer(give_push())
     fetch_memory_peak = memory_peak_fetcher()
+    sample_interval_updates = config.get("SAMPLE_INTERVAL_UPDATES", 1536)
 
     basic_env, env_params = gymnax.make(config["ENV_NAME"])
     env = FlattenObservationWrapper(basic_env)
@@ -231,19 +232,25 @@ def make_train(config):
             }
 
             def callback(metrics):
-                # .block_until_ready()
-                if (metrics["timesteps"] + 1) % 1000:
-                    returns = metrics["returns"].item()
-                    loss = metrics["loss"].block_until_ready().item()
-                    delta = metrics["timesteps"] - step_timer.timesteps
-                    step_timer.timestep = metrics["timesteps"]
-                    
-                    step_timer.step(delta.item())
-                    step_timer.log(returns=returns, loss=loss)
-                    step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
-                    step_timer.end()
+                returns = metrics["returns"].item()
+                loss = metrics["loss"].block_until_ready().item()
+                delta = metrics["timesteps"] - step_timer.timesteps
+                step_timer.timesteps = metrics["timesteps"]
 
-            jax.debug.callback(callback, metrics)
+                step_timer.step(delta.item())
+                step_timer.log(returns=returns, loss=loss)
+                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
+                step_timer.end()
+
+            should_sample = (
+                (metrics["timesteps"] // config["NUM_ENVS"]) % sample_interval_updates == 0
+            )
+            jax.lax.cond(
+                should_sample,
+                lambda payload: jax.debug.callback(callback, payload),
+                lambda payload: None,
+                metrics,
+            )
 
             runner_state = (train_state, buffer_state, env_state, obs, rng)
 
