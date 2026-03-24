@@ -1,7 +1,7 @@
 # RL Throughput Optimization Exercise — Human Guide (Verifier Role)
 
 ## Goal
-Each human+agent pair works independently to **increase steps/sec** on DQN while keeping **best mean reward** near baseline (within the agreed tolerance).
+Each human+agent pair works independently to **increase steps/sec** on DQN while keeping **best mean reward** near baseline (within 1 std of the baseline, measured on 5 runs).
 
 Workload for today:
 - Milabench PureJaxRL DQN: `benchmarks/purejaxrl/dqn.py` (via `benchmarks/purejaxrl/main.py`)
