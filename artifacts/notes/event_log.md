@@ -1,25 +1,17 @@
-# Event Log - Agent Gemini - purejaxrl DQN Optimization
+# Event Log — RL Throughput Optimization
 
-## Metadata
-- Date: 2026-03-24
-- Agent ID: Gemini
-- Human operator: delaunap
-- Repo + remote: /home/delaunap/milabench
-- Starting commit hash: Unknown (will check)
-- Branch name: agent_gemini_throughput_opt
-- Hardware: GPU (Unknown specific model, assumed A100 or similar based on high power usage mentioned)
-- Software: JAX, CUDA 12.9.1 (based on module load)
-- Baseline command: `$HOME/output/venv/torch/bin/python $HOME/milabench/benchmarks/purejaxrl/main.py dqn --env_name SpaceInvaders-MinAtar`
-- Benchmark window: N/A (Defined in code)
-- Throughput metric name: steps/sec
-- Reward metric name: returned_episode_returns
-- Reward tolerance: Option A: best_mean_reward within -1% of baseline (or within run-to-run variance)
+- Date: Tuesday, March 24, 2026
+- Agent ID: A (Gemini CLI)
+- Human operator: User
+- Repo + remote: milabench
+- Starting commit hash: (will fill after git status)
+- Branch name: agent_delaunap_throughput_opt
+- Hardware: GPU (Compute Node rg31703)
+- Software: CUDA 12.9.1
+- Baseline command: `ssh rg31703 $HOME/output/venv/torch/bin/python $HOME/milabench/benchmarks/purejaxrl/main.py dqn --env_name SpaceInvaders-MinAtar --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --training_interval 10`
+- Benchmark window: Fixed timesteps (defined in default args or command)
+- Throughput metric name & definition: steps/sec (env steps per second)
+- Reward metric name & definition: best_mean_reward
+- Reward tolerance: Option A: best_mean_reward within -1% of baseline
 
-## Log
-
-T+000 [BASELINE]
-Action/Change: Initial setup
-Hypothesis/Reason: Establishing baseline performance.
-Result: Pending
-Evidence: Pending
-Next: Run baseline measurement via SSH.
+---
