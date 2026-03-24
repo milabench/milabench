@@ -1,0 +1,5 @@
+{"total_timesteps": 32768, "num_envs": 128, "buffer_batch_size": 128, "lower_s": 0.9653678230242804, "compile_s": 11.57582506496692, "execute_s": 0.4684897660044953, "wall_s": 13.009682653995696}
+{"total_timesteps": 262144, "num_envs": 128, "buffer_batch_size": 128, "lower_s": 0.7725194880040362, "compile_s": 5.006224212003872, "execute_s": 0.7937870710156858, "wall_s": 6.572530771023594}
+{"total_timesteps": 262144, "num_envs": 64, "buffer_batch_size": 128, "lower_s": 0.8207915210514329, "compile_s": 7.565309794968925, "execute_s": 1.5572922169812955, "wall_s": 9.943393533001654}
+{"total_timesteps": 262144, "num_envs": 32, "buffer_batch_size": 128, "lower_s": 0.8217381139984354, "compile_s": 7.86278864502674, "execute_s": 3.1522954409592785, "wall_s": 11.836822199984454}
+{"total_timesteps": 262144, "num_envs": 128, "buffer_batch_size": 1024, "lower_s": 0.693896873970516, "compile_s": 7.158893949002959, "execute_s": 0.8032234110287391, "wall_s": 8.656014234002214}
