@@ -173,6 +173,45 @@ Store under:
 
 ---
 
+
+---
+
+## 8.1 Nsight Systems (`nsys`) on Alliance/Slurm clusters (REQUIRED when profiling GPU)
+When you need to profile GPU behavior with Nsight Systems:
+
+### A) Make `nsys` available via environment modules
+1. Discover available CUDA toolkits / Nsight modules:
+   - `module spider cuda`
+   - (optionally) `module spider nvidia` or `module spider nsight`
+
+2. Load an appropriate CUDA toolkit module (this typically provides `nsys`):
+   - `module load cuda/<VERSION>`
+   - Verify:
+     - `which nsys`
+     - `nsys --version`
+
+If `nsys` is still not found after loading CUDA, try `module spider nsight` and load the suggested Nsight module.
+
+### B) Running `nsys` in Slurm (profiling GPU tasks)
+If you need to launch a job under Slurm for profiling, follow the Alliance guidance here:
+- https://docs.alliancecan.ca/wiki/Using_GPUs_with_Slurm#Profiling_GPU_tasks
+
+Key expectation:
+- Use the Alliance-recommended Slurm/job-script pattern for profiling (cluster policies may require special handling).
+
+**Important:** On some Alliance clusters, GPU profiling may require extra steps (e.g., temporarily disabling DCGM) per the Alliance documentation above. Do not guess—follow the doc’s procedure for your cluster.
+
+### C) Minimal `nsys` usage pattern (example)
+In a Slurm job (or within an interactive allocation), the common pattern is:
+
+- `nsys profile -o artifacts/profiles/<name> --stats=true <your_command_here>`
+
+Keep traces small:
+- profile a short, representative window
+- prefer fewer iterations/steps during profiling
+- save the exact command you used in `artifacts/profiles/profiler_commands.md`
+
+
 ## 9) Logging during the session (REQUIRED)
 
 ### 9.1 Event log location
