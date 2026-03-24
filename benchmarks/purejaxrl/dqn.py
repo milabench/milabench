@@ -140,7 +140,9 @@ def make_train(config):
             return chosed_actions
 
         # TRAINING LOOP
-        def _update_step(runner_state, unused):
+        # _update_step_inner: one environment step + buffer + network update, no host callback.
+        # The callback is batched at chunk boundaries to reduce host-device sync overhead.
+        def _update_step_inner(runner_state, unused):
 
             train_state, buffer_state, env_state, last_obs, rng = runner_state
 
@@ -230,32 +232,58 @@ def make_train(config):
                 "returns": info["returned_episode_returns"].mean(),
             }
 
-            def callback(metrics):
-                # .block_until_ready()
-                if (metrics["timesteps"] + 1) % 1000:
-                    returns = metrics["returns"].item()
-                    loss = metrics["loss"].block_until_ready().item()
-                    delta = metrics["timesteps"] - step_timer.timesteps
-                    step_timer.timestep = metrics["timesteps"]
-                    
-                    step_timer.step(delta.item())
-                    step_timer.log(returns=returns, loss=loss)
-                    step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
-                    step_timer.end()
-
-            jax.debug.callback(callback, metrics)
-
             runner_state = (train_state, buffer_state, env_state, obs, rng)
 
             return runner_state, metrics
 
-        # train
-        rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, buffer_state, env_state, init_obs, _rng)
+        # Chunked outer scan: run SCAN_CHUNK_SIZE inner steps between host callbacks.
+        # This reduces jax.debug.callback dispatches by SCAN_CHUNK_SIZE×, cutting
+        # host-device sync overhead proportionally.
+        SCAN_CHUNK_SIZE = config.get("SCAN_CHUNK_SIZE", 1)
 
-        runner_state, metrics = jax.lax.scan(
-            _update_step, runner_state, None, config["NUM_UPDATES"]
-        )
+        def callback(metrics):
+            returns = metrics["returns"].item()
+            loss = metrics["loss"].item()
+            delta = metrics["timesteps"] - step_timer.timesteps
+            step_timer.timesteps = metrics["timesteps"]
+            step_timer.step(delta.item())
+            step_timer.log(returns=returns, loss=loss)
+            step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
+            step_timer.end()
+
+        if SCAN_CHUNK_SIZE <= 1:
+            # Original behaviour: callback every step (no chunking)
+            def _update_step(runner_state, unused):
+                runner_state, metrics = _update_step_inner(runner_state, unused)
+                jax.debug.callback(callback, metrics)
+                return runner_state, metrics
+
+            rng, _rng = jax.random.split(rng)
+            runner_state = (train_state, buffer_state, env_state, init_obs, _rng)
+            runner_state, metrics = jax.lax.scan(
+                _update_step, runner_state, None, config["NUM_UPDATES"]
+            )
+        else:
+            # Chunked: run SCAN_CHUNK_SIZE steps per outer iteration, one callback per chunk.
+            num_chunks = config["NUM_UPDATES"] // SCAN_CHUNK_SIZE
+            # Truncate NUM_UPDATES to a multiple of SCAN_CHUNK_SIZE
+            def _update_chunk(runner_state, unused):
+                runner_state, chunk_metrics = jax.lax.scan(
+                    _update_step_inner, runner_state, None, SCAN_CHUNK_SIZE
+                )
+                # Report last step's metrics for the chunk
+                last_metrics = jax.tree.map(lambda x: x[-1], chunk_metrics)
+                jax.debug.callback(callback, last_metrics)
+                return runner_state, chunk_metrics
+
+            rng, _rng = jax.random.split(rng)
+            runner_state = (train_state, buffer_state, env_state, init_obs, _rng)
+            runner_state, metrics = jax.lax.scan(
+                _update_chunk, runner_state, None, num_chunks
+            )
+            # Flatten chunk dimension: [num_chunks, SCAN_CHUNK_SIZE] -> [num_chunks*SCAN_CHUNK_SIZE]
+            metrics = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), metrics)
+
         return {"runner_state": runner_state, "metrics": metrics}
 
     return train
@@ -318,6 +346,7 @@ class Arguments:
     seed: int = 0
     num_seeds: int = 1
     project: str = ""
+    scan_chunk_size: int = 1  # steps between host callbacks; >1 reduces host-device sync overhead
 
 
 def add_dqn_command(subparser):
@@ -349,6 +378,7 @@ def main(args: Arguments = None):
         "SEED": args.seed,
         "NUM_SEEDS": args.num_seeds,
         "PROJECT": args.project,
+        "SCAN_CHUNK_SIZE": args.scan_chunk_size,
     }
 
     rng = jax.random.PRNGKey(config["SEED"])

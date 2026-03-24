@@ -1,0 +1,334 @@
+dqn.D0 [config.run_name] mulobane.2026-03-24_14-52-03
+dqn.D0 [config.group] dqn
+dqn.D0 [config.install_group] torch
+dqn.D0 [config.install_variant] cuda
+dqn.D0 [config.enabled] True
+dqn.D0 [config.capabilities.nodes] 1
+dqn.D0 [config.dirs.venv] /tmp/output/venv/torch
+dqn.D0 [config.dirs.data] /tmp/output/data
+dqn.D0 [config.dirs.runs] /tmp/output/runs
+dqn.D0 [config.dirs.extra] /tmp/output/extra/dqn
+dqn.D0 [config.dirs.cache] /tmp/output/cache
+dqn.D0 [config.max_duration] 600
+dqn.D0 [config.voir.options.stop] 60
+dqn.D0 [config.voir.options.interval] 1s
+dqn.D0 [config.validation.usage.gpu_load_threshold] 0.5
+dqn.D0 [config.validation.usage.gpu_mem_threshold] 0.5
+dqn.D0 [config.config_base] /tmp/milabench/config
+dqn.D0 [config.config_file] /tmp/milabench/config/standard.yaml
+dqn.D0 [config.tags] ['gym', 'jax', 'monogpu', 'rl']
+dqn.D0 [config.definition] /tmp/milabench/benchmarks/purejaxrl
+dqn.D0 [config.plan.method] per_gpu
+dqn.D0 [config.argv.dqn] True
+dqn.D0 [config.argv.--num_envs] auto({cpu_per_gpu}, 128)
+dqn.D0 [config.argv.--buffer_size] 131072
+dqn.D0 [config.argv.--buffer_batch_size] 65536
+dqn.D0 [config.argv.--env_name] CartPole-v1
+dqn.D0 [config.argv.--training_interval] 10
+dqn.D0 [config.weight] 0.0
+dqn.D0 [config.name] dqn
+dqn.D0 [config.tag] ['dqn', 'D0']
+dqn.D0 [config.device] 0
+dqn.D0 [config.devices] [0]
+dqn.D0 [config.env.CUDA_VISIBLE_DEVICES] 0
+dqn.D0 [start] /tmp/output/venv/torch/bin/voir --config /tmp/output/extra/dqn/voirconf-dqn.D0-0efae956f1553a76c1e03985181900f5.json /tmp/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 [at 2026-03-24 14:52:06.951798]
+dqn.D0 [stderr] /tmp/output/venv/torch/lib/python3.12/site-packages/voir/cli.py:104: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+dqn.D0 [stderr]   import pkg_resources
+dqn.D0 [stdout] Failed to import warp: No module named 'warp'
+dqn.D0 [stdout] Failed to import mujoco_warp: No module named 'warp'
+dqn.D0 [stderr] /tmp/output/venv/torch/lib/python3.12/site-packages/jax/_src/numpy/array_methods.py:125: UserWarning: Explicitly requested dtype int64 requested in astype is not available, and will be truncated to dtype int32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+dqn.D0 [stderr]   return lax_numpy.astype(self, dtype, copy=copy, device=device)
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'task': 'main', 'time': 1774378344.709641, 'gpudata': {'0': {'memory': [796.75, 46080.0], 'load': 0.0, 'temperature': 25.0, 'power': 71.904}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378345.768334, 'gpudata': {'0': {'memory': [860.75, 46080.0], 'load': 0.03, 'temperature': 26.0, 'power': 72.123}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378344.7097058, 'process': {'pid': 1649249, 'load': 0.0, 'num': 26, 'read_bytes': 51097600.0, 'write_bytes': 78819328.0, 'read_chars': 95571785.0, 'write_chars': 70495502.0, 'memory': [1242595328.0, 405373853696]}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378346.7703302, 'gpudata': {'0': {'memory': [988.75, 46080.0], 'load': 0.0, 'temperature': 27.0, 'power': 109.875}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378347.771809, 'gpudata': {'0': {'memory': [988.75, 46080.0], 'load': 0.0, 'temperature': 28.0, 'power': 110.327}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378346.7762337, 'process': {'pid': 1649249, 'load': 0.0, 'num': 29, 'read_bytes': 51097600.0, 'write_bytes': 78819328.0, 'read_chars': 95725108.0, 'write_chars': 70495502.0, 'memory': [1367691264.0, 405373853696]}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378348.7732568, 'gpudata': {'0': {'memory': [988.75, 46080.0], 'load': 0.0, 'temperature': 26.0, 'power': 72.087}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378349.7797937, 'gpudata': {'0': {'memory': [988.75, 46080.0], 'load': 0.0, 'temperature': 26.0, 'power': 72.116}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378348.7943313, 'process': {'pid': 1649249, 'load': 0.0, 'num': 30, 'read_bytes': 51097600.0, 'write_bytes': 79020032.0, 'read_chars': 96219922.0, 'write_chars': 70654141.0, 'memory': [1534423040.0, 405373853696]}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378350.7814126, 'gpudata': {'0': {'memory': [988.75, 46080.0], 'load': 0.0, 'temperature': 26.0, 'power': 72.119}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378351.7836232, 'gpudata': {'0': {'memory': [1244.75, 46080.0], 'load': 0.0, 'temperature': 27.0, 'power': 72.309}}}
+dqn.D0 [data] {'task': 'main', 'time': 1774378350.8110714, 'process': {'pid': 1649249, 'load': 0.0, 'num': 30, 'read_bytes': 51097600.0, 'write_bytes': 79020032.0, 'read_chars': 96373918.0, 'write_chars': 70654141.0, 'memory': [1535188992.0, 405373853696]}}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 16.337678297349377, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 326525.79861396534, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 831226.175630929, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 1520377.7241727961, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 2052177.122152055, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 2924962.070497814, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 4134266.15574091, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 5102299.968023759, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 6576886.617005733, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 7652890.347719565, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 9857190.28334161, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 11587016.745478246, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 14332898.732932694, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 15452996.792444345, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 17659376.439894512, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 20157750.724644683, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 23504710.162810348, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 25472457.522941627, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 27336719.350620255, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 31239844.818235938, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 36343029.4010275, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 39853997.919068046, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 40597395.85890874, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 43725110.46591903, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 50743077.84579976, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 52250289.64329139, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 55554048.94607981, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 61340218.26220094, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 64843476.5579325, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 68094762.20787357, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 74419792.8006847, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 85283543.81621341, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 81462386.67094071, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 86510645.40703057, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 93318439.6017938, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 107068480.58676311, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 113301535.93406859, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 111717291.02864721, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 115872171.30991009, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 130740268.54208864, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 136661680.24533173, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 142033899.54899305, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 137588468.21335658, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 154361495.02735782, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 163342182.95505515, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 161685847.81990445, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 169016217.40977, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 174898643.8880801, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 188112666.90115196, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 190604642.86842397, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 204797131.627184, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 195010896.9228352, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 204503112.56104362, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 221001469.29366145, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 228213075.16303322, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 238322310.70662743, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 229657242.70624983, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 247974878.9858549, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 248933164.33196416, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 258760919.4465381, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [data] {'loss': 0.0}
+dqn.D0 [data] {'memory_peak': 259.33935546875, 'units': 'MiB'}
+dqn.D0 [data] {'rate': 261267145.92880264, 'units': 'items/s', 'task': 'train'}
+dqn.D0 [end] /tmp/output/venv/torch/bin/voir --config /tmp/output/extra/dqn/voirconf-dqn.D0-0efae956f1553a76c1e03985181900f5.json /tmp/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 [at 2026-03-24 14:52:32.902770]
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ GLOBAL                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ (1/1)                                                                                                                                                                                                                                              │
+│ dqn.D0                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸    -:--:-- (60/65)                                                                                                                                                                                                                                    │
+│          loss                  0.00                                                                                                                                                                                                                                                                                        │
+│          gpu:0                   0% load | 1245/46080 MB | 27C                                                                                                                                                                                                                                                             │
+│          cpu.1649249             0% load | 2/405 GB                                                                                                                                                                                                                                                                        │
+│          physical.io.1649249     48 Mo reads   75 Mo writes                                                                                                                                                                                                                                                                │
+│          virtual.io.1649249      91 Mo reads   67 Mo writes                                                                                                                                                                                                                                                                │
+│          memory_peak           259.34 MiB                                                                                                                                                                                                                                                                                  │
+│          train rate            261267145.93 items/s                                                                                                                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Source: /tmp/output/runs/mulobane.2026-03-24_14-52-03
+=================
+Benchmark results
+=================
+
+System
+------
+cpu:      Intel(R) Xeon(R) Gold 6230 CPU @ 2.10GHz
+n_cpu:    40
+product:  Quadro RTX 8000
+n_gpu:    1
+memory:   46080.0
+
+Breakdown
+---------
+index                     | fail |   n | ngpu |        perf |   sem% |   std% | peak_memory |       score | weight | energy (Kj) |      perf_watt | median_watt | enabled
+cleanrljax                |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | False
+diffusion-gpus            |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+diffusion-nodes           |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+diffusion-single          |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+dimenet                   |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+dinov2-giant-gpus         |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+dinov2-giant-nodes        |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | False
+dinov2-giant-single       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+dqn                       |    0 |   1 |    1 | 95529533.61 |  11.0% |  84.5% |         861 | 95529533.61 |   0.00 |       0.586 | 1152364558.180 |      72.123 | True
+lightning                 |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+lightning-gpus            |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llava-gpus                |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | False
+llava-single              |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-chat-completion       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+llm-full-mp-gpus          |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-full-mp-nodes         |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-lora-ddp-gpus         |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-lora-ddp-nodes        |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-lora-mp-gpus          |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+llm-lora-single           |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+pna                       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+ppo                       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+recursiongfn              |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+rlhf-gpus                 |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+rlhf-single               |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+txt-to-image-single       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+vjepa-gpus                |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+vjepa-single              |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+whisper-transcribe-single |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+brax                      |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+bf16                      |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+fp16                      |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+fp32                      |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+fp8                       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+tf32                      |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+bert-fp16                 |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+bert-fp32                 |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+bert-tf32                 |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+bert-tf32-fp16            |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+reformer                  |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+t5                        |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+whisper                   |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+llama                     |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+focalnet                  |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+convnext_large-fp16       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+convnext_large-fp32       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+convnext_large-tf32       |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+convnext_large-tf32-fp16  |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+regnet_y_128gf            |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+resnet152-ddp-gpus        |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+resnet50                  |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   1.00 |       0.000 |          0.000 |         nan | True
+resnet50-noio             |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+vllm-dense-physics-gpus   |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+vllm-moe-code-gpus        |  nan | nan |    0 |         nan |   nan% |   nan% |         nan |         nan |   0.00 |       0.000 |          0.000 |         nan | True
+
+Scores
+------
+Failure rate:       0.00% (PASS)
+Score:               1.00
+Metric Collection
+=================
+  
+Early Stopped
+=============
+  * 1 x dqn                            (1/1)
+  
+Errors
+======
+  
+
+
+[DONE] Reports directory: /tmp/output/runs/mulobane.2026-03-24_14-52-03

@@ -29,3 +29,13 @@ gpus:
 
 nodes:
 	milabench run $(MILABENCH_ARGS) --select $(BENCH_NAME)-nodes
+
+
+PYTHON=/tmp/output/venv/torch/bin/python
+# uv pip install nsight-python[cu13]
+run:
+	$(PYTHON) /tmp/milabench/benchmarks/purejaxrl/main.py dqn			\
+		 --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536	\
+		 --env_name SpaceInvaders-MinAtar --training_interval 10		\
+		 --total_timesteps 200000
+
