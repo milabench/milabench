@@ -166,7 +166,17 @@ def make_train(config):
 
                 learn_batch = buffer.sample(buffer_state, rng).experience
 
-                q_next_target = network.apply(
+                # FP16 mixed precision: cast params+obs to float16 for faster GEMM
+                # on tensor cores, cast output back to float32 for stable loss.
+                def _apply_fp16(params, obs):
+                    params_fp16 = jax.tree.map(
+                        lambda p: p.astype(jnp.float16), params
+                    )
+                    return network.apply(
+                        params_fp16, obs.astype(jnp.float16)
+                    ).astype(jnp.float32)
+
+                q_next_target = _apply_fp16(
                     train_state.target_network_params, learn_batch.second.obs
                 )  # (batch_size, num_actions)
                 q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
@@ -176,7 +186,7 @@ def make_train(config):
                 )
 
                 def _loss_fn(params):
-                    q_vals = network.apply(
+                    q_vals = _apply_fp16(
                         params, learn_batch.first.obs
                     )  # (batch_size, num_actions)
                     chosen_action_qvals = jnp.take_along_axis(
