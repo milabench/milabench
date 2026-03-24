@@ -1,0 +1,390 @@
+"""
+PureJaxRL version of CleanRL's DQN: https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/dqn_jax.py
+"""
+from dataclasses import dataclass
+import time
+
+import jax
+import jax.numpy as jnp
+import chex
+import flax
+import optax
+import flax.linen as nn
+from flax.training.train_state import TrainState
+import gymnax
+from gymnax.wrappers.purerl import FlattenObservationWrapper, LogWrapper
+import flashbax as fbx
+
+from benchmate.metrics import give_push
+
+
+
+class QNetwork(nn.Module):
+    action_dim: int
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray):
+        x = nn.Dense(120)(x)
+        x = nn.relu(x)
+        x = nn.Dense(84)(x)
+        x = nn.relu(x)
+        x = nn.Dense(self.action_dim)(x)
+        return x
+
+
+@chex.dataclass(frozen=True)
+class TimeStep:
+    obs: chex.Array
+    action: chex.Array
+    reward: chex.Array
+    done: chex.Array
+
+
+class CustomTrainState(TrainState):
+    target_network_params: flax.core.FrozenDict
+    timesteps: int
+    n_updates: int
+
+
+def make_train(config):
+    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // config["NUM_ENVS"]
+
+    from benchmate.timings import StepTimer
+    from benchmate.jaxmem import memory_peak_fetcher
+    step_timer = StepTimer(give_push())
+    fetch_memory_peak = memory_peak_fetcher()
+
+    basic_env, env_params = gymnax.make(config["ENV_NAME"])
+    env = FlattenObservationWrapper(basic_env)
+    env = LogWrapper(env)
+
+    vmap_reset = lambda n_envs: lambda rng: jax.vmap(env.reset, in_axes=(0, None))(
+        jax.random.split(rng, n_envs), env_params
+    )
+    vmap_step = lambda n_envs: lambda rng, env_state, action: jax.vmap(
+        env.step, in_axes=(0, 0, 0, None)
+    )(jax.random.split(rng, n_envs), env_state, action, env_params)
+
+    def train(rng):
+
+        # INIT ENV
+        rng, _rng = jax.random.split(rng)
+        init_obs, env_state = vmap_reset(config["NUM_ENVS"])(_rng)
+
+        # INIT BUFFER
+        buffer = fbx.make_flat_buffer(
+            max_length=config["BUFFER_SIZE"],
+            min_length=config["BUFFER_BATCH_SIZE"],
+            sample_batch_size=config["BUFFER_BATCH_SIZE"],
+            add_sequences=False,
+            add_batch_size=config["NUM_ENVS"],
+        )
+        buffer = buffer.replace(
+            init=jax.jit(buffer.init),
+            add=jax.jit(buffer.add, donate_argnums=0),
+            sample=jax.jit(buffer.sample),
+            can_sample=jax.jit(buffer.can_sample),
+        )
+        rng = jax.random.PRNGKey(0)  # use a dummy rng here
+        _action = basic_env.action_space().sample(rng)
+        _, _env_state = env.reset(rng, env_params)
+        _obs, _, _reward, _done, _ = env.step(rng, _env_state, _action, env_params)
+        # Store observations as FP16 in buffer: MinAtar obs are 0/1 booleans
+        # (exact in FP16), halving buffer memory and sampling bandwidth.
+        _timestep = TimeStep(obs=_obs.astype(jnp.float16), action=_action, reward=_reward, done=_done)
+        buffer_state = buffer.init(_timestep)
+
+        # INIT NETWORK AND OPTIMIZER
+        network = QNetwork(action_dim=env.action_space(env_params).n)
+        rng, _rng = jax.random.split(rng)
+        init_x = jnp.zeros(env.observation_space(env_params).shape)
+        network_params = network.init(_rng, init_x)
+
+        def linear_schedule(count):
+            frac = 1.0 - (count / config["NUM_UPDATES"])
+            return config["LR"] * frac
+
+        lr = linear_schedule if config.get("LR_LINEAR_DECAY", False) else config["LR"]
+        tx = optax.adam(learning_rate=lr)
+
+        train_state = CustomTrainState.create(
+            apply_fn=network.apply,
+            params=network_params,
+            target_network_params=jax.tree.map(lambda x: jnp.copy(x), network_params),
+            tx=tx,
+            timesteps=0,
+            n_updates=0,
+        )
+
+        # epsilon-greedy exploration
+        def eps_greedy_exploration(rng, q_vals, t):
+            rng_a, rng_e = jax.random.split(
+                rng, 2
+            )  # a key for sampling random actions and one for picking
+            eps = jnp.clip(  # get epsilon
+                (
+                    (config["EPSILON_FINISH"] - config["EPSILON_START"])
+                    / config["EPSILON_ANNEAL_TIME"]
+                )
+                * t
+                + config["EPSILON_START"],
+                config["EPSILON_FINISH"],
+            )
+            greedy_actions = jnp.argmax(q_vals, axis=-1)  # get the greedy actions
+            chosed_actions = jnp.where(
+                jax.random.uniform(rng_e, greedy_actions.shape)
+                < eps,  # pick the actions that should be random
+                jax.random.randint(
+                    rng_a, shape=greedy_actions.shape, minval=0, maxval=q_vals.shape[-1]
+                ),  # sample random actions,
+                greedy_actions,
+            )
+            return chosed_actions
+
+        # TRAINING LOOP
+        def _update_step(runner_state, unused):
+
+            train_state, buffer_state, env_state, last_obs, rng = runner_state
+
+            # STEP THE ENV
+            rng, rng_a, rng_s = jax.random.split(rng, 3)
+            q_vals = network.apply(train_state.params, last_obs)
+            action = eps_greedy_exploration(
+                rng_a, q_vals, train_state.timesteps
+            )  # explore with epsilon greedy_exploration
+            obs, env_state, reward, done, info = vmap_step(config["NUM_ENVS"])(
+                rng_s, env_state, action
+            )
+            train_state = train_state.replace(
+                timesteps=train_state.timesteps + config["NUM_ENVS"]
+            )  # update timesteps count
+
+            # BUFFER UPDATE: cast obs to FP16 to halve buffer memory and gather bandwidth
+            timestep = TimeStep(obs=last_obs.astype(jnp.float16), action=action, reward=reward, done=done)
+            buffer_state = buffer.add(buffer_state, timestep)
+
+            # NETWORKS UPDATE
+            def _learn_phase(train_state, rng):
+
+                learn_batch = buffer.sample(buffer_state, rng).experience
+
+                # FP16 mixed precision: cast params+obs to float16 for faster GEMM
+                # on tensor cores, cast output back to float32 for stable loss.
+                def _apply_fp16(params, obs):
+                    params_fp16 = jax.tree.map(
+                        lambda p: p.astype(jnp.float16), params
+                    )
+                    return network.apply(
+                        params_fp16, obs.astype(jnp.float16)
+                    ).astype(jnp.float32)
+
+                q_next_target = _apply_fp16(
+                    train_state.target_network_params, learn_batch.second.obs
+                )  # (batch_size, num_actions)
+                q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
+                target = (
+                    learn_batch.first.reward
+                    + (1 - learn_batch.first.done) * config["GAMMA"] * q_next_target
+                )
+
+                def _loss_fn(params):
+                    q_vals = _apply_fp16(
+                        params, learn_batch.first.obs
+                    )  # (batch_size, num_actions)
+                    chosen_action_qvals = jnp.take_along_axis(
+                        q_vals,
+                        jnp.expand_dims(learn_batch.first.action, axis=-1),
+                        axis=-1,
+                    ).squeeze(axis=-1)
+                    return jnp.mean((chosen_action_qvals - target) ** 2)
+
+                loss, grads = jax.value_and_grad(_loss_fn)(train_state.params)
+                train_state = train_state.apply_gradients(grads=grads)
+                train_state = train_state.replace(n_updates=train_state.n_updates + 1)
+                return train_state, loss
+
+            rng, _rng = jax.random.split(rng)
+            is_learn_time = (
+                (buffer.can_sample(buffer_state))
+                & (  # enough experience in buffer
+                    train_state.timesteps > config["LEARNING_STARTS"]
+                )
+                & (  # pure exploration phase ended
+                    train_state.timesteps % config["TRAINING_INTERVAL"] == 0
+                )  # training interval
+            )
+            train_state, loss = jax.lax.cond(
+                is_learn_time,
+                lambda train_state, rng: _learn_phase(train_state, rng),
+                lambda train_state, rng: (train_state, jnp.array(0.0)),  # do nothing
+                train_state,
+                _rng,
+            )
+
+            # update target network
+            train_state = jax.lax.cond(
+                train_state.timesteps % config["TARGET_UPDATE_INTERVAL"] == 0,
+                lambda train_state: train_state.replace(
+                    target_network_params=optax.incremental_update(
+                        train_state.params,
+                        train_state.target_network_params,
+                        config["TAU"],
+                    )
+                ),
+                lambda train_state: train_state,
+                operand=train_state,
+            )
+
+            metrics = {
+                "timesteps": train_state.timesteps,
+                "updates": train_state.n_updates,
+                "loss": loss.mean(),
+                "returns": info["returned_episode_returns"].mean(),
+            }
+
+            def callback(metrics):
+                returns = metrics["returns"].item()
+                loss = metrics["loss"].item()
+                delta = metrics["timesteps"] - step_timer.timesteps
+                step_timer.timesteps = metrics["timesteps"]
+ 
+                step_timer.step(delta.item())
+                step_timer.log(returns=returns, loss=loss)
+                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
+                step_timer.end()
+
+            def _do_callback(_metrics):
+                jax.debug.callback(callback, _metrics)
+                return jnp.int32(0)
+
+            # Fire every LOG_EVERY_N scan steps. timesteps increments by NUM_ENVS
+            # per scan step, so the correct threshold is NUM_ENVS * LOG_EVERY_N.
+            # Default LOG_EVERY_N=10 → 78 callbacks for 781 total steps (≥65 needed).
+            log_interval = config["NUM_ENVS"] * config.get("LOG_EVERY_N", 10)
+            jax.lax.cond(
+                metrics["timesteps"] % log_interval == 0,
+                _do_callback,
+                lambda _: jnp.int32(0),
+                metrics,
+            )
+
+            runner_state = (train_state, buffer_state, env_state, obs, rng)
+
+            return runner_state, metrics
+
+        # train
+        rng, _rng = jax.random.split(rng)
+        runner_state = (train_state, buffer_state, env_state, init_obs, _rng)
+
+        runner_state, metrics = jax.lax.scan(
+            _update_step, runner_state, None, config["NUM_UPDATES"]
+        )
+        return {"runner_state": runner_state, "metrics": metrics}
+
+    return train
+
+
+# When using nvidia-smi to monitor memory
+#   arg: --buffer_size
+#   model:
+#     256: 61900.25 MiB
+#     1000: 61900.25 MiB
+#     10000: 61900.25 MiB
+
+# dqn:
+#   arg: --num_envs
+#   model:
+#     2: 61900.25 MiB
+#     4: 61900.25 MiB
+#     16: 61900.25 MiB
+#     32: 61900.25 MiB
+#     64: 61900.25 MiB
+#     128: 61900.25 MiB
+
+#   arg: --total_timesteps
+#   model:
+#     32768: 61900.25 MiB
+#     65536: 61900.25 MiB
+
+# When using Jax to monitor memory
+
+# dqn.D0 [stdout] Device: cuda:0
+# dqn.D0 [stdout]   num_allocs: 0.0006799697875976562 MiB
+# dqn.D0 [stdout]   bytes_in_use: 0.915771484375 MiB
+# dqn.D0 [stdout]   peak_bytes_in_use: 80.41552734375 MiB
+# dqn.D0 [stdout]   largest_alloc_size: 16.07958984375 MiB
+# dqn.D0 [stdout]   bytes_limit: 60832.359375 MiB
+# dqn.D0 [stdout]   bytes_reserved: 0.0 MiB
+# dqn.D0 [stdout]   peak_bytes_reserved: 0.0 MiB
+# dqn.D0 [stdout]   largest_free_block_bytes: 0.0 MiB
+# dqn.D0 [stdout]   pool_bytes: 60832.359375 MiB
+# dqn.D0 [stdout]   peak_pool_bytes: 60832.359375 MiB
+
+
+@dataclass
+class Arguments:
+    num_envs: int = 10                  # No impact on memory
+    buffer_size: int = 10000            # No impact on memory
+    buffer_batch_size: int = 128
+    total_timesteps: int = 100_000      # No impact on memory
+    epsilon_start: float =  1.0
+    epsilon_finish: float = 0.05
+    epsilon_anneal_time: int = 25e4
+    target_update_interval: int = 500
+    lr: float = 2.5e-4
+    learning_starts: int = 10000
+    training_interval: int = 10
+    lr_linear_decay: bool = False
+    gamma: float = 0.99
+    tau: float = 1.0
+    env_name: str = "CartPole-v1"
+    seed: int = 0
+    num_seeds: int = 1
+    project: str = ""
+    log_every_n: int = 10  # fire callback every N scan steps (controls benchmate observation count)
+
+
+def add_dqn_command(subparser):
+    parser = subparser.add_parser('dqn', help='RL dqn benchmark')
+    parser.add_arguments(Arguments)
+
+
+
+def main(args: Arguments = None):
+    if args is None:
+        args = Arguments()
+
+    config = {
+        "NUM_ENVS": args.num_envs,
+        "BUFFER_SIZE": args.buffer_size,
+        "BUFFER_BATCH_SIZE": args.buffer_batch_size,
+        "TOTAL_TIMESTEPS": args.total_timesteps,
+        "EPSILON_START": args.epsilon_start,
+        "EPSILON_FINISH": args.epsilon_finish,
+        "EPSILON_ANNEAL_TIME": args.epsilon_anneal_time,
+        "TARGET_UPDATE_INTERVAL": args.target_update_interval,
+        "LR": args.lr,
+        "LEARNING_STARTS": args.learning_starts,
+        "TRAINING_INTERVAL": args.training_interval,
+        "LR_LINEAR_DECAY": args.lr_linear_decay,
+        "GAMMA": args.gamma,
+        "TAU": args.tau,
+        "ENV_NAME": args.env_name,
+        "SEED": args.seed,
+        "NUM_SEEDS": args.num_seeds,
+        "PROJECT": args.project,
+        "LOG_EVERY_N": args.log_every_n,
+    }
+
+    rng = jax.random.PRNGKey(config["SEED"])
+    rngs = jax.random.split(rng, config["NUM_SEEDS"])
+    train_vjit = jax.jit(jax.vmap(make_train(config), in_axes=(0,)))
+    compiled_fn = train_vjit.lower(rngs).compile()
+
+    from benchmate.monitor import bench_monitor
+    with bench_monitor():
+        outs = jax.block_until_ready(compiled_fn(rngs))
+
+
+if __name__ == "__main__":
+    main()
