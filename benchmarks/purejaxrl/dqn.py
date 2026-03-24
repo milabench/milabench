@@ -231,19 +231,26 @@ def make_train(config):
             }
 
             def callback(metrics):
-                # .block_until_ready()
-                if (metrics["timesteps"] + 1) % 1000:
-                    returns = metrics["returns"].item()
-                    loss = metrics["loss"].block_until_ready().item()
-                    delta = metrics["timesteps"] - step_timer.timesteps
-                    step_timer.timestep = metrics["timesteps"]
-                    
-                    step_timer.step(delta.item())
-                    step_timer.log(returns=returns, loss=loss)
-                    step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
-                    step_timer.end()
+                returns = metrics["returns"].item()
+                loss = metrics["loss"].block_until_ready().item()
+                delta = metrics["timesteps"] - step_timer.timesteps
+                step_timer.timesteps = metrics["timesteps"]
+                
+                step_timer.step(delta.item())
+                step_timer.log(returns=returns, loss=loss)
+                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
+                step_timer.end()
 
-            jax.debug.callback(callback, metrics)
+            def _do_callback(_metrics):
+                jax.debug.callback(callback, _metrics)
+                return jnp.int32(0)
+
+            jax.lax.cond(
+                metrics["timesteps"] % 1000 == 0,
+                _do_callback,
+                lambda _: jnp.int32(0),
+                metrics,
+            )
 
             runner_state = (train_state, buffer_state, env_state, obs, rng)
 
