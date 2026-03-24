@@ -6,7 +6,6 @@ Each human+agent pair works independently to **increase steps/sec** on DQN while
 Workload for today:
 - Milabench PureJaxRL DQN: `benchmarks/purejaxrl/dqn.py` (via `benchmarks/purejaxrl/main.py`)
 - Env: `SpaceInvaders-MinAtar`
-- Env code is reference-only; no need to inspect or modify it for this exercise.
 
 Typical run:
 - `cd benchmarks/purejaxrl`
