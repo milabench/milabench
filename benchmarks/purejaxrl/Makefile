@@ -37,5 +37,5 @@ run:
 	$(PYTHON) /tmp/milabench/benchmarks/purejaxrl/main.py dqn			\
 		 --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536	\
 		 --env_name SpaceInvaders-MinAtar --training_interval 10		\
-		 --total_timesteps 200000
+		 --total_timesteps 20000000
 

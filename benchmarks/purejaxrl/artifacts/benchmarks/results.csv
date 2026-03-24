@@ -1,7 +1,0 @@
-approach,wall_clock_s,exec_only_s,callbacks,speedup_exec,max_return,last10_return,notes
-baseline_original,19.134,0.908,781,1.00x,4.820,4.011,"always-callback; buggy cond always fires; step_timer.timestep typo → quadratic n_size"
-lax_cond_pct1000,18.554,0.522,6,1.74x,4.336,3.997,"lax.cond timesteps%1000; too few callbacks for benchmate (needs 65+)"
-lax_cond_LOG10,18.376,0.522,78,1.74x,4.711,3.480,"lax.cond timesteps%(NUM_ENVS*10); 78 callbacks ≥ 65 needed; SELECTED"
-lax_cond_LOG10_run2,18.277,0.522,78,1.74x,4.711,3.466,""
-lax_cond_LOG10_run3,18.260,0.522,78,1.74x,4.711,3.480,""
-chunk_100_profiling,n/a,0.400,8,2.27x,3.756,n/a,"profiling only; 8 callbacks insufficient; truncates 10% of steps"

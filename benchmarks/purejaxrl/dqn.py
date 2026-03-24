@@ -235,7 +235,7 @@ def make_train(config):
                 loss = metrics["loss"].item()
                 delta = metrics["timesteps"] - step_timer.timesteps
                 step_timer.timesteps = metrics["timesteps"]
-                
+ 
                 step_timer.step(delta.item())
                 step_timer.log(returns=returns, loss=loss)
                 step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
