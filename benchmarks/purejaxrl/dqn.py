@@ -21,14 +21,16 @@ from benchmate.metrics import give_push
 
 class QNetwork(nn.Module):
     action_dim: int
+    dtype: jnp.dtype = jnp.float32
 
     @nn.compact
     def __call__(self, x: jnp.ndarray):
-        x = nn.Dense(120)(x)
+        x = x.astype(self.dtype)
+        x = nn.Dense(120, dtype=self.dtype)(x)
         x = nn.relu(x)
-        x = nn.Dense(84)(x)
+        x = nn.Dense(84, dtype=self.dtype)(x)
         x = nn.relu(x)
-        x = nn.Dense(self.action_dim)(x)
+        x = nn.Dense(self.action_dim, dtype=self.dtype)(x)
         return x
 
 
@@ -93,7 +95,7 @@ def make_train(config):
         buffer_state = buffer.init(_timestep)
 
         # INIT NETWORK AND OPTIMIZER
-        network = QNetwork(action_dim=env.action_space(env_params).n)
+        network = QNetwork(action_dim=env.action_space(env_params).n, dtype=config["DTYPE"])
         rng, _rng = jax.random.split(rng)
         init_x = jnp.zeros(env.observation_space(env_params).shape)
         network_params = network.init(_rng, init_x)
@@ -231,19 +233,26 @@ def make_train(config):
             }
 
             def callback(metrics):
-                # .block_until_ready()
-                if (metrics["timesteps"] + 1) % 1000:
-                    returns = metrics["returns"].item()
-                    loss = metrics["loss"].block_until_ready().item()
-                    delta = metrics["timesteps"] - step_timer.timesteps
-                    step_timer.timestep = metrics["timesteps"]
-                    
-                    step_timer.step(delta.item())
-                    step_timer.log(returns=returns, loss=loss)
-                    step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
-                    step_timer.end()
+                returns = metrics["returns"].item()
+                loss = metrics["loss"].block_until_ready().item()
+                delta = metrics["timesteps"] - step_timer.timesteps
+                step_timer.timesteps = metrics["timesteps"]
+                
+                step_timer.step(delta.item())
+                step_timer.log(returns=returns, loss=loss)
+                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
+                step_timer.end()
 
-            jax.debug.callback(callback, metrics)
+            def _do_callback(_metrics):
+                jax.debug.callback(callback, _metrics)
+                return jnp.int32(0)
+
+            jax.lax.cond(
+                metrics["timesteps"] % 1000 == 0,
+                _do_callback,
+                lambda _: jnp.int32(0),
+                metrics,
+            )
 
             runner_state = (train_state, buffer_state, env_state, obs, rng)
 
@@ -318,12 +327,20 @@ class Arguments:
     seed: int = 0
     num_seeds: int = 1
     project: str = ""
+    dtype: str = "fp32"
 
 
 def add_dqn_command(subparser):
     parser = subparser.add_parser('dqn', help='RL dqn benchmark')
     parser.add_arguments(Arguments)
 
+
+
+_DTYPE_MAP = {
+    "fp32": jnp.float32,
+    "fp16": jnp.float16,
+    "bf16": jnp.bfloat16,
+}
 
 
 def main(args: Arguments = None):
@@ -349,6 +366,7 @@ def main(args: Arguments = None):
         "SEED": args.seed,
         "NUM_SEEDS": args.num_seeds,
         "PROJECT": args.project,
+        "DTYPE": _DTYPE_MAP[args.dtype],
     }
 
     rng = jax.random.PRNGKey(config["SEED"])

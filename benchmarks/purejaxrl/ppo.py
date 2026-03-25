@@ -27,36 +27,38 @@ from wrappers import (
 class ActorCritic(nn.Module):
     action_dim: Sequence[int]
     activation: str = "tanh"
+    dtype: jnp.dtype = jnp.float32
 
     @nn.compact
     def __call__(self, x):
+        x = x.astype(self.dtype)
         if self.activation == "relu":
             activation = nn.relu
         else:
             activation = nn.tanh
         actor_mean = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), dtype=self.dtype
         )(x)
         actor_mean = activation(actor_mean)
         actor_mean = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), dtype=self.dtype
         )(actor_mean)
         actor_mean = activation(actor_mean)
         actor_mean = nn.Dense(
-            self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
+            self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0), dtype=self.dtype
         )(actor_mean)
         actor_logtstd = self.param("log_std", nn.initializers.zeros, (self.action_dim,))
         pi = distrax.MultivariateNormalDiag(actor_mean, jnp.exp(actor_logtstd))
 
         critic = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), dtype=self.dtype
         )(x)
         critic = activation(critic)
         critic = nn.Dense(
-            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+            256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0), dtype=self.dtype
         )(critic)
         critic = activation(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
+        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0), dtype=self.dtype)(
             critic
         )
 
@@ -105,7 +107,7 @@ def make_train(config):
     def train(rng):
         # INIT NETWORK
         network = ActorCritic(
-            env.action_space(env_params).shape[0], activation=config["ACTIVATION"]
+            env.action_space(env_params).shape[0], activation=config["ACTIVATION"], dtype=config["DTYPE"]
         )
         rng, _rng = jax.random.split(rng)
         init_x = jnp.zeros(env.observation_space(env_params).shape)
@@ -135,7 +137,7 @@ def make_train(config):
         def _update_step(runner_state, unused):
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, unused):
-                train_state, env_state, last_obs, rng = runner_state
+                train_state, env_state, last_obs, rng, n_updates = runner_state
 
                 # SELECT ACTION
                 rng, _rng = jax.random.split(rng)
@@ -152,7 +154,7 @@ def make_train(config):
                 transition = Transition(
                     done, action, value, reward, log_prob, last_obs, info
                 )
-                runner_state = (train_state, env_state, obsv, rng)
+                runner_state = (train_state, env_state, obsv, rng, n_updates)
                 return runner_state, transition
 
             runner_state, traj_batch = jax.lax.scan(
@@ -160,7 +162,7 @@ def make_train(config):
             )
 
             # CALCULATE ADVANTAGE
-            train_state, env_state, last_obs, rng = runner_state
+            train_state, env_state, last_obs, rng, n_updates = runner_state
             _, last_val = network.apply(train_state.params, last_obs)
 
             def _calculate_gae(traj_batch, last_val):
@@ -285,14 +287,23 @@ def make_train(config):
                 step_timer.log(loss=loss)
                 step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
                 step_timer.end()
-                
-            jax.debug.callback(callback, metrics)
 
-            runner_state = (train_state, env_state, last_obs, rng)
+            def _do_callback(_metrics):
+                jax.debug.callback(callback, _metrics)
+                return jnp.int32(0)
+
+            jax.lax.cond(
+                n_updates % 10 == 0,
+                _do_callback,
+                lambda _: jnp.int32(0),
+                metrics,
+            )
+
+            runner_state = (train_state, env_state, last_obs, rng, n_updates + 1)
             return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
-        runner_state = (train_state, env_state, obsv, _rng)
+        runner_state = (train_state, env_state, obsv, _rng, jnp.int32(0))
         runner_state, metric = jax.lax.scan(
             _update_step, runner_state, None, config["NUM_UPDATES"]
         )
@@ -320,11 +331,19 @@ class Arguments:
     env_name: str = "hopper"
     anneal_lr: bool = False
     normalize_env: bool = True
+    dtype: str = "fp32"
 
 
 def add_ppo_command(subparser):
     parser = subparser.add_parser('ppo', help='RL dqn benchmark')
     parser.add_arguments(Arguments)
+
+
+_DTYPE_MAP = {
+    "fp32": jnp.float32,
+    "fp16": jnp.float16,
+    "bf16": jnp.bfloat16,
+}
 
 
 def main(args: Arguments = None):
@@ -348,6 +367,7 @@ def main(args: Arguments = None):
         "ENV_NAME": args.env_name,
         "ANNEAL_LR": args.anneal_lr,
         "NORMALIZE_ENV": args.normalize_env,
+        "DTYPE": _DTYPE_MAP[args.dtype],
     }
     rng = jax.random.PRNGKey(30)
     train_jit = jax.jit(make_train(config))

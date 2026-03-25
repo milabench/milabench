@@ -732,7 +732,7 @@ dqn:
     --num_envs: auto({cpu_per_gpu}, 128)
     --buffer_size: 131072
     --buffer_batch_size: 65536
-    --env_name: CartPole-v1
+    --env_name: SpaceInvaders-MinAtar
     --training_interval: 10
 
 ppo:
