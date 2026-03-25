@@ -236,3 +236,15 @@ single-H100:
 - --exclusive
 - --export=ALL
 - -w cn-n[001-002]
+1x2xA100:
+- --job-name=1x1xA100_run
+- --partition=milabench
+- --nodes=1
+- --ntasks=1
+- --cpus-per-task=32
+- --mem=256G
+- --time=6:00:00
+- --gpus-per-task=2
+- --ntasks-per-node=1
+- --export=ALL
+- -w cn-d[003-004]
