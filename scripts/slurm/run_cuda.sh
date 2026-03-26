@@ -5,6 +5,7 @@ export CONFIG=all.yaml
 export PYTHON_VERSION=3.12
 export MILABENCH_GPU_ARCH=cuda
 export HF_TOKEN=""
+export MILABENCH_ARGS=""
 
 set -ex
 
@@ -22,6 +23,7 @@ export MILABENCH_ENV="$MILABENCH_WORDIR/.env/$PYTHON_VERSION/"
 export BENCHMARK_VENV="$MILABENCH_WORDIR/results/venv/torch"
 export MILABENCH_SIZER_SAVE="$MILABENCH_WORDIR/scaling.yaml"
 export MILABENCH_HF_TOKEN="$HF_TOKEN"
+export MILABENCH_SHARED="$HOME/scratch/shared"
 
 UV=$HOME/.local/bin/uv
 
@@ -56,7 +58,7 @@ install_prepare() {
     # pip install torch
     # milabench pin --variant cuda --from-scratch $ARGS 
 
-    milabench install --variant cuda --system $MILABENCH_WORDIR/system.yaml $ARGS
+    milabench install --variant cuda --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
 
     # (
     #     . $BENCHMARK_VENV/bin/activate
@@ -69,9 +71,14 @@ install_prepare() {
     #     pip install nvidia-nvjpeg-cu12
     # )
 
-    #
-    #   Generate/download datasets, download models etc...
-    milabench prepare --system $MILABENCH_WORDIR/system.yaml $ARGS
+    # Copy cached datasets/models
+    milabench sharedsetup --network $MILABENCH_SHARED --local $MILABENCH_BASE
+
+    #   Generate/download/verify datasets, download models etc...
+    milabench prepare --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+
+    # Generate an archive that is cached in the network drive
+    # milabench archive --network $MILABENCH_SHARED --local $MILABENCH_BASE
 }
 
 # module load cuda/12.3.2
@@ -104,7 +111,7 @@ if [ "$MILABENCH_PREPARE" -eq 0 ]; then
         # pip install torchao --no-input
     )
 
-    milabench run --system $MILABENCH_WORDIR/system.yaml $ARGS
+    milabench run --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
 
     #
     #   Display report

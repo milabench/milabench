@@ -28,6 +28,7 @@ _vllm:
       --backend: openai 
       --num-prompts: 198
       --endpoint: /v1/completions
+      --ready-check-timeout-sec: 1200
 
 
 vllm-dense-physics-gpus:
@@ -48,6 +49,7 @@ vllm-dense-physics-gpus:
       --num-prompts: 500
       --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
       --max-concurrency: 64
+      --ready-check-timeout-sec: 1200
 
   server:
    argv:
@@ -61,6 +63,7 @@ vllm-dense-physics-gpus:
       --limit-mm-per-prompt: '{"image":10}' 
   
 vllm-moe-code-gpus:
+  max_duration: 3600
   inherits: _vllm
 
   num_machines: 1
@@ -79,6 +82,7 @@ vllm-moe-code-gpus:
       --num-prompts: 500
       --model: meta-llama/Llama-4-Scout-17B-16E
       --max-concurrency: 64
+      --ready-check-timeout-sec: 1200
 
   server:
    argv:
