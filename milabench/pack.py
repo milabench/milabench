@@ -631,6 +631,7 @@ class Package(BasePackage):
             "--emit-index-url",
             "--emit-find-links",
             "--no-build-isolation",
+            "--index-strategy", "unsafe-best-match",
             "-o",
             relativize(requirements_file, working_dir),
             *argv,

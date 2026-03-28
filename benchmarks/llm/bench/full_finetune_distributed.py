@@ -150,7 +150,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         )
 
         import torchcompat.core as acc
-        acc.init_process_group(self.distributed_backend)
+        acc.init_process_group(backend=self.distributed_backend)
 
 
         # Initialize distributed variables

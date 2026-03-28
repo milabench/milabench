@@ -1,13 +1,14 @@
---extra-index-url https://download.pytorch.org/whl/cu130
+
 --extra-index-url https://flashinfer.ai/whl/cu130
---find-links https://data.pyg.org/whl/torch-2.10.0+cu130.html
+--extra-index-url https://download.pytorch.org/whl/cu130
+
 # Jax
 --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 jax[cuda13]
 
 
 # xformers
-# --extra-index-url https://download.pytorch.org/whl/cu130
+# --index https://download.pytorch.org/whl/cu130
 
 xformers>=0.0.27.post2
 

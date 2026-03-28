@@ -39,8 +39,6 @@ class Dimenet(Package):
             "FORCE_CUDA": "1",
             "CUDA_HOME": os.getenv("CUDA_HOME", '/usr/local/cuda/')
         })
-
-        print(env)
         return env
 
     async def install(self):
