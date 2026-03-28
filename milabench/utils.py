@@ -90,16 +90,12 @@ def assemble_options(options: list):
 
 @ovld
 def assemble_options(options: dict):
-    positional = []
     args = []
     for k, v in options.items():
         if v is None:
             continue
         elif v is True:
-            if k.startswith("-"):
-                args.append(k)
-            else:
-                positional.append(k)
+            args.append(k)
         elif k == "--":
             args.extend(v)
         elif v is False:
@@ -107,7 +103,7 @@ def assemble_options(options: dict):
         else:
             args.append(k)
             args.append(",".join(map(str, v)) if isinstance(v, list) else str(v))
-    return positional + args
+    return args
 
 
 def relativize(pth, working_dir):

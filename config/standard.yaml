@@ -1,17 +1,13 @@
-# standard:
-#   training
-#     defaults
-#   inference
-#     defaults
-
-
 include:
-  - training.yaml
-  - inference.yaml
+  - base.yaml
 
 #################
 # Enabled tests #
 #################
+
+llama:
+  enabled: true
+  weight: 1.0
 
 resnet50:
   enabled: true
@@ -213,12 +209,6 @@ vjepa-single:
 vjepa-gpus:
   enabled: true
   weight: 1.0
-
-
-llama:
-  enabled: true
-  weight: 1.0
-
 
 ##################
 # Disabled tests #

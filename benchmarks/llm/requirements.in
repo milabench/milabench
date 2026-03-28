@@ -4,14 +4,9 @@ PyYAML
 argklass
 fairscale
 torchao
-# torchtune
-torchtune @ git+https://github.com/meta-pytorch/torchtune.git@50a2b8f
+torchtune
 
 # Prepare
 accelerate
 transformers
-
-torch
-fairscale
-fire
-blobfile
+-r requirements.txt

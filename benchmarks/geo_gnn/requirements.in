@@ -5,5 +5,5 @@ torch-sparse
 torch-scatter
 pandas
 rdkit
-numpy
+numpy<2.0
 

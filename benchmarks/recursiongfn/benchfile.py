@@ -1,5 +1,4 @@
 from milabench.pack import Package
-import os
 
 
 URL = "https://github.com/Delaunay/gflownet/"
@@ -37,10 +36,9 @@ class Recursiongfn(Package):
 
         # In the case of compiling pytorch geometric
         # we want to compile for conda support even if no GPUs are availble
-        env.update({
-            "FORCE_CUDA": "1",
-            "CUDA_HOME": os.getenv("CUDA_HOME", '/usr/local/cuda/')
-        })
+        env = {
+            "FORCE_CUDA": "1"
+        }
 
         return env
 

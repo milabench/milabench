@@ -42,8 +42,7 @@ def instrument_main(ov, options: Config):
     observer = BenchObserver(
         accelerator.Event, 
         earlystop=options.stop + options.skip,
-        batch_size_fn=lambda x: len(x[0]),
-        raise_stop_program=True
+        batch_size_fn=lambda x: len(x[0])
     )
 
     probe = ov.probe(f"{refstring(imagenet_dataloader)}() as loader", overridable=True)
