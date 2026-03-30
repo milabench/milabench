@@ -194,11 +194,8 @@ async def install_benchmate(pack: Package):
 
 
 async def install_requires(pack: Package, *extras):
-    from .system import option
     global installed_requires
     group = pack.config.get("install_group", {})
-
-    system_extras = option("pip.args", str, "").split(",")
 
     if group not in installed_requires:
         await pack.pip_install("setuptools", "poetry", "uv", "flit_core", *extras, *system_extras, use_uv_override=False)
@@ -246,6 +243,14 @@ class PackageCore:
         grp = config.get("group", config["name"])
         ig = config.get("install_group", grp)
         self.install_mark_file = self.dirs.extra / f"mark_{ig}"
+
+
+def pip_more_args():
+    from .system import option
+
+    system_extras = option("pip.args", str, "").split(",")
+
+    return system_extras
 
 
 class BasePackage:
@@ -362,9 +367,9 @@ class BasePackage:
 
         with exclude_system_packages(self, enabled=should_use_uv(use_uv_override)) as exclude_args:
             if should_use_uv(use_uv_override):
-                pip_install_cmd = ["uv", "pip", "install"] + exclude_args + no_build_isolation(build_isolation) + [ "--index-strategy", "unsafe-best-match", *args]
+                pip_install_cmd = ["uv", "pip", "install"] + exclude_args + no_build_isolation(build_isolation) + pip_more_args() + [ "--index-strategy", "unsafe-best-match", *args]
             else:
-                pip_install_cmd = ["pip", "install"] + no_build_isolation(build_isolation) + [*args]
+                pip_install_cmd = ["pip", "install"] + no_build_isolation(build_isolation) + pip_more_args() + [*args]
 
             await run(
                 pip_install_cmd,

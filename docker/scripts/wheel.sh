@@ -7,6 +7,9 @@ SPARSE_VERSION=0.6.18
 SCATTER_VERSION=2.1.2
 TORCH_AO_VERSION=0.16.0
 XFORMER_VERSION=0.0.35
+export TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0;12.0;12.1"
+
+pip install wheel setuptools cmake ninja
 
 (
     git clone --recurse-submodules --branch v$XFORMER_VERSION https://github.com/facebookresearch/xformers.git
