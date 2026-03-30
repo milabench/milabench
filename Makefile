@@ -27,6 +27,7 @@ docker-build:
 		milabench:cuda-cuda-nightly											\
 	 	ghcr.io/mila-iqia/milabench:cuda-cuda-nightly
 
+	sudo docker push ghcr.io/mila-iqia/milabench:cuda-cuda-nightly
 
 tests:
 	coverage run --source=milabench -m pytest --ignore=tests/integration tests/ -vv -x 

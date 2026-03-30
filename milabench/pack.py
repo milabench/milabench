@@ -194,11 +194,14 @@ async def install_benchmate(pack: Package):
 
 
 async def install_requires(pack: Package, *extras):
+    from .system import option
     global installed_requires
     group = pack.config.get("install_group", {})
 
+    system_extras = option("pip.args", str, "").split(",")
+
     if group not in installed_requires:
-        await pack.pip_install("setuptools", "poetry", "uv", "flit_core", *extras, use_uv_override=False)
+        await pack.pip_install("setuptools", "poetry", "uv", "flit_core", *extras, *system_extras, use_uv_override=False)
         installed_requires[group] = 1
 
 
