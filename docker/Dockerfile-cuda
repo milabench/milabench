@@ -1,6 +1,6 @@
 # FROM ubuntu:22.04
 
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
+FROM nvidia/cuda:13.2.0-runtime-ubuntu24.04
 
 
 # Arguments
@@ -57,7 +57,7 @@ RUN apt-get update -y &&\
 # Install Rust
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
-ENV CUDA_HOME=/usr/local/cuda-12/
+ENV CUDA_HOME=/usr/local/cuda/
 ENV XDG_CACHE_HOME=/milabench/envs/cache
 ENV HF_HOME=/milabench/envs/cache
 ENV TORCH_HOME=/milabench/envs/cache
