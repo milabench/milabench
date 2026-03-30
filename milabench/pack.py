@@ -111,6 +111,20 @@ def exclude_system_packages(pack, enabled=True):
         os.unlink(exclude_filepath)
 
 
+def find_pytorch(requirement):
+    pip_args = []
+
+    with open(requirement, "r") as fp:
+        for line in fp.readlines():
+            if "pytorch.org/whl/" in line:
+                pip_args.extend(line.strip().split(" "))
+
+            if line.startswith("torch=="):
+                pip_args.append(line.strip())
+    
+    return pip_args
+
+
 @contextmanager
 def filter_system_packages(pack, requirements_file, enabled=True):
     """"Generate a new requirements file that filter out packages already on the system
@@ -179,12 +193,12 @@ async def install_benchmate(pack: Package):
         installed_benchmate[group] = 1
 
 
-async def install_requires(pack: Package):
+async def install_requires(pack: Package, *extras):
     global installed_requires
     group = pack.config.get("install_group", {})
 
     if group not in installed_requires:
-        await pack.pip_install("setuptools", "poetry", "uv", "flit_core", use_uv_override=False)
+        await pack.pip_install("setuptools", "poetry", "uv", "flit_core", *extras, use_uv_override=False)
         installed_requires[group] = 1
 
 
@@ -543,8 +557,25 @@ class Package(BasePackage):
         """
         assert self.phase == "install"
 
-        await install_requires(self)
+        #
+        # Find pytorch to install
+        #   a lot of packages rely on pytorch to be built
+        #       xformers, pytorch-geo, torch-scatter, torch-gather, torch-cluster
+        #
+        pytorch_version = []
+        for reqs in self.requirements_files(self.config.get("install_variant", None)):
+            if torch := find_pytorch(reqs):
+                pytorch_version = torch
+                break
+        
+        #
+        # Install build system and pytorch first
+        #
+        await install_requires(self, *pytorch_version)
 
+        #
+        #
+        #
         for reqs in self.requirements_files(self.config.get("install_variant", None)):
             if reqs.exists():
                 with filter_system_packages(self, reqs) as filtered_reqs:
