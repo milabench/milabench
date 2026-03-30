@@ -19,6 +19,7 @@ docker-ngc-push:
 
 docker-build:
 	sudo docker build 														\
+		--progress=plain													\
 		--build-arg CACHEBUST=`git rev-parse $(git branch --show-current)`	\
 	 	-f docker/Dockerfile-cuda 											\
 		-t milabench:cuda-cuda-nightly . 
