@@ -483,12 +483,13 @@ dinov2-giant-single:
   tags:
     - monogpu
   argv:
-    --config-file: "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    - --config-file 
+    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST
-    train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet: true
-    train.batch_size_per_gpu=auto_batch(32): true
-    train.saveckp_freq=100: true
-    train.num_workers=10: true
+    - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
+    - train.batch_size_per_gpu=auto_batch(32)
+    - train.saveckp_freq=100
+    - train.num_workers=10
 
 dinov2-giant-gpus:
   inherits: _dinov2
@@ -498,12 +499,13 @@ dinov2-giant-gpus:
     method: njobs
     n: 1
   argv:
-    --config-file: "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    - --config-file
+    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST
-    train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet: true
-    train.batch_size_per_gpu=auto_batch(32): true
-    train.saveckp_freq=100: true
-    train.num_workers=10: true
+    - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
+    - train.batch_size_per_gpu=auto_batch(32)
+    - train.saveckp_freq=100
+    - train.num_workers=10
 
 dinov2-giant-nodes:
   plan:
@@ -514,12 +516,13 @@ dinov2-giant-nodes:
   max_duration: 3600
   inherits: _dinov2
   argv:
-    --config-file: "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    - --config-file
+    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST
-    train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet: true
-    train.batch_size_per_gpu=auto_batch(12): true
-    train.saveckp_freq=100: true
-    train.num_workers=10: true
+    - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
+    - train.batch_size_per_gpu=auto_batch(12)
+    - train.saveckp_freq=100
+    - train.num_workers=10
 
   num_machines: 2
   requires_capabilities:
