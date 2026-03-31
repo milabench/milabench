@@ -473,8 +473,9 @@ _dinov2:
     n: 1
 
   argv:
-    --output-dir: "{milabench_extra}/output"
-    --no-resume: true
+    - --output-dir
+    - "{milabench_extra}/output"
+    - --no-resume
 
 dinov2-giant-single:
   inherits: _dinov2
