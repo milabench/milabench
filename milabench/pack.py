@@ -15,6 +15,7 @@ from sys import version_info as pyv
 from typing import Sequence
 from contextlib import contextmanager
 import tempfile
+import time
 
 from nox.sessions import Session, SessionRunner
 
@@ -23,6 +24,7 @@ from .alt_async import run, send
 from .fs import XPath
 from .merge import merge
 from .structs import BenchLogEntry
+from .system import option
 from .utils import (
     assemble_options,
     deprecated,
@@ -34,12 +36,10 @@ from .utils import (
 def should_use_uv(override):
     if override is not None:
         return override
-
-    from .system import option
+    
     return option("use_uv", int, 1)
 
 def no_build_isolation(build_isolation):
-    from .system import option
     if option("no_build_isolation", bool, not build_isolation):
         return ["--no-build-isolation"]
     return []
@@ -635,6 +635,11 @@ class Package(BasePackage):
 
         if ivar == "unpinned":
             raise Exception("Cannot pin the 'unpinned' variant.")
+
+        #
+        sleep_time = option("pip.pin_sleep", int, 0)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
         # assert self.phase == "pin"
         for base_reqs, reqs in self.requirements_map().items():
