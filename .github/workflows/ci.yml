@@ -37,8 +37,6 @@ env:
   MILABENCH_CONFIG_DOCKER: /milabench/milabench/config/${{ inputs.config || 'ci.yaml' }}
   MILABENCH_SYSTEM: /opt/milabench/data/system.yaml
   EXCLUDE_TAGS: ${{ inputs.exclude_tags }}
-  MILABENCH_SIZER_AUTO: "1"
-  MILABENCH_SIZER_BATCH_SIZE: "1"
 
 concurrency:
   group: "ci-${{ github.workflow }}-${{ github.ref }}"

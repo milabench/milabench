@@ -835,9 +835,9 @@ if __name__ == "__main__":
     # 
     selected = (
         # "vllm-dense-physics-gpus",
-        "vllm-moe-code-gpus",
+        # "vllm-moe-code-gpus",
         # "whisper-transcribe-single",
-        # "txt-to-image-gpus",
+        "txt-to-image-gpus",
         # "llm-chat-completion",
 
        # "vllm-sweep-conc512-mxbt4096-moe",

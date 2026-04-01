@@ -567,7 +567,7 @@ pathspec==1.0.4
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   black
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   brax

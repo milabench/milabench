@@ -89,6 +89,32 @@ _dinov2:
     options:
       stop: 5
 
+dinov2-giant-single:
+  argv:
+    - --output-dir
+    - "{milabench_extra}/output"
+    - --no-resume
+    - --config-file
+    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    # THOSE NEED TO BE LAST
+    - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
+    - train.batch_size_per_gpu=auto_batch1
+    - train.saveckp_freq=100
+    - train.num_workers=10
+
+dinov2-giant-gpus:
+  argv:
+    - --output-dir
+    - "{milabench_extra}/output"
+    - --no-resume
+    - --config-file
+    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    # THOSE NEED TO BE LAST
+    - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
+    - train.batch_size_per_gpu=auto_batch1
+    - train.saveckp_freq=100
+    - train.num_workers=10
+
 # ---- llm ----
 
 _llm:
@@ -103,6 +129,7 @@ llm-lora-single:
 
 llm-lora-ddp-gpus:
   argv:
+    batch_size=1: true
     gradient_accumulation_steps=1: true
 
 llm-lora-mp-gpus:
@@ -111,6 +138,7 @@ llm-lora-mp-gpus:
 
 llm-full-mp-gpus:
   argv:
+    batch_size=1: true
     gradient_accumulation_steps=1: true
 
 # ---- purejaxrl ----
@@ -205,6 +233,9 @@ diffusion-nodes:
 
 llm-lora-ddp-nodes:
   enabled: true
+
+  argv:
+    batch_size=auto_batch(1): true
 
 llm-full-mp-nodes:
   enabled: false
