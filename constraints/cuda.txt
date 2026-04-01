@@ -26,4 +26,4 @@ gymnax >= 0.0.8
 # flashinfer-cubin==0.6.6
 # flashinfer-jit-cache==0.6.6
 
-vllm>=0.17.1
+vllm==v0.18.1+cu130
