@@ -209,7 +209,7 @@ ovld==0.3.9
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   voir
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   torchvision

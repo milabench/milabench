@@ -336,7 +336,7 @@ pandas==3.0.2
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   datasets
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   diffusers

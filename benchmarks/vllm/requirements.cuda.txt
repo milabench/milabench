@@ -198,7 +198,7 @@ executing==2.2.1
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   varname
-fastapi==0.135.2
+fastapi==0.135.3
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   model-hosting-container-standards
@@ -709,7 +709,7 @@ partial-json-parser==0.2.1.1.post7
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   vllm
-pillow==12.1.1
+pillow==12.2.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   matplotlib
