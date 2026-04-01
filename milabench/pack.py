@@ -203,12 +203,26 @@ async def install_requires(pack: Package, *extras):
 
 
 def pip_more_args():
-    from .system import option
-
     system_extras = option("pip.args", str, "")
 
     if system_extras:
         return system_extras.split(",")
+
+    return []
+
+
+def pip_compile_extra_args():
+    # Wait for 2 weeks before updating packages
+    #   This is to mitigate supply chain attack
+    #   
+    #   Disabled by default because
+    #       numpy, flashinfer and more are not providing an upload date
+    #
+    # --generate-hashes would be an headache for arm + x86 support
+    avoid_newer = option("pip.avoid_newer", int, 0)
+
+    if avoid_newer:
+        return ["--exclude-newer", "2 weeks"]
 
     return []
 
@@ -679,6 +693,7 @@ class Package(BasePackage):
             "--emit-find-links",
             "--no-build-isolation",
             "--index-strategy", "unsafe-best-match",
+            *pip_compile_extra_args(),
             "-o",
             relativize(requirements_file, working_dir),
             *argv,
