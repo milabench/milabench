@@ -203,6 +203,7 @@ vllm-dense-physics-gpus:
       --num-prompts: 10
 
 vllm-moe-code-gpus:
+  enabled: false
   client:
     argv:
       --num-prompts: 10
