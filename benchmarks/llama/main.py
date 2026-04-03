@@ -106,7 +106,6 @@ def huggingface_main(args, model, config):
         torch_dtype=torch.bfloat16,
         # 
         tokenizer=tokenizer,
-        device=device,
     )
 
     in_token_count = 0

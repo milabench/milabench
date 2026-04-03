@@ -104,7 +104,7 @@ dinov2-giant-single:
     - train.num_workers=10
 
 dinov2-giant-gpus:
-  max_duration: 600
+  max_duration: 1800
   argv:
     - --output-dir
     - "{milabench_extra}/output"
@@ -149,7 +149,7 @@ dqn:
   argv:
     --buffer_size: 8192
     --buffer_batch_size: 4096
-    --total_timesteps: 10000
+    --total_timesteps: 100000
 
 ppo:
   argv:
