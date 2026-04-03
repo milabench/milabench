@@ -738,6 +738,7 @@ dqn:
     --buffer_batch_size: 65536
     --env_name: SpaceInvaders-MinAtar
     --training_interval: 10
+    --total_timesteps: 2000000
 
 ppo:
   inherits: _purejaxrl
