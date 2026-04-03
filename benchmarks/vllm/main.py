@@ -333,7 +333,8 @@ def main(argv):
                 try:
                     benchmark(bench_argv)
                 finally:
-                    proc.kill()
+                    proc.terminate()
+
         except Exception:
             raise
 

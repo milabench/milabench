@@ -98,7 +98,7 @@ dinov2-giant-single:
     - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
-    - train.batch_size_per_gpu=1
+    - train.batch_size_per_gpu=2
     - train.saveckp_freq=100
     - train.num_workers=10
 
@@ -111,7 +111,7 @@ dinov2-giant-gpus:
     - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
-    - train.batch_size_per_gpu=1
+    - train.batch_size_per_gpu=2
     - train.saveckp_freq=100
     - train.num_workers=10
 
