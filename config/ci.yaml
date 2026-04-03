@@ -233,7 +233,8 @@ diffusion-nodes:
   enabled: true
 
 llm-lora-ddp-nodes:
-  enabled: true
+  # Too long on the spark
+  enabled: false
 
   argv:
     batch_size=1: true
