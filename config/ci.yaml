@@ -104,13 +104,14 @@ dinov2-giant-single:
     - train.num_workers=10
 
 dinov2-giant-gpus:
+  # Changed to be LARGE instead of GIANT
   max_duration: 1800
   argv:
     - --output-dir
     - "{milabench_extra}/output"
     - --no-resume
     - --config-file
-    - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
+    - "{benchmark_folder}/src/dinov2/configs/train/vitl14.yaml"
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
     - train.batch_size_per_gpu=2

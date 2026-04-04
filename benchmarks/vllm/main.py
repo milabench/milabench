@@ -53,7 +53,7 @@ def calculate_metrics(
         A tuple of the benchmark metrics and the actual output lengths.
     """
 
-    log_request(input_requests, outputs)
+    # log_request(input_requests, outputs)
 
     for sampled_obs in timeline(outputs, 30):
         push_metric(**sampled_obs)
@@ -275,7 +275,7 @@ def monitor_process(proc):
         if ret is not None:
             if ret != 0:
                 print(f"\n[ERROR] vLLM server exited with code {ret}", file=sys.stderr)
-                os._exit(2)
+                return ret
             break
         time.sleep(0.5)
 
@@ -334,7 +334,12 @@ def main(argv):
                     benchmark(bench_argv)
                 finally:
                     proc.terminate()
+                    time.sleep(10)
 
+                    ret = proc.poll()
+                    if ret is None:
+                        proc.kill()
+                    
         except Exception:
             raise
 
