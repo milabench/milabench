@@ -443,7 +443,7 @@ torch==2.10.0+cu130
     #   -c .pin/../constraints/cuda.txt
     #   -r benchmarks/inference/requirements.in
     #   accelerate
-torchcodec==0.11.0+cu130
+torchcodec==0.10.0+cu130
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   -r benchmarks/inference/requirements.in

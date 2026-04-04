@@ -217,6 +217,8 @@ whisper-transcribe-single:
   voir:
     options:
       stop: 5
+  argv:
+    --batch_size: "auto_batch(8)"
 
 txt-to-image-single:
   voir:
