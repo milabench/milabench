@@ -126,6 +126,9 @@ class XPath(type(Path())):
             subtree: Path to the subtree to copy.
             dest: Path to which the subtree should be moved (must not already exist).
         """
+        import os
+        os.environ["GIT_LFS_SKIP_SMUDGE"] = "1"
+
         from git import GitCommandError, GitCommandNotFound, Repo
         
         if dest is None:
@@ -135,14 +138,24 @@ class XPath(type(Path())):
 
         tmp = tempfile.mkdtemp()
         repo = Repo.init(tmp)
+        repo.git.update_environment(GIT_LFS_SKIP_SMUDGE="1")
+
+        with repo.config_writer() as cw:
+            cw.set_value("filter \"lfs\"", "process", "")
+            cw.set_value("filter \"lfs\"", "required", False)
+            cw.set_value("filter \"lfs\"", "smudge", "")
+            cw.set_value("filter \"lfs\"", "clean", "")
+
         origin = repo.create_remote("origin", remote)
         origin.fetch(commit, depth=1)
+
         if subtree is not None:
             try:
                 repo.git.sparse_checkout("init")
                 repo.git.sparse_checkout("set", subtree)
             except (GitCommandNotFound, GitCommandError):
                 print("git sparse-checkout not available; doing a full checkout")
+
         repo.git.checkout(commit)
 
         if subtree:

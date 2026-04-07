@@ -756,7 +756,17 @@ class Package(BasePackage):
 
     def resolve_argument(self, name, default):
         """Resolve as single placeholder argument"""
-        placeholder = self.config.get("argv", {}).get(name)
+        argv = self.config.get("argv", {})
+        
+        placeholder = None
+        if isinstance(argv, dict):
+            placeholder = argv.get(name)
+        else:
+            for i, arg in enumerate(argv):
+                if arg == name:
+                    placeholder = argv[i + 1]
+                    break
+
         if placeholder:
             return self.resolve_placeholder(placeholder)
         return default

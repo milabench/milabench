@@ -1150,14 +1150,15 @@ class ActivatorCommand(SingleCmdCommand):
 
 
 class AccelerateAllNodes(ForeachNode):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, force_accelerate=False, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.force_accelerate = force_accelerate
 
     def single_node(self):
         ngpu = len(self.executor.pack.config.get("devices", []))
 
         # Multi GPU
-        if ngpu > 1:
+        if ngpu > 1 or self.force_accelerate:
             return AccelerateLaunchCommand(self.executor, rank=0, **self.options)
 
         # Single GPU
