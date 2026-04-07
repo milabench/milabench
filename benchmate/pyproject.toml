@@ -26,3 +26,4 @@ alpha_version_format = '{version}a{distance}+{commit_hash}'
 
 [tool.poetry.scripts]
 benchrun = "benchmate.benchrun:main"
+gpukill = "benchmate.warden:main"

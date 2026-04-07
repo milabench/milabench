@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -165,10 +166,48 @@ def report_combine():
     tags = make_tags(default_tags())
     reports = []
 
-    run_folders = sorted(
-        set(gather_run_folders(args.folder)),
-        key=lambda f: os.path.getmtime(f),
-    )
+    run_folders = gather_run_folders(args.folder)
+    # run_folders = sorted(
+    #     set(gather_run_folders(args.folder)),
+    #     key=lambda f: os.path.getmtime(f),
+    # )
+
+    selection_tags = [
+        "g1785", "g1980",
+        "p600", "p700", "o350"
+    ]
+
+    filtered_run = []
+
+    for run in run_folders:
+        srun = str(run)
+        run_name = Path(run).name
+
+        if "o350" not in srun:
+            continue
+        
+        g_match = re.search(r"g([0-9]+)", run_name)
+        g = int(g_match.group(1)) if g_match else 1785
+
+        p_match = re.search(r"p([0-9]+)", run_name)
+        p = int(p_match.group(1)) if p_match else 600
+
+        if g in (1785, 1980) and p in (600, 700):
+            print(run)
+            filtered_run.append(run)
+
+    run_folders = filtered_run
+
+
+    def machine_from_path(path):
+        if "/wvl/" in str(path):
+            return "pcie-imm"
+        if "/nvl/" in str(path):
+            return "pcie-air"
+        if "/sxm/" in str(path):
+            return "sxm-air"
+        if "/hgx/" in str(path):
+            return "sxm-imm"
 
     for folder in run_folders:
         full_pth = Path(folder)
@@ -179,6 +218,7 @@ def report_combine():
         columns = {
             "power": "600",
             "clock": "1785",
+            "machine": machine_from_path(full_pth),
         }
 
         # Tag Extraction from the run name
@@ -187,6 +227,7 @@ def report_combine():
                 columns[tag] = value
         
         # ---
+        print(full_pth, columns)
 
         # Report Generation
         with open(os.devnull, "w") as devnull:
@@ -195,8 +236,6 @@ def report_combine():
                 output=devnull,
                 filter_failures=args.filter_failures,
             )
-
-        print(full_pth, columns)
 
         # Insert columns to the data frame
         for key, value in columns.items():

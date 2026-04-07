@@ -126,6 +126,7 @@ whisper-transcribe-single:
 
 
 txt-to-image-single:
+  max_duration: 3600
   inherits: _inference
   tags:
     - monogpu

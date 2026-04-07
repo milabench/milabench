@@ -173,8 +173,6 @@ jobs:
             -e HF_TOKEN=${{ secrets.MILABENCH_HF_TOKEN }}                       \
             -e BENCHMATE_OBSERVATION_COUNT=10                                   \
             -e BENCHMATE_POLL_INTERVAL=5                                        \
-            -e MILABENCH_SIZER_AUTO=1                                           \
-            -e MILABENCH_SIZER_BATCH_SIZE=1                                     \
             -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:Z"        \
             -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
             -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \

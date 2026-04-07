@@ -472,10 +472,6 @@ _dinov2:
     method: njobs
     n: 1
 
-  argv:
-    - --output-dir
-    - "{milabench_extra}/output"
-    - --no-resume
 
 dinov2-giant-single:
   inherits: _dinov2
@@ -484,6 +480,9 @@ dinov2-giant-single:
   tags:
     - monogpu
   argv:
+    - --output-dir
+    - "{milabench_extra}/output"
+    - --no-resume
     - --config-file 
     - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
     # THOSE NEED TO BE LAST

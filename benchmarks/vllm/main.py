@@ -16,6 +16,22 @@ from benchmate.timeline import timeline
 push_metric = None
 
 
+
+def log_request(input_requests: list[SampleRequest], outputs: list[RequestFuncOutput])
+    for inp, out in zip(input_requests, outputs):
+        push_metric(**{
+            "request_id": inp.request_id,
+            "start_time": out.start_time
+            "prompt_len": out.prompt_len,
+            "output_len": out.output_tokens,
+            "success": out.success,
+            "latency": out.latency,
+            "ttft": out.ttft,
+            "itl": out.itl,
+            "tpot": out.tpot,
+        })
+
+
 def calculate_metrics(
     input_requests: list[SampleRequest],
     outputs: list[RequestFuncOutput],
@@ -37,6 +53,8 @@ def calculate_metrics(
     Returns:
         A tuple of the benchmark metrics and the actual output lengths.
     """
+
+    log_request(input_requests, outputs)
 
     for sampled_obs in timeline(outputs, 30):
         push_metric(**sampled_obs)

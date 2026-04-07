@@ -110,6 +110,7 @@ class Sizer:
                 self.scaling_config = yaml.safe_load(sconf)
         else:
             print(config, "does not exist")
+            self.scaling_config = {}
 
     @property
     def options(self):

@@ -198,7 +198,7 @@ class TimelineProcessor:
             with open(f"fjobs_{int(time.time())}.json", "w") as fp:    
                 json.dump([j.data for j in jobs], fp)
 
-    def method_2(self, jobs: list[jobs], number=30):
+    def method_2(self, jobs: list[jobs], number=30, dynamic_sampling=True):
         start = jobs[0].start
         for job in jobs:
             job.start -= start
@@ -206,6 +206,11 @@ class TimelineProcessor:
 
             self.start = min(job.start, self.start)
             self.end = max(job.end, self.end)
+
+        elapsed = self.end - self.start
+
+        if dynamic_sampling:
+            number = int(elapsed)
 
         self._sample(number)
 
@@ -241,7 +246,7 @@ class TimelineProcessor:
             rate = bucket.tokens / (bucket.end - bucket.start)
             self.avg += rate
             self.output.append({
-                "time": bucket.end,
+                "time": bucket.end + self.start,
                 "rate": rate,
                 "active_jobs": bucket.active_jobs(),
                 "start_job": bucket.start_job_count(),

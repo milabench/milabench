@@ -223,11 +223,11 @@ filelock==3.25.2
     #   torch
     #   transformers
     #   vllm
-flashinfer-cubin==0.6.7
+flashinfer-cubin==0.6.6
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   -r benchmarks/vllm/requirements.in
-flashinfer-jit-cache==0.6.7+cu130
+flashinfer-jit-cache==0.6.6+cu130
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   -r benchmarks/vllm/requirements.in

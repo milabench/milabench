@@ -89,6 +89,14 @@ _dinov2:
     options:
       stop: 5
 
+dinov2-giant-single:
+  argv:
+    - train.batch_size_per_gpu=1
+
+dinov2-giant-gpus:
+  argv:
+    - train.batch_size_per_gpu=1
+
 # ---- llm ----
 
 _llm:
@@ -205,6 +213,10 @@ diffusion-nodes:
 
 llm-lora-ddp-nodes:
   enabled: true
+
+  argv:
+    batch_size=auto_batch(1): true
+
 
 llm-full-mp-nodes:
   enabled: false
