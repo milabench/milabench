@@ -18,6 +18,10 @@ from ..utils import select_nodes
 from .executors import execute_command
 from ..system import option, DockerConfig
 
+def max_node_count(config):
+    all_nodes = config["system"]["nodes"]
+    return config.get("max_nodes", len(all_nodes))
+    
 
 def clone_with(cfg, new_cfg):
     return merge(deepcopy(cfg), new_cfg)
@@ -749,8 +753,7 @@ class ForeachNode(ListCommand):
 
         config = self.executor.pack.config
 
-        max_num = config.get("num_machines", 1)
-        self.nodes = select_nodes(config["system"]["nodes"], max_num)
+        self.nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
         key = config["system"].get("sshkey")
 
         # useless in single node setups
@@ -885,9 +888,8 @@ class RayMultiNode(ListCommand):
     def executors(self):
         config = self.executor.pack.config
         key = config["system"].get("sshkey")
-        max_num = config.get("num_machines", 1)
-
-        nodes = select_nodes(config["system"]["nodes"], max_num)
+        
+        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
         
         main = nodes[0]
         workers = nodes[1:]
@@ -912,8 +914,7 @@ class TorchrunAllNodes(ForeachNode):
     @staticmethod
     def make_base_executor(cls, executor, *args, **kwargs):
         config = executor.pack.config
-        max_num = config.get("num_machines", 1)
-        nodes = select_nodes(config["system"]["nodes"], max_num)
+        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
 
         main = nodes[0]
 
@@ -1214,8 +1215,7 @@ class AccelerateLaunchCommand(SingleCmdCommand):
         self.rank = rank
 
     def _get_main_and_workers(self):
-        max_num = self.pack.config.get("num_machines", 1)
-        nodes = select_nodes(self.pack.config["system"]["nodes"], max_num)
+        nodes = select_nodes(self.pack.config["system"]["nodes"], max_node_count(config))
         return nodes[0], nodes[1:]
 
     def _argv(self, **_) -> List:
