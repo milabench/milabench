@@ -749,7 +749,7 @@ class ForeachNode(ListCommand):
 
         config = self.executor.pack.config
 
-        max_num = config.get("num_machines", 1)
+        max_num = config.get("num_machines_max", len(config["system"]["nodes"]))
         self.nodes = select_nodes(config["system"]["nodes"], max_num)
         key = config["system"].get("sshkey")
 
@@ -885,8 +885,8 @@ class RayMultiNode(ListCommand):
     def executors(self):
         config = self.executor.pack.config
         key = config["system"].get("sshkey")
-        max_num = config.get("num_machines", 1)
-
+        
+        max_num = config.get("num_machines_max", len(config["system"]["nodes"]))
         nodes = select_nodes(config["system"]["nodes"], max_num)
         
         main = nodes[0]
@@ -1214,7 +1214,7 @@ class AccelerateLaunchCommand(SingleCmdCommand):
         self.rank = rank
 
     def _get_main_and_workers(self):
-        max_num = self.pack.config.get("num_machines", 1)
+        max_num = config.get("num_machines_max", len(config["system"]["nodes"]))
         nodes = select_nodes(self.pack.config["system"]["nodes"], max_num)
         return nodes[0], nodes[1:]
 
