@@ -1,0 +1,15 @@
+---
+description: Load benchmark group context when working on benchmark files
+globs: benchmarks/**/*
+alwaysApply: false
+---
+
+# Benchmark Group Context
+
+When working on files inside a benchmark folder (e.g. `benchmarks/recursiongfn/`), always read these files first:
+
+1. The benchmark group's `README.md` in the same folder (e.g. `benchmarks/recursiongfn/README.md`)
+2. The Jinja2 doc template at `docs/Benchmarks/.template.rst.j2`
+3. Search for the benchmark name in `config/training.yaml`, `config/inference.yaml`, and `config/synthetic.yaml` to find its configuration entries
+
+These provide the full picture of how the benchmark is configured, documented, and how its cheatsheet page is generated.

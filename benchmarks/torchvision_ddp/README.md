@@ -1,16 +1,33 @@
+# Torchvision DDP
 
-# Torchvision
+Multi-GPU image classification training using PyTorch DistributedDataParallel (DDP).
+Measures multi-GPU scaling throughput for convolutional networks on synthetic ImageNet
+data. Complements the single-GPU `torchvision` benchmark.
 
-Benchmark torchvision models on fake ImageNet data.
+## Concrete benchmarks
 
-## prepare
+| Name | Model | Batch size | Precision | GPUs |
+|------|-------|------------|-----------|------|
+| `resnet152-ddp-gpus` | ResNet-152 | 256 | bf16 (hardcoded) | all available |
 
-Generates 1000 training samples in `$MILABENCH_BASE/data/FakeImageNet`, to be read during training.
+## Data
 
-## run
+Same `FakeImageNet` dataset as `torchvision`. Prepared by `prepare.py` using
+`benchmate.datagen.generate_fakeimagenet()`.
 
-Any of the following models can be used with `--model`:
+## Scheduling
 
-* resnet18
-* resnet50
-* ...
+Runs with `plan.method: njobs, n: 1` -- a single process that internally calls
+`mp.spawn()` to fork one worker per GPU. Requires `gpu['count'] > 1`.
+
+## Key differences from `torchvision`
+
+- Uses `mp.spawn` + `DDP` instead of per-GPU process launch.
+- Hardcodes `bf16` autocast (not configurable via `--precision` at runtime).
+- Observer is created inside each worker (rank-aware), not injected by voirfile probes.
+- voirfile is essentially a no-op passthrough; all instrumentation lives in `main.py`.
+- Uses `multigpu_monitor` context manager for GPU telemetry.
+
+## Key dependencies
+
+torch, torchvision, torchcompat, benchmate, voir.

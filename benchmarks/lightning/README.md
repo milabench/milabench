@@ -1,16 +1,31 @@
+# Lightning
 
-# Torchvision
+Image classification training benchmark using [PyTorch Lightning](https://lightning.ai/) as the training framework.
 
-Benchmark torchvision models on fake ImageNet data.
+## What it measures
 
-## prepare
+Training throughput (samples/sec) for a torchvision model wrapped in a Lightning `Trainer`. Tests Lightning's overhead and distributed coordination versus raw PyTorch.
 
-Generates 1000 training samples in `$MILABENCH_BASE/data/FakeImageNet`, to be read during training.
+## Config entries
 
-## run
+| Entry | Scaling | Notes |
+|-------|---------|-------|
+| `lightning` | 1 process per GPU | Single-node, mono-GPU |
+| `lightning-gpus` | 1 job, all GPUs | Single-node, multi-GPU via Lightning DDP |
 
-Any of the following models can be used with `--model`:
+All inherit `_lightning`. Default model is `resnet152`.
 
-* resnet18
-* resnet50
-* ...
+## Dataset
+
+`FakeImageNet` -- synthetic images generated at prepare time. Loaded via `benchmate.dataloader.imagenet_dataloader`.
+
+## Key details
+
+- **Model**: Any `torchvision.models` model (default: `resnet152`)
+- **Loss**: `F.cross_entropy`
+- **Optimizer**: Adam, lr=1e-3
+- **Precision**: bf16-mixed
+- **Max steps**: 120 (hard-coded in Trainer)
+- **Distributed**: Lightning `strategy="auto"`, `accelerator="auto"`
+- **Checkpointing**: Disabled (`enable_checkpointing=False`)
+- **Dependencies**: `torch`, `torchvision`, `lightning`, `torchcompat`, `voir`

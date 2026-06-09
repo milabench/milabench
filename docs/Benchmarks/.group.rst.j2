@@ -1,0 +1,147 @@
+{% if readme_exists %}
+.. include:: {{ readme_path }}
+   :parser: myst_parser.sphinx_
+
+{% endif %}
+
+How to run
+----------
+
+Build
+^^^^^
+
+.. tab-set::
+
+   .. tab-item:: CUDA
+
+      .. code-block:: bash
+
+         docker build                                \
+           -f "docker/Dockerfile-cuda"               \
+           --build-arg CONFIG=config/all.yaml        \
+           --build-arg SELECT="{{ select_name }}"    \
+           -t "$IMAGE_TAG-{{ select_name }}"         \
+           .
+
+   .. tab-item:: ROCm
+
+      .. code-block:: bash
+
+         docker build                                \
+           -f "docker/Dockerfile-rocm"               \
+           --build-arg CONFIG=config/all.yaml        \
+           --build-arg SELECT="{{ select_name }}"    \
+           -t "$IMAGE_TAG-{{ select_name }}"         \
+           .
+
+   .. tab-item:: Local
+
+      .. code-block:: bash
+
+         export MILABENCH_GPU_ARCH="<cuda|rocm>"
+         milabench install --config config/all.yaml --base $MILABENCH_BASE --select "{{ select_name }}"
+
+
+Prepare
+^^^^^^^
+
+.. tab-set::
+
+   .. tab-item:: CUDA
+
+      .. code-block:: bash
+
+         docker run --rm --device nvidia.com/gpu=all                           \
+           --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+           --network=host                                                      \
+           --security-opt=label=disable                                        \
+           -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:ro"       \
+           -e HF_TOKEN=***                                                     \
+           -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+           -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+           -v "$MILABENCH_BASE/runs:/milabench/results/runs"                   \
+           "$IMAGE_TAG-{{ select_name }}"                                      \
+           milabench prepare                                                   \
+             --config "/milabench/milabench/config/all.yaml"                   \
+             --select "{{ select_name }}"
+
+   .. tab-item:: ROCm
+
+      .. code-block:: bash
+
+         docker run --rm                                                       \
+           --device /dev/kfd --device /dev/dri                                 \
+           --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+           --network=host                                                      \
+           --security-opt=label=disable --security-opt seccomp=unconfined      \
+           -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:ro"       \
+           -e HF_TOKEN=***                                                     \
+           -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+           -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+           -v "$MILABENCH_BASE/runs:/milabench/results/runs"                   \
+           "$IMAGE_TAG-{{ select_name }}"                                      \
+           milabench prepare                                                   \
+             --config "/milabench/milabench/config/all.yaml"                   \
+             --select "{{ select_name }}"
+
+   .. tab-item:: Local
+
+      .. code-block:: bash
+
+         export HF_TOKEN=***
+         milabench prepare --config config/all.yaml --base $MILABENCH_BASE --select "{{ select_name }}"
+
+Run
+^^^
+
+.. tab-set::
+
+   .. tab-item:: CUDA
+
+      .. code-block:: bash
+
+         docker run --rm --device nvidia.com/gpu=all                           \
+           --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+           --network=host                                                      \
+           --security-opt=label=disable                                        \
+           -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:ro"       \
+           -e HF_TOKEN=***                                                     \
+           -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+           -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+           -v "$MILABENCH_BASE/runs:/milabench/results/runs"                   \
+           "$IMAGE_TAG-{{ select_name }}"                                      \
+           milabench run                                                       \
+             --config "/milabench/milabench/config/all.yaml"                   \
+             --select "{{ select_name }}"
+
+   .. tab-item:: ROCm
+
+      .. code-block:: bash
+
+         docker run --rm                                                       \
+           --device /dev/kfd --device /dev/dri                                 \
+           --ipc=host --ulimit memlock=-1 --ulimit stack=67108864              \
+           --network=host                                                      \
+           --security-opt=label=disable --security-opt seccomp=unconfined      \
+           -v "/home/github/.ssh/id_ed25519_shared:/root/.ssh/id_rsa:ro"       \
+           -e HF_TOKEN=***                                                     \
+           -v "$MILABENCH_BASE/data:/milabench/results/data"                   \
+           -v "$MILABENCH_BASE/cache:/milabench/results/cache"                 \
+           -v "$MILABENCH_BASE/runs:/milabench/results/runs"                   \
+           "$IMAGE_TAG-{{ select_name }}"                                      \
+           milabench run                                                       \
+             --config "/milabench/milabench/config/all.yaml"                   \
+             --select "{{ select_name }}"
+
+   .. tab-item:: Local
+
+      .. code-block:: bash
+
+         export HF_TOKEN=***
+         milabench run --config config/all.yaml --base $MILABENCH_BASE --select "{{ select_name }}"
+
+
+{% for section in benchmark_sections %}
+{{ section }}
+
+{% endfor %}

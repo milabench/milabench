@@ -1,0 +1,78 @@
+{{ title }}
+{{ "-" * title|length }}
+
+{% if cheatsheet_exists %}
+.. include:: {{ cheatsheet_path }}
+   :parser: myst_parser.sphinx_
+
+{% endif %}
+
+Configuration
+^^^^^^^^^^^^^
+
+.. list-table::
+   :widths: 30 70
+   :stub-columns: 1
+
+   * - Definition
+     - ``{{ definition }}``
+{% if group %}
+   * - Group
+     - ``{{ group }}``
+{% endif %}
+{% if install_group %}
+   * - Install Group
+     - ``{{ install_group }}``
+{% endif %}
+{% if tags %}
+   * - Tags
+     - {{ tags | join(", ") }}
+{% endif %}
+   * - Max Duration
+     - {{ max_duration }}s
+{% if plan_method %}
+   * - Plan
+     - ``{{ plan_method }}``
+{% endif %}
+{% if num_machines and num_machines > 1 %}
+   * - Machines
+     - {{ num_machines }}
+{% endif %}
+{% if url %}
+   * - URL
+     - {{ url }}
+{% endif %}
+
+{% if argv %}
+Arguments
+"""""""""
+
+.. code-block:: yaml
+
+{% for key, value in argv.items() %}
+   {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
+
+{% if variants|length > 1 %}
+Scaling Variants
+""""""""""""""""
+
+.. list-table::
+   :header-rows: 1
+
+   * - Name
+     - Plan
+     - Tags
+     - Machines
+     - Enabled
+     - Weight
+{% for v in variants %}
+   * - {{ v.name }}
+     - {{ v.plan }}
+     - {{ v.tags | join(", ") }}
+     - {{ v.num_machines }}
+     - {{ v.enabled }}
+     - {{ v.weight }}
+{% endfor %}
+{% endif %}

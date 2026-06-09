@@ -2,23 +2,15 @@
 Welcome to milabench's documentation!
 =====================================
 
-
-.. toctree::
-   :caption: News
-   :maxdepth: 1
-
-   Welcome/Features
-   Welcome/Roadmap
-   Welcome/Changelog
-
-
 .. toctree::
    :maxdepth: 2
    :caption: Getting Started
 
    GettingStarted/usage.rst
-   GettingStarted/docker.rst
-   
+   GettingStarted/quickstart.rst
+
+.. include:: _benchmarks_toc.rst
+
 
 .. toctree::
    :caption: Contributing
@@ -36,7 +28,10 @@ Welcome to milabench's documentation!
    :caption: API
    :maxdepth: 1
 
+   ref-cli.rst
    ref-pack.rst
+   ref-system.rst
+   ref-commands.rst
 
 
 Indices and tables
