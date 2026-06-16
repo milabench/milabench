@@ -65,4 +65,4 @@ pip install wheel setuptools cmake ninja
 )
 
 
-gh release upload cu130-wheels wheels/*.whl --repo milabench/wheels
+gh release upload torch2.10-cu130 wheels/*.whl --repo milabench/wheels

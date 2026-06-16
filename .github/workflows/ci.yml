@@ -11,6 +11,10 @@ on:
         description: "Comma-separated tags to exclude (e.g. multinode,gated)"
         default: "multinode"
         type: string
+      select:
+        description: "Comma-separated benchmark names to run (overrides automatic grouping)"
+        default: ""
+        type: string
       dockerfile:
         description: "Dockerfile to use (e.g. Dockerfile-cuda, Dockerfile-ngc)"
         default: "Dockerfile-cuda"
@@ -69,9 +73,15 @@ jobs:
       - name: Compute benchmark groups
         id: groups
         run: |
-          matrix=$(milabench tools ci \
-            --config "$MILABENCH_CONFIG" \
-            --exclude_tags "$EXCLUDE_TAGS")
+          SELECT="${{ inputs.select }}"
+          if [ -n "$SELECT" ]; then
+            NAME=$(echo "$SELECT" | tr ',' '-' | cut -c1-40)
+            matrix=$(python3 -c "import json; print(json.dumps([{'name': '$NAME', 'select': '$SELECT', 'multinode': False}]))")
+          else
+            matrix=$(milabench tools ci \
+              --config "$MILABENCH_CONFIG" \
+              --exclude_tags "$EXCLUDE_TAGS")
+          fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "Groups: $matrix"
 
