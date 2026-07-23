@@ -2,7 +2,7 @@ import argparse
 import contextlib
 
 import torch
-import torch.cuda.amp
+import torch.amp
 import torch.nn as nn
 import torchvision.models as tvmodels
 import torchcompat.core as accelerator
@@ -44,10 +44,15 @@ class NoScale:
 @contextlib.contextmanager
 def scaling(enable, dtype):
     if enable:
-        with accelerator.amp.autocast(dtype=dtype):
-            yield
-    else:
-        yield
+        try:
+            with torch.amp.autocast(dtype=dtype, device_type="xla"):
+                yield
+
+            return
+        except:
+            pass
+
+    yield
 
 
 def model_optimizer(args, model, device):
@@ -186,7 +191,6 @@ def train_epoch(args, model, criterion, optimizer, loader, device, dtype, scaler
             loss = criterion(output, target)
     
             scaler.scale(loss).backward()
-            accelerator.mark_step()
 
             scaler.step(optimizer)
             accelerator.mark_step()
@@ -214,7 +218,7 @@ def trainbench(args):
 
     scaler = NoScale()
     if torch.cuda.is_available():
-        scaler = accelerator.amp.GradScaler(enabled=is_fp16_allowed(args))
+        scaler = torch.amp.GradScaler(enabled=is_fp16_allowed(args))
 
     for _ in range(args.epochs):
         train_epoch(

@@ -48,6 +48,16 @@ bf16:
     --n: 8192
     --dtype: bf16
 
+
+bf16-small:
+  inherits: _flops
+  enabled: true
+  weight: 0.0
+  argv:
+    --m: 4096
+    --n: 4096
+    --dtype: bf16
+
 tf32:
   inherits: _flops
  
@@ -63,4 +73,14 @@ fp32:
   argv:
     --m: 8192
     --n: 8192
+    --dtype: fp32
+
+
+fp32-small:
+  inherits: _flops
+  enabled: true
+  weight: 0.0
+  argv:
+    --m: 2048
+    --n: 2048
     --dtype: fp32

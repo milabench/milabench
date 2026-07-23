@@ -1,8 +1,8 @@
 """This file is generated, do not modify"""
 
-__tag__ = "v1.3.2-26-gf5a8027"
-__commit__ = "f5a80277efb97c07e40ad5c3a1045aab94601a76"
-__date__ = "2026-06-08 17:53:54 -0400"
+__tag__ = "v1.3.2-36-gfaf3923"
+__commit__ = "faf39234e7ff35b45a49faa09c66383519f6ec55"
+__date__ = "2026-07-02 18:27:13 -0400"
 __branch__ = "None"
 __repo__ = "None"
 __pr_url__ = "None"

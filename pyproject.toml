@@ -49,6 +49,7 @@ rocm = []
 hpu = []
 xpu = []
 web = ["psycopg2-binary"]
+tt = ["tt-smi"]
 
 [tool.poetry.group.cuda.dependencies]
 nvidia-ml-py = "^12.575.51"

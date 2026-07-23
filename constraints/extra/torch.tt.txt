@@ -1,0 +1,16 @@
+--extra-index-url https://pypi.eng.aws.tenstorrent.com/
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+pjrt-plugin-tt==1.4.0.dev20260708001937
+
+torch @  https://download.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
+torch-xla @ https://pypi.eng.aws.tenstorrent.com/torch-xla/torch_xla-2.9.0%2Bgit8d31cb3-cp312-cp312-linux_x86_64.whl
+tt-lang @ https://pypi.eng.aws.tenstorrent.com/2026-07/tt-lang/tt_lang-1.1.5.dev20260704%2Blight-cp312-cp312-manylinux_2_34_x86_64.whl
+
+vllm-tt
+
+torchvision
+git+https://github.com/erfanzar/EasyDeL.git@77ced9d2f2ab6a3d705936d26112eb97d9f9e64a
+
+voir[tt]
+torchcompat[tt]

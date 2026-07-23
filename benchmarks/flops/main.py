@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 from argparse import ArgumentParser
+import os
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchcompat.core as accelerator
@@ -14,6 +18,28 @@ MEGA = 1e6
 GIGA = 1e9
 TERA = 1e12
 EXA = 1e18
+
+## >>>>>>>>>>>>>>>>>>>>>>>>>
+
+def get_mesh(mesh_shape: tuple[int, ...] | None, mesh_names: tuple[str, ...]):
+    """
+    Creates and returns a Mesh object based on the provided mesh shape and mesh names.
+    Args:
+        mesh_shape (tuple or None): The shape of the mesh to create. If None, no mesh is created and None is returned.
+        mesh_names (list or sequence): The names corresponding to each dimension of the mesh.
+    Returns:
+        Mesh or None: A Mesh object if mesh_shape is provided, otherwise None.
+    """
+    import torch_xla.runtime as xr
+    from torch_xla.distributed.spmd import Mesh
+
+    num_devices = xr.global_runtime_device_count()
+    device_ids = np.array(range(num_devices))
+    mesh = Mesh(device_ids, mesh_shape, mesh_names) if mesh_shape is not None else None
+    print(f"Created device mesh: {mesh_shape} with {num_devices} devices.")
+    return mesh
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<
 
 def empty_cache():
     accelerator.empty_cache()
@@ -124,7 +150,14 @@ def mxfp_blockwise_fp4_mm(x, a, out, device):
 
 
 def f(N, R=30, m=5000000, n=256, unit=TERA, dtype_mm=torch.float32, log=None):
+    import torch_xla.runtime as xr
+
     device = accelerator.fetch_device(0)
+
+    os.environ["CONVERT_SHLO_TO_SHARDY"] = "1"
+    xr.use_spmd() # Single program multiple data
+
+    mesh = get_mesh(mesh_shape=(2,), mesh_names=("x",))
 
     empty_cache()
     dtype, mm = dtype_mm
@@ -144,7 +177,6 @@ def f(N, R=30, m=5000000, n=256, unit=TERA, dtype_mm=torch.float32, log=None):
             
             y = mm(x, a, out=y, device=device)
             x = mm(y, a, out=x, device=device)
-            
             accelerator.mark_step()
 
         synchronize()

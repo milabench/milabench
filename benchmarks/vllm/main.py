@@ -3,17 +3,17 @@ import subprocess
 import warnings
 import threading
 import time
+import contextlib
 import signal
 import os
 
 import numpy as np
-import torchcompat.core as accelerator
 from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, BenchmarkMetrics, MILLISECONDS_TO_SECONDS_CONVERSION
 from transformers import PreTrainedTokenizerBase
 import vllm.benchmarks.datasets as datasets
 from benchmate.timeline import timeline
 
-push_metric = None
+push_metric = lambda **kwargs: None
 
 
 def log_request(input_requests: list[SampleRequest], outputs: list[RequestFuncOutput]):
@@ -163,7 +163,7 @@ class GPQADiamond(datasets.HuggingFaceDataset):
         return sampled_requests
 
 
-def benchmark(argv):
+def benchmark(args):
     # vllm bench serve --model meta-llama/Meta-Llama-3-8B-Instruct --request-rate inf --dataset-name random --label milabench --backend openai --num-prompts 1000
 
     # vllm bench serve                                      \
@@ -234,15 +234,19 @@ def benchmark(argv):
         return original(*args, **kwargs)
 
     bench.calculate_metrics = new_calculate_metrics
-
-    parser = ArgumentParser()
-    bench.add_cli_args(parser)
-
-    print("BENCH:", " ".join(['vllm', 'bench', 'serve'] + argv))
-    args = parser.parse_args(argv)
-
     bench.main(args)
     print("FINISHED")
+
+
+def parse_bench_args(argv):
+    import vllm.benchmarks.serve as bench
+    parser = ArgumentParser()
+    # --base-url BASE_URL 
+    # --host HOST
+    # --port PORT
+    bench.add_cli_args(parser)
+    parser.add_argument("--external", action="store_true", default=False)
+    return parser.parse_args(argv)
 
 
 def prepare_voir():
@@ -250,6 +254,7 @@ def prepare_voir():
 
     from benchmate.observer import BenchObserver
     from benchmate.monitor import bench_monitor
+    import torchcompat.core as accelerator
 
     observer = BenchObserver(
         accelerator.Event, 
@@ -280,8 +285,11 @@ def monitor_process(proc):
         time.sleep(0.5)
 
 
-def inference_server(argv):
+def inference_server(argv, enabled=True):
     # vllm serve meta-llama/Meta-Llama-3-8B-Instruct --dtype bfloat16 
+
+    if not enabled:
+        return contextlib.nullcontext()
 
     server_args = ["vllm", "serve"] + argv
 
@@ -315,6 +323,10 @@ def split_args(argv):
     return server_argv, bench_argv
 
 
+def is_local_vllm_server(args):
+    return (args.host == "127.0.0.1" and args.port == 8000) and (not args.external)
+
+
 def main(argv):
     global push_metric 
 
@@ -324,24 +336,26 @@ def main(argv):
     # args, argv = parser.parse_known_args(argv)
 
     server_argv, bench_argv = split_args(argv)
+    bench_args = parse_bench_args(bench_argv)
 
-    observer, bench_monitor= prepare_voir()
-
-    with bench_monitor() as log:
-        try:
-            with inference_server(server_argv) as proc:
-                try:
-                    benchmark(bench_argv)
-                finally:
+    # observer, bench_monitor= prepare_voir()
+    # with bench_monitor() as log:
+    try:
+        with inference_server(server_argv, enabled=is_local_vllm_server(bench_args)) as proc:
+            try:
+                print("BENCH:", " ".join(['vllm', 'bench', 'serve'] + bench_argv))
+                benchmark(bench_args)
+            finally:
+                if proc is not None:
                     proc.terminate()
                     time.sleep(10)
 
                     ret = proc.poll()
                     if ret is None:
                         proc.kill()
-                    
-        except Exception:
-            raise
+                
+    except Exception:
+        raise
 
 
 if __name__ == "__main__":

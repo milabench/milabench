@@ -19,6 +19,7 @@ sqlite.db
 .pin-constraints-*
 .mongo/
 .pin/tmp-*
+generated/
 
 .no_report
 trash/

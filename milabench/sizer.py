@@ -495,8 +495,10 @@ def arch_to_device(arch):
         "fpga", "maia", "xla", "lazy", "vulkan", "mps", "meta",
         "hpu", "mtia", "privateuseone"
     ]
-    arch_to_device = {t:t for t in device_types}
+    arch_to_device = {t: t for t in device_types}
     arch_to_device["rocm"] = "cuda"
+    # Tenstorrent uses the PyTorch/XLA device type (same idea as rocm → cuda).
+    arch_to_device["tt"] = "xla"
     return arch_to_device.get(arch, "cpu")
 
 

@@ -33,10 +33,15 @@ class ParsedTraceback:
         return None, None
 
     def raised_exception(self):
+        if not self.lines:
+            return None
+
         raised_idx, _ = self.find_raise()
 
         if raised_idx is not None:
-            return self.lines[min(raised_idx + 1, len(self.lines))]
+            # Prefer the exception message line after `raise ...`;
+            # clamp to the last line when the traceback ends on the raise.
+            return self.lines[min(raised_idx + 1, len(self.lines) - 1)]
 
         return self.lines[-1]
 

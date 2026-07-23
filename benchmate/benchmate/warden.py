@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -142,11 +143,58 @@ class BaseWarden:
         pass
 
 
+def _tt_smi_path():
+    return shutil.which("tt-smi")
+
+
+def _tt_smi_reset(timeout=120):
+    tt_smi = _tt_smi_path()
+    if tt_smi is None:
+        syslog("warden: tt-smi not found, skipping Tenstorrent device reset")
+        return False
+
+    try:
+        subprocess.run(
+            [tt_smi, "-r"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        syslog("warden: reset Tenstorrent devices with tt-smi -r")
+        return True
+    except subprocess.CalledProcessError as err:
+        stderr = (err.stderr or "").strip()
+        syslog("warden: tt-smi -r failed: {}", stderr or err)
+        return False
+    except subprocess.TimeoutExpired:
+        syslog("warden: tt-smi -r timed out after {}s", timeout)
+        return False
+    except:
+        traceback.print_exc()
+        return False
+
+
+@contextmanager
+def tt_warden(*args, enabled=True, **kwargs):
+    cls = BaseWarden
+    if enabled:
+        cls = TenstorrentWarden
+
+    with cls(*args, **kwargs) as warden:
+        yield warden
+
+
 @contextmanager
 def gpu_warden(*args, enabled=True, **kwargs):
     cls = BaseWarden
     if enabled:
-        cls = GPUProcessWarden
+        gpus = safe_get_gpu_info()
+        arch = gpus.get("arch", "cpu")
+        if arch == "tt":
+            cls = TenstorrentWarden
+        else:
+            cls = GPUProcessWarden
 
     with cls(*args, **kwargs) as warden:
         yield warden
@@ -236,6 +284,33 @@ def children_warden(enabled: bool = True):
         os.kill(child, signal.SIGCONT)
 
     wait_for_children(1)
+
+
+class TenstorrentWarden(BaseWarden):
+    """Reset Tenstorrent devices before & after the bench using tt-smi -r."""
+
+    def __init__(self, reset_on_start=True, reset_on_end=True, timeout=120):
+        self.reset_on_start = reset_on_start
+        self.reset_on_end = reset_on_end
+        self.timeout = timeout
+
+    def reset(self):
+        return _tt_smi_reset(timeout=self.timeout)
+
+    def __enter__(self):
+        if self.reset_on_start:
+            self.reset()
+        return self
+
+    def __exit__(self, *args):
+        if self.reset_on_end:
+            self.reset()
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
 
 
 class GPUProcessWarden(BaseWarden):

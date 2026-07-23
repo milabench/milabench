@@ -9,7 +9,7 @@ from pathlib import Path
 import random
 import sys
 
-import torchcompat.core as acc
+import torchcompat.lazy as acc
 import torch
 from benchmate.progress import tqdm
 

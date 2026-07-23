@@ -1,0 +1,1 @@
+FROM ghcr.io/tenstorrent/tt-xla/tt-xla-base-ubuntu-24-04:latest

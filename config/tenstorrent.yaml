@@ -1,0 +1,38 @@
+include:
+  - _defaults.yaml
+
+vllm_tt:
+  inherits: _defaults
+  definition: ../benchmarks/vllm
+  group: vllm
+  install_group: torch
+  enabled: true
+  tags:
+    - inference
+    - vllm
+
+  plan:
+    method: njobs
+    n: 1
+  
+  # Inference Server Args
+  server:
+   argv:
+      --served-model-name: model
+      --dtype: bfloat16
+
+  # Benchmarking client Args
+  client:
+    argv:
+      --model: meta-llama/Llama-3.3-70B-Instruct
+      --served-model-name: meta-llama/Llama-3.3-70B-Instruct
+      --request-rate: inf
+      --dataset-name: random
+      --label: milabench
+      --backend: openai 
+      --num-prompts: 198
+      --endpoint: /v1/completions
+      --ready-check-timeout-sec: 1200
+      --external: true
+      --host: 127.0.0.1
+      --port: 8000

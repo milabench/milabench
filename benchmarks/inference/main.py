@@ -28,7 +28,9 @@ flux_default_generation_args = {
     "guidance_scale": 3.5,
     "num_inference_steps": 50,
     "max_sequence_length": 512,
-    "generator": torch.Generator(accelerator.device_type).manual_seed(0)
+    # Diffusers seeds via a CPU Generator; XLA/TT does not expose a usable
+    # torch.Generator("xla") hook even after importing torch_xla.
+    "generator": torch.Generator("cpu").manual_seed(0),
 }
 
 chat_default_generation_args = {
