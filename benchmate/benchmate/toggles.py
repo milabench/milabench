@@ -14,6 +14,14 @@ def get_observation_count(value):
     return _get_flag("BENCHMATE_OBSERVATION_COUNT", int, value)
 
 
+def torchmem_enabled():
+    """Whether to poll PyTorch CUDA/ROCm allocator stats.
+
+    Disable with ``BENCHMATE_TORCHMEM=0`` (e.g. for Jax benches).
+    """
+    return _get_flag("BENCHMATE_TORCHMEM", int, 1) != 0
+
+
 poll_interval_default = get_poll_interval(0.25)
 
 

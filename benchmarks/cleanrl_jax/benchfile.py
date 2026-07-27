@@ -18,7 +18,9 @@ class Cleanrl_jax(Package):
     def make_env(self):
         # Return a dict of environment variables for prepare_script and
         # main_script.
-        return super().make_env()
+        env = super().make_env()
+        env["BENCHMATE_TORCHMEM"] = "0"
+        return env
 
     async def install(self):
         await super().install()  # super() call installs the requirements
