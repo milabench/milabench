@@ -91,6 +91,32 @@ def to_octet(value: str) -> float:
     return float(value)
 
 
+def observation_memory(obs):
+    """Return observation memory in octets, preferring allocator stats.
+
+    Preference: ``torchmem`` then ``jaxmem`` then NVML ``memory``.
+    """
+    for key in ("torchmem", "jaxmem"):
+        if key in obs and obs[key]:
+            return to_octet(obs[key])
+    return to_octet(obs["memory"])
+
+
+def _max_allocated_mib(payload):
+    """Max ``max_allocated`` across a torchmem/jaxmem per-device payload."""
+    if not payload:
+        return None
+    return max(data.get("max_allocated", 0) for data in payload.values())
+
+
+def _obs_mib_int(obs, key):
+    """Parse ``\"1234 MiB\"`` style observation fields; return None if missing."""
+    value = obs.get(key)
+    if not value:
+        return None
+    return int(str(value).split(" ")[0])
+
+
 class Sizer:
     """Automatically scale the batch size to match GPU spec"""
 
@@ -143,7 +169,7 @@ class Sizer:
 
         data = list(sorted(data, key=lambda x: x["batch_size"]))
 
-        mem = [to_octet(v["memory"]) for v in data]
+        mem = [observation_memory(v) for v in data]
         size = [float(v["batch_size"]) for v in data]
         perf = [float(v["perf"]) for v in data]
 
@@ -226,7 +252,7 @@ class Sizer:
         data = list(sorted(data, key=lambda x: x["perf"], reverse=True))
 
         for obs in data:
-            used_mem = to_octet(obs["memory"])
+            used_mem = observation_memory(obs)
             if used_mem < capacity:
                 return int(obs["batch_size"])
         
@@ -322,12 +348,14 @@ class BenchStats:
     perf: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     cpu: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     max_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
-    peak_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
+    torchmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
+    jaxmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
 
     def max_memory_usage(self):
-        if self.peak_usage.current_count != 0:
-            return self.peak_usage.max
-        return self.max_usage.max
+        for stream in (self.torchmem_usage, self.jaxmem_usage, self.max_usage):
+            if stream.current_count != 0:
+                return stream.max
+        return float("-inf")
 
     def has_stopped_early(self):
         return len(self.early_stopped) > 0 and self.early_stopped[-1]
@@ -404,15 +432,22 @@ class MemoryUsageExtractor(ValidationLayer):
 
         stat = self.benchstat(entry.pack.config["name"])
 
-        # This is for jax
+        # Legacy in-loop JAX peak (purejaxrl); fold into jaxmem column
         if memorypeak := entry.data.get("memory_peak"):
-            stat.peak_usage += memorypeak
-            return
-        
+            stat.jaxmem_usage += memorypeak
+
         if gpudata := entry.data.get("gpudata"):
             for device, data in gpudata.items():
                 usage, total = data.get("memory", [0, 1])
                 stat.max_usage += usage
+
+        if torchmem := entry.data.get("torchmem"):
+            if (usage := _max_allocated_mib(torchmem)) is not None:
+                stat.torchmem_usage += usage
+
+        if jaxmem := entry.data.get("jaxmem"):
+            if (usage := _max_allocated_mib(jaxmem)) is not None:
+                stat.jaxmem_usage += usage
 
         if rate := entry.data.get("rate"):
             stat.perf += rate
@@ -461,13 +496,17 @@ class MemoryUsageExtractor(ValidationLayer):
         obs = {
             "cpu": int(stats.cpu.avg),
             "batch_size": int(stats.batch_size.avg),
-            "memory": f"{int(stats.max_usage.max)} MiB",
             "perf": float(f"{stats.perf.avg:.2f}"),
             "time": int(time.time())
         }
 
-        if stats.peak_usage.current_count > 0:
-            obs["memory"] = f"{int(stats.peak_usage.max)} MiB",
+        # NVML / gpudata stays in ``memory``; allocator stats get their own columns
+        if stats.max_usage.current_count > 0:
+            obs["memory"] = f"{int(stats.max_usage.max)} MiB"
+        if stats.torchmem_usage.current_count > 0:
+            obs["torchmem"] = f"{int(stats.torchmem_usage.max)} MiB"
+        if stats.jaxmem_usage.current_count > 0:
+            obs["jaxmem"] = f"{int(stats.jaxmem_usage.max)} MiB"
 
         observations.append(obs)
         config["observations"] = list(sorted(observations, key=lambda x: x["batch_size"]))
@@ -657,6 +696,8 @@ def deduplicate_observation(scaling):
             key, data = duplicate_sets.popitem()
 
             memory_stat = StatStream(0)
+            torchmem_stat = StatStream(0)
+            jaxmem_stat = StatStream(0)
             perf_stat = StatStream(0)
             lastest_time = 0
 
@@ -664,30 +705,46 @@ def deduplicate_observation(scaling):
                 perf = obs["perf"]
 
                 if perf > 0:
-                    memory_stat += int(obs["memory"].split(" ")[0])
+                    if (mem := _obs_mib_int(obs, "memory")) is not None:
+                        memory_stat += mem
+                    if (tm := _obs_mib_int(obs, "torchmem")) is not None:
+                        torchmem_stat += tm
+                    if (jm := _obs_mib_int(obs, "jaxmem")) is not None:
+                        jaxmem_stat += jm
                     perf_stat += perf
                     lastest_time = max(lastest_time, obs["time"])
 
+            # Prefer NVML for merge similarity; fall back to allocator columns
+            merge_mem = memory_stat
+            if merge_mem.current_count == 0:
+                merge_mem = torchmem_stat if torchmem_stat.current_count else jaxmem_stat
+
             should_generate_aggregate = (
-                (perf_stat.current_count > 1 and memory_stat.current_count > 1) and 
-                (memory_stat.avg > 0 and memory_stat.sd / memory_stat.avg < 0.1) and 
+                (perf_stat.current_count > 1 and merge_mem.current_count > 1) and 
+                (merge_mem.avg > 0 and merge_mem.sd / merge_mem.avg < 0.1) and 
                 (perf_stat.avg > 0   and perf_stat.sd   / perf_stat.avg   < 0.1)
             )
-            should_generate_single = perf_stat.current_count == 1 and perf_stat.avg > 0 and memory_stat.current_count == 1
+            should_generate_single = perf_stat.current_count == 1 and perf_stat.avg > 0 and merge_mem.current_count == 1
 
             if should_generate_aggregate or should_generate_single:
                 # If observation are similar-ish merge them into one
-                newobs.append({
+                merged = {
                     "batch_size": key[0], 
                     "cpu": key[1],
-                    "memory": f"{int(memory_stat.avg)} MiB",
                     "perf": int(perf_stat.avg * 100) / 100,
                     "time": int(lastest_time)
-                })
+                }
+                if memory_stat.current_count > 0:
+                    merged["memory"] = f"{int(memory_stat.avg)} MiB"
+                if torchmem_stat.current_count > 0:
+                    merged["torchmem"] = f"{int(torchmem_stat.avg)} MiB"
+                if jaxmem_stat.current_count > 0:
+                    merged["jaxmem"] = f"{int(jaxmem_stat.avg)} MiB"
+                newobs.append(merged)
             else:
-                if (not should_generate_aggregate) and perf_stat.avg > 0:
+                if (not should_generate_aggregate) and perf_stat.avg > 0 and merge_mem.avg > 0:
                     syslog("{}: could not merge observation, significant differences because (Mem: {:.2f} < 0.1) and (Perf: {:.2f} < 0.1)",
-                         bench, memory_stat.sd / memory_stat.avg, perf_stat.sd / perf_stat.avg)
+                         bench, merge_mem.sd / merge_mem.avg, perf_stat.sd / perf_stat.avg)
                 
                 for obs in data:
                     if obs["perf"] > 0:

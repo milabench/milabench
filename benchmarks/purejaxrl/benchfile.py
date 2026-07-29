@@ -20,6 +20,8 @@ class Template(Package):
         # main_script.
         env = super().make_env()
         env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
+        env["BENCHMATE_TORCHMEM"] = "0"
+        env["BENCHMATE_JAXMEM"] = "1"
         return env
 
     async def install(self):

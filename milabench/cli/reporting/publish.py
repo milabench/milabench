@@ -1,44 +1,51 @@
-"""Publish an archived run to a database."""
+"""Publish run results to the dashboard via push key."""
 
-import json
+import os
 import sys
 from dataclasses import dataclass
 from typing import Optional
 
+from argklass.arguments import argument
 from argklass.command import Command
 
-from .._publish_utils import reverse_proxy
+from .._push_results import publish_results
 
 
 class Publish(Command):
-    """Publish an archived run to a database."""
+    """Publish run results to the dashboard.
+
+    Example::
+
+        milabench publish ./runs/my-run --key $MILABENCH_PUBLISH_KEY
+    """
 
     name = "publish"
 
     # fmt: off
     @dataclass
     class Arguments:
-        """Publish an archived run to a database."""
-        uri     : str           = None  # URI to the database
-        folder  : str           = None  # Run folder to save
-        meta    : Optional[str] = None  # JSON file to append to meta dictionary
-        testing : bool          = True  # Enable reverse proxy for testing
+        """Publish run results to the dashboard."""
+        runs          : list[str]     = argument(default=[], nargs="+")               # Run directory to publish
+        key           : Optional[str] = os.getenv("MILABENCH_PUBLISH_KEY", None)     # Push key
+        dashboard_url : Optional[str] = os.getenv("MILABENCH_DASHBOARD_URL", "https://www.milabench.com")  # Dashboard URL
     # fmt: on
 
     @staticmethod
     def execute(args):
-        from ...metrics.archive import publish_archived_run
-        from ...metrics.sqlalchemy import SQLAlchemy
+        if not args.key:
+            print(
+                "error: push key required (pass --key or set MILABENCH_PUBLISH_KEY)",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
-        if args.meta is not None:
-            with open(args.meta, "r") as file:
-                args.meta = json.load(file)
-
-        with reverse_proxy(args.uri, enabled=args.testing) as uri:
-            backend = SQLAlchemy(uri, meta_override=args.meta)
-            publish_archived_run(backend, args.folder)
-
-        sys.exit(0)
+        success = publish_results(
+            args.runs,
+            push_key=args.key,
+            dashboard_url=args.dashboard_url,
+        )
+        if not success:
+            sys.exit(1)
 
 
 COMMANDS = Publish
