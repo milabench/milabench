@@ -22,6 +22,14 @@ def torchmem_enabled():
     return _get_flag("BENCHMATE_TORCHMEM", int, 1) != 0
 
 
+def jaxmem_enabled():
+    """Whether to poll JAX device allocator stats.
+
+    Opt-in with ``BENCHMATE_JAXMEM=1`` (e.g. for Jax benches).
+    """
+    return _get_flag("BENCHMATE_JAXMEM", int, 0) != 0
+
+
 poll_interval_default = get_poll_interval(0.25)
 
 

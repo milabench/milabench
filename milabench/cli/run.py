@@ -60,13 +60,16 @@ PLUGINS = {
     "ipmi": ipmi_logger,
 }
 
-try:
-    from milabench.metrics.sqlalchemy import SQLAlchemy
-    PLUGINS["sql"] = SQLAlchemy
-except ImportError as err:
-    def _sql_error(*args, **kwargs):
-        raise err
-    PLUGINS["sql"] = _sql_error
+
+def _sql_removed(*args, **kwargs):
+    raise RuntimeError(
+        "The 'sql' logger was removed from milabench. "
+        "Database ingest now lives in the dashboard; use --publish with a push key, "
+        "or install/use the dashboard package for local DB writes."
+    )
+
+
+PLUGINS["sql"] = _sql_removed
 
 
 def _instantiate_loggers(*plugins):

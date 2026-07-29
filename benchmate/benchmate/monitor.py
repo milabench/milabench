@@ -16,13 +16,26 @@ from voir.helpers import current_overseer
 
 
 from .metrics import sumggle_push, give_push, file_push
-from .toggles import get_poll_interval, log_pattern, get_observation_count, torchmem_enabled
+from .toggles import (
+    get_poll_interval,
+    log_pattern,
+    get_observation_count,
+    torchmem_enabled,
+    jaxmem_enabled,
+)
 from .torchmem import torchmem_fetcher
+from .jaxmem import jaxmem_fetcher
 
 
 def _torchmem_kwargs():
     if torchmem_enabled():
         return {"torchmem": torchmem_fetcher()}
+    return {}
+
+
+def _jaxmem_kwargs():
+    if jaxmem_enabled():
+        return {"jaxmem": jaxmem_fetcher()}
     return {}
 
 
@@ -34,7 +47,7 @@ def log_patterns():
     )
 
     gpu_metrics = (
-        "gpudata", "memory_peak", "torchmem",
+        "gpudata", "memory_peak", "torchmem", "jaxmem",
     )
 
     system_metrics = (
@@ -86,6 +99,7 @@ def monitor_monogpu(ov, poll_interval=1, arch=None):
         gpudata=gpu_monitor_fun(),
         worker_init=lambda: select_backend(arch, force=True),
         **_torchmem_kwargs(),
+        **_jaxmem_kwargs(),
     )
 
 
@@ -109,6 +123,7 @@ def monitor_node(ov, poll_interval=1, arch=None):
         cpudata=cpu_monitor(),
         worker_init=lambda: select_backend(arch, force=True),
         **_torchmem_kwargs(),
+        **_jaxmem_kwargs(),
     )
 
 
@@ -186,6 +201,7 @@ def _monitors(monogpu=True):
             ("worker_init", lambda: select_backend(None, True)),
         ]
     monitors.extend(_torchmem_kwargs().items())
+    monitors.extend(_jaxmem_kwargs().items())
     return dict(monitors)
 
 
