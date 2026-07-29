@@ -9,7 +9,9 @@
 --find-links https://data.pyg.org/whl/torch-2.10.0+cu130.html
 
 accelerate==1.13.0
-
+    # via
+    #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   -r benchmarks/llama/requirements.in
 aiohappyeyeballs==2.6.1
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
@@ -106,6 +108,7 @@ hf-xet==1.4.3
 huggingface-hub==0.36.2
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   datasets
     #   tokenizers
     #   transformers
@@ -171,6 +174,7 @@ networkx==3.6.1
 numpy==2.2.6
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   datasets
     #   fairscale
     #   jax
@@ -289,6 +293,7 @@ ovld==0.3.9
 packaging==26.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   datasets
     #   huggingface-hub
     #   transformers
@@ -304,6 +309,7 @@ propcache==0.4.1
 psutil==7.2.2
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   voir
 ptera==1.4.1
     # via
@@ -324,6 +330,7 @@ python-dateutil==2.9.0.post0
 pyyaml==6.0.3
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   datasets
     #   huggingface-hub
     #   omegaconf
@@ -349,6 +356,7 @@ rich==14.3.3
 safetensors==0.7.0
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   accelerate
     #   transformers
 scipy==1.17.1
     # via
@@ -384,6 +392,7 @@ torch==2.10.0+cu130
     #   -c .pin/../.pin/constraints-cuda-torch.txt
     #   -c .pin/../constraints/cuda.txt
     #   -r benchmarks/llama/requirements.in
+    #   accelerate
     #   fairscale
 tqdm==4.67.3
     # via
