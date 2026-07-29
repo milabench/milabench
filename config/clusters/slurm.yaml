@@ -292,3 +292,17 @@ single-H100:
   - --exclusive
   - --export=ALL
   - -w cn-n[001-002]
+1x1xGPU:
+  cluster: mila
+  args:
+  - --job-name=1x1xGPU_pin
+  - --partition=milabench
+  - --nodes=1
+  - --ntasks=1
+  - --cpus-per-task=128
+  - --mem=0
+  - --time=4:00:00
+  - --gpus-per-task=1
+  - --ntasks-per-node=1
+  - --exclusive
+  - --export=ALL

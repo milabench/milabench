@@ -801,111 +801,10 @@ class ForeachNode(ListCommand):
         return copy
 
 
-# # Start head node
-# echo "Starting head node"
-# srun -J "head ray node-step-%J" -N 1 --ntasks-per-node=1  -c $(( SLURM_CPUS_PER_TASK/2 )) -w ${HEAD_HOSTNAME} apptainer exec ${APPTAINER_ARGS} ${SIF_IMAGE} ${RAY_CMD_HEAD} &
-# sleep 10
-# echo "Starting worker node"
-# srun -J "worker ray node-step-%J" -N $(( SLURM_NNODES-1 ))
-#  --ntasks-per-node=1 -c ${SLURM_CPUS_PER_TASK} -x ${HEAD_HOSTNAME}  apptainer exec ${APPTAINER_ARGS} ${SIF_IMAGE} ${RAY_CMD_WORKER} &
-# sleep 30
-# # Start server on head to serve the model
-# echo "Starting server"
-# apptainer exec  ${APPTAINER_ARGS} ${SIF_IMAGE} vllm serve ${HF_MODEL} --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} --pipeline-parallel-size ${PIPELINE_PARALLEL_SIZE}
-
-
-class RayMultiNode(ListCommand):
-    def __init__(self, executor: Command, use_docker=True, **kwargs) -> None:
-        super().__init__(None, **kwargs)
-        self.options.update(kwargs)
-        self.executor = executor
-        self.base_tags = self.executor.pack.config["tag"]
-        self.use_docker = use_docker
-
-
-    def newpack(self, name, node, logs=False) -> "BasePackage":
-        """Make a new environment/config for the run"""
-        config = self.executor.pack.config
-        tags = [*self.base_tags, name, node["name"]]
-
-        # Workers do not send training data
-        # tag it as such so validation can ignore this pack
-        if not logs:
-            tags.append("nolog")
-
-        run = clone_with(config, {"tag": tags})
-        return self.executor.pack.copy(run)
-
-    def headnode(self, node, key, port):
-        """Ray Head node, starts on rank 0"""
-        # ray start --block --head --port=${RANDOM_PORT}
-        cmd = WrapperCommand(self.newpack("head", node), "ray", "start", "--block", "--head", f"--port={port}")
-
-        return SSHCommand(
-            host=node_address(node),
-            user=node["user"],
-            key=key,
-            port=node.get("sshport", 22),
-            executor=cmd,
-            **options
-        )
-    
-    def worknode(self, node, key, main_ip, main_port):
-        """Ray work node, starts on other ranks"""
-        # 
-        cmd = WrapperCommand(self.newpack("worker", node), "ray", "start", "--block", f"--address={main_ip}:{main_port}")
-
-        return SSHCommand(
-            host=node_address(node),
-            user=node["user"],
-            key=key,
-            port=node.get("sshport", 22),
-            executor=cmd,
-            **options
-        )
-
-    def workload(self, main):
-        """Rank 0 workload that will leverage the ray cluster"""
-
-        # vllm serve ${HF_MODEL} --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} --pipeline-parallel-size ${PIPELINE_PARALLEL_SIZE}
-        cmd =  WrapperCommand(
-            self.newpack("head", node, logs=True), 
-            "vllm", "serve", 
-            "--tensor-parallel-size", f"{TENSOR_PARALLEL_SIZE}", 
-            "--pipeline-parallel-size", f"{PIPELINE_PARALLEL_SIZE}"
-        )
-       
-        return SSHCommand(
-            host=node_address(node),
-            user=node["user"],
-            key=key,
-            port=node.get("sshport", 22),
-            executor=cmd,
-            **options
-        )
-
-    @property
-    def executors(self):
-        config = self.executor.pack.config
-        key = config["system"].get("sshkey")
-        
-        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
-        
-        main = nodes[0]
-        workers = nodes[1:]
-
-        main_port = 29400
-        main_ip = main["ip"]
-
-        init = self.headnode(main, key, main_port)
-
-        workers = [
-            self.worknode(w, key, main_ip, main_port) for w in workers[1:]
-        ]
-
-        work = self.workload(main, key)
-
-        return [init] + workers + [work]
+# # Ray on Slurm: see milabench.commands.ray.RayCluster
+# srun -J "head ray ..." -N 1 -w ${HEAD_HOSTNAME} ${RAY_CMD_HEAD} &
+# srun -J "worker ray ..." -N $((SLURM_NNODES-1)) -x ${HEAD_HOSTNAME} ${RAY_CMD_WORKER} &
+# <workload on head>
 
 
 class TorchrunAllNodes(ForeachNode):
@@ -973,6 +872,15 @@ class TorchrunAllNodes(ForeachNode):
             **kwargs
         )
         super().__init__(base_exec)
+
+
+# Imported after TorchrunAllNodes / TorchrunAllGPU so commands.srun can reuse them.
+from .srun import (  # noqa: E402
+    ForeachSrun,
+    SrunCommand,
+    SrunExceptMain,
+    TorchrunSrun,
+)
 
 
 TorchRunCommand = TorchrunAllGPU
@@ -1136,6 +1044,10 @@ class PerGPU(ListCommand):
         super().__init__(*executors, **kwargs)
 
 
+
+
+
+
 #
 # Check if we need this
 #   I think if we use python script.py it will load
@@ -1268,3 +1180,7 @@ class AccelerateLaunchCommand(SingleCmdCommand):
             f"--num_processes={nproc}",
             *self.accelerate_argv,
         ]
+
+
+# After SequenceCommand / CmdCommand are defined.
+from .ray import RayCluster  # noqa: E402

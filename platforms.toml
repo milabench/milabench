@@ -4,7 +4,7 @@
 
 [vars]
 cuda = "130"
-rocm = "7.1"
+rocm = "7.2"
 torch = "2.10.0"
 vllm = "v0.18.1"
 
@@ -38,7 +38,7 @@ find-links = [
 
 [cuda.constraints]
 torch = ">=2.10"
-voir = ">=0.2.19"
+voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 datasets = ">=3.5.1"
 navix = ">=0.7.1"
@@ -62,7 +62,7 @@ find-links = [
     # "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch}-rocm{rocm}",
 ]
 [rocm.constraints]
-voir = ">=0.2.19"
+voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
 
@@ -75,7 +75,7 @@ extra-index-url = [
 ]
 
 [cpu.constraints]
-voir = ">=0.2.19"
+voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 
 # ─── HPU Backend ──────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ torchcompat = ">=1.0.0"
 index-url = "https://pypi.org/simple"
 
 [hpu.constraints]
-voir = ">=0.2.19"
+voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
 
@@ -98,7 +98,7 @@ extra-index-url = [
 ]
 
 [xpu.constraints]
-voir = ">=0.2.19"
+voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
 

@@ -31,7 +31,7 @@ def build_parser(commands):
         "-h", "--help", action=HelpAction, help="show this help message and exit"
     )
 
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="cmd")
 
     ParentCommand.dispatch = dict()
     for k, command in commands.items():
@@ -55,7 +55,7 @@ def main(argv=None):
     except HelpActionException:
         return 0
 
-    cmd_name = parsed_args.command
+    cmd_name = parsed_args.cmd
     if cmd_name is None:
         parser.print_usage()
         return 1

@@ -73,8 +73,8 @@ rm -rf $MILABENCH_WORDIR/results/venv
 
 module load cuda/12.6.0
 
-# $UV pip install torch
-# milabench tools pin --variant cuda
+$UV pip install torch
+milabench tools pin --variant cuda
 
 milabench install --system $MILABENCH_WORDIR/system.yaml --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION $MILABENCH_ARGS
 

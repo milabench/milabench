@@ -13,12 +13,12 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-voir =  ">=0.2.20"
+voir =  ">=0.2.23"
 benchmate =  {path = "benchmate", develop = false}
 python = ">=3.10,<4.0"
 giving = "^0.4.0"
 ptera = "^1.2.0"
-argklass = ">=1.4.4"
+argklass = ">=2.3.0"
 requests = "^2.26.0"
 nox = "^2021.10.1"
 GitPython = "^3.1.24"
