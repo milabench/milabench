@@ -1031,6 +1031,7 @@ torchaudio==2.10.0+cu130
 torchcodec==0.10.0+cu130
     # via
     #   -c .pin/../.pin/constraints-cuda-torch.txt
+    #   -c .pin/../constraints/cuda.txt
     #   -r benchmarks/vllm/requirements.in
 torchvision==0.25.0+cu130
     # via
