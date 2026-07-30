@@ -77,6 +77,7 @@ class PlatformConfig:
 
         Also injects derived variables:
           - cuda_major: first 2 chars of cuda version (e.g. "130" → "13", "126" → "12")
+          - torch_short: major.minor of torch (e.g. "2.10.0" → "2.10")
         """
         resolved = dict(self.vars)
         if overrides:
@@ -85,6 +86,14 @@ class PlatformConfig:
         # Derived variables
         if "cuda" in resolved and "cuda_major" not in resolved:
             resolved["cuda_major"] = resolved["cuda"][:2]
+
+        # torch_short: major.minor for release tags (2.10.0 → 2.10)
+        if "torch" in resolved and "torch_short" not in resolved:
+            parts = resolved["torch"].split(".")
+            if len(parts) >= 2:
+                resolved["torch_short"] = f"{parts[0]}.{parts[1]}"
+            else:
+                resolved["torch_short"] = resolved["torch"]
 
         return resolved
 

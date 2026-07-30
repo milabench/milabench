@@ -215,6 +215,8 @@ class TestPlatformConfig:
         assert resolved["cuda"] == "126"
         assert resolved["torch"] == "2.11.0"
         assert resolved["rocm"] == "7.1"  # unchanged
+        assert resolved["torch_short"] == "2.11"
+        assert resolved["cuda_major"] == "12"
 
     def test_resolve_string(self, platforms_toml):
         config = load_platform_config(path=platforms_toml)

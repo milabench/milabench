@@ -382,6 +382,13 @@ class Torchrun:
     port: int = defaultfield("torchrun.port", int, default=29400)
     backend: str = defaultfield("torchrun.backend", str, default="c10d")
 
+
+@dataclass
+class Network:
+    gloo_ifname: str = defaultfield("network.gloo_ifname", str, None)
+    nccl_ifname: str = defaultfield("network.nccl_ifname", str, None)
+
+
 @dataclass
 class Report:
     lean: bool = defaultfield("report.lean", int, default=0)
@@ -393,7 +400,7 @@ class Options:
     cpu: CPUOptions = field(default_factory=CPUOptions)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     torchrun: Torchrun = field(default_factory=Torchrun)
-
+    network: Network = field(default_factory=Network)
 
 @dataclass
 class GPUConfig:

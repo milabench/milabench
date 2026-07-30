@@ -6,7 +6,7 @@
 cuda = "130"
 rocm = "7.2"
 torch = "2.10.0"
-vllm = "v0.18.1"
+vllm = "0.18.1"
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -30,8 +30,7 @@ extra-index-url = [
     "https://flashinfer.ai/whl/cu{cuda}",
 ]
 find-links = [
-    # "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch}-cu{cuda}",
-    "https://github.com/vllm-project/vllm/releases/expanded_assets/{vllm}",
+    "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
     "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
     "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html",
 ]
@@ -44,13 +43,6 @@ datasets = ">=3.5.1"
 navix = ">=0.7.1"
 gymnax = ">=0.0.8"
 
-[cuda.overrides.torchao]
-install = "pip install --no-build-isolation torchao"
-
-[cuda.overrides.vllm]
-install = "pip install --no-build-isolation --no-deps 'vllm @ git+https://github.com/vllm-project/vllm.git@{vllm}'"
-env = { VLLM_TARGET_DEVICE = "cuda" }
-
 # ─── ROCm Backend ─────────────────────────────────────────────────────────────
 
 [rocm.indexes]
@@ -59,7 +51,7 @@ extra-index-url = [
     "https://download.pytorch.org/whl/rocm{rocm}",
 ]
 find-links = [
-    # "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch}-rocm{rocm}",
+    "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-rocm{rocm}",
 ]
 [rocm.constraints]
 voir = ">=0.2.23"

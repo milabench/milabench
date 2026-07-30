@@ -1,9 +1,9 @@
 import tempfile
+
 from milabench.fs import XPath
 from milabench.pack import Package
-
-
 from milabench.commands import TorchrunAllGPU, TorchrunAllNodes, ForeachNode
+from milabench.commands.srun import ForeachSrun
 from milabench.pack import BasePackage
 from milabench.commands import SimpleCommand, WorkingDir
 
@@ -35,6 +35,19 @@ class TorchtuneAllNodes(TorchrunAllNodes):
         """Make a new environment and create a new executor for the node"""
         executor = WorkingDir(super().make_new_node_executor(rank, node, base))
         return executor
+
+
+class TorchtuneSrun(ForeachSrun):
+    """Torchtune via srun: main locally, workers through one ``srun -x main``."""
+
+    def __init__(self, executor, *args, **kwargs) -> None:
+        base_exec = TorchrunAllNodes.make_base_executor(
+            Torchtune,
+            executor,
+            *args,
+            **kwargs,
+        )
+        super().__init__(WorkingDir(base_exec))
 
 
 class Llm(Package):
@@ -72,7 +85,7 @@ class Llm(Package):
 
     def build_run_plan(self):
         exec = SimpleCommand(self)
-        return TorchtuneAllNodes(exec).use_stdout()
+        return TorchtuneSrun(exec).use_stdout()
 
 
 

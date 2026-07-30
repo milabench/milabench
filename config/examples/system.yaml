@@ -4,6 +4,11 @@ system:
   # sshkey used in remote milabench operations
   sshkey: ~/.ssh/id_ed25519
 
+  # options:
+  #   network:
+  #     gloo_ifname: enP7s7
+  #     nccl_ifname: enP7s7
+
   # Configures how to use docker 
   docker:
     executable: podman

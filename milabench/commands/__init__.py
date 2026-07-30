@@ -331,6 +331,9 @@ class WorkingDir(WrapperCommand):
     #  and we don't have to worry about it
 
     def __init__(self, cmd: Command, **kwargs):
+        gloo_ifname = option("network.gloo_ifname", str, None)
+        nccl_ifname = option("network.nccl_ifname", str, None)
+
         args = [
             "env",
             "-C", str(cmd.pack.working_directory),
@@ -339,10 +342,13 @@ class WorkingDir(WrapperCommand):
             f"XDG_CACHE_HOME={str(cmd.pack.dirs.cache)}",
             f"HF_HOME={str(cmd.pack.dirs.cache)}",
             f"TORCH_HOME={str(cmd.pack.dirs.cache)}",
-            "GLOO_SOCKET_IFNAME=enP7s7",
-            "NCCL_SOCKET_IFNAME=enP7s7",
             #  "TORCH_DISTRIBUTED_DEBUG=DETAIL"
         ]
+        if gloo_ifname:
+            args.append(f"GLOO_SOCKET_IFNAME={gloo_ifname}")
+        if nccl_ifname:
+            args.append(f"NCCL_SOCKET_IFNAME={nccl_ifname}")
+
         super().__init__(cmd, *args)
 
 
@@ -757,7 +763,7 @@ class ForeachNode(ListCommand):
         key = config["system"].get("sshkey")
 
         # useless in single node setups
-        if len(self.nodes) == 1 or max_num == 1:
+        if len(self.nodes) == 1:
             return [self.single_node()]
 
         for rank, node in enumerate(self.nodes):
@@ -872,15 +878,6 @@ class TorchrunAllNodes(ForeachNode):
             **kwargs
         )
         super().__init__(base_exec)
-
-
-# Imported after TorchrunAllNodes / TorchrunAllGPU so commands.srun can reuse them.
-from .srun import (  # noqa: E402
-    ForeachSrun,
-    SrunCommand,
-    SrunExceptMain,
-    TorchrunSrun,
-)
 
 
 TorchRunCommand = TorchrunAllGPU
@@ -1044,10 +1041,6 @@ class PerGPU(ListCommand):
         super().__init__(*executors, **kwargs)
 
 
-
-
-
-
 #
 # Check if we need this
 #   I think if we use python script.py it will load
@@ -1182,5 +1175,7 @@ class AccelerateLaunchCommand(SingleCmdCommand):
         ]
 
 
-# After SequenceCommand / CmdCommand are defined.
-from .ray import RayCluster  # noqa: E402
+def torchrun(*args, **kwargs):
+    from .srun import TorchrunSrun
+
+    return TorchrunSrun(*args, **kwargs)

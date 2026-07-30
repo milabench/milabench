@@ -104,7 +104,7 @@ class LazyLossPusher(LazyMetricPusher):
 
 
 class CPUTimer:
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self._start = None
         self._end = None
 
