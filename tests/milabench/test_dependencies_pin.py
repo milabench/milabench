@@ -665,3 +665,53 @@ class TestResolveCompatConstraints:
         lines = _resolve_compat_constraints(config, {"torch": "2.12.0"})
         assert "torchao<0.18" in lines
         assert "flash-attn>=2.5" in lines
+
+    def test_constraint_formats_variables(self):
+        config = PlatformConfig(
+            vars={
+                "vllm": "0.18.1",
+                "cuda": "130",
+                "torch": "2.10.0",
+            },
+            vllm_untagged_cuda={"0.18.1": "129"},
+            compat={
+                "vllm": CompatEntry(
+                    package="vllm",
+                    rules=[
+                        CompatRule(
+                            conditions="torch>=2.10,cuda>=13",
+                            constraint="=={vllm}{vllm_local}",
+                        ),
+                    ],
+                )
+            },
+        )
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.10.0", "cuda": "130"}
+        )
+        assert lines == ["vllm==0.18.1+cu130"]
+
+    def test_constraint_omits_tag_for_default_cuda(self):
+        config = PlatformConfig(
+            vars={
+                "vllm": "0.18.1",
+                "cuda": "129",
+                "torch": "2.10.0",
+            },
+            vllm_untagged_cuda={"0.18.1": "129", "0.17.1": "128"},
+            compat={
+                "vllm": CompatEntry(
+                    package="vllm",
+                    rules=[
+                        CompatRule(
+                            conditions="torch>=2.10,cuda>=12.9,cuda<13",
+                            constraint="=={vllm}{vllm_local}",
+                        ),
+                    ],
+                )
+            },
+        )
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.10.0", "cuda": "129"}
+        )
+        assert lines == ["vllm==0.18.1"]

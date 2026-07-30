@@ -1058,8 +1058,6 @@ varname==1.0.0
     # via giving
 vcs-versioning==2.2.2
     # via setuptools-scm
-vllm==0.2.5
-    # via -r requirements.in
 voir==0.2.23
     # via
     #   -c constraints.in

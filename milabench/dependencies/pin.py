@@ -186,7 +186,15 @@ def _resolve_compat_constraints(
     for pkg, entry in platform_config.compat.items():
         for rule in entry.rules:
             if _compat_conditions_match(rule.conditions, known_versions):
-                lines.append(f"{pkg}{rule.constraint}")
+                try:
+                    constraint = rule.constraint.format(**variables)
+                except KeyError as e:
+                    raise ValueError(
+                        f"Variable {e} used in [compat.{pkg}] constraint "
+                        f"'{rule.constraint}' is not defined in platforms.toml "
+                        f"[vars] or CLI overrides. Available: {list(variables.keys())}"
+                    ) from e
+                lines.append(f"{pkg}{constraint}")
                 break  # first match wins
     return lines
 

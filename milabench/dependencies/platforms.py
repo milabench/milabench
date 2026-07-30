@@ -65,6 +65,10 @@ class PlatformConfig:
     discovery: DiscoveryConfig | None = None
     backends: dict[str, BackendConfig] = field(default_factory=dict)
     compat: dict[str, CompatEntry] = field(default_factory=dict)
+    # vLLM release matrix (see [vllm.*] in platforms.toml)
+    vllm_torch: dict[str, str] = field(default_factory=dict)  # vllm → torch
+    vllm_untagged_cuda: dict[str, str] = field(default_factory=dict)  # vllm → bare CUDA
+    vllm_rocm: dict[str, str] = field(default_factory=dict)  # vllm → rocmNNN
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def resolve_vars(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -78,10 +82,15 @@ class PlatformConfig:
         Also injects derived variables:
           - cuda_major: first 2 chars of cuda version (e.g. "130" → "13", "126" → "12")
           - torch_short: major.minor of torch (e.g. "2.10.0" → "2.10")
+          - vllm: newest release matching [vllm.torch] for the active torch,
+            unless overrides explicitly set vllm
+          - vllm_local: "" when cuda matches [vllm.untagged_cuda] for that vllm,
+            else "+cu{cuda}"
+          - vllm_rocm: ROCm variant dir from [vllm.rocm] for the selected vllm
         """
+        overrides = _normalize_overrides(overrides) if overrides else {}
         resolved = dict(self.vars)
-        if overrides:
-            resolved.update(_normalize_overrides(overrides))
+        resolved.update(overrides)
 
         # Derived variables
         if "cuda" in resolved and "cuda_major" not in resolved:
@@ -95,7 +104,44 @@ class PlatformConfig:
             else:
                 resolved["torch_short"] = resolved["torch"]
 
+        # Auto-select newest vLLM for the active torch (matrix-driven)
+        if "vllm" not in overrides and self.vllm_torch and resolved.get("torch"):
+            selected = self.select_vllm_for_torch(resolved["torch"])
+            if selected:
+                resolved["vllm"] = selected
+
+        # vllm_local: keyed by selected vLLM version
+        if "vllm_local" not in resolved and "cuda" in resolved:
+            resolved["vllm_local"] = self.vllm_local_tag(
+                resolved.get("vllm", ""), resolved["cuda"]
+            )
+
+        if "vllm_rocm" not in resolved and resolved.get("vllm"):
+            rocm_var = self.vllm_rocm.get(resolved["vllm"])
+            if rocm_var:
+                resolved["vllm_rocm"] = rocm_var
+
         return resolved
+
+    def select_vllm_for_torch(self, torch_version: str) -> str | None:
+        """Return the newest vLLM release that requires ``torch_version``, or None."""
+        from packaging.version import Version
+
+        matches = [v for v, t in self.vllm_torch.items() if t == torch_version]
+        if not matches:
+            return None
+        return str(max(matches, key=Version))
+
+    def vllm_local_tag(self, vllm_version: str, cuda: str) -> str:
+        """Return '' for the untagged default wheel, else '+cu{cuda}'.
+
+        Looks up ``[vllm.untagged_cuda]`` for ``vllm_version``. If that release
+        has no entry, always returns ``+cu{cuda}`` (never assume an untagged match).
+        """
+        default_cuda = self.vllm_untagged_cuda.get(vllm_version)
+        if default_cuda is not None and cuda == default_cuda:
+            return ""
+        return f"+cu{cuda}"
 
     def resolve_string(self, template: str, overrides: dict[str, str] | None = None) -> str:
         """Interpolate {var} placeholders in a string."""
@@ -300,6 +346,19 @@ def load_platform_config(
             )
 
         config.backends[name] = backend
+
+    # Parse [vllm.*] release matrix
+    vllm_raw = raw.get("vllm", {})
+    if isinstance(vllm_raw, dict):
+        torch_map = vllm_raw.get("torch", {})
+        if isinstance(torch_map, dict):
+            config.vllm_torch = {str(k): str(v) for k, v in torch_map.items()}
+        untagged = vllm_raw.get("untagged_cuda", {})
+        if isinstance(untagged, dict):
+            config.vllm_untagged_cuda = {str(k): str(v) for k, v in untagged.items()}
+        rocm_map = vllm_raw.get("rocm", {})
+        if isinstance(rocm_map, dict):
+            config.vllm_rocm = {str(k): str(v) for k, v in rocm_map.items()}
 
     # Parse [compat.*] sections
     compat_raw = raw.get("compat", {})

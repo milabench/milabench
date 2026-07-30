@@ -51,16 +51,17 @@ mkdir -p $MILABENCH_WORDIR/results/runs
 
 $UV pip install -e $MILABENCH_SOURCE[$MILABENCH_GPU_ARCH]
 
-milabench data sharedsetup --network $MILABENCH_SHARED --local $MILABENCH_BASE
-
 milabench slurm system > $MILABENCH_WORDIR/system.yaml
 rm -rf $MILABENCH_WORDIR/results/venv
 
 module load cuda/12.6.0
 
 export MILABENCH_USE_TOML_DEPS=1 
+milabench tools pin --from-scratch
 
 milabench install --system $MILABENCH_WORDIR/system.yaml --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION $MILABENCH_ARGS
+
+milabench data sharedsetup --network $MILABENCH_SHARED --local $MILABENCH_BASE
 
 milabench run --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS $MILABENCH_DB || :
 

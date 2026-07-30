@@ -6,7 +6,8 @@
 cuda = "130"
 rocm = "7.2"
 torch = "2.10.0"
-vllm = "0.18.1"
+# Default; overridden from [vllm.torch] for the selected torch unless --set vllm=...
+vllm = "0.19.1"
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -31,6 +32,7 @@ extra-index-url = [
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
+    "https://github.com/vllm-project/vllm/releases/expanded_assets/v{vllm}",
     "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
     "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html",
 ]
@@ -113,3 +115,89 @@ gymnax = ">=0.0.8"
 "torch>=2.12,torch<2.13" = ">=1.2,<1.3"
 "torch>=2.11,torch<2.12" = ">=1.1,<1.2"
 "torch>=2.10,torch<2.11" = ">=1.0,<1.1"
+
+# ─── vLLM ─────────────────────────────────────────────────────────────────────
+# Release matrix: PyPI requires_dist (torch), GitHub wheels (+cu / bare),
+#                 https://wheels.vllm.ai/rocm/{vllm}/ (rocmNNN).
+# bare wheel (no +cu tag) == untagged_cuda; the other published +cuXXX is the variant.
+# Epoch flip: ≤0.19 bare≈cu129 +cu130 | ≥0.20 bare≈cu130 +cu129
+# [vllm.torch] picks newest release for the active torch (unless --set vllm=...);
+# {vllm_local} is "" when cuda == [vllm.untagged_cuda] for that release, else +cu{cuda}.
+
+[compat.vllm]
+"torch>=2.10" = "=={vllm}{vllm_local}"
+
+[vllm.torch]
+# vllm → required torch
+"0.26.0" = "2.11.0"
+"0.25.1" = "2.11.0"
+"0.25.0" = "2.11.0"
+"0.24.0" = "2.11.0"
+"0.23.0" = "2.11.0"
+"0.22.1" = "2.11.0"
+"0.22.0" = "2.11.0"
+"0.21.0" = "2.11.0"
+"0.20.2" = "2.11.0"
+"0.20.1" = "2.11.0"
+"0.20.0" = "2.11.0"
+"0.19.1" = "2.10.0"
+"0.19.0" = "2.10.0"
+"0.18.1" = "2.10.0"
+"0.18.0" = "2.10.0"
+"0.17.1" = "2.10.0"
+"0.17.0" = "2.10.0"
+"0.16.0" = "2.9.1"
+"0.15.1" = "2.9.1"
+"0.15.0" = "2.9.1"
+"0.14.1" = "2.9.1"
+"0.14.0" = "2.9.1"
+
+[vllm.untagged_cuda]
+# vllm → CUDA of the bare (untagged) wheel
+"0.26.0" = "130"
+"0.25.1" = "130"
+"0.25.0" = "130"
+"0.24.0" = "130"
+"0.23.0" = "130"
+"0.22.1" = "130"
+"0.22.0" = "130"
+"0.21.0" = "130"
+"0.20.2" = "130"
+"0.20.1" = "130"
+"0.20.0" = "130"
+"0.19.1" = "129"
+"0.19.0" = "129"
+"0.18.1" = "129"
+"0.18.0" = "129"
+"0.17.1" = "129"
+"0.17.0" = "129"
+"0.16.0" = "129"
+"0.15.1" = "129"
+"0.15.0" = "129"
+"0.14.1" = "129"
+"0.14.0" = "129"
+
+[vllm.rocm]
+# vllm → wheels.vllm.ai/rocm/{vllm}/{rocm}/ variant directory
+"0.26.0" = "rocm723"
+"0.25.1" = "rocm723"
+"0.25.0" = "rocm723"
+"0.24.0" = "rocm723"
+"0.23.0" = "rocm723"
+"0.22.1" = "rocm722"
+"0.22.0" = "rocm722"
+"0.21.0" = "rocm722"
+"0.20.2" = "rocm721"
+"0.20.1" = "rocm721"
+"0.20.0" = "rocm721"
+"0.19.1" = "rocm721"
+"0.19.0" = "rocm721"
+"0.18.1" = "rocm700"
+"0.18.0" = "rocm700"
+"0.17.1" = "rocm700"
+"0.17.0" = "rocm700"
+"0.16.0" = "rocm700"
+"0.15.1" = "rocm700"
+"0.15.0" = "rocm700"
+"0.14.1" = "rocm700"
+"0.14.0" = "rocm700"

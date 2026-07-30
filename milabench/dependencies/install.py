@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .platforms import PlatformConfig
-from .pin import get_constraint_file
-from .requirements import load_benchmark_requirements, resolve_benchmark
+from .pin import _build_constraints_content, get_constraint_file
+from .requirements import resolve_benchmark
 
 
 @dataclass
@@ -19,11 +19,15 @@ class InstallArgs:
     constraint_file: Path | None
     index_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    platform_constraint_file: Path | None = None
     _temp_files: list[Path] = field(default_factory=list, repr=False)
 
     def as_pip_args(self) -> list[str]:
         """Build the full pip install argument list."""
         args = ["-r", str(self.requirements_file)]
+        # Platform policy (compat matrix / backend.constraints) before pin lockfile
+        if self.platform_constraint_file and self.platform_constraint_file.exists():
+            args.extend(["-c", str(self.platform_constraint_file)])
         if self.constraint_file and self.constraint_file.exists():
             args.extend(["-c", str(self.constraint_file)])
         args.extend(self.index_args)
@@ -85,7 +89,8 @@ def install_args(
         backend: Backend name (cuda, rocm, etc.).
         pin_dir: Path to .pin/ directory.
         overrides: CLI variable overrides (e.g. {"cuda": "130", "torch": "2.12.0"}).
-        unpinned: If True, skip constraint file (NGC/dev mode).
+        unpinned: If True, skip pin lockfile (NGC/dev mode). Platform policy
+            constraints from platforms.toml are still applied.
 
     Returns:
         InstallArgs with paths and arguments ready for pip install.
@@ -109,8 +114,26 @@ def install_args(
         temp_req.write(f"{dep}\n")
     temp_req.close()
     temp_req_path = Path(temp_req.name)
+    temp_files = [temp_req_path]
 
-    # Find matching constraint file
+    # Platform policy constraints (compat matrix, backend.constraints)
+    platform_constraint_file = None
+    platform_lines = _build_constraints_content(
+        platform_config, backend, all_overrides
+    )
+    if platform_lines:
+        temp_cons = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            prefix=f"milabench-{benchmark_path.name}-platform-",
+            delete=False,
+        )
+        temp_cons.write("\n".join(platform_lines) + "\n")
+        temp_cons.close()
+        platform_constraint_file = Path(temp_cons.name)
+        temp_files.append(platform_constraint_file)
+
+    # Find matching pin lockfile
     constraint_file = None
     if not unpinned:
         import platform as plat
@@ -139,8 +162,9 @@ def install_args(
     return InstallArgs(
         requirements_file=temp_req_path,
         constraint_file=constraint_file,
+        platform_constraint_file=platform_constraint_file,
         index_args=index_args,
-        _temp_files=[temp_req_path],
+        _temp_files=temp_files,
     )
 
 

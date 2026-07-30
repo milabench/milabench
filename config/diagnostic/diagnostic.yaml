@@ -1,0 +1,36 @@
+include:
+  - ../_defaults.yaml
+
+# Dummy torchrun + srun multi-node smoke test.
+# Main keeps metrics locally; workers are nolog via TorchrunSrun.
+_torchsrun:
+  inherits: _defaults
+  definition: ../benchmarks/torchsrun
+  install_group: torch
+  weight: 0.0
+  tags:
+    - multinode
+    - diagnostic
+    - nobatch
+  plan:
+    method: njobs
+    n: 1
+  voir:
+    options:
+      stop: 30
+  argv:
+    --repeats: 30
+    --warmup: 5
+    --size-mb: 64
+
+torchsrun:
+  inherits: _torchsrun
+  num_machines: 2
+  enabled: true
+  weight: 0
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  argv:
+    --repeats: 30
+    --warmup: 5
+    --size-mb: 64

@@ -314,7 +314,7 @@ single-H100:
   - --ntasks=1
   - --cpus-per-task=1
   - --mem=0
-  - --time=0:10:00
+  - --time=0:01:00
   - --gpus-per-task=0
   - --ntasks-per-node=1
   - --export=ALL
