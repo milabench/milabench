@@ -306,3 +306,15 @@ single-H100:
   - --ntasks-per-node=1
   - --exclusive
   - --export=ALL
+10x1xCPU:
+  cluster: mila
+  args:
+  - --job-name=10x1xCPU
+  - --nodes=10
+  - --ntasks=1
+  - --cpus-per-task=1
+  - --mem=0
+  - --time=0:10:00
+  - --gpus-per-task=0
+  - --ntasks-per-node=1
+  - --export=ALL
