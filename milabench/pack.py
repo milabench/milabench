@@ -114,6 +114,9 @@ def exclude_system_packages(pack, enabled=True):
 def find_pytorch(requirement):
     pip_args = []
 
+    if not XPath(requirement).exists():
+        return pip_args
+
     with open(requirement, "r") as fp:
         for line in fp.readlines():
             if "pytorch.org/whl/" in line:

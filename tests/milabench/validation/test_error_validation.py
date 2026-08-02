@@ -101,11 +101,19 @@ class TestParsedTraceback:
         assert tb.raised_exception() == "final line"
 
     def test_raised_exception_raise_at_last_line(self):
-        """When raise is the only element, min(idx+1, len) overshoots (source bug)."""
+        """When raise is the last line, fall back to the exception name."""
         lines = ["    raise KeyError("]
         tb = ParsedTraceback(lines)
-        with pytest.raises(IndexError):
-            tb.raised_exception()
+        assert tb.raised_exception() == "KeyError"
+
+    def test_raised_exception_empty(self):
+        tb = ParsedTraceback([])
+        assert tb.raised_exception() == "<empty traceback>"
+
+    def test_append_line_on_empty(self):
+        tb = ParsedTraceback([])
+        tb.append_line("first\n")
+        assert tb.lines == ["first"]
 
     def test_append_line_normal(self):
         tb = ParsedTraceback(["first"])

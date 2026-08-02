@@ -1,0 +1,6 @@
+[common]
+dependencies = [
+    "torch",
+    "torchcompat",
+    "voir>=0.2.19,<0.3",
+]

@@ -33,16 +33,28 @@ class ParsedTraceback:
         return None, None
 
     def raised_exception(self):
-        raised_idx, _ = self.find_raise()
+        if not self.lines:
+            return "<empty traceback>"
+
+        raised_idx, exc_name = self.find_raise()
 
         if raised_idx is not None:
-            return self.lines[min(raised_idx + 1, len(self.lines))]
+            next_idx = raised_idx + 1
+            if next_idx < len(self.lines):
+                return self.lines[next_idx]
+            # raise was the last line; use the exception name from it if available
+            if exc_name:
+                return exc_name
+            return self.lines[raised_idx]
 
         return self.lines[-1]
 
-
     def append_line(self, line):
-        if all(c in "^ " for c in line) and all(c in "^ " for c in self.lines[-1]):
+        if (
+            self.lines
+            and all(c in "^ " for c in line)
+            and all(c in "^ " for c in self.lines[-1])
+        ):
             self.lines[-1] += line
         else:
             self.lines.append(line.replace("\n", ""))
