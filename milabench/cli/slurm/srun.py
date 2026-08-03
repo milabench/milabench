@@ -51,6 +51,7 @@ def _exec_native_srun() -> None:
 
     args = list(sys.argv[idx + 1 :])
     args = _shrink_srun_allocation_for_exclude(args)
+    print(f"[srun] native: {srun} {' '.join(args)}", file=sys.stderr, flush=True)
     os.execvp(srun, [srun, *args])
 
 
@@ -178,20 +179,21 @@ def run_on_nodes(
 ) -> int:
     """SSH to each system node and run *command* via voir's Multiplexer.
 
-    Injects ``SLURM_NODEID`` / ``SLURM_NNODES`` into the remote command so
-    callers (e.g. torchrun) can derive a stable per-node rank.
+    Injects step-local ``SLURM_NODEID`` / ``SLURM_PROCID`` (0..len(nodes)-1) and
+    ``SLURM_NNODES`` from the full system list when provided. Step-local ids match
+    native ``srun -x <main>`` numbering so ``benchrun`` can map them to global
+    ranks via ``SLURM_NODEID + 1``.
     """
     rank_source = all_nodes or nodes
     nnodes = len(rank_source)
     mp = Multiplexer(timeout=None, constructor=SrunLogEntry)
 
-    for node in nodes:
+    for step_id, node in enumerate(nodes):
         label = node.get("name") or node["ip"]
-        rank = _node_rank(rank_source, node)
         remote_cmd = [
             "env",
-            f"SLURM_NODEID={rank}",
-            f"SLURM_PROCID={rank}",
+            f"SLURM_NODEID={step_id}",
+            f"SLURM_PROCID={step_id}",
             f"SLURM_NNODES={nnodes}",
             *command,
         ]
@@ -269,6 +271,12 @@ class SlurmRun(Command):
         if included:
             print(f"[srun] nodelist: {', '.join(sorted(included))}", file=sys.stderr)
 
+        print(
+            f"[srun] ssh fallback: {len(nodes)} node(s) "
+            f"command={' '.join(command)}",
+            file=sys.stderr,
+            flush=True,
+        )
         return run_on_nodes(
             nodes, command, sshkey=system.get("sshkey"), all_nodes=all_nodes
         )

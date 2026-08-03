@@ -7,6 +7,7 @@ torchsrun:
   definition: .
   install_group: torch
   weight: 0.0
+  max_duration: 120
   tags:
     - multinode
     - diagnostic

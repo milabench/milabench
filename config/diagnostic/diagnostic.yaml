@@ -8,6 +8,8 @@ _torchsrun:
   definition: ../../benchmarks/torchsrun
   install_group: torch
   weight: 0.0
+  # Smoke all-reduce; fail fast if rendezvous hangs (default is 600s).
+  max_duration: 120
   tags:
     - multinode
     - diagnostic
