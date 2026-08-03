@@ -99,12 +99,65 @@ def _collect_all_toml_deps(
     return all_deps
 
 
+# GitHub "expanded_assets" find-links 404 when that release was never published
+# (milabench/wheels does not build every torch×backend combo).
+_EXPANDED_ASSETS_RE = re.compile(
+    r"^https?://github\.com/[^/]+/[^/]+/releases/expanded_assets/"
+)
+_find_links_availability_cache: dict[str, bool] = {}
+
+
+def _is_optional_find_links_url(url: str) -> bool:
+    """True for find-links that should be omitted when the URL is missing."""
+    return bool(_EXPANDED_ASSETS_RE.match(url))
+
+
+def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
+    """Return True if ``url`` responds without HTTP 404.
+
+    Results are cached for the process lifetime so pin/install across many
+    benchmarks does not re-probe the same release page.
+    """
+    if url in _find_links_availability_cache:
+        return _find_links_availability_cache[url]
+
+    import urllib.error
+    import urllib.request
+
+    available = False
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "milabench"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            available = 200 <= getattr(resp, "status", 200) < 400
+    except urllib.error.HTTPError as e:
+        # Some hosts disallow HEAD; retry GET on 405/403 before giving up.
+        if e.code in (403, 405):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "milabench"})
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    available = 200 <= getattr(resp, "status", 200) < 400
+            except Exception:
+                available = False
+        else:
+            available = False
+    except Exception:
+        available = False
+
+    _find_links_availability_cache[url] = available
+    return available
+
+
 def _build_index_args(
     platform_config: PlatformConfig,
     backend: str,
     overrides: dict[str, str] | None = None,
 ) -> list[str]:
-    """Build --index-url, --extra-index-url, --find-links arguments."""
+    """Build --index-url, --extra-index-url, --find-links arguments.
+
+    GitHub ``releases/expanded_assets/...`` find-links are only included when
+    the release page exists. Missing milabench wheel builds fall back to the
+    normal package indexes.
+    """
     backend_config = platform_config.get_backend(backend)
     variables = platform_config.resolve_vars(overrides)
     args = []
@@ -120,6 +173,14 @@ def _build_index_args(
 
     for url in idx.find_links:
         resolved_url = url.format(**variables)
+        if _is_optional_find_links_url(resolved_url) and not _find_links_url_available(
+            resolved_url
+        ):
+            print(
+                f"Skipping missing find-links (not published): {resolved_url}",
+                flush=True,
+            )
+            continue
         args.extend(["--find-links", resolved_url])
 
     return args
@@ -139,8 +200,8 @@ def _build_constraints_content(
         resolved_spec = version_spec.format(**variables)
         lines.append(f"{pkg}{resolved_spec}")
 
-    # Append compat-derived constraints
-    lines.extend(_resolve_compat_constraints(platform_config, overrides))
+    # Append compat-derived constraints (scoped to the active backend)
+    lines.extend(_resolve_compat_constraints(platform_config, overrides, backend=backend))
 
     return lines
 
@@ -155,24 +216,40 @@ def _normalize_backend_version(raw: str) -> str:
     return f"{raw[:-1]}.{raw[-1]}"
 
 
+# Accelerator keys that identify the active pin/install backend.
+_COMPAT_ACCEL_KEYS = ("cuda", "rocm", "hpu", "xpu", "cpu")
+
+
 def _resolve_compat_constraints(
     platform_config: PlatformConfig,
     overrides: dict[str, str] | None = None,
+    backend: str | None = None,
 ) -> list[str]:
     """Evaluate [compat.*] rules against known pin-time variables.
 
     Returns constraint lines like 'torchao<0.18' for each package
     whose first matching rule applies.
+
+    When ``backend`` is set (e.g. ``"rocm"``), only that accelerator's version
+    is visible to conditions — plus ``torch``. Defaults for other accelerators
+    in ``[vars]`` are ignored so rules like ``torch>=2.12,rocm>=7`` apply only
+    while pinning/installing ROCm, not CUDA.
     """
-    from packaging.specifiers import SpecifierSet
     from packaging.version import Version
 
     if not platform_config.compat:
         return []
 
     variables = platform_config.resolve_vars(overrides)
+    if backend:
+        keys = ["torch"]
+        if backend in _COMPAT_ACCEL_KEYS:
+            keys.append(backend)
+    else:
+        keys = ["torch", *_COMPAT_ACCEL_KEYS]
+
     known_versions: dict[str, Version] = {}
-    for key in ("torch", "cuda", "rocm"):
+    for key in keys:
         raw = variables.get(key, "")
         if not raw:
             continue
@@ -215,6 +292,25 @@ def _compat_conditions_match(conditions_str: str, known: dict) -> bool:
         if known[name] not in SpecifierSet(spec_str):
             return False
     return True
+
+
+def _is_torch_requirement(line: str) -> bool:
+    """True if a requirements/constraint line pins the ``torch`` distribution."""
+    name = re.split(r"[<>=!~;\[]", line.strip(), maxsplit=1)[0].strip().lower()
+    return name == "torch"
+
+
+def _torch_minor_pin(torch_version: str) -> str:
+    """Return a minor-version torch constraint for the pin matrix entry.
+
+    For ``2.12.1`` → ``torch>=2.12,<2.13`` so newer patches in that minor
+    can resolve, while still blocking the next minor (e.g. 2.13).
+    """
+    parts = torch_version.split(".")
+    if len(parts) < 2:
+        raise ValueError(f"Expected torch major.minor[.patch], got {torch_version!r}")
+    major, minor = int(parts[0]), int(parts[1])
+    return f"torch>={major}.{minor},<{major}.{minor + 1}"
 
 
 async def pin_combination(
@@ -271,6 +367,16 @@ async def pin_combination(
 
     # Build platform constraint lines
     constraint_lines = _build_constraints_content(platform_config, backend, overrides)
+
+    # Cap torch to the matrix minor. Without an upper bound, uv resolves unpinned
+    # "torch" to the newest wheel on the backend index (e.g. 2.13) while still
+    # writing constraints.rocm72.torch2121.txt — then --set torch=2.12.1 installs 2.13.
+    # Allow any patch within the minor (2.12.0, 2.12.1, …) via >=X.Y,<X.(Y+1).
+    torch_pin = _torch_minor_pin(torch_version)
+    constraint_lines = [
+        line for line in constraint_lines if not _is_torch_requirement(line)
+    ]
+    constraint_lines.insert(0, torch_pin)
 
     # Write temporary input files
     with tempfile.NamedTemporaryFile(

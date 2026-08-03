@@ -385,12 +385,12 @@ def main(args: Arguments = None):
     train_jit = jax.jit(make_train(config))
     compiled_fn = train_jit.lower(rng).compile()
 
-    from benchmate.monitor import bench_monitor
     from benchmate.profiler import jax_profiler
 
-    with bench_monitor():
-        with jax_profiler():
-            out = compiled_fn(rng)
+    # GPU polling comes from voirfile_monitor; bench_monitor() smuggles OSC
+    # sequences on stdout that show up as garbage when use_stdout is off.
+    with jax_profiler():
+        out = compiled_fn(rng)
 
 
 if __name__ == "__main__":

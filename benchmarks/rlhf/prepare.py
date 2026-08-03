@@ -12,6 +12,8 @@ class Arguments:
     split: str = "descriptiveness"
     subset: str = None
     model_name_or_path: str = "EleutherAI/pythia-1b-deduped"
+    sft_model_path: str = None
+    reward_model_path: str = None
     per_device_train_batch_size: int = 16
 
 
@@ -27,8 +29,14 @@ def new_prepare():
 
     download_hf_dataset(args.dataset, args.split, name=args.subset)
 
-    # Download model
-    download_hf_model(args.model_name_or_path)
+    models = {
+        args.model_name_or_path,
+        args.sft_model_path or args.model_name_or_path,
+        args.reward_model_path or args.model_name_or_path,
+    }
+    for model in models:
+        if model:
+            download_hf_model(model)
 
     print("=" * 60)
     print("Prepare script completed successfully")

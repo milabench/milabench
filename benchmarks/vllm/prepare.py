@@ -21,7 +21,22 @@ def arguments():
     return args
 
 
+def _is_cuda() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    # ROCm builds expose a hip version; flashinfer is CUDA-only.
+    return bool(getattr(torch.version, "cuda", None)) and not getattr(
+        torch.version, "hip", None
+    )
+
+
 def setup_flashinfer():
+    if not _is_cuda():
+        print("Skipping flashinfer setup (CUDA-only)")
+        return
+
     commands = [
         # ["flashinfer", "clear-cache"],
         ["flashinfer", "show-config"],

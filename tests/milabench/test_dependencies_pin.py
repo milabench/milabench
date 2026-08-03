@@ -516,6 +516,65 @@ class TestBuildIndexArgs:
         assert "--find-links" in args
         assert "https://example.com/2.12.0" in args
 
+    def test_skips_missing_expanded_assets_find_links(self, monkeypatch):
+        from milabench.dependencies import pin as pin_mod
+
+        pin_mod._find_links_availability_cache.clear()
+        monkeypatch.setattr(pin_mod, "_find_links_url_available", lambda url, timeout=10.0: False)
+
+        missing = (
+            "https://github.com/milabench/wheels/releases/expanded_assets/"
+            "torch{torch_short}-cu{cuda}"
+        )
+        config = PlatformConfig(
+            vars={"torch": "2.11.0", "cuda": "129"},
+            backends={
+                "cuda": BackendConfig(
+                    name="cuda",
+                    indexes=IndexConfig(
+                        index_url="https://pypi.org/simple",
+                        find_links=[missing, "https://example.com/always"],
+                    ),
+                )
+            },
+        )
+        args = _build_index_args(
+            config, "cuda", {"cuda": "129", "torch": "2.11.0"}
+        )
+        assert "--find-links" in args
+        assert "https://example.com/always" in args
+        assert "expanded_assets/torch2.11-cu129" not in " ".join(args)
+
+    def test_keeps_published_expanded_assets_find_links(self, monkeypatch):
+        from milabench.dependencies import pin as pin_mod
+
+        pin_mod._find_links_availability_cache.clear()
+        monkeypatch.setattr(pin_mod, "_find_links_url_available", lambda url, timeout=10.0: True)
+
+        url = (
+            "https://github.com/milabench/wheels/releases/expanded_assets/"
+            "torch{torch_short}-rocm{rocm}"
+        )
+        config = PlatformConfig(
+            vars={"torch": "2.12.1", "rocm": "7.2"},
+            backends={
+                "rocm": BackendConfig(
+                    name="rocm",
+                    indexes=IndexConfig(
+                        index_url="https://pypi.org/simple",
+                        find_links=[url],
+                    ),
+                )
+            },
+        )
+        args = _build_index_args(
+            config, "rocm", {"rocm": "7.2", "torch": "2.12.1"}
+        )
+        assert (
+            "https://github.com/milabench/wheels/releases/expanded_assets/"
+            "torch2.12-rocm7.2"
+        ) in args
+
     def test_unknown_backend_uses_default_pypi(self):
         config = PlatformConfig()
         args = _build_index_args(config, "xpu", {})
@@ -573,6 +632,37 @@ class TestBuildConstraintsContent:
         )
         lines = _build_constraints_content(config, "cuda", {"torch": "2.12.0", "cuda": "130"})
         assert "torchao<0.18" in lines
+
+    def test_compat_scoped_to_active_backend(self):
+        """ROCm-conditioned rules must not apply when building CUDA constraints."""
+        config = PlatformConfig(
+            vars={"torch": "2.12.0", "cuda": "130", "rocm": "7.2"},
+            backends={
+                "cuda": BackendConfig(name="cuda"),
+                "rocm": BackendConfig(name="rocm"),
+            },
+            compat={
+                "torchao": CompatEntry(
+                    package="torchao",
+                    rules=[
+                        CompatRule(
+                            conditions="torch>=2.12,rocm>=7",
+                            constraint=">=0.18.0.dev0,<0.19",
+                        ),
+                        CompatRule(conditions="torch>=2.12", constraint="<0.19"),
+                    ],
+                )
+            },
+        )
+        cuda_lines = _build_constraints_content(
+            config, "cuda", {"torch": "2.12.0", "cuda": "130"}
+        )
+        rocm_lines = _build_constraints_content(
+            config, "rocm", {"torch": "2.12.0", "rocm": "7.2"}
+        )
+        assert "torchao<0.19" in cuda_lines
+        assert "torchao>=0.18.0.dev0,<0.19" not in cuda_lines
+        assert "torchao>=0.18.0.dev0,<0.19" in rocm_lines
 
 
 # ---------------------------------------------------------------------------

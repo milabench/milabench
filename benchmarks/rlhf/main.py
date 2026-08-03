@@ -107,11 +107,32 @@ class PPOv2TrainerIntrumented(PPOTrainer):
 
 
 
+# TRL PPOConfig defaults when --sft_model_path / --reward_model_path are omitted.
+_TRL_DEFAULT_SFT_REWARD = "EleutherAI/pythia-160m"
+
+
+def _align_ppo_model_paths(training_args, model_args):
+    """Use --model_name_or_path for SFT/reward when those flags were left at TRL defaults.
+
+    Milabench historically only set --model_name_or_path (pythia-1b). TRL still
+    defaults sft/reward to pythia-160m, which makes PPO diverge (huge KL / NaNs)
+    and then abort on ROCm with hipErrorLaunchFailure.
+    """
+    policy_name = getattr(model_args, "model_name_or_path", None)
+    if not policy_name:
+        return
+    if training_args.sft_model_path == _TRL_DEFAULT_SFT_REWARD:
+        training_args.sft_model_path = policy_name
+    if training_args.reward_model_path == _TRL_DEFAULT_SFT_REWARD:
+        training_args.reward_model_path = policy_name
+
+
 def main():
     from trl.scripts.utils import ScriptArguments
 
     parser = HfArgumentParser((ScriptArguments, PPOConfig, ModelConfig))
     script_args, training_args, model_args = parser.parse_args_into_dataclasses()
+    _align_ppo_model_paths(training_args, model_args)
     # remove output_dir if exists
     shutil.rmtree(training_args.output_dir, ignore_errors=True)
 
@@ -122,13 +143,18 @@ def main():
         model_args.dtype if model_args.dtype in ["auto", None] else getattr(torch, model_args.dtype)
     )
     quantization_config = get_quantization_config(model_args)
-    model_kwargs = dict(
-        revision=model_args.model_revision,
-        attn_implementation=model_args.attn_implementation,
-        dtype=torch_dtype,
-        device_map=get_kbit_device_map() if quantization_config is not None else None,
-        quantization_config=quantization_config,
-    )
+    model_kwargs = {
+        k: v
+        for k, v in dict(
+            revision=model_args.model_revision,
+            attn_implementation=model_args.attn_implementation,
+            dtype=torch_dtype,
+            device_map=get_kbit_device_map() if quantization_config is not None else None,
+            quantization_config=quantization_config,
+            trust_remote_code=model_args.trust_remote_code,
+        ).items()
+        if v is not None
+    }
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.model_name_or_path, padding_side="left", trust_remote_code=model_args.trust_remote_code
@@ -137,19 +163,19 @@ def main():
     if tokenizer.chat_template is None:
         tokenizer.chat_template = SIMPLE_CHAT_TEMPLATE
     value_model = AutoModelForSequenceClassification.from_pretrained(
-        training_args.reward_model_path, trust_remote_code=model_args.trust_remote_code, num_labels=1
+        training_args.reward_model_path, num_labels=1, **model_kwargs
     )
     reward_model = AutoModelForSequenceClassification.from_pretrained(
-        training_args.reward_model_path, trust_remote_code=model_args.trust_remote_code, num_labels=1
+        training_args.reward_model_path, num_labels=1, **model_kwargs
     )
     policy = AutoModelForCausalLM.from_pretrained(
-        training_args.sft_model_path, trust_remote_code=model_args.trust_remote_code
+        training_args.sft_model_path, **model_kwargs
     )
 
     peft_config = get_peft_config(model_args)
     if peft_config is None:
         ref_policy = AutoModelForCausalLM.from_pretrained(
-            training_args.sft_model_path, trust_remote_code=model_args.trust_remote_code
+            training_args.sft_model_path, **model_kwargs
         )
     else:
         ref_policy = None

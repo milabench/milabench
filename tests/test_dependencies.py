@@ -771,10 +771,12 @@ def compat_toml(tmp_path):
 
         [compat.torchao]
         "torch>=2.12" = "<0.19"
-        "torch>=2.11,torch<2.12" = "<0.18"
-        "torch>=2.10,torch<2.11" = "<0.17"
+        "torch>=2.11,torch<2.12" = ">=0.17,<0.18"
+        "torch>=2.10,torch<2.11" = ">=0.16,<0.17"
 
         [compat.torchcodec]
+        "rocm>=0,torch>=2.11" = "==0.15.0+cpu"
+        "rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
         "torch>=2.10,torch<2.11" = "<0.12"
 
         [compat.flashinfer-python]
@@ -806,8 +808,10 @@ class TestCompatParsing:
         assert len(torchao.rules) == 3
         assert torchao.rules[0].conditions == "torch>=2.12"
         assert torchao.rules[0].constraint == "<0.19"
+        assert torchao.rules[1].conditions == "torch>=2.11,torch<2.12"
+        assert torchao.rules[1].constraint == ">=0.17,<0.18"
         assert torchao.rules[2].conditions == "torch>=2.10,torch<2.11"
-        assert torchao.rules[2].constraint == "<0.17"
+        assert torchao.rules[2].constraint == ">=0.16,<0.17"
 
     def test_compat_entry_structure(self, compat_toml):
         config = load_platform_config(path=compat_toml)
@@ -867,16 +871,20 @@ class TestCompatConditionsMatch:
 class TestResolveCompatConstraints:
     def test_torch_2100_cuda130(self, compat_toml):
         config = load_platform_config(path=compat_toml)
-        lines = _resolve_compat_constraints(config, {"torch": "2.10.0", "cuda": "130"})
-        assert "torchao<0.17" in lines
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.10.0", "cuda": "130"}, backend="cuda"
+        )
+        assert "torchao>=0.16,<0.17" in lines
         assert "torchcodec<0.12" in lines
         assert "flashinfer-python>=0.6" in lines
         assert "mslk>=1.0,<1.1" in lines
 
     def test_torch_2110_cuda126(self, compat_toml):
         config = load_platform_config(path=compat_toml)
-        lines = _resolve_compat_constraints(config, {"torch": "2.11.0", "cuda": "126"})
-        assert "torchao<0.18" in lines
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.11.0", "cuda": "126"}, backend="cuda"
+        )
+        assert "torchao>=0.17,<0.18" in lines
         assert "flashinfer-python>=0.5,<0.6" in lines
         assert "mslk>=1.1,<1.2" in lines
         # torchcodec rule only applies to torch<2.11
@@ -884,28 +892,52 @@ class TestResolveCompatConstraints:
 
     def test_torch_2120_cuda130(self, compat_toml):
         config = load_platform_config(path=compat_toml)
-        lines = _resolve_compat_constraints(config, {"torch": "2.12.0", "cuda": "130"})
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
+        )
         assert "torchao<0.19" in lines
         assert "flashinfer-python>=0.6" in lines
         assert "mslk>=1.2,<1.3" in lines
 
+    def test_torch_2120_rocm72(self, compat_toml):
+        config = load_platform_config(path=compat_toml)
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.0", "rocm": "7.2"}, backend="rocm"
+        )
+        assert "torchao<0.19" in lines
+        # ROCm has no CUDA torchcodec wheel; force CPU/FFmpeg build
+        assert "torchcodec==0.15.0+cpu" in lines
+        # cuda-only flashinfer must not apply while pinning ROCm
+        assert not any("flashinfer" in l for l in lines)
+
+    def test_torch_2120_cuda_no_torchcodec_cpu(self, compat_toml):
+        config = load_platform_config(path=compat_toml)
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
+        )
+        assert not any("torchcodec" in l for l in lines)
+
     def test_first_match_wins(self, compat_toml):
         config = load_platform_config(path=compat_toml)
-        # torch 2.12.0 matches both "torch>=2.12" and would match "torch>=2.11,torch<2.12" → no
-        # Only first rule should fire
-        lines = _resolve_compat_constraints(config, {"torch": "2.12.0", "cuda": "130"})
+        # torch 2.12 matches "torch>=2.12" first; later torch 2.11 rule must not fire
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
+        )
         assert "torchao<0.19" in lines
-        assert "torchao<0.18" not in lines
+        assert "torchao>=0.17,<0.18" not in lines
 
     def test_no_compat_if_empty(self):
         config = PlatformConfig(vars={"torch": "2.12.0", "cuda": "130"})
-        lines = _resolve_compat_constraints(config, {"torch": "2.12.0", "cuda": "130"})
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
+        )
         assert lines == []
 
     def test_rocm_backend_no_cuda_rules(self, tmp_path):
-        """When cuda is absent from vars entirely, cuda-only compat rules don't fire."""
+        """Active backend=rocm hides cuda defaults so cuda-only rules don't fire."""
         content = dedent("""\
             [vars]
+            cuda = "130"
             rocm = "7.1"
             torch = "2.11.0"
 
@@ -913,7 +945,7 @@ class TestResolveCompatConstraints:
             index-url = "https://pypi.org/simple"
 
             [compat.torchao]
-            "torch>=2.11,torch<2.12" = "<0.18"
+            "torch>=2.11,torch<2.12" = ">=0.17,<0.18"
 
             [compat.flashinfer-python]
             "cuda>=13" = ">=0.6"
@@ -921,9 +953,10 @@ class TestResolveCompatConstraints:
         path = tmp_path / "platforms_rocm_only.toml"
         path.write_text(content)
         config = load_platform_config(path=path)
-        lines = _resolve_compat_constraints(config, {"torch": "2.11.0", "rocm": "7.1"})
-        assert "torchao<0.18" in lines
-        # flashinfer has cuda-only conditions → should not match (no cuda var)
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.11.0", "rocm": "7.1"}, backend="rocm"
+        )
+        assert "torchao>=0.17,<0.18" in lines
         assert not any("flashinfer" in l for l in lines)
 
     def test_build_constraints_includes_compat(self, compat_toml):
@@ -932,8 +965,21 @@ class TestResolveCompatConstraints:
         # Static constraint
         assert "torch>=2.10" in lines
         # Compat-derived
-        assert "torchao<0.17" in lines
+        assert "torchao>=0.16,<0.17" in lines
         assert "flashinfer-python>=0.6" in lines
+
+    def test_build_constraints_backend_hides_other_accel(self, compat_toml):
+        config = load_platform_config(path=compat_toml)
+        rocm_lines = _build_constraints_content(
+            config, "rocm", {"torch": "2.12.1", "rocm": "7.2"}
+        )
+        cuda_lines = _build_constraints_content(
+            config, "cuda", {"torch": "2.12.1", "cuda": "130"}
+        )
+        assert "torchao<0.19" in rocm_lines
+        assert "torchao<0.19" in cuda_lines
+        assert not any("flashinfer" in l for l in rocm_lines)
+        assert "flashinfer-python>=0.6" in cuda_lines
 
 
 class TestVllmCompatMatrix:
@@ -948,7 +994,7 @@ class TestVllmCompatMatrix:
         assert config.vllm_untagged_cuda["0.19.1"] == "129"
         assert config.select_vllm_for_torch("2.10.0") == "0.19.1"
         lines = _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "130"}
+            config, {"torch": "2.10.0", "cuda": "130"}, backend="cuda"
         )
         assert "vllm==0.19.1+cu130" in lines
 
@@ -958,7 +1004,7 @@ class TestVllmCompatMatrix:
         repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
         config = load_platform_config(path=repo_toml)
         lines = _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "129"}
+            config, {"torch": "2.10.0", "cuda": "129"}, backend="cuda"
         )
         assert "vllm==0.19.1" in lines
         assert "+cu" not in [l for l in lines if l.startswith("vllm")][0]
@@ -970,13 +1016,27 @@ class TestVllmCompatMatrix:
         config = load_platform_config(path=repo_toml)
         assert config.select_vllm_for_torch("2.11.0") == "0.26.0"
         lines = _resolve_compat_constraints(
-            config, {"torch": "2.11.0", "cuda": "130"}
+            config, {"torch": "2.11.0", "cuda": "130"}, backend="cuda"
         )
         assert "vllm==0.26.0" in lines
         lines129 = _resolve_compat_constraints(
-            config, {"torch": "2.11.0", "cuda": "129"}
+            config, {"torch": "2.11.0", "cuda": "129"}, backend="cuda"
         )
         assert "vllm==0.26.0+cu129" in lines129
+
+    def test_repo_matrix_torch212_rocm72_milabench_wheel(self):
+        from pathlib import Path
+
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.12.1", "rocm": "7.2"}, backend="rocm"
+        )
+        assert "vllm==0.18.1+rocm7.2" in lines
+        assert "torch-geometric>=2.6,<2.7" in lines
+        assert "torchcodec==0.15.0+cpu" in lines
+        # Must not pin CUDA local versions on the ROCm path
+        assert not any(l.startswith("vllm==") and "+cu" in l for l in lines)
 
     def test_explicit_vllm_override_skips_auto_select(self):
         from pathlib import Path

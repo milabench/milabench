@@ -14,6 +14,11 @@ from giving import give, given
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "False"
 
 import torch  # This is a bit of a trick to make jax use torch's packaged libs
+from benchmate.jax_compat import ensure_device_put_compat
+
+# Newer JAX removes device_put_replicated; brax still calls it.
+ensure_device_put_compat()
+
 from brax import envs
 from brax.training.agents.ppo.train import train
 

@@ -2,7 +2,6 @@
 dependencies = [
     "voir>=0.2.19,<0.3",
     "torch",
-    "torchcodec",
 ]
 
 [cuda]
@@ -14,9 +13,17 @@ dependencies = [
     "flashinfer-python",
     "flashinfer-cubin",
     # "flashinfer-jit-cache",
+    "torchcodec",
 ]
 
 [rocm]
+dependencies = [
+    # Version (+rocmX.Y) comes from platforms.toml [compat.vllm]
+    # (milabench find-links, e.g. vllm==0.18.1+rocm7.2)
+    "vllm",
+    # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
+    "torchcodec",
+]
 
 [hpu]
 enabled = false

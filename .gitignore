@@ -66,3 +66,7 @@ benchmarks/*/src/
 *.png
 *.pkl
 fjobs_*.json
+
+
+benchmarks/dinov2/logs/
+benchmarks/dinov2/config.yaml

@@ -24,6 +24,7 @@ default_scaling_config = os.path.join(default_scaling_folder, "default.yaml")
 
 gpu_name_to_file = {
     "AMD Instinct MI325 OAM": "MI325",
+    "AMD Instinct MI355X": "MI355X",
     "NVIDIA H100 80GB HBM3": "H100",
     "NVIDIA L40S": "L40S"
 }
@@ -514,7 +515,7 @@ class MemoryUsageExtractor(ValidationLayer):
     def save(self):
         if self.filepath is not None:
             with open(self.filepath, "w") as file:
-                yaml.dump(self.memory, file, Dumper=compact_dump())
+                yaml.dump(self.memory, file, Dumper=compact_dump(), width=float("inf"))
 
     def report(self, *args, **kwargs):
         for name, stats in self._benchstat.items():
@@ -767,7 +768,7 @@ def deduplicate_scaling_file(filepath):
     newmem = deduplicate_observation(memory)
 
     with open(f"{filepath}.new.yml", "w") as fp:
-        yaml.dump(newmem, fp, Dumper=compact_dump())
+        yaml.dump(newmem, fp, Dumper=compact_dump(), width=float("inf"))
 
 
 
@@ -827,7 +828,7 @@ def merge_scaling_files(*files):
     newmem = deduplicate_observation(dict(all_data))
 
     with open("merged.yaml", "w") as fp:
-        yaml.dump(dict(newmem), fp, Dumper=compact_dump())
+        yaml.dump(dict(newmem), fp, Dumper=compact_dump(), width=float("inf"))
     
 
 if __name__ == "__main__":

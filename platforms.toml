@@ -44,6 +44,8 @@ torchcompat = ">=1.0.0"
 datasets = ">=3.5.1"
 navix = ">=0.7.1"
 gymnax = ">=0.0.8"
+# pydantic 1.10 breaks on Python 3.12.4+ (ForwardRef.recursive_guard)
+pydantic = ">=2,<3"
 
 # ─── ROCm Backend ─────────────────────────────────────────────────────────────
 
@@ -51,6 +53,8 @@ gymnax = ">=0.0.8"
 index-url = "https://pypi.org/simple"
 extra-index-url = [
     "https://download.pytorch.org/whl/rocm{rocm}",
+    # torchcodec has no ROCm wheel; decode uses the CPU/FFmpeg build
+    "https://download.pytorch.org/whl/cpu",
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-rocm{rocm}",
@@ -59,6 +63,8 @@ find-links = [
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
+# pydantic 1.10 breaks on Python 3.12.4+ (ForwardRef.recursive_guard)
+pydantic = ">=2,<3"
 
 # ─── CPU Backend ──────────────────────────────────────────────────────────────
 
@@ -71,6 +77,7 @@ extra-index-url = [
 [cpu.constraints]
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
+pydantic = ">=2,<3"
 
 # ─── HPU Backend ──────────────────────────────────────────────────────────────
 
@@ -81,6 +88,7 @@ index-url = "https://pypi.org/simple"
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
+pydantic = ">=2,<3"
 
 # ─── XPU Backend ──────────────────────────────────────────────────────────────
 
@@ -95,20 +103,29 @@ extra-index-url = [
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 gymnax = ">=0.0.8"
+pydantic = ">=2,<3"
 
 # ─── Compatibility Matrix ─────────────────────────────────────────────────────
 # Keys: comma-separated conditions of the form "pkg_or_var specifier"
-#   - Evaluated against known variables (torch, cuda, rocm) and their versions
+#   - Evaluated against torch + the *active* backend version only
+#     (pin/install for rocm sees rocm, not cuda defaults from [vars], and vice versa)
 #   - Multiple conditions are AND-ed together
 # Values: version constraint applied to the package (the table name)
 # First matching rule wins (checked top-to-bottom).
 
+# Upstream matrix: https://github.com/pytorch/ao/issues/2919
+#   0.16 ↔ torch 2.10 | 0.17 ↔ torch 2.11 | 0.18 ↔ torch 2.12
+# Allow 0.17 on torch 2.12 for now (stable rocm index has no 0.18 yet).
 [compat.torchao]
 "torch>=2.12" = "<0.19"
-"torch>=2.11,torch<2.12" = "<0.18"
-"torch>=2.10,torch<2.11" = "<0.17"
+"torch>=2.11,torch<2.12" = ">=0.17,<0.18"
+"torch>=2.10,torch<2.11" = ">=0.16,<0.17"
 
 [compat.torchcodec]
+# No ROCm torchcodec wheel; PyPI's untagged Linux wheel is CUDA (libnvrtc).
+# Force the CPU/FFmpeg build from download.pytorch.org/whl/cpu.
+"rocm>=0,torch>=2.11" = "==0.15.0+cpu"
+"rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
 "torch>=2.10,torch<2.11" = "<0.12"
 
 [compat.mslk]
@@ -125,7 +142,16 @@ gymnax = ">=0.0.8"
 # {vllm_local} is "" when cuda == [vllm.untagged_cuda] for that release, else +cu{cuda}.
 
 [compat.vllm]
+# ROCm: milabench find-links ships +rocm{rocm} (not wheels.vllm.ai / +cuXXX).
+# torch 2.12 + rocm7.2 → vllm-0.18.1+rocm7.2 on the milabench wheel release.
+"rocm>=0,torch>=2.12,torch<2.13" = "==0.18.1+rocm{rocm}"
+"rocm>=0" = "=={vllm}+rocm{rocm}"
 "torch>=2.10" = "=={vllm}{vllm_local}"
+
+# PyG 2.7+ requires pyg-lib for radius_graph; no ROCm pyg-lib wheel.
+# Keep 2.6.x which routes radius_graph through torch-cluster (shipped for ROCm).
+[compat.torch-geometric]
+"rocm>=0" = ">=2.6,<2.7"
 
 [vllm.torch]
 # vllm → required torch

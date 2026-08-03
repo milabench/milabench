@@ -383,11 +383,11 @@ def main(args: Arguments = None):
     train_vjit = jax.jit(jax.vmap(make_train(config), in_axes=(0,)))
     compiled_fn = train_vjit.lower(rngs).compile()
 
-    from benchmate.monitor import bench_monitor
     from benchmate.profiler import jax_profiler
-    with bench_monitor():
-        with jax_profiler():
-            outs = jax.block_until_ready(compiled_fn(rngs))
+    # GPU polling comes from voirfile_monitor; bench_monitor() smuggles OSC
+    # sequences on stdout that show up as garbage when use_stdout is off.
+    with jax_profiler():
+        outs = jax.block_until_ready(compiled_fn(rngs))
 
 
 if __name__ == "__main__":

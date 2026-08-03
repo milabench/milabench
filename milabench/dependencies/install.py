@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .platforms import PlatformConfig
-from .pin import _build_constraints_content, get_constraint_file
+from .pin import _build_constraints_content, _build_index_args, get_constraint_file
 from .requirements import resolve_benchmark
 
 
@@ -54,21 +54,7 @@ def get_index_args(
     Returns:
         List of --index-url, --extra-index-url, --find-links arguments.
     """
-    backend_config = platform_config.get_backend(backend)
-    variables = platform_config.resolve_vars(overrides)
-    args = []
-
-    idx = backend_config.indexes
-    if idx.index_url:
-        args.extend(["--index-url", idx.index_url.format(**variables)])
-
-    for url in idx.extra_index_url:
-        args.extend(["--extra-index-url", url.format(**variables)])
-
-    for url in idx.find_links:
-        args.extend(["--find-links", url.format(**variables)])
-
-    return args
+    return _build_index_args(platform_config, backend, overrides)
 
 
 def install_args(

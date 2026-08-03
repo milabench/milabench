@@ -1,0 +1,619 @@
+bert-fp16:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 7816 MiB, perf: 284.36, time: 1785703082, torchmem: 5139
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 10396 MiB, perf: 533.28, time: 1785706822, torchmem: 8079
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 10396 MiB, perf: 546.38, time: 1785740617, torchmem: 8079
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 14380 MiB, perf: 658.51, time: 1785747251, torchmem: 11030
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 18332 MiB, perf: 761.53, time: 1785713980, torchmem: 14046
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 18332 MiB, perf: 781.3, time: 1785753770, torchmem: 14046
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 22342 MiB, perf: 838.93, time: 1785761160, torchmem: 17028
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 23434 MiB, perf: 842.11, time: 1785721685, torchmem: 19994
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 30398 MiB, perf: 873.87, time: 1785730893, torchmem: 25992
+      MiB}
+bert-fp32:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 9140 MiB, perf: 227.28, time: 1785703048, torchmem: 6342
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 13042 MiB, perf: 263.45, time: 1785706784, torchmem: 10528
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 13042 MiB, perf: 263.39, time: 1785740581, torchmem: 10528
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 16911 MiB, perf: 273.91, time: 1785747215, torchmem: 14876
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 21705 MiB, perf: 280.88, time: 1785713945, torchmem: 19255
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 21705 MiB, perf: 280.44, time: 1785753736, torchmem: 19255
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 26574 MiB, perf: 284.17, time: 1785761126, torchmem: 23580
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 31372 MiB, perf: 284.6, time: 1785721646, torchmem: 27936
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 41042 MiB, perf: 285.62, time: 1785730858, torchmem: 36625
+      MiB}
+bert-tf32:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 9140 MiB, perf: 225.77, time: 1785703117, torchmem: 6342
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 13042 MiB, perf: 262.92, time: 1785706858, torchmem: 10528
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 13042 MiB, perf: 263.61, time: 1785740654, torchmem: 10528
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 16911 MiB, perf: 272.99, time: 1785747289, torchmem: 14876
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 21705 MiB, perf: 280.16, time: 1785714020, torchmem: 19255
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 21705 MiB, perf: 281.82, time: 1785753810, torchmem: 19255
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 26574 MiB, perf: 283.22, time: 1785761202, torchmem: 23580
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 31372 MiB, perf: 286.73, time: 1785721726, torchmem: 27936
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 41042 MiB, perf: 285.5, time: 1785730939, torchmem: 36625
+      MiB}
+bert-tf32-fp16:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 7816 MiB, perf: 260.8, time: 1785703152, torchmem: 5139
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 10396 MiB, perf: 574.47, time: 1785706892, torchmem: 8079
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 10396 MiB, perf: 559.54, time: 1785740690, torchmem: 8079
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 14380 MiB, perf: 658.54, time: 1785747323, torchmem: 11030
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 18332 MiB, perf: 752.31, time: 1785714054, torchmem: 14046
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 18332 MiB, perf: 765.39, time: 1785753844, torchmem: 14046
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 22342 MiB, perf: 839.44, time: 1785761239, torchmem: 17028
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 23434 MiB, perf: 843.14, time: 1785721762, torchmem: 19994
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 30398 MiB, perf: 871.83, time: 1785730975, torchmem: 25992
+      MiB}
+convnext_large-fp16:
+  observations:
+  - {batch_size: 32, cpu: 8, memory: 10489 MiB, perf: 366.37, time: 1785702881, torchmem: 7590
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 26577 MiB, perf: 478.95, time: 1785706576, torchmem: 13430
+      MiB}
+  - {batch_size: 112, cpu: 8, memory: 34291 MiB, perf: 419.63, time: 1785740323, torchmem: 22135
+      MiB}
+  - {batch_size: 120, cpu: 8, memory: 35499 MiB, perf: 417.59, time: 1785746934, torchmem: 23614
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 53223 MiB, perf: 499.92, time: 1785713763, torchmem: 25141
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 51891 MiB, perf: 499.03, time: 1785753557, torchmem: 25141
+      MiB}
+  - {batch_size: 136, cpu: 8, memory: 42655 MiB, perf: 419.66, time: 1785760801, torchmem: 26516
+      MiB}
+  - {batch_size: 192, cpu: 8, memory: 51449 MiB, perf: 506.58, time: 1785721254, torchmem: 36721
+      MiB}
+  - {batch_size: 256, cpu: 8, memory: 62633 MiB, perf: 507.62, time: 1785730367, torchmem: 48428
+      MiB}
+convnext_large-fp32:
+  observations:
+  - {batch_size: 32, cpu: 8, memory: 15087 MiB, perf: 245.31, time: 1785702845, torchmem: 11992
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 43222 MiB, perf: 279.96, time: 1785706541, torchmem: 22609
+      MiB}
+  - {batch_size: 112, cpu: 8, memory: 74786 MiB, perf: 260.36, time: 1785740281, torchmem: 38467
+      MiB}
+  - {batch_size: 120, cpu: 8, memory: 80102 MiB, perf: 262.07, time: 1785746893, torchmem: 41084
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 82712 MiB, perf: 285.87, time: 1785713721, torchmem: 43769
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 72128 MiB, perf: 291.99, time: 1785753515, torchmem: 43769
+      MiB}
+  - {batch_size: 136, cpu: 8, memory: 87474 MiB, perf: 257.78, time: 1785760759, torchmem: 46355
+      MiB}
+  - {batch_size: 192, cpu: 8, memory: 81172 MiB, perf: 287.84, time: 1785721209, torchmem: 65050
+      MiB}
+  - {batch_size: 256, cpu: 8, memory: 100289 MiB, perf: 285.58, time: 1785730310,
+    torchmem: 86395 MiB}
+convnext_large-tf32:
+  observations:
+  - {batch_size: 32, cpu: 8, memory: 22399 MiB, perf: 243.48, time: 1785702918, torchmem: 11992
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 38486 MiB, perf: 277.53, time: 1785706616, torchmem: 22609
+      MiB}
+  - {batch_size: 112, cpu: 8, memory: 74786 MiB, perf: 258.52, time: 1785740368, torchmem: 38467
+      MiB}
+  - {batch_size: 120, cpu: 8, memory: 78170 MiB, perf: 260.97, time: 1785746981, torchmem: 41084
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 80654 MiB, perf: 286.3, time: 1785713811, torchmem: 43769
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 85434 MiB, perf: 288.86, time: 1785753604, torchmem: 43769
+      MiB}
+  - {batch_size: 136, cpu: 8, memory: 87474 MiB, perf: 260.59, time: 1785760850, torchmem: 46355
+      MiB}
+  - {batch_size: 192, cpu: 8, memory: 86280 MiB, perf: 287.69, time: 1785721309, torchmem: 65050
+      MiB}
+  - {batch_size: 256, cpu: 8, memory: 93206 MiB, perf: 286.56, time: 1785730431, torchmem: 86395
+      MiB}
+convnext_large-tf32-fp16:
+  observations:
+  - {batch_size: 32, cpu: 8, memory: 11357 MiB, perf: 365.39, time: 1785702955, torchmem: 7590
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 25175 MiB, perf: 483.31, time: 1785706654, torchmem: 13430
+      MiB}
+  - {batch_size: 112, cpu: 8, memory: 30005 MiB, perf: 420.75, time: 1785740411, torchmem: 22135
+      MiB}
+  - {batch_size: 120, cpu: 8, memory: 43481 MiB, perf: 418.76, time: 1785747022, torchmem: 23614
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 50115 MiB, perf: 503.08, time: 1785713852, torchmem: 25141
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 52483 MiB, perf: 501.62, time: 1785753645, torchmem: 25141
+      MiB}
+  - {batch_size: 136, cpu: 8, memory: 50479 MiB, perf: 419.49, time: 1785760893, torchmem: 26516
+      MiB}
+  - {batch_size: 192, cpu: 8, memory: 75757 MiB, perf: 510.49, time: 1785721353, torchmem: 36721
+      MiB}
+  - {batch_size: 256, cpu: 8, memory: 93623 MiB, perf: 505.84, time: 1785730481, torchmem: 48428
+      MiB}
+diffusion-gpus:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 36798 MiB, perf: 321.77, time: 1785703722, torchmem: 25563
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 44457 MiB, perf: 471.6, time: 1785708149, torchmem: 35167
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 46951 MiB, perf: 476.95, time: 1785741382, torchmem: 35167
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 54999 MiB, perf: 493.12, time: 1785748129, torchmem: 44791
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 73208 MiB, perf: 507.36, time: 1785714993, torchmem: 54394
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 72269 MiB, perf: 553.01, time: 1785754780, torchmem: 54394
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 75887 MiB, perf: 574.65, time: 1785762188, torchmem: 64011
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 85797 MiB, perf: 544.33, time: 1785723470, torchmem: 73625
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 107257 MiB, perf: 592.29, time: 1785732791, torchmem: 92858
+      MiB}
+diffusion-single:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 26203 MiB, perf: 52.28, time: 1785703663, torchmem: 22253
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 36788 MiB, perf: 68.18, time: 1785708087, torchmem: 31865
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 47259 MiB, perf: 67.96, time: 1785741318, torchmem: 31864
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 47419 MiB, perf: 75.56, time: 1785748056, torchmem: 41491
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 78082 MiB, perf: 77.95, time: 1785714912, torchmem: 51097
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 78234 MiB, perf: 75.97, time: 1785754704, torchmem: 51097
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 68764 MiB, perf: 78.7, time: 1785762106, torchmem: 60698
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 79763 MiB, perf: 82.25, time: 1785723379, torchmem: 70316
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 99828 MiB, perf: 85.13, time: 1785732687, torchmem: 89565
+      MiB}
+lightning:
+  observations:
+  - {batch_size: 64, cpu: 8, memory: 10975 MiB, perf: 883.47, time: 1785703780, torchmem: 6733
+      MiB}
+  - {batch_size: 248, cpu: 8, memory: 31771 MiB, perf: 1826.41, time: 1785748202,
+    torchmem: 22557 MiB}
+  - {batch_size: 256, cpu: 8, memory: 33180 MiB, perf: 2105.23, time: 1785754853,
+    torchmem: 23250 MiB}
+  - {batch_size: 264, cpu: 8, memory: 33582 MiB, perf: 1994.19, time: 1785762261,
+    torchmem: 24029 MiB}
+lightning-gpus:
+  observations:
+  - {batch_size: 64, cpu: 8, memory: 15710 MiB, perf: 3661.25, time: 1785703854, torchmem: 7194
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 21795 MiB, perf: 6924.16, time: 1785708291,
+    torchmem: 12525 MiB}
+  - {batch_size: 240, cpu: 8, memory: 32570 MiB, perf: 11367.97, time: 1785741555,
+    torchmem: 22103 MiB}
+  - {batch_size: 248, cpu: 8, memory: 33668 MiB, perf: 11568.77, time: 1785748295,
+    torchmem: 22791 MiB}
+  - {batch_size: 256, cpu: 8, memory: 34238 MiB, perf: 11905.14, time: 1785715161,
+    torchmem: 23700 MiB}
+  - {batch_size: 256, cpu: 8, memory: 34236 MiB, perf: 12177.09, time: 1785754950,
+    torchmem: 23700 MiB}
+  - {batch_size: 264, cpu: 8, memory: 35468 MiB, perf: 12574.22, time: 1785762356,
+    torchmem: 24259 MiB}
+  - {batch_size: 384, cpu: 8, memory: 49883 MiB, perf: 13939.62, time: 1785723652,
+    torchmem: 34529 MiB}
+  - {batch_size: 512, cpu: 8, memory: 69251 MiB, perf: 14475.39, time: 1785733029,
+    torchmem: 45761 MiB}
+llava-single:
+  observations:
+  - {batch_size: 1, cpu: 4, memory: 74260 MiB, perf: 4.66, time: 1785705460, torchmem: 67886
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.72, time: 1785709988, torchmem: 67898
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.68, time: 1785717234, torchmem: 67898
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.7, time: 1785726044, torchmem: 67898
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.69, time: 1785743175, torchmem: 67898
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.82, time: 1785749858, torchmem: 67898
+      MiB}
+  - {batch_size: 1, cpu: 4, memory: 73757 MiB, perf: 4.71, time: 1785756925, torchmem: 67898
+      MiB}
+  - {batch_size: 2, cpu: 4, memory: 73677 MiB, perf: 4.74, time: 1785735776, torchmem: 67874
+      MiB}
+  - {batch_size: 9, cpu: 4, memory: 73811 MiB, perf: 4.77, time: 1785764967, torchmem: 67889
+      MiB}
+llm-chat-completion:
+  observations:
+  - {batch_size: 1, cpu: 0, memory: 17661 MiB, perf: 153.34, time: 1785706116, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 148.64, time: 1785713165, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 149.85, time: 1785720423, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 145.52, time: 1785729412, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 150.88, time: 1785746221, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 149.0, time: 1785752979, torchmem: 15492
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17644 MiB, perf: 149.72, time: 1785760086, torchmem: 15492
+      MiB}
+  - {batch_size: 2, cpu: 0, memory: 17708 MiB, perf: 156.12, time: 1785739620, torchmem: 15521
+      MiB}
+llm-lora-ddp-gpus:
+  observations:
+  - {batch_size: 1, cpu: 0, memory: 17718 MiB, perf: 4939.3, time: 1785741945, torchmem: 6996
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 17717 MiB, perf: 4918.71, time: 1785748683, torchmem: 6996
+      MiB}
+  - {batch_size: 2, cpu: 0, memory: 18079 MiB, perf: 12217.31, time: 1785704273, torchmem: 7000
+      MiB}
+  - {batch_size: 4, cpu: 0, memory: 19853 MiB, perf: 24456.57, time: 1785708817, torchmem: 7009
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 26219 MiB, perf: 38724.91, time: 1785715992, torchmem: 13154
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 26219 MiB, perf: 39482.62, time: 1785755756, torchmem: 13154
+      MiB}
+  - {batch_size: 12, cpu: 0, memory: 30980 MiB, perf: 49643.68, time: 1785724794,
+    torchmem: 17654 MiB}
+  - {batch_size: 16, cpu: 0, memory: 36002 MiB, perf: 57557.4, time: 1785734421, torchmem: 22155
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 36002 MiB, perf: 58025.62, time: 1785763741,
+    torchmem: 22155 MiB}
+llm-lora-mp-gpus:
+  observations:
+  - {batch_size: 1, cpu: 0, memory: 39663 MiB, perf: 617.64, time: 1785742079, torchmem: 28472
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 39668 MiB, perf: 669.17, time: 1785748803, torchmem: 28472
+      MiB}
+  - {batch_size: 2, cpu: 0, memory: 40642 MiB, perf: 1415.65, time: 1785704416, torchmem: 28479
+      MiB}
+  - {batch_size: 4, cpu: 0, memory: 42572 MiB, perf: 2861.28, time: 1785708977, torchmem: 28491
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 46670 MiB, perf: 4963.52, time: 1785716157, torchmem: 30005
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 46663 MiB, perf: 5154.93, time: 1785755926, torchmem: 30005
+      MiB}
+  - {batch_size: 12, cpu: 0, memory: 50966 MiB, perf: 5839.36, time: 1785724996, torchmem: 32672
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 60191 MiB, perf: 5953.48, time: 1785734675, torchmem: 37203
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 60198 MiB, perf: 6930.57, time: 1785763974, torchmem: 37203
+      MiB}
+llm-lora-single:
+  observations:
+  - {batch_size: 1, cpu: 0, memory: 147847 MiB, perf: 448.0, time: 1785741825, torchmem: 16263
+      MiB}
+  - {batch_size: 1, cpu: 0, memory: 147847 MiB, perf: 439.03, time: 1785748561, torchmem: 16263
+      MiB}
+  - {batch_size: 2, cpu: 0, memory: 152999 MiB, perf: 953.28, time: 1785704147, torchmem: 16887
+      MiB}
+  - {batch_size: 4, cpu: 0, memory: 162567 MiB, perf: 1500.02, time: 1785708669, torchmem: 18074
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 182535 MiB, perf: 1730.69, time: 1785715795, torchmem: 20502
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 182535 MiB, perf: 1756.72, time: 1785755560, torchmem: 20502
+      MiB}
+  - {batch_size: 12, cpu: 0, memory: 203047 MiB, perf: 1767.6, time: 1785724522, torchmem: 22912
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 223719 MiB, perf: 1809.76, time: 1785734141,
+    torchmem: 25322 MiB}
+  - {batch_size: 16, cpu: 0, memory: 223719 MiB, perf: 1802.45, time: 1785763463,
+    torchmem: 25322 MiB}
+pna:
+  observations:
+  - {batch_size: 1024, cpu: 0, memory: 11838 MiB, perf: 5878.37, time: 1785705298,
+    torchmem: 6712 MiB}
+  - {batch_size: 2048, cpu: 0, memory: 20968 MiB, perf: 9100.63, time: 1785709826,
+    torchmem: 13155 MiB}
+  - {batch_size: 4080, cpu: 0, memory: 40108 MiB, perf: 11256.96, time: 1785742997,
+    torchmem: 25835 MiB}
+  - {batch_size: 4088, cpu: 0, memory: 40108 MiB, perf: 11227.46, time: 1785749683,
+    torchmem: 25956 MiB}
+  - {batch_size: 4096, cpu: 0, memory: 40098 MiB, perf: 10932.54, time: 1785717057,
+    torchmem: 26021 MiB}
+  - {batch_size: 4096, cpu: 0, memory: 40100 MiB, perf: 11112.74, time: 1785756753,
+    torchmem: 25997 MiB}
+  - {batch_size: 4104, cpu: 0, memory: 40104 MiB, perf: 11244.42, time: 1785764789,
+    torchmem: 26026 MiB}
+  - {batch_size: 6144, cpu: 0, memory: 60802 MiB, perf: 11395.86, time: 1785725860,
+    torchmem: 38849 MiB}
+  - {batch_size: 8192, cpu: 0, memory: 78798 MiB, perf: 12666.34, time: 1785735598,
+    torchmem: 51884 MiB}
+recursiongfn:
+  observations:
+  - {batch_size: 32, cpu: 8, memory: 4558 MiB, perf: 6145.36, time: 1785705405, torchmem: 1193
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 7620 MiB, perf: 13887.47, time: 1785709935, torchmem: 2056
+      MiB}
+  - {batch_size: 112, cpu: 8, memory: 9792 MiB, perf: 17948.98, time: 1785743119,
+    torchmem: 3350 MiB}
+  - {batch_size: 120, cpu: 8, memory: 13088 MiB, perf: 21573.91, time: 1785749804,
+    torchmem: 3580 MiB}
+  - {batch_size: 128, cpu: 8, memory: 22442 MiB, perf: 19457.62, time: 1785717177,
+    torchmem: 3734 MiB}
+  - {batch_size: 128, cpu: 8, memory: 15772 MiB, perf: 18694.58, time: 1785756872,
+    torchmem: 3782 MiB}
+  - {batch_size: 136, cpu: 8, memory: 17290 MiB, perf: 22508.95, time: 1785764911,
+    torchmem: 4140 MiB}
+  - {batch_size: 192, cpu: 8, memory: 37264 MiB, perf: 25806.19, time: 1785725990,
+    torchmem: 5490 MiB}
+  - {batch_size: 256, cpu: 8, memory: 21762 MiB, perf: 22554.66, time: 1785735723,
+    torchmem: 6282 MiB}
+reformer:
+  observations:
+  - {batch_size: 8, cpu: 8, memory: 6249 MiB, perf: 137.56, time: 1785703224, torchmem: 2853
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 9209 MiB, perf: 166.63, time: 1785706970, torchmem: 5461
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 9209 MiB, perf: 167.11, time: 1785740763, torchmem: 5461
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 12131 MiB, perf: 182.8, time: 1785747402, torchmem: 8070
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 14349 MiB, perf: 185.43, time: 1785714136, torchmem: 10680
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 14349 MiB, perf: 186.45, time: 1785753925, torchmem: 10680
+      MiB}
+  - {batch_size: 40, cpu: 8, memory: 16375 MiB, perf: 187.1, time: 1785761324, torchmem: 13289
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 19167 MiB, perf: 187.05, time: 1785721850, torchmem: 15899
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 24751 MiB, perf: 188.25, time: 1785731072, torchmem: 21117
+      MiB}
+regnet_y_128gf:
+  observations:
+  - {batch_size: 16, cpu: 8, memory: 13937 MiB, perf: 175.33, time: 1785703014, torchmem: 9331
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 17943 MiB, perf: 240.56, time: 1785706748, torchmem: 14115
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 23448 MiB, perf: 236.83, time: 1785740545, torchmem: 19042
+      MiB}
+  - {batch_size: 56, cpu: 8, memory: 25717 MiB, perf: 245.02, time: 1785747178, torchmem: 21496
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 31038 MiB, perf: 238.48, time: 1785713906, torchmem: 24037
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 31038 MiB, perf: 240.35, time: 1785753698, torchmem: 24037
+      MiB}
+  - {batch_size: 72, cpu: 8, memory: 31261 MiB, perf: 264.16, time: 1785761084, torchmem: 26420
+      MiB}
+  - {batch_size: 96, cpu: 8, memory: 39989 MiB, perf: 277.94, time: 1785721605, torchmem: 33798
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 50901 MiB, perf: 285.39, time: 1785730812, torchmem: 43624
+      MiB}
+resnet152-ddp-gpus:
+  observations:
+  - {batch_size: 64, cpu: 8, memory: 14760 MiB, perf: 3827.3, time: 1785702807, torchmem: 0
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 21110 MiB, perf: 7894.32, time: 1785706502,
+    torchmem: 0 MiB}
+  - {batch_size: 240, cpu: 8, memory: 31940 MiB, perf: 11177.03, time: 1785740235,
+    torchmem: 0 MiB}
+  - {batch_size: 248, cpu: 8, memory: 32781 MiB, perf: 11525.03, time: 1785746846,
+    torchmem: 0 MiB}
+  - {batch_size: 256, cpu: 8, memory: 33213 MiB, perf: 11790.09, time: 1785713672,
+    torchmem: 0 MiB}
+  - {batch_size: 256, cpu: 8, memory: 33214 MiB, perf: 12657.85, time: 1785753469,
+    torchmem: 0 MiB}
+  - {batch_size: 264, cpu: 8, memory: 34320 MiB, perf: 12950.01, time: 1785760710,
+    torchmem: 0 MiB}
+  - {batch_size: 384, cpu: 8, memory: 45632 MiB, perf: 14847.19, time: 1785721152,
+    torchmem: 0 MiB}
+  - {batch_size: 512, cpu: 8, memory: 57772 MiB, perf: 15545.1, time: 1785730239,
+    torchmem: 0 MiB}
+resnet50:
+  observations:
+  - {batch_size: 64, cpu: 8, memory: 5695 MiB, perf: 1794.95, time: 1785702675, torchmem: 3071
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 9001 MiB, perf: 2363.73, time: 1785706338, torchmem: 5786
+      MiB}
+  - {batch_size: 240, cpu: 8, memory: 15093 MiB, perf: 2824.37, time: 1785740000,
+    torchmem: 10513 MiB}
+  - {batch_size: 248, cpu: 8, memory: 15461 MiB, perf: 2818.53, time: 1785746606,
+    torchmem: 10852 MiB}
+  - {batch_size: 256, cpu: 8, memory: 17320 MiB, perf: 3072.26, time: 1785713538,
+    torchmem: 11192 MiB}
+  - {batch_size: 256, cpu: 8, memory: 16786 MiB, perf: 3029.55, time: 1785753335,
+    torchmem: 11192 MiB}
+  - {batch_size: 264, cpu: 8, memory: 16259 MiB, perf: 2953.04, time: 1785760465,
+    torchmem: 11543 MiB}
+  - {batch_size: 384, cpu: 8, memory: 22343 MiB, perf: 3089.09, time: 1785720833,
+    torchmem: 16618 MiB}
+  - {batch_size: 512, cpu: 8, memory: 30450 MiB, perf: 3189.85, time: 1785729841,
+    torchmem: 22021 MiB}
+resnet50-noio:
+  observations:
+  - {batch_size: 64, cpu: 8, memory: 8445 MiB, perf: 1847.96, time: 1785702728, torchmem: 6596
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 15241 MiB, perf: 3309.39, time: 1785706412,
+    torchmem: 13020 MiB}
+  - {batch_size: 240, cpu: 8, memory: 28222 MiB, perf: 3454.57, time: 1785740120,
+    torchmem: 24239 MiB}
+  - {batch_size: 248, cpu: 8, memory: 28313 MiB, perf: 3426.88, time: 1785746731,
+    torchmem: 25065 MiB}
+  - {batch_size: 256, cpu: 8, memory: 28098 MiB, perf: 3742.64, time: 1785713603,
+    torchmem: 25844 MiB}
+  - {batch_size: 256, cpu: 8, memory: 29423 MiB, perf: 3761.87, time: 1785753399,
+    torchmem: 25844 MiB}
+  - {batch_size: 264, cpu: 8, memory: 29999 MiB, perf: 3748.89, time: 1785760594,
+    torchmem: 26668 MiB}
+  - {batch_size: 384, cpu: 8, memory: 42979 MiB, perf: 3843.58, time: 1785721012,
+    torchmem: 38682 MiB}
+  - {batch_size: 512, cpu: 8, memory: 56755 MiB, perf: 3922.13, time: 1785730074,
+    torchmem: 51523 MiB}
+rlhf-gpus:
+  observations:
+  - {batch_size: 32, cpu: 0, memory: 39985 MiB, perf: 2447.98, time: 1785710623, torchmem: 31160
+      MiB}
+  - {batch_size: 48, cpu: 0, memory: 46966 MiB, perf: 3896.87, time: 1785743704, torchmem: 37367
+      MiB}
+  - {batch_size: 56, cpu: 0, memory: 50627 MiB, perf: 4175.67, time: 1785750405, torchmem: 40487
+      MiB}
+  - {batch_size: 64, cpu: 0, memory: 54055 MiB, perf: 4486.63, time: 1785717787, torchmem: 43654
+      MiB}
+  - {batch_size: 64, cpu: 0, memory: 53218 MiB, perf: 4480.38, time: 1785757474, torchmem: 43654
+      MiB}
+  - {batch_size: 72, cpu: 0, memory: 57093 MiB, perf: 5118.56, time: 1785765558, torchmem: 47575
+      MiB}
+  - {batch_size: 96, cpu: 0, memory: 68545 MiB, perf: 6112.02, time: 1785726638, torchmem: 56915
+      MiB}
+  - {batch_size: 128, cpu: 0, memory: 80445 MiB, perf: 7675.87, time: 1785736476,
+    torchmem: 68809 MiB}
+rlhf-single:
+  observations:
+  - {batch_size: 32, cpu: 0, memory: 53280 MiB, perf: 1244.96, time: 1785710143, torchmem: 27620
+      MiB}
+  - {batch_size: 48, cpu: 0, memory: 128370 MiB, perf: 1507.93, time: 1785743376,
+    torchmem: 34064 MiB}
+  - {batch_size: 56, cpu: 0, memory: 134098 MiB, perf: 1449.76, time: 1785750101,
+    torchmem: 37170 MiB}
+  - {batch_size: 64, cpu: 0, memory: 131963 MiB, perf: 1423.05, time: 1785717502,
+    torchmem: 40411 MiB}
+  - {batch_size: 64, cpu: 0, memory: 141936 MiB, perf: 1417.28, time: 1785757187,
+    torchmem: 40411 MiB}
+  - {batch_size: 72, cpu: 0, memory: 200366 MiB, perf: 1261.14, time: 1785765306,
+    torchmem: 44136 MiB}
+  - {batch_size: 96, cpu: 0, memory: 198135 MiB, perf: 1359.09, time: 1785726417,
+    torchmem: 53388 MiB}
+  - {batch_size: 128, cpu: 0, memory: 219386 MiB, perf: 1340.36, time: 1785736290,
+    torchmem: 65965 MiB}
+t5:
+  observations:
+  - {batch_size: 1, cpu: 8, memory: 4832 MiB, perf: 21.0, time: 1785740725, torchmem: 2999
+      MiB}
+  - {batch_size: 4, cpu: 8, memory: 10740 MiB, perf: 74.58, time: 1785703188, torchmem: 8369
+      MiB}
+  - {batch_size: 8, cpu: 8, memory: 18461 MiB, perf: 131.16, time: 1785706931, torchmem: 15532
+      MiB}
+  - {batch_size: 8, cpu: 8, memory: 18461 MiB, perf: 130.61, time: 1785747359, torchmem: 15532
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 34499 MiB, perf: 178.34, time: 1785714091, torchmem: 29857
+      MiB}
+  - {batch_size: 16, cpu: 8, memory: 34499 MiB, perf: 179.21, time: 1785753882, torchmem: 29857
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 50629 MiB, perf: 191.42, time: 1785721801, torchmem: 44182
+      MiB}
+  - {batch_size: 24, cpu: 8, memory: 50629 MiB, perf: 192.84, time: 1785761278, torchmem: 44182
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 66680 MiB, perf: 201.65, time: 1785731018, torchmem: 58508
+      MiB}
+txt-to-image-single:
+  observations:
+  - {batch_size: 1, cpu: 0, memory: 35325 MiB, perf: 27.65, time: 1785745975, torchmem: 32640
+      MiB}
+  - {batch_size: 4, cpu: 0, memory: 35943 MiB, perf: 56.3, time: 1785705880, torchmem: 33142
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 37626 MiB, perf: 62.57, time: 1785712910, torchmem: 33987
+      MiB}
+  - {batch_size: 8, cpu: 0, memory: 37302 MiB, perf: 62.64, time: 1785752732, torchmem: 33987
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 40918 MiB, perf: 65.63, time: 1785720170, torchmem: 35715
+      MiB}
+  - {batch_size: 16, cpu: 0, memory: 40932 MiB, perf: 65.68, time: 1785759840, torchmem: 35715
+      MiB}
+  - {batch_size: 24, cpu: 0, memory: 49346 MiB, perf: 65.04, time: 1785729164, torchmem: 37542
+      MiB}
+  - {batch_size: 32, cpu: 0, memory: 54609 MiB, perf: 64.44, time: 1785739177, torchmem: 39172
+      MiB}
+version: 2.0
+vjepa-gpus:
+  observations:
+  - {batch_size: 6, cpu: 12, memory: 39116 MiB, perf: 160.96, time: 1785705788, torchmem: 29135
+      MiB}
+  - {batch_size: 8, cpu: 12, memory: 43724 MiB, perf: 200.33, time: 1785743959, torchmem: 32757
+      MiB}
+  - {batch_size: 12, cpu: 12, memory: 54308 MiB, perf: 218.14, time: 1785710898, torchmem: 38561
+      MiB}
+  - {batch_size: 16, cpu: 12, memory: 60382 MiB, perf: 290.17, time: 1785750686, torchmem: 46027
+      MiB}
+  - {batch_size: 24, cpu: 12, memory: 79733 MiB, perf: 310.97, time: 1785718101, torchmem: 57287
+      MiB}
+  - {batch_size: 24, cpu: 12, memory: 79707 MiB, perf: 331.59, time: 1785757788, torchmem: 58065
+      MiB}
+  - {batch_size: 32, cpu: 12, memory: 92429 MiB, perf: 421.06, time: 1785765915, torchmem: 70877
+      MiB}
+  - {batch_size: 36, cpu: 12, memory: 100893 MiB, perf: 310.32, time: 1785727028,
+    torchmem: 74485 MiB}
+  - {batch_size: 48, cpu: 12, memory: 126874 MiB, perf: 409.0, time: 1785736946, torchmem: 94273
+      MiB}
+vjepa-single:
+  observations:
+  - {batch_size: 6, cpu: 12, memory: 31962 MiB, perf: 24.66, time: 1785705654, torchmem: 23818
+      MiB}
+  - {batch_size: 8, cpu: 12, memory: 34246 MiB, perf: 30.26, time: 1785743824, torchmem: 27416
+      MiB}
+  - {batch_size: 12, cpu: 12, memory: 44866 MiB, perf: 34.87, time: 1785710750, torchmem: 35193
+      MiB}
+  - {batch_size: 16, cpu: 12, memory: 54536 MiB, perf: 44.56, time: 1785750534, torchmem: 40824
+      MiB}
+  - {batch_size: 24, cpu: 12, memory: 67878 MiB, perf: 46.57, time: 1785717928, torchmem: 53810
+      MiB}
+  - {batch_size: 24, cpu: 12, memory: 70154 MiB, perf: 47.06, time: 1785757618, torchmem: 54206
+      MiB}
+  - {batch_size: 32, cpu: 12, memory: 84158 MiB, perf: 62.14, time: 1785765706, torchmem: 66503
+      MiB}
+  - {batch_size: 36, cpu: 12, memory: 91896 MiB, perf: 50.13, time: 1785726798, torchmem: 72432
+      MiB}
+  - {batch_size: 48, cpu: 12, memory: 114308 MiB, perf: 62.39, time: 1785736645, torchmem: 91053
+      MiB}
+whisper:
+  observations:
+  - {batch_size: 16, cpu: 8, memory: 4476 MiB, perf: 521.74, time: 1785703257, torchmem: 2262
+      MiB}
+  - {batch_size: 32, cpu: 8, memory: 6534 MiB, perf: 556.0, time: 1785707008, torchmem: 4204
+      MiB}
+  - {batch_size: 48, cpu: 8, memory: 9108 MiB, perf: 1312.23, time: 1785740797, torchmem: 6133
+      MiB}
+  - {batch_size: 56, cpu: 8, memory: 10238 MiB, perf: 1330.63, time: 1785747439, torchmem: 7132
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 11390 MiB, perf: 1351.97, time: 1785714173, torchmem: 8080
+      MiB}
+  - {batch_size: 64, cpu: 8, memory: 11390 MiB, perf: 1345.15, time: 1785753963, torchmem: 8080
+      MiB}
+  - {batch_size: 72, cpu: 8, memory: 12536 MiB, perf: 1352.8, time: 1785761363, torchmem: 9072
+      MiB}
+  - {batch_size: 96, cpu: 8, memory: 15864 MiB, perf: 1393.82, time: 1785721888, torchmem: 11979
+      MiB}
+  - {batch_size: 128, cpu: 8, memory: 28935 MiB, perf: 1455.69, time: 1785731113,
+    torchmem: 15868 MiB}
+whisper-transcribe-single:
+  observations:
+  - {batch_size: 32, cpu: 0, memory: 13946 MiB, perf: 27.47, time: 1785712857, torchmem: 11255
+      MiB}
+  - {batch_size: 48, cpu: 0, memory: 18057 MiB, perf: 32.51, time: 1785745928, torchmem: 15333
+      MiB}
+  - {batch_size: 56, cpu: 0, memory: 20168 MiB, perf: 32.45, time: 1785752676, torchmem: 17412
+      MiB}
+  - {batch_size: 64, cpu: 0, memory: 22300 MiB, perf: 34.43, time: 1785720104, torchmem: 19419
+      MiB}
+  - {batch_size: 64, cpu: 0, memory: 21898 MiB, perf: 35.38, time: 1785759774, torchmem: 19419
+      MiB}
+  - {batch_size: 96, cpu: 0, memory: 30462 MiB, perf: 36.66, time: 1785729076, torchmem: 27638
+      MiB}
+  - {batch_size: 128, cpu: 0, memory: 39812 MiB, perf: 37.97, time: 1785739086, torchmem: 35919
+      MiB}

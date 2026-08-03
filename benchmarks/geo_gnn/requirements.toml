@@ -11,5 +11,15 @@ dependencies = [
     "numpy",
 ]
 
+[cuda]
+dependencies = [
+    # PyG 2.7+ radius_graph needs pyg-lib (CUDA wheels on data.pyg.org)
+    "pyg-lib",
+]
+
+[rocm]
+# No pyg-lib ROCm wheel; platforms.toml pins torch-geometric>=2.6,<2.7
+# so radius_graph uses torch-cluster instead.
+
 [xpu]
 enabled = false
