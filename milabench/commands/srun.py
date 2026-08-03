@@ -107,7 +107,6 @@ class SrunExceptMain(SrunCommand):
             return self.exclude
         return _node_hostlist_token(_main_node(self.pack.config))
 
-
 class ForeachSrun(ListCommand):
     """Run *executor* on the main node locally; dispatch the rest via srun.
 
@@ -162,9 +161,9 @@ class ForeachSrun(ListCommand):
 class TorchrunSrun(ForeachSrun):
     """torchrun on main locally; same torchrun argv on workers via one srun.
 
-    No per-worker ``--node-rank`` / ``--local-addr`` — Slurm supplies node
-    identity (``SLURM_NODEID``). Use a rendezvous backend that tolerates that,
-    or have the launched command read the env itself.
+    Main gets an explicit ``--node-rank=0``. Workers omit ``--node-rank``;
+    ``benchrun`` fills it from ``SLURM_NODEID + 1`` under static rendezvous
+    (worker srun uses ``-x main``, so step-local ids are 0..N-2).
     """
 
     def __init__(self, executor: Command, *args, **kwargs) -> None:
@@ -175,3 +174,8 @@ class TorchrunSrun(ForeachSrun):
             **kwargs,
         )
         super().__init__(base_exec)
+
+    def main_executor(self) -> Command:
+        main = deepcopy(self.executor)
+        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
+        return main
