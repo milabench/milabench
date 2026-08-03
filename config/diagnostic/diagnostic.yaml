@@ -5,7 +5,7 @@ include:
 # Main keeps metrics locally; workers are nolog via TorchrunSrun.
 _torchsrun:
   inherits: _defaults
-  definition: ../benchmarks/torchsrun
+  definition: ../../benchmarks/torchsrun
   install_group: torch
   weight: 0.0
   tags:

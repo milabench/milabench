@@ -39,16 +39,89 @@ narval:
         - name: A100
           ram: 40
           count: 4
+    
 
-roqual:
-  ssh: roqual
-  account: rrg-bengioy-ad
+tamia:
+  ssh: tamia.alliancecan.ca
+  nodes: 
+    - name: perf
+      gpu:
+        - name: H200
+          ram: 141
+          count: 8
+    - name: standard
+      gpu:
+        - name: H100
+          ram: 80
+          count: 4
 
+
+killarney:
+  ssh: killarney.alliancecan.ca
+  nodes: 
+    - name: perf
+      gpu:
+        - name: H100
+          ram: 80
+          count: 8
+    - name: standard
+      gpu:
+        - name: L40S
+          ram: 48
+          count: 4
+
+
+vulcan:
+  ssh: vulcan.alliancecan.ca
+  nodes:
+    - name: base
+      gpu:
+        - name: L40S
+          ram: 48
+          count: 4
 
 fir:
   ssh: fir
   account: rrg-bengioy-ad
-
+  internet: yes
+  nodes: 
+    - name: base
+      gpu:
+        - name: H100
+          ram: 80
+          count: 4
+  
 nibi:
   ssh: nibi
   account: rrg-bengioy-ad
+  internet: yes
+  nodes: 
+    - name: base
+      gpu:
+        - name: H100
+          ram: 80
+          count: 8
+  
+rorqual:
+  ssh: roqual
+  account: rrg-bengioy-ad
+  internet: no
+  nodes: 
+    - name: base
+      gpu:
+        - name: H100
+          ram: 80
+          count: 4
+
+trillium:
+  ssh: trillium.alliancecan.ca
+  ssh-gpu: trillium-gpu.alliancecan.ca
+
+  account: rrg-bengioy-ad
+  internet: no
+  nodes: 
+    - name: base
+      gpu:
+        - name: H100
+          ram: 80
+          count: 4
