@@ -34,7 +34,12 @@ class SrunLogEntry(LogEntry):
 
 
 def _exec_native_srun() -> None:
-    """Replace this process with the system ``srun`` and the original CLI args."""
+    """Replace this process with the system ``srun`` and the original CLI args.
+
+    When ``-x``/``--exclude`` removes nodes from a Slurm allocation, also shrink
+    ``--nodes``/``--ntasks`` so srun does not still request the full job size
+    (``Only allocated N-1 nodes asked for N``).
+    """
     srun = shutil.which("srun")
     if srun is None:
         return
@@ -44,7 +49,50 @@ def _exec_native_srun() -> None:
     except ValueError:
         return
 
-    os.execvp(srun, [srun, *sys.argv[idx + 1 :]])
+    args = list(sys.argv[idx + 1 :])
+    args = _shrink_srun_allocation_for_exclude(args)
+    os.execvp(srun, [srun, *args])
+
+
+def _has_srun_nodes_override(args: list[str]) -> bool:
+    for arg in args:
+        if arg in ("-N", "--nodes", "-n", "--ntasks") or arg.startswith(("--nodes=", "--ntasks=")):
+            return True
+    return False
+
+
+def _exclude_host_count(args: list[str]) -> int:
+    for flag in ("-x", "--exclude"):
+        if flag not in args:
+            continue
+        i = args.index(flag)
+        if i + 1 >= len(args) or args[i + 1].startswith("-"):
+            return 1
+        return max(len(expand_node_list(args[i + 1])), 1)
+    return 0
+
+
+def _shrink_srun_allocation_for_exclude(args: list[str]) -> list[str]:
+    """If excluding hosts, request only the remaining nodes from the job."""
+    n_excl = _exclude_host_count(args)
+    if n_excl <= 0 or _has_srun_nodes_override(args):
+        return args
+
+    job_nodes = int(
+        os.environ.get("SLURM_JOB_NUM_NODES")
+        or os.environ.get("SLURM_NNODES")
+        or "0"
+    )
+    if job_nodes <= n_excl:
+        return args
+
+    workers = job_nodes - n_excl
+    return [
+        f"--nodes={workers}",
+        f"--ntasks={workers}",
+        "--ntasks-per-node=1",
+        *args,
+    ]
 
 
 def _parse_hostlist(hostlist: Optional[str]) -> set[str]:
