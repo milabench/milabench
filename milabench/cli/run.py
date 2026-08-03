@@ -36,7 +36,7 @@ def _fetch_arch(mp):
     from milabench.system import system_global
 
     try:
-        arch = system_global.get()["arch"]
+        return system_global.get()["arch"]
     except StopIteration:
         print("no selected bench")
         return None

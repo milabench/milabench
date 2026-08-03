@@ -125,10 +125,12 @@ def cli_slurm_system(args):
         }]
 
     from milabench.network import resolve_addresses
+    from milabench.common import deduce_arch
+
     resolve_addresses(nodes)
 
     system = {
-        "arch": "cuda",
+        "arch": deduce_arch(),
         "nodes": nodes,
     }
 
