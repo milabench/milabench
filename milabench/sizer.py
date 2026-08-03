@@ -118,6 +118,55 @@ def _obs_mib_int(obs, key):
     return int(str(value).split(" ")[0])
 
 
+def _obs_pair_octets(obs):
+    """Return ``(nvml_memory, allocator_memory)`` in octets, or ``None``.
+
+    Allocator memory is ``torchmem`` when present, else ``jaxmem``.
+    """
+    mem = obs.get("memory")
+    alloc = obs.get("torchmem") or obs.get("jaxmem")
+    if not mem or not alloc:
+        return None
+    return to_octet(mem), to_octet(alloc)
+
+
+def _fixed_overhead(observations):
+    """Median NVML−allocator gap (octets), or ``None`` if no paired observations."""
+    gaps = []
+    for obs in observations:
+        pair = _obs_pair_octets(obs)
+        if pair is None:
+            continue
+        mem, alloc = pair
+        gaps.append(max(mem - alloc, 0.0))
+    if not gaps:
+        return None
+    return float(np.median(gaps))
+
+
+def _fit_torchmem_vs_batch(observations):
+    """Fit ``allocator ≈ α·batch_size + β``.
+
+    Returns ``(α, β)`` in octets-per-batch / octets, or ``None`` if fewer than
+    two paired points or non-positive slope.
+    """
+    batches = []
+    allocs = []
+    for obs in observations:
+        pair = _obs_pair_octets(obs)
+        if pair is None:
+            continue
+        _, alloc = pair
+        batches.append(float(obs["batch_size"]))
+        allocs.append(alloc)
+    if len(batches) < 2:
+        return None
+    alpha, beta = np.polyfit(batches, allocs, deg=1)
+    if alpha <= 0:
+        return None
+    return float(alpha), float(beta)
+
+
 class Sizer:
     """Automatically scale the batch size to match GPU spec"""
 
@@ -188,33 +237,8 @@ class Sizer:
 
         return capacity
 
-    def auto_size(self, benchmark, capacity):
-        capacity = self.get_capacity(capacity)
-
-        if capacity is None:
-            syslog("Capacity is missing")
-            return None
-
-        config = self.benchscaling(benchmark)
-
-        if config:
-            if "model" in config:
-                mem, size = self._scaling_v1(config)
-            else:
-                mem, size, _ = self._scaling_v2(config)
-        else:
-            return 1
-
-        if len(mem) <= 1:
-            syslog(f"Not enough data for {benchmark.config['name']}")
-            return 1
-        # This does not extrapolate
-        # int(np.interp(capacity, mem, size))
-
-        # Use polynomial of degree 1 so it is essentially linear interpolation
-        model = np.poly1d(np.polyfit(mem, size, deg=1))
-
-        newsize_f = model(capacity)
+    def _finalize_batch_size(self, newsize_f):
+        """Round predicted batch size and apply multiple/power constraints."""
         newsize_i = int(newsize_f)
 
         if newsize_i <= 0:
@@ -233,6 +257,83 @@ class Sizer:
 
         return max(final_size, 1)
 
+    def _auto_size_legacy(self, mem, size, capacity, bench_name):
+        """Single-series fit: ``batch_size ≈ a·mem + b`` (v1 / fallback)."""
+        if len(mem) <= 1:
+            syslog(f"Not enough data for {bench_name}")
+            return 1
+
+        model = np.poly1d(np.polyfit(mem, size, deg=1))
+        newsize_f = model(capacity)
+        final_size = self._finalize_batch_size(newsize_f)
+        syslog(
+            "auto_size legacy path for {}: capacity={} predicted={} final={}",
+            bench_name,
+            capacity,
+            newsize_f,
+            final_size,
+        )
+        return final_size
+
+    def _auto_size_fixed_torchmem(self, observations, capacity, bench_name):
+        """Predict BS from fixed NVML overhead + linear torchmem vs batch.
+
+        ``total(B) = fixed + (α·B + β)``; solve for capacity. Returns ``None``
+        when there is not enough paired data or the slope is non-positive.
+        """
+        fixed = _fixed_overhead(observations)
+        fit = _fit_torchmem_vs_batch(observations)
+        if fixed is None or fit is None:
+            return None
+
+        alpha, beta = fit
+        newsize_f = (capacity - fixed - beta) / alpha
+        final_size = self._finalize_batch_size(newsize_f)
+        syslog(
+            "auto_size fixed+torchmem for {}: fixed={} alpha={} beta={} "
+            "capacity={} predicted={} final={}",
+            bench_name,
+            fixed,
+            alpha,
+            beta,
+            capacity,
+            newsize_f,
+            final_size,
+        )
+        return final_size
+
+    def auto_size(self, benchmark, capacity):
+        capacity = self.get_capacity(capacity)
+
+        if capacity is None:
+            syslog("Capacity is missing")
+            return None
+
+        config = self.benchscaling(benchmark)
+
+        if not config:
+            return 1
+
+        if isinstance(benchmark, str):
+            bench_name = benchmark
+        elif isinstance(benchmark, dict):
+            bench_name = benchmark.get("name", "?")
+        else:
+            bench_name = benchmark.config["name"]
+
+        # v1 scaling maps have no torchmem column — keep legacy fit.
+        if "model" in config:
+            mem, size = self._scaling_v1(config)
+            return self._auto_size_legacy(mem, size, capacity, bench_name)
+
+        observations = config.get("observations", [])
+        result = self._auto_size_fixed_torchmem(observations, capacity, bench_name)
+        if result is not None:
+            return result
+
+        mem, size, _ = self._scaling_v2(config)
+        return self._auto_size_legacy(mem, size, capacity, bench_name)
+
     def optimized(self, benchmark, capacity):
         # Old V1 format
         config = self.benchscaling(benchmark)
@@ -247,16 +348,18 @@ class Sizer:
             syslog("Capacity is missing")
             return None
 
-        # Look for the best batch size, make sure the used memory can fit
-        # in our current GPU
+        # Prefer NVML ``memory`` when present so fit checks match auto_size capacity.
         data = config["observations"]
         data = list(sorted(data, key=lambda x: x["perf"], reverse=True))
 
         for obs in data:
-            used_mem = observation_memory(obs)
+            if obs.get("memory"):
+                used_mem = to_octet(obs["memory"])
+            else:
+                used_mem = observation_memory(obs)
             if used_mem < capacity:
                 return int(obs["batch_size"])
-        
+
         return None
 
     def size(self, benchmark, capacity):

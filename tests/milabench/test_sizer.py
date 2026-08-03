@@ -15,6 +15,9 @@ from milabench.sizer import (
     compact_dump,
     deduplicate_observation,
     to_octet,
+    _fixed_overhead,
+    _fit_torchmem_vs_batch,
+    _obs_pair_octets,
 )
 
 
@@ -430,6 +433,84 @@ class TestCompactDump:
         dumped = yaml.dump(data, Dumper=compact_dump())
         reloaded = yaml.safe_load(dumped)
         assert reloaded == data
+
+
+# ---------------------------------------------------------------------------
+# fixed + torchmem helpers
+# ---------------------------------------------------------------------------
+
+def _pair_obs(batch_size, memory_mib, torchmem_mib, perf=100.0):
+    return {
+        "batch_size": batch_size,
+        "cpu": 8,
+        "memory": f"{memory_mib} MiB",
+        "torchmem": f"{torchmem_mib} MiB",
+        "perf": perf,
+        "time": 0,
+    }
+
+
+class TestObsPairOctets:
+    def test_returns_both(self):
+        pair = _obs_pair_octets(_pair_obs(32, 4000, 2500))
+        assert pair is not None
+        mem, alloc = pair
+        assert mem == to_octet("4000MiB")
+        assert alloc == to_octet("2500MiB")
+
+    def test_missing_torchmem(self):
+        assert _obs_pair_octets({"memory": "1000 MiB", "batch_size": 1}) is None
+
+    def test_jaxmem_fallback(self):
+        obs = {
+            "memory": "3000 MiB",
+            "jaxmem": "2000 MiB",
+            "batch_size": 8,
+        }
+        pair = _obs_pair_octets(obs)
+        assert pair is not None
+        assert pair[1] == to_octet("2000MiB")
+
+
+class TestFixedOverhead:
+    def test_median_gap(self):
+        obs = [
+            _pair_obs(16, 3600, 1600),  # gap 2000
+            _pair_obs(32, 5200, 3200),  # gap 2000
+            _pair_obs(64, 8400, 6400),  # gap 2000
+        ]
+        fixed = _fixed_overhead(obs)
+        assert fixed == pytest.approx(to_octet("2000MiB"))
+
+    def test_clamps_negative_gap(self):
+        obs = [_pair_obs(16, 1000, 1500)]  # torchmem > nvml
+        assert _fixed_overhead(obs) == 0.0
+
+    def test_none_without_pairs(self):
+        assert _fixed_overhead([{"batch_size": 1, "memory": "1000 MiB"}]) is None
+
+
+class TestFitTorchmemVsBatch:
+    def test_linear_through_origin(self):
+        # torchmem = 100 MiB * batch
+        obs = [
+            _pair_obs(16, 3600, 1600),
+            _pair_obs(32, 5200, 3200),
+            _pair_obs(64, 8400, 6400),
+        ]
+        alpha, beta = _fit_torchmem_vs_batch(obs)
+        assert alpha == pytest.approx(to_octet("100MiB"), rel=1e-6)
+        assert beta == pytest.approx(0.0, abs=to_octet("1MiB"))
+
+    def test_none_when_non_positive_slope(self):
+        obs = [
+            _pair_obs(16, 5000, 4000),
+            _pair_obs(32, 4500, 3000),  # torchmem shrinks with batch
+        ]
+        assert _fit_torchmem_vs_batch(obs) is None
+
+    def test_none_with_single_point(self):
+        assert _fit_torchmem_vs_batch([_pair_obs(16, 3600, 1600)]) is None
 
 
 # ---------------------------------------------------------------------------
