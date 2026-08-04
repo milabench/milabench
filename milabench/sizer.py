@@ -24,7 +24,7 @@ default_scaling_config = os.path.join(default_scaling_folder, "default.yaml")
 
 gpu_name_to_file = {
     "AMD Instinct MI325 OAM": "MI325",
-    "AMD Instinct MI355X": "MI355X",
+    "AMD Instinct MI355 OAM": "MI355X",
     "NVIDIA H100 80GB HBM3": "H100",
     "NVIDIA L40S": "L40S"
 }

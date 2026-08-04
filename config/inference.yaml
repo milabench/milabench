@@ -156,6 +156,7 @@ txt-to-image-single:
   
 
 llm-chat-completion:
+  max_duration: 3600
   inherits: _inference
   num_machines: 1
   tags:

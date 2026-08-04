@@ -109,6 +109,7 @@ convnext_large-fp16:
   - {batch_size: 344, cpu: 8, memory: 72341 MiB, perf: 522.54, time: 1785820269, torchmem: 64540 MiB}
   - {batch_size: 672, cpu: 8, memory: 155738 MiB, perf: 524.39, time: 1785850419, torchmem: 124671 MiB}
   - {batch_size: 704, cpu: 8, memory: 167005 MiB, perf: 520.51, time: 1785838301, torchmem: 130516 MiB}
+  - {batch_size: 1496, cpu: 8, memory: 294374 MiB, perf: 526.1, time: 1785861696, torchmem: 275963 MiB}
 convnext_large-fp32:
   observations:
   - {batch_size: 1, cpu: 8, memory: 4374 MiB, perf: 31.41, time: 1785793220, torchmem: 1883 MiB}
@@ -132,6 +133,7 @@ convnext_large-fp32:
   - {batch_size: 256, cpu: 8, memory: 100289 MiB, perf: 285.58, time: 1785730310, torchmem: 86395 MiB}
   - {batch_size: 352, cpu: 8, memory: 147200 MiB, perf: 297.71, time: 1785838169, torchmem: 118269 MiB}
   - {batch_size: 352, cpu: 8, memory: 227812 MiB, perf: 299.5, time: 1785850288, torchmem: 118269 MiB}
+  - {batch_size: 792, cpu: 8, memory: 293746 MiB, perf: 293.8, time: 1785861444, torchmem: 264949 MiB}
 convnext_large-tf32:
   observations:
   - {batch_size: 1, cpu: 8, memory: 4374 MiB, perf: 27.26, time: 1785793293, torchmem: 1883 MiB}
@@ -155,6 +157,7 @@ convnext_large-tf32:
   - {batch_size: 256, cpu: 8, memory: 93206 MiB, perf: 286.56, time: 1785730431, torchmem: 86395 MiB}
   - {batch_size: 344, cpu: 8, memory: 142636 MiB, perf: 295.65, time: 1785838388, torchmem: 115659 MiB}
   - {batch_size: 352, cpu: 8, memory: 233672 MiB, perf: 293.27, time: 1785850497, torchmem: 118269 MiB}
+  - {batch_size: 792, cpu: 8, memory: 287770 MiB, perf: 294.45, time: 1785861827, torchmem: 264945 MiB}
 convnext_large-tf32-fp16:
   observations:
   - {batch_size: 1, cpu: 8, memory: 4601 MiB, perf: 20.01, time: 1785793330, torchmem: 2211 MiB}
@@ -178,6 +181,7 @@ convnext_large-tf32-fp16:
   - {batch_size: 320, cpu: 8, memory: 128815 MiB, perf: 511.15, time: 1785829041, torchmem: 60105 MiB}
   - {batch_size: 640, cpu: 8, memory: 152218 MiB, perf: 539.16, time: 1785850614, torchmem: 118863 MiB}
   - {batch_size: 664, cpu: 8, memory: 152149 MiB, perf: 531.29, time: 1785838512, torchmem: 123228 MiB}
+  - {batch_size: 1464, cpu: 8, memory: 291489 MiB, perf: 494.03, time: 1785862092, torchmem: 270029 MiB}
 diffusion-gpus:
   observations:
   - {batch_size: 1, cpu: 8, memory: 29234 MiB, perf: 41.1, time: 1785793986, torchmem: 20911 MiB}

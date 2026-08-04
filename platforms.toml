@@ -135,15 +135,25 @@ pydantic = ">=2,<3"
 
 # ─── vLLM ─────────────────────────────────────────────────────────────────────
 # Release matrix: PyPI requires_dist (torch), GitHub wheels (+cu / bare),
-#                 https://wheels.vllm.ai/rocm/{vllm}/ (rocmNNN).
+#                 https://wheels.vllm.ai/rocm/{vllm}/{rocmNNN}/.
 # bare wheel (no +cu tag) == untagged_cuda; the other published +cuXXX is the variant.
 # Epoch flip: ≤0.19 bare≈cu129 +cu130 | ≥0.20 bare≈cu130 +cu129
 # [vllm.torch] picks newest release for the active torch (unless --set vllm=...);
 # {vllm_local} is "" when cuda == [vllm.untagged_cuda] for that release, else +cu{cuda}.
+#
+# ROCm (https://vllm.ai/releases install notes + wheels.vllm.ai verification):
+#   Available from v0.14.0+; Python 3.12; glibc ≥ 2.35 (Ubuntu 22.04+).
+#   Docs summary: <0.19 → 7.0.0 | 0.19–0.20 → 7.2.1 | ≥0.21 → 7.2.2
+#   Wheel dirs:   <0.19 → rocm700 | 0.19–0.20 → rocm721 | 0.21–0.22 → rocm722
+#                 ≥0.23 → rocm723 (ROCm 7.2.3; docs omit this).
+#   Companion torch on that index (not PyTorch.org): 2.9.1 (700), 2.10.0 (721/722
+#   and 0.23), 2.11.0 (0.24+). No official wheel targets torch 2.12 / +rocm7.2.
 
 [compat.vllm]
 # ROCm: milabench find-links ships +rocm{rocm} (not wheels.vllm.ai / +cuXXX).
 # torch 2.12 + rocm7.2 → vllm-0.18.1+rocm7.2 on the milabench wheel release.
+# Official wheels.vllm.ai has no torch-2.12 build; closest runtime line is rocm723
+# (vLLM ≥0.23) but requires their torch 2.10/2.11+git stack, not 2.12.1+rocm7.2.
 "rocm>=0,torch>=2.12,torch<2.13" = "==0.18.1+rocm{rocm}"
 "rocm>=0" = "=={vllm}+rocm{rocm}"
 "torch>=2.10" = "=={vllm}{vllm_local}"
@@ -204,21 +214,23 @@ pydantic = ">=2,<3"
 "0.14.0" = "129"
 
 [vllm.rocm]
-# vllm → wheels.vllm.ai/rocm/{vllm}/{rocm}/ variant directory
-"0.26.0" = "rocm723"
+# vllm → wheels.vllm.ai/rocm/{vllm}/{rocm}/ variant directory (one dir per release).
+# Verified 2026-08-04 against the index; aligns with vllm.ai/releases except ≥0.23
+# which is rocm723 (7.2.3), not the docs' blanket “≥0.21 → 7.2.2”.
+"0.26.0" = "rocm723"   # ROCm 7.2.3; torch==2.11.0+gitd0c8b1f
 "0.25.1" = "rocm723"
 "0.25.0" = "rocm723"
-"0.24.0" = "rocm723"
-"0.23.0" = "rocm723"
-"0.22.1" = "rocm722"
+"0.24.0" = "rocm723"   # torch==2.11.0+gitd0c8b1f
+"0.23.0" = "rocm723"   # torch==2.10.0+git8514f05 (still 2.10 on ROCm)
+"0.22.1" = "rocm722"   # ROCm 7.2.2; torch==2.10.0+git8514f05
 "0.22.0" = "rocm722"
 "0.21.0" = "rocm722"
-"0.20.2" = "rocm721"
+"0.20.2" = "rocm721"   # ROCm 7.2.1; torch==2.10.0+git8514f05
 "0.20.1" = "rocm721"
 "0.20.0" = "rocm721"
 "0.19.1" = "rocm721"
 "0.19.0" = "rocm721"
-"0.18.1" = "rocm700"
+"0.18.1" = "rocm700"   # ROCm 7.0.0; torch==2.9.1+git8907517
 "0.18.0" = "rocm700"
 "0.17.1" = "rocm700"
 "0.17.0" = "rocm700"
