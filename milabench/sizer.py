@@ -124,6 +124,11 @@ def _obs_mib_int(obs, key):
     return int(str(value).split(" ")[0])
 
 
+def _fmt_mo(n_octets: float) -> str:
+    """Format an octet count as mebibytes for logs (``1234.5 Mo``)."""
+    return f"{n_octets / (1024 ** 2):.1f} Mo"
+
+
 def _obs_pair_octets(obs):
     """Return ``(nvml_memory, allocator_memory)`` in octets, or ``None``.
 
@@ -192,6 +197,7 @@ class Sizer:
                 config = get_scaling_config()
 
         self.scaling_config = {}
+        self.prev_key = None
         if os.path.exists(config):
             with open(config, "r") as sconf:
                 self.scaling_config = yaml.safe_load(sconf)
@@ -267,6 +273,12 @@ class Sizer:
 
         return max(final_size, 1)
 
+    def should_log(self, key):
+        if self.prev_key != key:
+            self.prev_key = key
+            return True
+        return False
+
     def _auto_size_legacy(self, mem, size, capacity, bench_name):
         """Single-series fit: ``batch_size ≈ a·mem + b`` (v1 / fallback).
 
@@ -293,13 +305,15 @@ class Sizer:
 
         newsize_f = model(capacity)
         final_size = self._finalize_batch_size(newsize_f)
-        syslog(
-            "auto_size legacy path for {}: capacity={} predicted={} final={}",
-            bench_name,
-            capacity,
-            newsize_f,
-            final_size,
-        )
+        if self.should_log(bench_name):
+            syslog(
+                "Sizer: auto_size legacy path for {}: capacity={} "
+                "predicted={:.2f} final={}",
+                bench_name,
+                _fmt_mo(capacity),
+                newsize_f,
+                final_size,
+            )
         return final_size
 
     def _auto_size_fixed_torchmem(self, observations, capacity, bench_name):
@@ -316,17 +330,18 @@ class Sizer:
         alpha, beta = fit
         newsize_f = (capacity - fixed - beta) / alpha
         final_size = self._finalize_batch_size(newsize_f)
-        syslog(
-            "auto_size fixed+torchmem for {}: fixed={} alpha={} beta={} "
-            "capacity={} predicted={} final={}",
-            bench_name,
-            fixed,
-            alpha,
-            beta,
-            capacity,
-            newsize_f,
-            final_size,
-        )
+        if self.should_log(bench_name):
+            syslog(
+                "Sizer: auto_size fixed+torchmem for {}: fixed={} "
+                "alpha={}/batch beta={} capacity={} predicted={:.2f} final={}",
+                bench_name,
+                _fmt_mo(fixed),
+                _fmt_mo(alpha),
+                _fmt_mo(beta),
+                _fmt_mo(capacity),
+                newsize_f,
+                final_size,
+            )
         return final_size
 
     def auto_size(self, benchmark, capacity):
