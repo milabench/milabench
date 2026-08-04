@@ -96,10 +96,16 @@ def observation_memory(obs):
     """Return observation memory in octets, preferring allocator stats.
 
     Preference: ``torchmem`` then ``jaxmem`` then NVML ``memory``.
+    Zero or missing allocator values are ignored so a dead ``torchmem: 0 MiB``
+    column does not poison the linear fit.
     """
     for key in ("torchmem", "jaxmem"):
-        if key in obs and obs[key]:
-            return to_octet(obs[key])
+        raw = obs.get(key)
+        if not raw:
+            continue
+        octets = to_octet(raw)
+        if octets > 0:
+            return octets
     return to_octet(obs["memory"])
 
 
@@ -122,12 +128,16 @@ def _obs_pair_octets(obs):
     """Return ``(nvml_memory, allocator_memory)`` in octets, or ``None``.
 
     Allocator memory is ``torchmem`` when present, else ``jaxmem``.
+    Zero allocator readings are treated as missing (instrumentation failed).
     """
     mem = obs.get("memory")
     alloc = obs.get("torchmem") or obs.get("jaxmem")
     if not mem or not alloc:
         return None
-    return to_octet(mem), to_octet(alloc)
+    mem_o, alloc_o = to_octet(mem), to_octet(alloc)
+    if alloc_o <= 0:
+        return None
+    return mem_o, alloc_o
 
 
 def _fixed_overhead(observations):
@@ -258,12 +268,29 @@ class Sizer:
         return max(final_size, 1)
 
     def _auto_size_legacy(self, mem, size, capacity, bench_name):
-        """Single-series fit: ``batch_size ≈ a·mem + b`` (v1 / fallback)."""
+        """Single-series fit: ``batch_size ≈ a·mem + b`` (v1 / fallback).
+
+        Returns ``None`` when there is not enough usable data (caller should
+        keep the ``auto_batch`` default).
+        """
         if len(mem) <= 1:
             syslog(f"Not enough data for {bench_name}")
-            return 1
+            return None
 
-        model = np.poly1d(np.polyfit(mem, size, deg=1))
+        # Constant / all-zero memory (e.g. torchmem: 0 MiB) → singular LSTSQ.
+        if len(set(float(m) for m in mem)) < 2:
+            syslog(
+                "Memory observations are constant for {}; cannot fit batch size",
+                bench_name,
+            )
+            return None
+
+        try:
+            model = np.poly1d(np.polyfit(mem, size, deg=1))
+        except np.linalg.LinAlgError as err:
+            syslog("polyfit failed for {}: {}; falling back to default", bench_name, err)
+            return None
+
         newsize_f = model(capacity)
         final_size = self._finalize_batch_size(newsize_f)
         syslog(
@@ -332,7 +359,15 @@ class Sizer:
             return result
 
         mem, size, _ = self._scaling_v2(config)
-        return self._auto_size_legacy(mem, size, capacity, bench_name)
+        result = self._auto_size_legacy(mem, size, capacity, bench_name)
+        if result is not None:
+            return result
+
+        syslog(
+            "auto_size could not fit {}; caller should keep auto_batch default",
+            bench_name,
+        )
+        return None
 
     def optimized(self, benchmark, capacity):
         # Old V1 format
@@ -696,8 +731,16 @@ def new_argument_resolver(pack):
             if (gpu_opt.add is not None or gpu_opt.mult is not None):
                 val = max(1, int(default * (gpu_opt.mult or 1)) + (gpu_opt.add or 0))
             else:
-                val = suggested_batch_size(pack)
-                assert val is not None
+                suggested = suggested_batch_size(pack)
+                if suggested is None:
+                    syslog(
+                        "auto_batch sizing failed for {}; using default {}",
+                        pack.config.get("name"),
+                        default,
+                    )
+                    val = default
+                else:
+                    val = suggested
 
         broadcast(on_batch_size_set, pack, default, val)
         return val

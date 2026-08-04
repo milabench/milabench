@@ -4,6 +4,8 @@ Main node runs locally and owns milabench metrics. Workers are launched once
 via ``srun -x <main>`` and tagged ``nolog`` so only node 0's rates count.
 """
 
+from copy import deepcopy
+
 from milabench.commands import PackCommand, TorchrunAllGPU, TorchrunAllNodes
 from milabench.commands.srun import ForeachSrun
 from milabench.pack import Package
@@ -36,6 +38,12 @@ class TorchrunSrunAlways(ForeachSrun):
             **kwargs,
         )
         super().__init__(base_exec)
+
+    def main_executor(self):
+        # Required so outer-job SLURM_NODEID=0 does not make benchrun inject rank 1.
+        main = deepcopy(self.executor)
+        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
+        return main
 
 
 class Torchsrun(Package):

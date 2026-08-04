@@ -45,6 +45,15 @@ def forward_voir_file():
     elastic.SubprocessHandler = old_handler
 
 
+def _split_at_script_sep(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split torchrun options from script args at ``--`` (if present)."""
+    try:
+        sep = argv.index("--")
+    except ValueError:
+        return list(argv), []
+    return list(argv[:sep]), list(argv[sep:])
+
+
 def _argv_has_option(argv, *names: str) -> bool:
     for arg in argv:
         for name in names:
@@ -78,14 +87,19 @@ def _slurm_node_rank() -> int:
 
 
 def maybe_inject_node_rank(argv):
-    """If static rdzv and ``--node-rank`` is absent, derive it from Slurm."""
+    """If static rdzv and ``--node-rank`` is absent, derive it from Slurm.
+
+    Inserts ``--node-rank`` among torchrun options (before ``--``), never as a
+    script argument after the separator.
+    """
     argv = list(argv)
-    if _rdzv_backend(argv) != "static":
+    torch_args, rest = _split_at_script_sep(argv)
+    if _rdzv_backend(torch_args or argv) != "static":
         return argv
-    if _argv_has_option(argv, "--node-rank", "--node_rank"):
+    if _argv_has_option(torch_args, "--node-rank", "--node_rank"):
         return argv
-    argv.append(f"--node-rank={_slurm_node_rank()}")
-    return argv
+    torch_args.append(f"--node-rank={_slurm_node_rank()}")
+    return torch_args + rest
 
 
 def _format_cmd(argv) -> str:

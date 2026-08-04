@@ -331,6 +331,25 @@ def _benchrun_argv_from_remote(argv: list[str]) -> list[str]:
     raise AssertionError(f"benchrun not found in {argv}")
 
 
+def _torch_node_rank(argv: list[str]) -> int:
+    """Parse ``--node-rank`` from torchrun options (before ``--`` only)."""
+    sep = argv.index("--") if "--" in argv else len(argv)
+    torch_args = argv[:sep]
+    for i, arg in enumerate(torch_args):
+        if arg.startswith("--node-rank="):
+            return int(arg.split("=", 1)[1])
+        if arg == "--node-rank" and i + 1 < len(torch_args):
+            return int(torch_args[i + 1])
+    raise AssertionError(f"no --node-rank before -- in {argv}")
+
+
+def _with_main_node_rank(argv: list[str], rank: int = 0) -> list[str]:
+    """Plan shape for the main node: explicit ``--node-rank`` before ``--``."""
+    argv = list(argv)
+    sep = argv.index("--")
+    return argv[:sep] + [f"--node-rank={rank}"] + argv[sep:]
+
+
 BENCHRUN_STATIC = [
     "--nnodes=3",
     "--rdzv-backend=static",
@@ -378,20 +397,24 @@ class TestBenchrunThroughSrun:
         self.maybe_inject_node_rank = maybe_inject_node_rank
 
     def test_native_step_ids_map_to_global_ranks(self, monkeypatch):
-        """Native ``srun -x main`` uses step-local NODEID 0..N-2."""
-        ranks = []
+        """Native ``srun -x main`` uses step-local NODEID 0..N-2.
+
+        Combined with main's plan ``--node-rank=0``, the job covers 0..N-1.
+        """
+        # Main runs under the outer allocation (NODEID=0) with an explicit rank.
+        monkeypatch.setenv("SLURM_NODEID", "0")
+        main = self.maybe_inject_node_rank(_with_main_node_rank(BENCHRUN_STATIC, 0))
+        assert _torch_node_rank(main) == 0
+        assert main.index("--node-rank=0") < main.index("--")
+        assert main.count("--node-rank=0") == 1
+
+        ranks = [_torch_node_rank(main)]
         for step_id in (0, 1):
             monkeypatch.setenv("SLURM_NODEID", str(step_id))
             out = self.maybe_inject_node_rank(BENCHRUN_STATIC)
-            assert out[-1].startswith("--node-rank=")
-            ranks.append(int(out[-1].split("=", 1)[1]))
-        assert ranks == [1, 2]
-
-        # Main keeps metrics locally with an explicit rank.
-        monkeypatch.delenv("SLURM_NODEID", raising=False)
-        main = self.maybe_inject_node_rank([*BENCHRUN_STATIC, "--node-rank=0"])
-        assert "--node-rank=0" in main
-        assert main.count("--node-rank=0") == 1
+            assert out.index(f"--node-rank={step_id + 1}") < out.index("--")
+            ranks.append(_torch_node_rank(out))
+        assert ranks == [0, 1, 2]
 
     def test_ssh_fallback_exclude_main_feeds_benchrun(self, no_srun, monkeypatch):
         """SSH path injects step-local NODEIDs; benchrun turns them into 1..N-1."""
@@ -429,19 +452,31 @@ class TestBenchrunThroughSrun:
         assert SlurmRun.execute(args) == 0
         assert len(started) == 2
 
+        # Main keeps rank 0 under outer SLURM_NODEID=0 via plan argv.
+        monkeypatch.setenv("SLURM_NODEID", "0")
+        main_rank = _torch_node_rank(
+            self.maybe_inject_node_rank(_with_main_node_rank(BENCHRUN_STATIC, 0))
+        )
+
         worker_ranks = []
         for argv, info in started:
             env = _parse_env_assignments(argv)
             assert "SLURM_NODEID" in env
             bench_argv = _benchrun_argv_from_remote(argv)
-            assert "--node-rank" not in " ".join(bench_argv)
+            assert "--node-rank" not in " ".join(
+                bench_argv[: bench_argv.index("--")]
+            )
 
             monkeypatch.setenv("SLURM_NODEID", env["SLURM_NODEID"])
             injected = self.maybe_inject_node_rank(bench_argv)
-            rank = int(injected[-1].split("=", 1)[1])
-            worker_ranks.append((info["node"], rank))
+            assert injected.index(f"--node-rank={_torch_node_rank(injected)}") < injected.index(
+                "--"
+            )
+            worker_ranks.append((info["node"], _torch_node_rank(injected)))
 
+        assert main_rank == 0
         assert worker_ranks == [("tri0002", 1), ("tri0003", 2)]
+        assert sorted([main_rank, *(r for _, r in worker_ranks)]) == [0, 1, 2]
 
     def test_dummy_native_srun_then_benchrun(self, fake_srun, monkeypatch):
         """Captured native srun argv + step ids → same ranks as production."""
@@ -475,10 +510,106 @@ class TestBenchrunThroughSrun:
         assert srun_args[:3] == ["--nodes=2", "--ntasks=2", "--ntasks-per-node=1"]
         assert "-x" in srun_args and "tri0001" in srun_args
 
-        # What each of the 2 srun tasks would see:
-        ranks = []
+        monkeypatch.setenv("SLURM_NODEID", "0")
+        ranks = [
+            _torch_node_rank(
+                self.maybe_inject_node_rank(_with_main_node_rank(BENCHRUN_STATIC, 0))
+            )
+        ]
         for step_id in range(2):
             monkeypatch.setenv("SLURM_NODEID", str(step_id))
             out = self.maybe_inject_node_rank(BENCHRUN_STATIC)
-            ranks.append(int(out[-1].split("=", 1)[1]))
-        assert ranks == [1, 2]
+            assert out.index(f"--node-rank={step_id + 1}") < out.index("--")
+            ranks.append(_torch_node_rank(out))
+        assert ranks == [0, 1, 2]
+
+
+class TestTorchrunSrunMainRank:
+    """Plan-level: main gets ``--node-rank=0``; workers do not (benchrun fills)."""
+
+    def _stub_pack(self, devices=(0, 1)):
+        from pathlib import Path
+
+        from milabench.merge import merge
+        from milabench.pack import BasePackage
+
+        class StubPack(BasePackage):
+            def __init__(self, config):
+                self.config = config
+                self.core = SimpleNamespace()
+                self.dirs = SimpleNamespace(
+                    cache=Path("/tmp/c"),
+                    venv=Path("/tmp/venv"),
+                    code=Path("/tmp"),
+                    data=Path("/tmp"),
+                    runs=Path("/tmp"),
+                    extra=Path("/tmp"),
+                )
+                self.working_directory = Path("/tmp")
+                self.phase = None
+                self.processes = []
+                self.main_script = "main.py"
+
+            def copy(self, config):
+                return StubPack(merge(self.config, config))
+
+        return StubPack(
+            {
+                "name": "torchsrun",
+                "tag": [],
+                "dirs": {"venv": "/tmp/venv"},
+                "plan": {"method": "njobs", "n": 1},
+                "devices": list(devices),
+                "num_machines": 3,
+                "argv": ["--repeats", "30"],
+                "system": {"nodes": NODES[:3]},
+            }
+        )
+
+    def test_torchrun_srun_main_pins_rank_zero(self):
+        from milabench.commands import PackCommand
+        from milabench.commands.srun import TorchrunSrun
+
+        pack = self._stub_pack(devices=(0, 1))
+        pack.main_script = "main.py"
+        plan = TorchrunSrun(PackCommand(pack, "main.py", "--repeats", "30"))
+        main = plan.main_executor()
+        worker = plan.worker_executor()
+        assert "--node-rank=0" in main.wrapper_argv
+        assert "--node-rank=0" not in worker.wrapper_argv
+        main_argv = main.argv()
+        assert main_argv.index("--node-rank=0") < main_argv.index("--")
+
+    def test_torchsrun_always_main_pins_rank_zero(self):
+        import importlib.util
+        from pathlib import Path
+
+        from milabench.commands import PackCommand
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "benchmarks"
+            / "torchsrun"
+            / "benchfile.py"
+        )
+        spec = importlib.util.spec_from_file_location("torchsrun_benchfile", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        pack = self._stub_pack(devices=(0,))
+        pack.main_script = "main.py"
+        # torchsrun uses a single proc per node; TorchrunAlways still wraps.
+        plan = mod.TorchrunSrunAlways(PackCommand(pack, "main.py", "--repeats", "30"))
+        main = plan.main_executor()
+        worker = plan.worker_executor()
+        assert "--node-rank=0" in main.wrapper_argv
+        assert "--node-rank=0" not in worker.wrapper_argv
+        main_argv = main.argv()
+        assert main_argv.index("--node-rank=0") < main_argv.index("--")
+        # Worker plan argv has no node-rank; benchrun injects from SLURM_NODEID.
+        worker_argv = worker.argv()
+        assert "--" in worker_argv
+        assert not any(
+            a == "--node-rank" or a.startswith("--node-rank=")
+            for a in worker_argv[: worker_argv.index("--")]
+        )

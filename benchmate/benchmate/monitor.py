@@ -184,7 +184,14 @@ def smuggle_monitor(poll_interval=1, worker_init=None, enabled=True, **monitors)
         yield
 
 
-def _monitors(monogpu=True):
+def _monitors(monogpu=True, *, torchmem=None, jaxmem=None):
+    """Build smuggle/voir monitor callables.
+
+    ``torchmem`` / ``jaxmem``:
+      - ``None``: follow ``BENCHMATE_TORCHMEM`` / ``BENCHMATE_JAXMEM`` toggles
+      - ``True`` / ``False``: force on/off (e.g. parent DDP process disables
+        torchmem; rank-0 worker enables a torchmem-only poller)
+    """
     if monogpu:
         monitors = [
             ("gpudata", gpu_monitor_fun()),
@@ -200,34 +207,68 @@ def _monitors(monogpu=True):
             ("cpudata", cpu_monitor()),
             ("worker_init", lambda: select_backend(None, True)),
         ]
-    monitors.extend(_torchmem_kwargs().items())
-    monitors.extend(_jaxmem_kwargs().items())
+
+    if torchmem is None:
+        monitors.extend(_torchmem_kwargs().items())
+    elif torchmem:
+        monitors.append(("torchmem", torchmem_fetcher()))
+
+    if jaxmem is None:
+        monitors.extend(_jaxmem_kwargs().items())
+    elif jaxmem:
+        monitors.append(("jaxmem", jaxmem_fetcher()))
+
     return dict(monitors)
 
 
 @contextmanager
-def multigpu_monitor(*args, **kwargs):
-    with smuggle_monitor(*args, **kwargs, **_monitors(False)) as log:
+def multigpu_monitor(*args, torchmem=None, jaxmem=None, **kwargs):
+    with smuggle_monitor(
+        *args, **kwargs, **_monitors(False, torchmem=torchmem, jaxmem=jaxmem)
+    ) as log:
         yield log
-        
+
 
 @contextmanager
-def monogpu_monitor(*args, **kwargs):
-    with smuggle_monitor(*args, **kwargs, **_monitors(True)) as log:
+def monogpu_monitor(*args, torchmem=None, jaxmem=None, **kwargs):
+    with smuggle_monitor(
+        *args, **kwargs, **_monitors(True, torchmem=torchmem, jaxmem=jaxmem)
+    ) as log:
         yield log
+
+
+@contextmanager
+def torchmem_monitor(poll_interval=1, device=None, **kwargs):
+    """Smuggle only PyTorch allocator stats (for DDP workers that own tensors)."""
+    with smuggle_monitor(
+        poll_interval=poll_interval,
+        torchmem=torchmem_fetcher(device=device),
+        **kwargs,
+    ) as log:
+        yield log
+
+
+@contextmanager
+def rank0_torchmem_monitor(*args, **kwargs):
+    """Like ``torchmem_monitor``, but only active when ``RANK=0``."""
+    if get_rank() == 0:
+        with torchmem_monitor(*args, **kwargs) as mon:
+            yield mon
+    else:
+        yield
 
 
 @contextmanager
 def bench_monitor(*args, **kwargs):
-    if int(os.getenv("RANK", -1)) == -1:
+    if get_rank() == -1:
         with monogpu_monitor(*args, **kwargs) as mon:
             yield mon
-    
-    elif int(os.getenv("RANK", -1)) == 0:
+
+    elif get_rank() == 0:
         with multigpu_monitor(*args, **kwargs) as mon:
             yield mon
     else:
-        yield 
+        yield
 
 #
 # Legacy compatibility
@@ -246,8 +287,8 @@ def milabench_sys_monitor(monogpu=False):
 
 def get_rank():
     try:
-        return int(os.getenv("RANK", -1))
-    except:
+        return int(os.getenv("RANK", "-1"))
+    except (TypeError, ValueError):
         return -1
 
 

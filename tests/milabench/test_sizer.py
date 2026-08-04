@@ -10,10 +10,13 @@ from cantilever.core.statstream import StatStream
 
 from milabench.sizer import (
     BenchStats,
+    Sizer,
+    SizerOptions,
     arch_to_device,
     broadcast,
     compact_dump,
     deduplicate_observation,
+    observation_memory,
     to_octet,
     _fixed_overhead,
     _fit_torchmem_vs_batch,
@@ -461,6 +464,9 @@ class TestObsPairOctets:
     def test_missing_torchmem(self):
         assert _obs_pair_octets({"memory": "1000 MiB", "batch_size": 1}) is None
 
+    def test_zero_torchmem_treated_as_missing(self):
+        assert _obs_pair_octets(_pair_obs(32, 4000, 0)) is None
+
     def test_jaxmem_fallback(self):
         obs = {
             "memory": "3000 MiB",
@@ -511,6 +517,50 @@ class TestFitTorchmemVsBatch:
 
     def test_none_with_single_point(self):
         assert _fit_torchmem_vs_batch([_pair_obs(16, 3600, 1600)]) is None
+
+    def test_none_when_all_torchmem_zero(self):
+        obs = [
+            _pair_obs(16, 3600, 0),
+            _pair_obs(32, 5200, 0),
+            _pair_obs(64, 8400, 0),
+        ]
+        assert _fit_torchmem_vs_batch(obs) is None
+
+
+class TestObservationMemoryZeroTorchmem:
+    def test_skips_zero_torchmem_uses_nvml(self):
+        obs = _pair_obs(64, 8400, 0)
+        assert observation_memory(obs) == to_octet("8400MiB")
+
+    def test_prefers_positive_torchmem(self):
+        obs = _pair_obs(64, 8400, 6400)
+        assert observation_memory(obs) == to_octet("6400MiB")
+
+
+class TestAutoSizeZeroTorchmem:
+    def test_falls_back_to_nvml_fit(self, tmp_path):
+        """All-zero torchmem must not crash; NVML memory still sizes the batch."""
+        profile = tmp_path / "scaling.yaml"
+        profile.write_text(
+            yaml.dump(
+                {
+                    "resnet152-ddp-gpus": {
+                        "observations": [
+                            _pair_obs(64, 14760, 0, perf=100),
+                            _pair_obs(128, 21110, 0, perf=200),
+                            _pair_obs(256, 33213, 0, perf=300),
+                        ]
+                    }
+                }
+            )
+        )
+        sizer = Sizer(
+            sizer=SizerOptions(auto=True),
+            config=str(profile),
+        )
+        size = sizer.auto_size("resnet152-ddp-gpus", "40000 MiB")
+        assert size is not None
+        assert size > 1
 
 
 # ---------------------------------------------------------------------------

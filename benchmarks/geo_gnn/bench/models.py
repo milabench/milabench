@@ -1,5 +1,12 @@
 from types import SimpleNamespace as NS
 
+import math
+import numpy as np
+
+# PyG 2.6 DimeNet still calls np.math.factorial; NumPy 2 removed np.math.
+if not hasattr(np, "math"):
+    np.math = math
+
 from torch_geometric.nn.models import PNA as _PNA, DimeNet as _DimeNet
 
 models = {}

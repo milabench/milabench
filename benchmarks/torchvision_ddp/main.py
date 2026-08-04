@@ -20,7 +20,7 @@ import torchvision.models as torchvision_models
 from benchmate.metrics import StopProgram
 from benchmate.observer import BenchObserver
 from benchmate.dataloader import imagenet_dataloader, dataloader_arguments
-from benchmate.monitor import multigpu_monitor
+from benchmate.monitor import multigpu_monitor, rank0_torchmem_monitor
 
 import torchcompat.core as accelerator
 
@@ -34,6 +34,10 @@ def ddp_setup(rank, world_size):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
     os.environ["ID"] = str(rank)
+    # So bench_monitor / BenchObserver see the worker rank (not the parent).
+    os.environ["RANK"] = str(rank)
+    os.environ["LOCAL_RANK"] = str(rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
     accelerator.init_process_group(backend=accelerator.ccl, rank=rank, world_size=world_size)
     accelerator.set_device(rank)
 
@@ -127,13 +131,14 @@ def worker_main(rank: int, world_size: int, args):
         ddp_setup(rank, world_size)
 
         model, optimizer = load_train_objs(args)
-    
+
         train_data = prepare_dataloader(args, model, rank, world_size)
 
-        trainer = Trainer(model, train_data, optimizer, rank, world_size)
+        # Parent polls NVML for all GPUs; rank 0 only reports torch allocator stats.
+        with rank0_torchmem_monitor(poll_interval=3, device=rank):
+            trainer = Trainer(model, train_data, optimizer, rank, world_size)
+            trainer.train(args.epochs)
 
-        trainer.train(args.epochs)
-        
         destroy_process_group()
 
         print(f"<<< rank: {rank}")
@@ -164,22 +169,22 @@ def main():
         help="Precision configuration",
     )
     args = parser.parse_args()
-    
+
     world_size = accelerator.device_count()
 
-    #
-    # This is not voir friendly as it does not allow voir to hook itself
-    # to the process
-    with multigpu_monitor(poll_interval=3):
+    # Parent: NVML/system metrics for all GPUs. Disable torchmem here — this
+    # process has no CUDA allocations (workers do after mp.spawn).
+    with multigpu_monitor(poll_interval=3, torchmem=False):
         mp.spawn(
             worker_main,
             args=(
-                world_size, 
+                world_size,
                 args
-            ), 
+            ),
             nprocs=world_size,
             join=True
         )
+
 
 if __name__ == "__main__":
     main()
