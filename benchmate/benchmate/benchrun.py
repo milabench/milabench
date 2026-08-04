@@ -113,21 +113,8 @@ def run(args):
 
 def main(args=None):
     argv = list(args) if args is not None else sys.argv[1:]
-    before = list(argv)
     argv = maybe_inject_node_rank(argv)
-    host = os.environ.get("SLURMD_NODENAME") or os.environ.get("HOSTNAME") or "?"
-    print(
-        f"[benchrun] host={host} "
-        f"SLURM_NODEID={os.environ.get('SLURM_NODEID', '')!r} "
-        f"SLURM_PROCID={os.environ.get('SLURM_PROCID', '')!r} "
-        f"SLURM_NNODES={os.environ.get('SLURM_NNODES', '')!r}",
-        file=sys.stderr,
-        flush=True,
-    )
-    if argv != before:
-        print(f"[benchrun] injected argv: {_format_cmd(argv)}", file=sys.stderr, flush=True)
-    else:
-        print(f"[benchrun] argv: {_format_cmd(argv)}", file=sys.stderr, flush=True)
+    print(f"[benchrun] {_format_cmd(argv)}", file=sys.stderr, flush=True)
     run(distrun.parse_args(argv))
 
 

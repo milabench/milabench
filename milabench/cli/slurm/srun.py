@@ -51,7 +51,7 @@ def _exec_native_srun() -> None:
 
     args = list(sys.argv[idx + 1 :])
     args = _shrink_srun_allocation_for_exclude(args)
-    print(f"[srun] native: {srun} {' '.join(args)}", file=sys.stderr, flush=True)
+    print(f"[srun] {srun} {' '.join(args)}", file=sys.stderr, flush=True)
     os.execvp(srun, [srun, *args])
 
 
@@ -198,7 +198,6 @@ def run_on_nodes(
             *command,
         ]
         argv = _ssh_argv(node, remote_cmd, sshkey=sshkey)
-        print(f"[srun] {label}: {' '.join(argv)}", file=sys.stderr)
         mp.start(argv, info={"node": label})
 
     return_codes: dict[str, int] = {}
@@ -266,17 +265,7 @@ class SlurmRun(Command):
             print("error: no nodes left after applying --exclude/--nodelist", file=sys.stderr)
             return 2
 
-        if excluded:
-            print(f"[srun] excluding: {', '.join(sorted(excluded))}", file=sys.stderr)
-        if included:
-            print(f"[srun] nodelist: {', '.join(sorted(included))}", file=sys.stderr)
-
-        print(
-            f"[srun] ssh fallback: {len(nodes)} node(s) "
-            f"command={' '.join(command)}",
-            file=sys.stderr,
-            flush=True,
-        )
+        print(f"[srun] {' '.join(command)}", file=sys.stderr, flush=True)
         return run_on_nodes(
             nodes, command, sshkey=system.get("sshkey"), all_nodes=all_nodes
         )

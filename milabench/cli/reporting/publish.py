@@ -27,7 +27,7 @@ class Publish(Command):
         """Publish run results to the dashboard."""
         runs          : list[str]     = argument(default=[], nargs="+")               # Run directory to publish
         key           : Optional[str] = os.getenv("MILABENCH_PUBLISH_KEY", None)     # Push key
-        dashboard_url : Optional[str] = os.getenv("MILABENCH_DASHBOARD_URL", "https://www.milabench.com")  # Dashboard URL
+        dashboard_url : Optional[str] = os.getenv("MILABENCH_DASHBOARD_URL", "https://app-milabench-dev-api.azurewebsites.net")  # Dashboard API URL (bypass SWA 30MB limit)
     # fmt: on
 
     @staticmethod

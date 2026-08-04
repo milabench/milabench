@@ -10,6 +10,7 @@ from cantilever.core.statstream import StatStream
 
 from milabench.sizer import (
     BenchStats,
+    MemoryUsageExtractor,
     Sizer,
     SizerOptions,
     arch_to_device,
@@ -21,6 +22,7 @@ from milabench.sizer import (
     _fixed_overhead,
     _fit_torchmem_vs_batch,
     _obs_pair_octets,
+    _torch_backend_info,
 )
 
 
@@ -561,6 +563,102 @@ class TestAutoSizeZeroTorchmem:
         size = sizer.auto_size("resnet152-ddp-gpus", "40000 MiB")
         assert size is not None
         assert size > 1
+
+
+# ---------------------------------------------------------------------------
+# torch / backend version stamping on scaling observations
+# ---------------------------------------------------------------------------
+
+class TestTorchBackendInfo:
+    def setup_method(self):
+        _torch_backend_info.cache_clear()
+
+    def teardown_method(self):
+        _torch_backend_info.cache_clear()
+
+    def test_cuda_backend(self, monkeypatch):
+        import sys
+        import types
+
+        fake = types.ModuleType("torch")
+        fake.__version__ = "2.7.0+cu128"
+        fake.version = types.SimpleNamespace(cuda="12.8", hip=None)
+        monkeypatch.setitem(sys.modules, "torch", fake)
+
+        info = _torch_backend_info()
+        assert info == {
+            "torch": "2.7.0+cu128",
+            "backend": "cuda",
+            "backend_version": "12.8",
+        }
+
+    def test_rocm_backend(self, monkeypatch):
+        import sys
+        import types
+
+        fake = types.ModuleType("torch")
+        fake.__version__ = "2.7.0+rocm6.3"
+        fake.version = types.SimpleNamespace(cuda=None, hip="6.3.42134")
+        monkeypatch.setitem(sys.modules, "torch", fake)
+
+        info = _torch_backend_info()
+        assert info["backend"] == "rocm"
+        assert info["backend_version"] == "6.3.42134"
+        assert info["torch"] == "2.7.0+rocm6.3"
+
+    def test_missing_torch(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _raise(name, *args, **kwargs):
+            if name == "torch":
+                raise ImportError("no torch")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _raise)
+        assert _torch_backend_info() == {}
+
+
+class TestPushObservationVersions:
+    def setup_method(self):
+        _torch_backend_info.cache_clear()
+
+    def teardown_method(self):
+        _torch_backend_info.cache_clear()
+
+    def test_observation_includes_backend_fields(self, tmp_path, monkeypatch):
+        import sys
+        import types
+
+        fake = types.ModuleType("torch")
+        fake.__version__ = "2.6.0+cu124"
+        fake.version = types.SimpleNamespace(cuda="12.4", hip=None)
+        monkeypatch.setitem(sys.modules, "torch", fake)
+
+        save_path = tmp_path / "out.yaml"
+        monkeypatch.setattr(
+            SizerOptions,
+            "instance",
+            classmethod(lambda cls: SizerOptions(save=str(save_path), config=None)),
+        )
+
+        extractor = MemoryUsageExtractor()
+        extractor.filepath = str(save_path)
+        extractor.memory = {"version": 2.0}
+
+        stats = BenchStats("bert-fp16")
+        stats.cpu += 8
+        stats.batch_size += 16
+        stats.perf += 100.0
+        stats.max_usage += 4000
+
+        extractor.push_observation(stats)
+        obs = extractor.memory["bert-fp16"]["observations"][0]
+        assert obs["torch"] == "2.6.0+cu124"
+        assert obs["backend"] == "cuda"
+        assert obs["backend_version"] == "12.4"
+        assert "revision" not in obs
 
 
 # ---------------------------------------------------------------------------

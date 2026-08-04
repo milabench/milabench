@@ -8,7 +8,8 @@ import requests
 
 MILABENCH_DASHBOARD_URL = os.getenv(
     "MILABENCH_DASHBOARD_URL",
-    "https://www.milabench.com",
+    # App Service directly — Azure Static Web Apps caps request bodies at 30 MB.
+    "https://app-milabench-dev-api.azurewebsites.net",
 )
 
 MAX_ZIP_SIZE = 500 * 1024 * 1024       # 500 MB

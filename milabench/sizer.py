@@ -1,5 +1,6 @@
 from collections import defaultdict
 import contextvars
+import functools
 import multiprocessing
 import os
 from copy import deepcopy
@@ -114,6 +115,31 @@ def _max_allocated_mib(payload):
     if not payload:
         return None
     return max(data.get("max_allocated", 0) for data in payload.values())
+
+
+@functools.cache
+def _torch_backend_info():
+    """Return ``{torch, backend, backend_version}`` for scaling observations.
+
+    ``backend`` is ``\"rocm\"`` when HIP is present, else ``\"cuda\"`` when CUDA
+    is present. Returns ``{}`` when torch is unavailable.
+    """
+    try:
+        import torch
+    except Exception:
+        return {}
+
+    info = {"torch": torch.__version__}
+    hip = getattr(torch.version, "hip", None)
+    cuda = getattr(torch.version, "cuda", None)
+    if hip:
+        info["backend"] = "rocm"
+        info["backend_version"] = str(hip)
+    elif cuda:
+        info["backend"] = "cuda"
+        info["backend_version"] = str(cuda)
+    return info
+
 
 
 def _obs_mib_int(obs, key):
@@ -661,6 +687,8 @@ class MemoryUsageExtractor(ValidationLayer):
             obs["torchmem"] = f"{int(stats.torchmem_usage.max)} MiB"
         if stats.jaxmem_usage.current_count > 0:
             obs["jaxmem"] = f"{int(stats.jaxmem_usage.max)} MiB"
+
+        obs.update(_torch_backend_info())
 
         observations.append(obs)
         config["observations"] = list(sorted(observations, key=lambda x: x["batch_size"]))

@@ -257,7 +257,7 @@ jobs:
       - name: Generate report and publish
         env:
           MILABENCH_PUBLISH_KEY: ${{ secrets.MILABENCH_PUBLISH_KEY }}
-          MILABENCH_DASHBOARD_URL: ${{ vars.MILABENCH_DASHBOARD_URL || 'https://www.milabench.com' }}
+          MILABENCH_DASHBOARD_URL: ${{ vars.MILABENCH_DASHBOARD_URL || 'https://app-milabench-dev-api.azurewebsites.net' }}
         run: |
           milabench report \
             --runs "$MILABENCH_BASE/runs/${{ github.sha }}" \
