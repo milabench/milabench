@@ -2,6 +2,7 @@
 
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -673,42 +674,54 @@ class TestAutoSizeZeroTorchmem:
 # torch / backend version stamping on scaling observations
 # ---------------------------------------------------------------------------
 
+def fake_torch_module(version, cuda=None, hip=None):
+    """A torch stub complete enough for ``torchversion.get_pytorch_version``."""
+    import types
+
+    fake = types.ModuleType("torch")
+    fake.__version__ = version
+    fake.version = types.SimpleNamespace(cuda=cuda, hip=hip)
+    fake.__config__ = types.SimpleNamespace(show=lambda: "header\ncompiler\n")
+    return fake
+
+
 class TestTorchBackendInfo:
-    def setup_method(self):
-        _torch_backend_info.cache_clear()
-
-    def teardown_method(self):
-        _torch_backend_info.cache_clear()
-
     def test_cuda_backend(self, monkeypatch):
         import sys
-        import types
 
-        fake = types.ModuleType("torch")
-        fake.__version__ = "2.7.0+cu128"
-        fake.version = types.SimpleNamespace(cuda="12.8", hip=None)
-        monkeypatch.setitem(sys.modules, "torch", fake)
+        monkeypatch.setitem(
+            sys.modules, "torch", fake_torch_module("2.7.0+cu128", cuda="12.8")
+        )
 
         info = _torch_backend_info()
         assert info == {
-            "torch": "2.7.0+cu128",
+            "torch": "2.7.0",
+            "torch_local": "cu128",
             "backend": "cuda",
             "backend_version": "12.8",
         }
 
     def test_rocm_backend(self, monkeypatch):
         import sys
-        import types
 
-        fake = types.ModuleType("torch")
-        fake.__version__ = "2.7.0+rocm6.3"
-        fake.version = types.SimpleNamespace(cuda=None, hip="6.3.42134")
-        monkeypatch.setitem(sys.modules, "torch", fake)
+        monkeypatch.setitem(
+            sys.modules, "torch", fake_torch_module("2.7.0+rocm6.3", hip="6.3.42134")
+        )
 
         info = _torch_backend_info()
         assert info["backend"] == "rocm"
         assert info["backend_version"] == "6.3.42134"
-        assert info["torch"] == "2.7.0+rocm6.3"
+        assert info["torch"] == "2.7.0"
+        assert info["torch_local"] == "rocm6.3"
+
+    def test_version_without_local_label(self, monkeypatch):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "torch", fake_torch_module("2.7.0", cuda="12.8"))
+
+        info = _torch_backend_info()
+        assert info["torch"] == "2.7.0"
+        assert "torch_local" not in info
 
     def test_missing_torch(self, monkeypatch):
         import builtins
@@ -723,22 +736,43 @@ class TestTorchBackendInfo:
         monkeypatch.setattr(builtins, "__import__", _raise)
         assert _torch_backend_info() == {}
 
+    def test_reads_version_from_bench_venv(self, monkeypatch):
+        """The bench's own venv is queried, not the one milabench runs in."""
+        import milabench.metadata as metadata
+        import milabench.sizer as sizer_module
+
+        calls = []
+
+        def fake_fetch(pack):
+            calls.append(pack)
+            return {"torch": "2.9.1+rocm7.0", "hip": "7.0.1", "cuda": None}
+
+        monkeypatch.setattr(metadata, "fetch_torch_version", fake_fetch)
+        monkeypatch.setattr(sizer_module, "_torch_version_cache", {})
+
+        pack = SimpleNamespace(dirs=SimpleNamespace(venv="/tmp/venv/torch"))
+        info = _torch_backend_info(pack)
+
+        assert info == {
+            "torch": "2.9.1",
+            "torch_local": "rocm7.0",
+            "backend": "rocm",
+            "backend_version": "7.0.1",
+        }
+        assert calls == [pack]
+
+        # cached per venv: a second pack on the same venv does not respawn a subprocess
+        _torch_backend_info(SimpleNamespace(dirs=SimpleNamespace(venv="/tmp/venv/torch")))
+        assert len(calls) == 1
+
 
 class TestPushObservationVersions:
-    def setup_method(self):
-        _torch_backend_info.cache_clear()
-
-    def teardown_method(self):
-        _torch_backend_info.cache_clear()
-
     def test_observation_includes_backend_fields(self, tmp_path, monkeypatch):
         import sys
-        import types
 
-        fake = types.ModuleType("torch")
-        fake.__version__ = "2.6.0+cu124"
-        fake.version = types.SimpleNamespace(cuda="12.4", hip=None)
-        monkeypatch.setitem(sys.modules, "torch", fake)
+        monkeypatch.setitem(
+            sys.modules, "torch", fake_torch_module("2.6.0+cu124", cuda="12.4")
+        )
 
         save_path = tmp_path / "out.yaml"
         monkeypatch.setattr(
@@ -759,10 +793,50 @@ class TestPushObservationVersions:
 
         extractor.push_observation(stats)
         obs = extractor.memory["bert-fp16"]["observations"][0]
-        assert obs["torch"] == "2.6.0+cu124"
+        assert obs["torch"] == "2.6.0"
+        assert obs["torch_local"] == "cu124"
         assert obs["backend"] == "cuda"
         assert obs["backend_version"] == "12.4"
         assert "revision" not in obs
+
+    def test_observation_is_yaml_serializable(self, tmp_path, monkeypatch):
+        """torch.__version__ is a str subclass that yaml refuses to represent."""
+        import sys
+
+        class TorchVersion(str):
+            pass
+
+        monkeypatch.setitem(
+            sys.modules,
+            "torch",
+            fake_torch_module(TorchVersion("2.11.0+rocm7.2"), hip="7.2.26015"),
+        )
+
+        save_path = tmp_path / "out.yaml"
+        monkeypatch.setattr(
+            SizerOptions,
+            "instance",
+            classmethod(lambda cls: SizerOptions(save=str(save_path), config=None)),
+        )
+
+        extractor = MemoryUsageExtractor()
+        extractor.filepath = str(save_path)
+        extractor.memory = {"version": 2.0}
+
+        stats = BenchStats("bert-fp16")
+        stats.cpu += 8
+        stats.batch_size += 16
+        stats.perf += 100.0
+        stats.max_usage += 4000
+
+        extractor.push_observation(stats)
+        extractor.save()
+
+        saved = yaml.safe_load(save_path.read_text())
+        obs = saved["bert-fp16"]["observations"][0]
+        assert obs["torch"] == "2.11.0"
+        assert obs["torch_local"] == "rocm7.2"
+        assert obs["backend_version"] == "7.2.26015"
 
 
 # ---------------------------------------------------------------------------

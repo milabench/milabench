@@ -129,6 +129,9 @@ class RecordEpisodeStatistics(gym.Wrapper):
     def __init__(self, env, deque_size=100):
         super().__init__(env)
         self.num_envs = getattr(env, "num_envs", 1)
+        # gymnasium >= 1.0 no longer forwards unknown attributes to the wrapped env
+        self.single_action_space = env.single_action_space
+        self.single_observation_space = env.single_observation_space
         self.episode_returns = None
         self.episode_lengths = None
 

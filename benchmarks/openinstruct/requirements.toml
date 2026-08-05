@@ -22,7 +22,9 @@ dependencies = [
 dependencies = [
     "flash-attn",
     # flash-attn-3 is flash-attn-2 with different arch support
-    "flash-attn-4",
+    # Only pre-releases exist upstream (final 0.0.1 is a yanked placeholder), so the
+    # specifier must name a pre-release or resolution finds no usable version.
+    "flash-attn-4>=4.0.0b8",
 ]
 
 [rocm]

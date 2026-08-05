@@ -154,4 +154,11 @@ def resolve_benchmark(
                 f"Available: {list(variables.keys())}"
             ) from e
 
+    # Validate the exact vLLM map early when this benchmark requests vllm
+    # and platforms.toml defines maps for the backend.
+    from .platforms import deps_need_vllm
+
+    if deps_need_vllm(resolved) and backend in platform_config.vllm_maps:
+        platform_config.resolve_vllm(backend, overrides, required=True)
+
     return resolved

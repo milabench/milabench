@@ -36,7 +36,7 @@ from .utils import (
 def should_use_uv(override):
     if override is not None:
         return override
-    
+
     return option("use_uv", int, 1)
 
 def no_build_isolation(build_isolation):
@@ -82,7 +82,7 @@ def fetch_system_packages(venv_dir):
 @contextmanager
 def exclude_system_packages(pack, enabled=True):
     """Generate an exclude file to not install packages already on the system
-    
+
     Notes
     -----
 
@@ -95,7 +95,7 @@ def exclude_system_packages(pack, enabled=True):
         return
 
     packages = fetch_system_packages(str(pack.dirs.venv))
-    
+
     if not packages:
         yield []
         return
@@ -124,18 +124,18 @@ def find_pytorch(requirement):
 
             if line.startswith("torch=="):
                 pip_args.append(line.strip())
-    
+
     return pip_args
 
 
 @contextmanager
 def filter_system_packages(pack, requirements_file, enabled=True):
     """"Generate a new requirements file that filter out packages already on the system
-    
+
     Notes
     ----
 
-    This seems like a duplicate of `exclude_system_packages` but it does not work as expected 
+    This seems like a duplicate of `exclude_system_packages` but it does not work as expected
     so we are reduced to filter those packages ourselves
     """
     if not enabled:
@@ -217,7 +217,7 @@ def pip_more_args():
 def pip_compile_extra_args():
     # Wait for 2 weeks before updating packages
     #   This is to mitigate supply chain attack
-    #   
+    #
     #   Disabled by default because
     #       numpy, flashinfer and more are not providing an upload date
     #
@@ -381,7 +381,7 @@ class BasePackage:
         if self.constraints:
             self.constraints.write_text("\n".join(self.config["pip"]["constraints"]))
             args += ["-c", str(self.constraints)]
-       
+
         for line in self.config.get("pip", {}).get("args", []):
             args += line.split(" ")
 
@@ -600,7 +600,7 @@ class Package(BasePackage):
             if torch := find_pytorch(reqs):
                 pytorch_version = torch
                 break
-        
+
         #
         # Install build system and pytorch first
         #

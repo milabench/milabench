@@ -6,8 +6,6 @@
 cuda = "130"
 rocm = "7.2"
 torch = "2.10.0"
-# Default; overridden from [vllm.torch] for the selected torch unless --set vllm=...
-vllm = "0.19.1"
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -32,7 +30,6 @@ extra-index-url = [
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
-    "https://github.com/vllm-project/vllm/releases/expanded_assets/v{vllm}",
     "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
     "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html",
 ]
@@ -133,109 +130,33 @@ pydantic = ">=2,<3"
 "torch>=2.11,torch<2.12" = ">=1.1,<1.2"
 "torch>=2.10,torch<2.11" = ">=1.0,<1.1"
 
-# ─── vLLM ─────────────────────────────────────────────────────────────────────
-# Release matrix: PyPI requires_dist (torch), GitHub wheels (+cu / bare),
-#                 https://wheels.vllm.ai/rocm/{vllm}/{rocmNNN}/.
-# bare wheel (no +cu tag) == untagged_cuda; the other published +cuXXX is the variant.
-# Epoch flip: ≤0.19 bare≈cu129 +cu130 | ≥0.20 bare≈cu130 +cu129
-# [vllm.torch] picks newest release for the active torch (unless --set vllm=...);
-# {vllm_local} is "" when cuda == [vllm.untagged_cuda] for that release, else +cu{cuda}.
-#
-# ROCm (https://vllm.ai/releases install notes + wheels.vllm.ai verification):
-#   Available from v0.14.0+; Python 3.12; glibc ≥ 2.35 (Ubuntu 22.04+).
-#   Docs summary: <0.19 → 7.0.0 | 0.19–0.20 → 7.2.1 | ≥0.21 → 7.2.2
-#   Wheel dirs:   <0.19 → rocm700 | 0.19–0.20 → rocm721 | 0.21–0.22 → rocm722
-#                 ≥0.23 → rocm723 (ROCm 7.2.3; docs omit this).
-#   Companion torch on that index (not PyTorch.org): 2.9.1 (700), 2.10.0 (721/722
-#   and 0.23), 2.11.0 (0.24+). No official wheel targets torch 2.12 / +rocm7.2.
-
-[compat.vllm]
-# ROCm: milabench find-links ships +rocm{rocm} (not wheels.vllm.ai / +cuXXX).
-# torch 2.12 + rocm7.2 → vllm-0.18.1+rocm7.2 on the milabench wheel release.
-# Official wheels.vllm.ai has no torch-2.12 build; closest runtime line is rocm723
-# (vLLM ≥0.23) but requires their torch 2.10/2.11+git stack, not 2.12.1+rocm7.2.
-"rocm>=0,torch>=2.12" = "==0.18.1+rocm{rocm}"
-"rocm>=0" = "=={vllm}+rocm{rocm}"
-"torch>=2.10" = "=={vllm}{vllm_local}"
-
 # PyG 2.7+ requires pyg-lib for radius_graph; no ROCm pyg-lib wheel.
 # Keep 2.6.x which routes radius_graph through torch-cluster (shipped for ROCm).
 [compat.torch-geometric]
 "rocm>=0" = ">=2.6,<2.7"
 
-[vllm.torch]
-# vllm → required torch
-"0.26.0" = "2.11.0"
-"0.25.1" = "2.11.0"
-"0.25.0" = "2.11.0"
-"0.24.0" = "2.11.0"
-"0.23.0" = "2.11.0"
-"0.22.1" = "2.11.0"
-"0.22.0" = "2.11.0"
-"0.21.0" = "2.11.0"
-"0.20.2" = "2.11.0"
-"0.20.1" = "2.11.0"
-"0.20.0" = "2.11.0"
-"0.19.1" = "2.10.0"
-"0.19.0" = "2.10.0"
-"0.18.1" = "2.10.0"
-"0.18.0" = "2.10.0"
-"0.17.1" = "2.10.0"
-"0.17.0" = "2.10.0"
-"0.16.0" = "2.9.1"
-"0.15.1" = "2.9.1"
-"0.15.0" = "2.9.1"
-"0.14.1" = "2.9.1"
-"0.14.0" = "2.9.1"
+# ─── vLLM ─────────────────────────────────────────────────────────────────────
+# Exact map: (torch, backend_version) → installable version + wheel source.
+# Do not --set vllm=...; unsupported pairs fail with the supported list.
+# Each entry uses the verified compatible source (upstream or milabench).
 
-[vllm.untagged_cuda]
-# vllm → CUDA of the bare (untagged) wheel
-"0.26.0" = "130"
-"0.25.1" = "130"
-"0.25.0" = "130"
-"0.24.0" = "130"
-"0.23.0" = "130"
-"0.22.1" = "130"
-"0.22.0" = "130"
-"0.21.0" = "130"
-"0.20.2" = "130"
-"0.20.1" = "130"
-"0.20.0" = "130"
-"0.19.1" = "129"
-"0.19.0" = "129"
-"0.18.1" = "129"
-"0.18.0" = "129"
-"0.17.1" = "129"
-"0.17.0" = "129"
-"0.16.0" = "129"
-"0.15.1" = "129"
-"0.15.0" = "129"
-"0.14.1" = "129"
-"0.14.0" = "129"
+[vllm.cuda]
+"2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
+"2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 
 [vllm.rocm]
-# vllm → wheels.vllm.ai/rocm/{vllm}/{rocm}/ variant directory (one dir per release).
-# Verified 2026-08-04 against the index; aligns with vllm.ai/releases except ≥0.23
-# which is rocm723 (7.2.3), not the docs' blanket “≥0.21 → 7.2.2”.
-"0.26.0" = "rocm723"   # ROCm 7.2.3; torch==2.11.0+gitd0c8b1f
-"0.25.1" = "rocm723"
-"0.25.0" = "rocm723"
-"0.24.0" = "rocm723"   # torch==2.11.0+gitd0c8b1f
-"0.23.0" = "rocm723"   # torch==2.10.0+git8514f05 (still 2.10 on ROCm)
-"0.22.1" = "rocm722"   # ROCm 7.2.2; torch==2.10.0+git8514f05
-"0.22.0" = "rocm722"
-"0.21.0" = "rocm722"
-"0.20.2" = "rocm721"   # ROCm 7.2.1; torch==2.10.0+git8514f05
-"0.20.1" = "rocm721"
-"0.20.0" = "rocm721"
-"0.19.1" = "rocm721"
-"0.19.0" = "rocm721"
-"0.18.1" = "rocm700"   # ROCm 7.0.0; torch==2.9.1+git8907517
-"0.18.0" = "rocm700"
-"0.17.1" = "rocm700"
-"0.17.0" = "rocm700"
-"0.16.0" = "rocm700"
-"0.15.1" = "rocm700"
-"0.15.0" = "rocm700"
-"0.14.1" = "rocm700"
-"0.14.0" = "rocm700"
+# Official index: https://wheels.vllm.ai/rocm/{vllm}/{rocmNNN}/
+"2.11.0,7.2.3" = { version = "0.26.0+rocm723", extra-index-url = "https://wheels.vllm.ai/rocm/0.26.0/rocm723/" }
+"2.10.0,7.2.3" = { version = "0.23.0+rocm723", extra-index-url = "https://wheels.vllm.ai/rocm/0.23.0/rocm723/" }
+"2.11.0,7.2" = { version = "0.26.0+rocm723", extra-index-url = "https://wheels.vllm.ai/rocm/0.26.0/rocm723/" }
+"2.10.0,7.2" = { version = "0.23.0+rocm723", extra-index-url = "https://wheels.vllm.ai/rocm/0.23.0/rocm723/" }
+"2.10.0,7.2.2" = { version = "0.22.1+rocm722", extra-index-url = "https://wheels.vllm.ai/rocm/0.22.1/rocm722/" }
+"2.10.0,7.2.1" = { version = "0.20.2+rocm721", extra-index-url = "https://wheels.vllm.ai/rocm/0.20.2/rocm721/" }
+"2.9.1,7.0.0" = { version = "0.18.1+rocm700", extra-index-url = "https://wheels.vllm.ai/rocm/0.18.1/rocm700/" }
+"2.9.1,7.0" = { version = "0.18.1+rocm700", extra-index-url = "https://wheels.vllm.ai/rocm/0.18.1/rocm700/" }
+
+# milabench wheel for pytorch.org torch 2.12 + rocm7.2 (no official wheels.vllm.ai match)
+"2.12.0,7.2" = { version = "0.18.1+rocm7.2", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.12-rocm7.2" }
+"2.12.1,7.2" = { version = "0.18.1+rocm7.2", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.12-rocm7.2" }

@@ -6,8 +6,13 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .platforms import PlatformConfig
-from .pin import _build_constraints_content, _build_index_args, get_constraint_file
+from .platforms import PlatformConfig, deps_need_vllm
+from .pin import (
+    _append_vllm_index_args,
+    _build_constraints_content,
+    _build_index_args,
+    get_constraint_file,
+)
 from .requirements import resolve_benchmark
 
 
@@ -89,6 +94,13 @@ def install_args(
         benchmark_path, backend, platform_config, all_overrides
     )
 
+    # Exact vLLM map applies only when this benchmark requests vllm
+    vllm_mapping = None
+    if deps_need_vllm(resolved_deps):
+        vllm_mapping = platform_config.resolve_vllm(
+            backend, all_overrides, required=True
+        )
+
     # Write temp requirements file
     temp_req = tempfile.NamedTemporaryFile(
         mode="w",
@@ -102,11 +114,13 @@ def install_args(
     temp_req_path = Path(temp_req.name)
     temp_files = [temp_req_path]
 
-    # Platform policy constraints (compat matrix, backend.constraints)
+    # Platform policy constraints (compat matrix, backend.constraints, vLLM map)
     platform_constraint_file = None
     platform_lines = _build_constraints_content(
         platform_config, backend, all_overrides
     )
+    if vllm_mapping is not None:
+        platform_lines.append(vllm_mapping.as_constraint())
     if platform_lines:
         temp_cons = tempfile.NamedTemporaryFile(
             mode="w",
@@ -142,8 +156,10 @@ def install_args(
                 if not constraint_file.exists():
                     constraint_file = None
 
-    # Build index args
+    # Build index args (+ vLLM source when mapped)
     index_args = get_index_args(platform_config, backend, all_overrides)
+    if vllm_mapping is not None:
+        _append_vllm_index_args(index_args, vllm_mapping)
 
     return InstallArgs(
         requirements_file=temp_req_path,

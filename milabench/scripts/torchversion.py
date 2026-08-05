@@ -47,7 +47,9 @@ def get_pytorch_version():
         build_settings = find_config(conf, "Build settings")
 
         return dict(
-            torch=torch.__version__,
+            torch=str(torch.__version__),
+            hip=getattr(torch.version, "hip", None),
+            cuda=getattr(torch.version, "cuda", None),
             compiler=clean(compiler),
             cpp=clean(cpp),
             intel=clean(intel),

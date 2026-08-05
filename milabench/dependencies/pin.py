@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .platforms import PlatformConfig
+from .platforms import PlatformConfig, VllmMapping, deps_need_vllm
 from .requirements import (
     has_toml_requirements,
     load_benchmark_requirements,
@@ -99,17 +99,20 @@ def _collect_all_toml_deps(
     return all_deps
 
 
-# GitHub "expanded_assets" find-links 404 when that release was never published
-# (milabench/wheels does not build every torch×backend combo).
-_EXPANDED_ASSETS_RE = re.compile(
-    r"^https?://github\.com/[^/]+/[^/]+/releases/expanded_assets/"
+# Wheel indexes that only exist for some torch×backend combos:
+#   - GitHub "expanded_assets" 404s when that release was never published
+#     (milabench/wheels does not build every combo).
+#   - data.pyg.org 403s for combos PyG never shipped (e.g. cu129).
+_OPTIONAL_FIND_LINKS_RES = (
+    re.compile(r"^https?://github\.com/[^/]+/[^/]+/releases/expanded_assets/"),
+    re.compile(r"^https?://data\.pyg\.org/whl/"),
 )
 _find_links_availability_cache: dict[str, bool] = {}
 
 
 def _is_optional_find_links_url(url: str) -> bool:
     """True for find-links that should be omitted when the URL is missing."""
-    return bool(_EXPANDED_ASSETS_RE.match(url))
+    return any(pattern.match(url) for pattern in _OPTIONAL_FIND_LINKS_RES)
 
 
 def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
@@ -154,9 +157,9 @@ def _build_index_args(
 ) -> list[str]:
     """Build --index-url, --extra-index-url, --find-links arguments.
 
-    GitHub ``releases/expanded_assets/...`` find-links are only included when
-    the release page exists. Missing milabench wheel builds fall back to the
-    normal package indexes.
+    Combo-specific wheel indexes (GitHub ``releases/expanded_assets/...``,
+    ``data.pyg.org``) are only included when the page exists. Missing ones fall
+    back to the normal package indexes instead of failing resolution.
     """
     backend_config = platform_config.get_backend(backend)
     variables = platform_config.resolve_vars(overrides)
@@ -294,10 +297,25 @@ def _compat_conditions_match(conditions_str: str, known: dict) -> bool:
     return True
 
 
+def _requirement_name(line: str) -> str:
+    """Return the distribution name from a requirement/constraint line."""
+    return re.split(r"[<>=!~;\[]", line.strip(), maxsplit=1)[0].strip().lower()
+
+
 def _is_torch_requirement(line: str) -> bool:
     """True if a requirements/constraint line pins the ``torch`` distribution."""
-    name = re.split(r"[<>=!~;\[]", line.strip(), maxsplit=1)[0].strip().lower()
-    return name == "torch"
+    return _requirement_name(line) == "torch"
+
+
+def _is_vllm_requirement(line: str) -> bool:
+    """True if a requirements/constraint line refers to the ``vllm`` distribution."""
+    return _requirement_name(line) == "vllm"
+
+
+def _append_vllm_index_args(args: list[str], mapping: VllmMapping) -> list[str]:
+    """Append the verified vLLM source from the exact mapping table."""
+    args.extend(mapping.as_index_args())
+    return args
 
 
 def _torch_minor_pin(torch_version: str) -> str:
@@ -362,11 +380,36 @@ async def pin_combination(
             f"version={backend_version}, torch={torch_version}"
         )
 
+    # Exact vLLM map: include version+source when this combo is supported;
+    # otherwise omit vllm from the shared pin so other packages still pin.
+    vllm_mapping = None
+    if deps_need_vllm(all_deps):
+        vllm_mapping = platform_config.resolve_vllm(
+            backend, overrides, required=False
+        )
+        if vllm_mapping is None:
+            print(
+                f"Skipping vLLM for {backend}={backend_version} torch={torch_version} "
+                f"(no exact mapping in platforms.toml)",
+                flush=True,
+            )
+            all_deps = [dep for dep in all_deps if not _is_vllm_requirement(dep)]
+            if not all_deps:
+                raise RuntimeError(
+                    f"No TOML dependencies left for backend={backend}, "
+                    f"version={backend_version}, torch={torch_version} "
+                    f"after skipping unmapped vLLM"
+                )
+
     # Build index URL arguments
     index_args = _build_index_args(platform_config, backend, overrides)
+    if vllm_mapping is not None:
+        _append_vllm_index_args(index_args, vllm_mapping)
 
     # Build platform constraint lines
     constraint_lines = _build_constraints_content(platform_config, backend, overrides)
+    if vllm_mapping is not None:
+        constraint_lines.append(vllm_mapping.as_constraint())
 
     # Cap torch to the matrix minor. Without an upper bound, uv resolves unpinned
     # "torch" to the newest wheel on the backend index (e.g. 2.13) while still

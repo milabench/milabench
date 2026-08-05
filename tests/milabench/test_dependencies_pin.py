@@ -575,6 +575,36 @@ class TestBuildIndexArgs:
             "torch2.12-rocm7.2"
         ) in args
 
+    def test_skips_missing_pyg_find_links(self, monkeypatch):
+        """PyG ships no cu129 index; the 403 must not fail resolution."""
+        from milabench.dependencies import pin as pin_mod
+
+        pin_mod._find_links_availability_cache.clear()
+        monkeypatch.setattr(
+            pin_mod,
+            "_find_links_url_available",
+            lambda url, timeout=10.0: "cu129" not in url,
+        )
+
+        pyg = "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html"
+        config = PlatformConfig(
+            vars={"torch": "2.11.0", "cuda": "129"},
+            backends={
+                "cuda": BackendConfig(
+                    name="cuda",
+                    indexes=IndexConfig(
+                        index_url="https://pypi.org/simple",
+                        find_links=[pyg],
+                    ),
+                )
+            },
+        )
+        missing = _build_index_args(config, "cuda", {"cuda": "129", "torch": "2.11.0"})
+        assert "data.pyg.org" not in " ".join(missing)
+
+        present = _build_index_args(config, "cuda", {"cuda": "130", "torch": "2.11.0"})
+        assert "https://data.pyg.org/whl/torch-2.11.0+cu130.html" in present
+
     def test_unknown_backend_uses_default_pypi(self):
         config = PlatformConfig()
         args = _build_index_args(config, "xpu", {})
@@ -759,18 +789,16 @@ class TestResolveCompatConstraints:
     def test_constraint_formats_variables(self):
         config = PlatformConfig(
             vars={
-                "vllm": "0.18.1",
                 "cuda": "130",
                 "torch": "2.10.0",
             },
-            vllm_untagged_cuda={"0.18.1": "129"},
             compat={
-                "vllm": CompatEntry(
-                    package="vllm",
+                "flashinfer-python": CompatEntry(
+                    package="flashinfer-python",
                     rules=[
                         CompatRule(
                             conditions="torch>=2.10,cuda>=13",
-                            constraint="=={vllm}{vllm_local}",
+                            constraint=">=0.6,<0.7",
                         ),
                     ],
                 )
@@ -779,29 +807,33 @@ class TestResolveCompatConstraints:
         lines = _resolve_compat_constraints(
             config, {"torch": "2.10.0", "cuda": "130"}
         )
-        assert lines == ["vllm==0.18.1+cu130"]
+        assert lines == ["flashinfer-python>=0.6,<0.7"]
 
-    def test_constraint_omits_tag_for_default_cuda(self):
+    def test_vllm_exact_mapping_not_via_compat(self):
+        from milabench.dependencies.platforms import VllmMapping
+
         config = PlatformConfig(
-            vars={
-                "vllm": "0.18.1",
-                "cuda": "129",
-                "torch": "2.10.0",
-            },
-            vllm_untagged_cuda={"0.18.1": "129", "0.17.1": "128"},
-            compat={
-                "vllm": CompatEntry(
-                    package="vllm",
-                    rules=[
-                        CompatRule(
-                            conditions="torch>=2.10,cuda>=12.9,cuda<13",
-                            constraint="=={vllm}{vllm_local}",
-                        ),
-                    ],
-                )
+            vars={"cuda": "129", "torch": "2.10.0"},
+            vllm_maps={
+                "cuda": {
+                    ("2.10.0", "129"): VllmMapping(
+                        version="0.19.1",
+                        find_links="https://example.com/v0.19.1",
+                    ),
+                    ("2.10.0", "130"): VllmMapping(
+                        version="0.19.1+cu130",
+                        find_links="https://example.com/v0.19.1",
+                    ),
+                }
             },
         )
-        lines = _resolve_compat_constraints(
+        assert config.lookup_vllm("cuda", "129", "2.10.0").as_constraint() == (
+            "vllm==0.19.1"
+        )
+        assert config.lookup_vllm("cuda", "130", "2.10.0").as_constraint() == (
+            "vllm==0.19.1+cu130"
+        )
+        # compat path no longer synthesizes vllm pins
+        assert _resolve_compat_constraints(
             config, {"torch": "2.10.0", "cuda": "129"}
-        )
-        assert lines == ["vllm==0.18.1"]
+        ) == []

@@ -1,6 +1,5 @@
 from collections import defaultdict
 import contextvars
-import functools
 import multiprocessing
 import os
 from copy import deepcopy
@@ -117,27 +116,52 @@ def _max_allocated_mib(payload):
     return max(data.get("max_allocated", 0) for data in payload.values())
 
 
-@functools.cache
-def _torch_backend_info():
-    """Return ``{torch, backend, backend_version}`` for scaling observations.
+_torch_version_cache = {}
 
+
+def _torch_version(pack):
+    """Query torch inside ``pack``'s venv, which is not the one milabench runs in.
+
+    Falls back to the current interpreter when no pack is available. Results are
+    cached per venv because each lookup spawns a subprocess that imports torch.
+    """
+    from .metadata import fetch_torch_version
+    from .scripts.torchversion import get_pytorch_version
+
+    if pack is None:
+        return get_pytorch_version()
+
+    key = str(pack.dirs.venv)
+    if key not in _torch_version_cache:
+        _torch_version_cache[key] = fetch_torch_version(pack)
+    return _torch_version_cache[key]
+
+
+def _torch_backend_info(pack=None):
+    """Return ``{torch, torch_local, backend, backend_version}`` for observations.
+
+    ``torch`` is the public version and ``torch_local`` the local version label
+    of the wheel (the ``rocm7.2`` of ``2.11.0+rocm7.2``), omitted when absent.
     ``backend`` is ``\"rocm\"`` when HIP is present, else ``\"cuda\"`` when CUDA
     is present. Returns ``{}`` when torch is unavailable.
     """
-    try:
-        import torch
-    except Exception:
+    torchv = _torch_version(pack) or {}
+
+    version = str(torchv.get("torch") or "")
+    if not version:
         return {}
 
-    info = {"torch": torch.__version__}
-    hip = getattr(torch.version, "hip", None)
-    cuda = getattr(torch.version, "cuda", None)
+    version, _, local = version.partition("+")
+    info = {"torch": version}
+    if local:
+        info["flavor"] = local
+
+    hip = torchv.get("hip")
+    cuda = torchv.get("cuda")
     if hip:
-        info["backend"] = "rocm"
-        info["backend_version"] = str(hip)
+        info["backend"] = str(hip)
     elif cuda:
-        info["backend"] = "cuda"
-        info["backend_version"] = str(cuda)
+        info["backend"] = str(cuda)
     return info
 
 
@@ -660,7 +684,7 @@ class MemoryUsageExtractor(ValidationLayer):
 
         if stats.active_count <= 0:
             if sum(stats.rc) == 0:
-                self.push_observation(stats)
+                self.push_observation(stats, entry.pack)
             else:
                 syslog("MemoryUsageExtractor: Could not add scaling data because of a failure {}", stats.benchname)
 
@@ -669,7 +693,7 @@ class MemoryUsageExtractor(ValidationLayer):
             except Exception as err:
                 print(f"MemoryUsageExtractor: Could not save scaling file because of {err}")
 
-    def push_observation(self, stats):
+    def push_observation(self, stats, pack=None):
         config = self.memory.setdefault(stats.benchname, dict())
         observations = config.setdefault("observations", [])
 
@@ -688,7 +712,7 @@ class MemoryUsageExtractor(ValidationLayer):
         if stats.jaxmem_usage.current_count > 0:
             obs["jaxmem"] = f"{int(stats.jaxmem_usage.max)} MiB"
 
-        obs.update(_torch_backend_info())
+        obs.update(_torch_backend_info(pack))
 
         observations.append(obs)
         config["observations"] = list(sorted(observations, key=lambda x: x["batch_size"]))

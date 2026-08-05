@@ -57,6 +57,26 @@ def _normalize_overrides(overrides: dict[str, str]) -> dict[str, str]:
 
 
 @dataclass
+class VllmMapping:
+    """Exact vLLM package version and wheel source for one platform pair."""
+
+    version: str
+    find_links: str | None = None
+    extra_index_url: str | None = None
+
+    def as_constraint(self) -> str:
+        return f"vllm=={self.version}"
+
+    def as_index_args(self) -> list[str]:
+        args: list[str] = []
+        if self.extra_index_url:
+            args.extend(["--extra-index-url", self.extra_index_url])
+        if self.find_links:
+            args.extend(["--find-links", self.find_links])
+        return args
+
+
+@dataclass
 class PlatformConfig:
     """Parsed platforms.toml with resolved variable interpolation."""
 
@@ -65,10 +85,8 @@ class PlatformConfig:
     discovery: DiscoveryConfig | None = None
     backends: dict[str, BackendConfig] = field(default_factory=dict)
     compat: dict[str, CompatEntry] = field(default_factory=dict)
-    # vLLM release matrix (see [vllm.*] in platforms.toml)
-    vllm_torch: dict[str, str] = field(default_factory=dict)  # vllm → torch
-    vllm_untagged_cuda: dict[str, str] = field(default_factory=dict)  # vllm → bare CUDA
-    vllm_rocm: dict[str, str] = field(default_factory=dict)  # vllm → rocmNNN
+    # backend → {(torch, backend_version): VllmMapping}
+    vllm_maps: dict[str, dict[tuple[str, str], VllmMapping]] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def resolve_vars(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
@@ -82,13 +100,17 @@ class PlatformConfig:
         Also injects derived variables:
           - cuda_major: first 2 chars of cuda version (e.g. "130" → "13", "126" → "12")
           - torch_short: major.minor of torch (e.g. "2.10.0" → "2.10")
-          - vllm: newest release matching [vllm.torch] for the active torch,
-            unless overrides explicitly set vllm
-          - vllm_local: "" when cuda matches [vllm.untagged_cuda] for that vllm,
-            else "+cu{cuda}"
-          - vllm_rocm: ROCm variant dir from [vllm.rocm] for the selected vllm
+
+        Explicit ``vllm=...`` overrides are rejected; vLLM is selected by the
+        exact ``(backend, backend_version, torch)`` mapping in platforms.toml.
         """
         overrides = _normalize_overrides(overrides) if overrides else {}
+        if "vllm" in overrides:
+            raise ValueError(
+                "vLLM is selected by the (backend, torch) mapping in platforms.toml; "
+                "do not pass --set vllm=... . Set torch and cuda/rocm instead."
+            )
+
         resolved = dict(self.vars)
         resolved.update(overrides)
 
@@ -104,44 +126,74 @@ class PlatformConfig:
             else:
                 resolved["torch_short"] = resolved["torch"]
 
-        # Auto-select newest vLLM for the active torch (matrix-driven)
-        if "vllm" not in overrides and self.vllm_torch and resolved.get("torch"):
-            selected = self.select_vllm_for_torch(resolved["torch"])
-            if selected:
-                resolved["vllm"] = selected
-
-        # vllm_local: keyed by selected vLLM version
-        if "vllm_local" not in resolved and "cuda" in resolved:
-            resolved["vllm_local"] = self.vllm_local_tag(
-                resolved.get("vllm", ""), resolved["cuda"]
-            )
-
-        if "vllm_rocm" not in resolved and resolved.get("vllm"):
-            rocm_var = self.vllm_rocm.get(resolved["vllm"])
-            if rocm_var:
-                resolved["vllm_rocm"] = rocm_var
-
         return resolved
 
-    def select_vllm_for_torch(self, torch_version: str) -> str | None:
-        """Return the newest vLLM release that requires ``torch_version``, or None."""
-        from packaging.version import Version
+    def lookup_vllm(
+        self,
+        backend: str,
+        backend_version: str,
+        torch_version: str,
+    ) -> VllmMapping:
+        """Return the exact vLLM mapping for ``(backend, backend_version, torch)``.
 
-        matches = [v for v, t in self.vllm_torch.items() if t == torch_version]
-        if not matches:
-            return None
-        return str(max(matches, key=Version))
-
-    def vllm_local_tag(self, vllm_version: str, cuda: str) -> str:
-        """Return '' for the untagged default wheel, else '+cu{cuda}'.
-
-        Looks up ``[vllm.untagged_cuda]`` for ``vllm_version``. If that release
-        has no entry, always returns ``+cu{cuda}`` (never assume an untagged match).
+        Raises:
+            ValueError: if the pair is not in the mapping tables.
         """
-        default_cuda = self.vllm_untagged_cuda.get(vllm_version)
-        if default_cuda is not None and cuda == default_cuda:
-            return ""
-        return f"+cu{cuda}"
+        backend_maps = self.vllm_maps.get(backend, {})
+        key = (torch_version, backend_version)
+        mapping = backend_maps.get(key)
+        if mapping is not None:
+            return mapping
+
+        supported = self.supported_vllm_pairs(backend)
+        supported_txt = ", ".join(supported) if supported else "(none)"
+        raise ValueError(
+            f"No vLLM mapping for {backend}={backend_version} torch={torch_version}. "
+            f"Supported {backend} pairs: {supported_txt}"
+        )
+
+    def try_lookup_vllm(
+        self,
+        backend: str,
+        backend_version: str,
+        torch_version: str,
+    ) -> VllmMapping | None:
+        """Like :meth:`lookup_vllm` but returns None when the pair is unmapped."""
+        return self.vllm_maps.get(backend, {}).get((torch_version, backend_version))
+
+    def resolve_vllm(
+        self,
+        backend: str,
+        overrides: dict[str, str] | None = None,
+        *,
+        required: bool = True,
+    ) -> VllmMapping | None:
+        """Resolve the exact vLLM mapping for the active backend/torch pair."""
+        variables = self.resolve_vars(overrides)
+        backend_version = variables.get(backend, "")
+        torch_version = variables.get("torch", "")
+        if not backend_version or not torch_version:
+            if required:
+                raise ValueError(
+                    f"vLLM mapping requires backend version and torch; got "
+                    f"{backend}={backend_version!r} torch={torch_version!r}"
+                )
+            return None
+        if required:
+            return self.lookup_vllm(backend, backend_version, torch_version)
+        return self.try_lookup_vllm(backend, backend_version, torch_version)
+
+    def supported_vllm_pairs(self, backend: str | None = None) -> list[str]:
+        """Human-readable supported ``torch,backend_version`` pairs."""
+        backends = [backend] if backend else sorted(self.vllm_maps)
+        lines: list[str] = []
+        for name in backends:
+            for torch_ver, backend_ver in sorted(self.vllm_maps.get(name, {})):
+                if backend:
+                    lines.append(f"{torch_ver},{backend_ver}")
+                else:
+                    lines.append(f"{name}:{torch_ver},{backend_ver}")
+        return lines
 
     def resolve_string(self, template: str, overrides: dict[str, str] | None = None) -> str:
         """Interpolate {var} placeholders in a string."""
@@ -155,6 +207,15 @@ class PlatformConfig:
             # explicitly configured in platforms.toml to still work.
             return BackendConfig(name=name)
         return self.backends[name]
+
+
+def deps_need_vllm(deps: list[str]) -> bool:
+    """True if any dependency line requests the ``vllm`` package."""
+    for dep in deps:
+        name = re.split(r"[<>=!~;\[]", dep.strip(), maxsplit=1)[0].strip().lower()
+        if name == "vllm":
+            return True
+    return False
 
 
 @dataclass
@@ -263,6 +324,48 @@ def _find_platforms_toml(start_path: Path | None = None) -> Path:
     )
 
 
+def _parse_vllm_maps(raw: dict[str, Any]) -> dict[str, dict[tuple[str, str], VllmMapping]]:
+    """Parse ``[vllm.cuda]`` / ``[vllm.rocm]`` exact mapping tables."""
+    result: dict[str, dict[tuple[str, str], VllmMapping]] = {}
+    for backend, entries in raw.items():
+        if not isinstance(entries, dict):
+            continue
+        # Skip legacy reverse maps if someone still has them
+        if backend in {"torch", "untagged_cuda"}:
+            continue
+        backend_maps: dict[tuple[str, str], VllmMapping] = {}
+        for key, value in entries.items():
+            if not isinstance(value, dict):
+                continue
+            parts = [p.strip() for p in str(key).split(",")]
+            if len(parts) != 2:
+                raise ValueError(
+                    f"[vllm.{backend}] key {key!r} must be 'torch,backend_version' "
+                    f"(e.g. '2.10.0,130')"
+                )
+            torch_ver, backend_ver = parts
+            version = value.get("version")
+            if not version:
+                raise ValueError(
+                    f"[vllm.{backend}] entry {key!r} requires a 'version' field"
+                )
+            find_links = value.get("find-links") or value.get("find_links")
+            extra = value.get("extra-index-url") or value.get("extra_index_url")
+            if not find_links and not extra:
+                raise ValueError(
+                    f"[vllm.{backend}] entry {key!r} requires 'find-links' "
+                    f"or 'extra-index-url'"
+                )
+            backend_maps[(torch_ver, backend_ver)] = VllmMapping(
+                version=str(version),
+                find_links=str(find_links) if find_links else None,
+                extra_index_url=str(extra) if extra else None,
+            )
+        if backend_maps:
+            result[str(backend)] = backend_maps
+    return result
+
+
 def load_platform_config(
     path: Path | str | None = None,
     overrides: dict[str, str] | None = None,
@@ -347,18 +450,10 @@ def load_platform_config(
 
         config.backends[name] = backend
 
-    # Parse [vllm.*] release matrix
+    # Parse [vllm.cuda] / [vllm.rocm] exact maps
     vllm_raw = raw.get("vllm", {})
     if isinstance(vllm_raw, dict):
-        torch_map = vllm_raw.get("torch", {})
-        if isinstance(torch_map, dict):
-            config.vllm_torch = {str(k): str(v) for k, v in torch_map.items()}
-        untagged = vllm_raw.get("untagged_cuda", {})
-        if isinstance(untagged, dict):
-            config.vllm_untagged_cuda = {str(k): str(v) for k, v in untagged.items()}
-        rocm_map = vllm_raw.get("rocm", {})
-        if isinstance(rocm_map, dict):
-            config.vllm_rocm = {str(k): str(v) for k, v in rocm_map.items()}
+        config.vllm_maps = _parse_vllm_maps(vllm_raw)
 
     # Parse [compat.*] sections
     compat_raw = raw.get("compat", {})

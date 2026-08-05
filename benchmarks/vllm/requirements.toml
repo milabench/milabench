@@ -8,10 +8,10 @@ dependencies = [
 
 [cuda]
 dependencies = [
-    # Version (+cuXXX) comes from platforms.toml [compat.vllm]
-    "vllm",
-    "vllm[bench]",
-    "vllm[audio]",
+    # vLLM installed manually for now (platforms.toml [vllm.cuda] kept for later)
+    # "vllm",
+    # "vllm[bench]",
+    # "vllm[audio]",
     "flashinfer-python",
     "flashinfer-cubin",
     # "flashinfer-jit-cache",
@@ -20,9 +20,8 @@ dependencies = [
 
 [rocm]
 dependencies = [
-    # Version (+rocmX.Y) comes from platforms.toml [compat.vllm]
-    # (milabench find-links, e.g. vllm==0.18.1+rocm7.2)
-    "vllm",
+    # vLLM installed manually for now (platforms.toml [vllm.rocm] kept for later)
+    # "vllm",
     # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
     "torchcodec",
 ]

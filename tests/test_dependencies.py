@@ -982,140 +982,155 @@ class TestResolveCompatConstraints:
         assert "flashinfer-python>=0.6" in cuda_lines
 
 
-class TestVllmCompatMatrix:
-    """vLLM matrix: torch → newest vllm; untagged_cuda → {vllm_local}."""
+class TestVllmExactMapping:
+    """Exact (torch, backend_version) → vLLM version + source."""
 
-    def test_repo_matrix_torch210_cuda130(self):
+    def test_repo_cuda_tagged_and_untagged(self):
         from pathlib import Path
 
         repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
         config = load_platform_config(path=repo_toml)
-        assert config.vllm_torch["0.19.1"] == "2.10.0"
-        assert config.vllm_untagged_cuda["0.19.1"] == "129"
-        assert config.select_vllm_for_torch("2.10.0") == "0.19.1"
-        lines = _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "130"}, backend="cuda"
-        )
-        assert "vllm==0.19.1+cu130" in lines
 
-    def test_repo_matrix_torch210_cuda129_untagged(self):
+        m130 = config.lookup_vllm("cuda", "130", "2.10.0")
+        assert m130.version == "0.19.1+cu130"
+        assert m130.find_links.endswith("/v0.19.1")
+
+        m129 = config.lookup_vllm("cuda", "129", "2.10.0")
+        assert m129.version == "0.19.1"
+        assert "+cu" not in m129.version
+
+        m211 = config.lookup_vllm("cuda", "130", "2.11.0")
+        assert m211.version == "0.26.0"
+        assert config.lookup_vllm("cuda", "129", "2.11.0").version == "0.26.0+cu129"
+
+    def test_repo_rocm_milabench_wheel(self):
         from pathlib import Path
 
         repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
         config = load_platform_config(path=repo_toml)
-        lines = _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "129"}, backend="cuda"
-        )
-        assert "vllm==0.19.1" in lines
-        assert "+cu" not in [l for l in lines if l.startswith("vllm")][0]
+        mapping = config.lookup_vllm("rocm", "7.2", "2.12.1")
+        assert mapping.version == "0.18.1+rocm7.2"
+        assert "torch2.12-rocm7.2" in mapping.find_links
 
-    def test_repo_matrix_torch211_cuda130_untagged(self):
-        from pathlib import Path
-
-        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
-        config = load_platform_config(path=repo_toml)
-        assert config.select_vllm_for_torch("2.11.0") == "0.26.0"
-        lines = _resolve_compat_constraints(
-            config, {"torch": "2.11.0", "cuda": "130"}, backend="cuda"
-        )
-        assert "vllm==0.26.0" in lines
-        lines129 = _resolve_compat_constraints(
-            config, {"torch": "2.11.0", "cuda": "129"}, backend="cuda"
-        )
-        assert "vllm==0.26.0+cu129" in lines129
-
-    def test_repo_matrix_torch212_rocm72_milabench_wheel(self):
-        from pathlib import Path
-
-        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
-        config = load_platform_config(path=repo_toml)
+        # Compat rules unrelated to vLLM still apply on the ROCm path
         lines = _resolve_compat_constraints(
             config, {"torch": "2.12.1", "rocm": "7.2"}, backend="rocm"
         )
-        assert "vllm==0.18.1+rocm7.2" in lines
         assert "torch-geometric>=2.6,<2.7" in lines
         assert "torchcodec==0.15.0+cpu" in lines
-        # Must not pin CUDA local versions on the ROCm path
-        assert not any(l.startswith("vllm==") and "+cu" in l for l in lines)
+        assert not any(l.startswith("vllm==") for l in lines)
 
-    def test_explicit_vllm_override_skips_auto_select(self):
+    def test_repo_rocm_official_wheels_vllm_ai(self):
         from pathlib import Path
 
         repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
         config = load_platform_config(path=repo_toml)
-        resolved = config.resolve_vars(
-            {"torch": "2.10.0", "cuda": "130", "vllm": "0.18.1"}
-        )
-        assert resolved["vllm"] == "0.18.1"
-        assert resolved["vllm_local"] == "+cu130"
 
-    def test_untagged_cuda_depends_on_vllm_version(self, tmp_path):
+        m723 = config.lookup_vllm("rocm", "7.2.3", "2.11.0")
+        assert m723.version == "0.26.0+rocm723"
+        assert m723.extra_index_url == "https://wheels.vllm.ai/rocm/0.26.0/rocm723/"
+        assert m723.find_links is None
+
+        # 7.2 shorthand follows newest 7.2.x for that torch
+        assert config.lookup_vllm("rocm", "7.2", "2.11.0").version == "0.26.0+rocm723"
+        assert config.lookup_vllm("rocm", "7.2", "2.10.0").version == "0.23.0+rocm723"
+        assert config.lookup_vllm("rocm", "7.2.2", "2.10.0").version == "0.22.1+rocm722"
+        assert config.lookup_vllm("rocm", "7.2.1", "2.10.0").version == "0.20.2+rocm721"
+        assert config.lookup_vllm("rocm", "7.0.0", "2.9.1").version == "0.18.1+rocm700"
+
+    def test_install_official_rocm_uses_extra_index(self, tmp_path):
         content = dedent("""\
             [vars]
-            cuda = "129"
-            torch = "2.10.0"
-            vllm = "0.18.1"
+            rocm = "7.2.3"
+            torch = "2.11.0"
 
-            [vllm.untagged_cuda]
-            "0.18.1" = "129"
-            "0.17.1" = "128"
+            [rocm.indexes]
+            index-url = "https://pypi.org/simple"
+
+            [vllm.rocm]
+            "2.11.0,7.2.3" = { version = "0.26.0+rocm723", extra-index-url = "https://wheels.vllm.ai/rocm/0.26.0/rocm723/" }
+        """)
+        path = tmp_path / "platforms.toml"
+        path.write_text(content)
+
+        bench = tmp_path / "benchmarks" / "vllm"
+        bench.mkdir(parents=True)
+        (bench / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [rocm]
+            dependencies = ["vllm"]
+        """))
+
+        config = load_platform_config(path=path)
+        result = install_args(
+            benchmark_path=bench,
+            platform_config=config,
+            backend="rocm",
+            pin_dir=tmp_path / ".pin",
+            unpinned=True,
+        )
+        try:
+            assert "vllm==0.26.0+rocm723" in result.platform_constraint_file.read_text()
+            pip_args = result.as_pip_args()
+            assert "--extra-index-url" in pip_args
+            assert "https://wheels.vllm.ai/rocm/0.26.0/rocm723/" in pip_args
+        finally:
+            result.cleanup()
+
+    def test_missing_pair_lists_supported(self):
+        from pathlib import Path
+
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+        with pytest.raises(ValueError, match="No vLLM mapping.*2.13.0"):
+            config.lookup_vllm("cuda", "130", "2.13.0")
+
+    def test_explicit_vllm_override_rejected(self):
+        from pathlib import Path
+
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+        with pytest.raises(ValueError, match="do not pass --set vllm"):
+            config.resolve_vars({"torch": "2.10.0", "cuda": "130", "vllm": "0.18.1"})
+
+    def test_parse_exact_map_table(self, tmp_path):
+        content = dedent("""\
+            [vars]
+            cuda = "130"
+            torch = "2.10.0"
 
             [cuda.indexes]
             index-url = "https://pypi.org/simple"
 
-            [compat.vllm]
-            "torch>=2.10" = "=={vllm}{vllm_local}"
+            [vllm.cuda]
+            "2.10.0,129" = { version = "0.19.1", find-links = "https://example.com/v0.19.1" }
+            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://example.com/v0.19.1" }
         """)
         path = tmp_path / "platforms.toml"
         path.write_text(content)
         config = load_platform_config(path=path)
 
-        assert config.vllm_local_tag("0.18.1", "129") == ""
-        assert config.vllm_local_tag("0.18.1", "128") == "+cu128"
-        assert config.vllm_local_tag("0.17.1", "128") == ""
-        assert config.vllm_local_tag("0.17.1", "129") == "+cu129"
+        assert config.lookup_vllm("cuda", "129", "2.10.0").as_constraint() == "vllm==0.19.1"
+        assert (
+            config.lookup_vllm("cuda", "130", "2.10.0").as_constraint()
+            == "vllm==0.19.1+cu130"
+        )
+        assert config.resolve_vllm("cuda", {"cuda": "129", "torch": "2.10.0"}).version == (
+            "0.19.1"
+        )
 
-        assert _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "129", "vllm": "0.18.1"}
-        ) == ["vllm==0.18.1"]
-        assert _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "128", "vllm": "0.17.1"}
-        ) == ["vllm==0.17.1"]
-        assert _resolve_compat_constraints(
-            config, {"torch": "2.10.0", "cuda": "129", "vllm": "0.17.1"}
-        ) == ["vllm==0.17.1+cu129"]
-
-    def test_vllm_local_derived_var(self):
-        from pathlib import Path
-
-        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
-        config = load_platform_config(path=repo_toml)
-        # torch 2.10 → vllm 0.19.1, untagged cuda 129
-        assert config.resolve_vars({"torch": "2.10.0", "cuda": "130"})["vllm_local"] == "+cu130"
-        assert config.resolve_vars({"torch": "2.10.0", "cuda": "129"})["vllm_local"] == ""
-        # torch 2.11 → vllm 0.26.0, untagged cuda 130
-        assert config.resolve_vars({"torch": "2.11.0", "cuda": "130"})["vllm_local"] == ""
-        assert config.resolve_vars({"torch": "2.11.0", "cuda": "129"})["vllm_local"] == "+cu129"
-
-    def test_install_includes_vllm_find_links_and_constraint(self, tmp_path):
+    def test_install_includes_vllm_source_and_constraint(self, tmp_path):
         content = dedent("""\
             [vars]
             cuda = "130"
             torch = "2.10.0"
-            vllm = "0.18.1"
-
-            [vllm.untagged_cuda]
-            "0.18.1" = "129"
-            "0.17.1" = "128"
 
             [cuda.indexes]
             index-url = "https://pypi.org/simple"
-            find-links = [
-                "https://github.com/vllm-project/vllm/releases/expanded_assets/v{vllm}",
-            ]
 
-            [compat.vllm]
-            "torch>=2.10,cuda>=13" = "=={vllm}{vllm_local}"
+            [vllm.cuda]
+            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
         """)
         path = tmp_path / "platforms.toml"
         path.write_text(content)
@@ -1141,10 +1156,10 @@ class TestVllmCompatMatrix:
         )
         try:
             assert result.platform_constraint_file is not None
-            assert "vllm==0.18.1+cu130" in result.platform_constraint_file.read_text()
+            assert "vllm==0.19.1+cu130" in result.platform_constraint_file.read_text()
             pip_args = result.as_pip_args()
             assert (
-                "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.18.1"
+                "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1"
                 in pip_args
             )
             assert (
@@ -1153,3 +1168,37 @@ class TestVllmCompatMatrix:
             )
         finally:
             result.cleanup()
+
+    def test_install_unmapped_pair_fails(self, tmp_path):
+        content = dedent("""\
+            [vars]
+            cuda = "130"
+            torch = "2.12.0"
+
+            [cuda.indexes]
+            index-url = "https://pypi.org/simple"
+
+            [vllm.cuda]
+            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://example.com/v0.19.1" }
+        """)
+        path = tmp_path / "platforms.toml"
+        path.write_text(content)
+
+        bench = tmp_path / "benchmarks" / "vllm"
+        bench.mkdir(parents=True)
+        (bench / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["vllm"]
+        """))
+
+        config = load_platform_config(path=path)
+        with pytest.raises(ValueError, match="No vLLM mapping"):
+            install_args(
+                benchmark_path=bench,
+                platform_config=config,
+                backend="cuda",
+                pin_dir=tmp_path / ".pin",
+                unpinned=True,
+            )
