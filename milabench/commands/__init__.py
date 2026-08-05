@@ -807,10 +807,8 @@ class ForeachNode(ListCommand):
         return copy
 
 
-# # Ray on Slurm: see milabench.commands.ray.RayCluster
-# srun -J "head ray ..." -N 1 -w ${HEAD_HOSTNAME} ${RAY_CMD_HEAD} &
-# srun -J "worker ray ..." -N $((SLURM_NNODES-1)) -x ${HEAD_HOSTNAME} ${RAY_CMD_WORKER} &
-# <workload on head>
+# Ray on Slurm: milabench.commands.ray.RayCluster (lazy export via __getattr__)
+# ray start --head; srun -x main -- ray start --address=...; wait; <workload>; ray stop
 
 
 class TorchrunAllNodes(ForeachNode):
@@ -1180,3 +1178,11 @@ def torchrun(*args, **kwargs):
     from .srun import TorchrunSrun
 
     return TorchrunSrun(*args, **kwargs)
+
+
+def __getattr__(name: str):
+    if name == "RayCluster":
+        from .ray import RayCluster
+
+        return RayCluster
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

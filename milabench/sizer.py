@@ -796,6 +796,11 @@ def new_argument_resolver(pack):
 
     context["cpu_count"] = total_available
     context["gpu_count"] = device_count_system
+    num_machines = 1
+    if hasattr(pack, "config"):
+        num_machines = max(1, int(pack.config.get("num_machines", 1)))
+    context["num_machines"] = num_machines
+    context["total_gpu_count"] = device_count_system * num_machines
     context["cpu_per_gpu"] = total_available // max(device_count_system, 1)
     context["n_worker"] = clamp(context["cpu_per_gpu"])
 

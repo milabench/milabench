@@ -1,5 +1,8 @@
 # milabench run --config /home/mila/d/delaunap/scratch/milabench/benchmarks/vllm/dev.yaml --base /tmp/data/ --select vllm-gpus --use-current-env
 
+include:
+  - ../../config/_defaults.yaml
+
 _vllm:
   inherits: _defaults
   definition: .
@@ -164,3 +167,87 @@ vllm-whisper-gpus:
 #       --dtype: bfloat16
 #       --tensor-parallel-size: "{gpu_count}"
 
+
+# -----------------------------------------------------------------------------
+# Multi-node Ray smoke configs (arch + total params + lowest dtype in the name)
+# Naming: vllm-{arch}-{model}-{params}-{dtype}-nodes
+#   params = total parameter count (e.g. 2.8t, 744b)
+# -----------------------------------------------------------------------------
+
+_vllm_nodes:
+  inherits: _vllm
+  num_machines: 2
+  max_duration: 3600
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - multigpu
+    - multinode
+  client:
+    argv:
+      --dataset-name: random
+      --num-prompts: 8
+      --max-concurrency: 4
+      --ready-check-timeout-sec: 3600
+  server:
+    argv:
+      --distributed-executor-backend: ray
+      --tensor-parallel-size: "{total_gpu_count}"
+      --gpu-memory-utilization: 0.9
+
+vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
+  inherits: _vllm_nodes
+  tags:
+    - moe
+    - mxfp4
+    - multinode
+  url: https://huggingface.co/moonshotai/Kimi-K3
+  client:
+    argv:
+      --model: moonshotai/Kimi-K3
+  server:
+    argv:
+      moonshotai/Kimi-K3: true
+      --trust-remote-code: true
+      --enable-auto-tool-choice: true
+      --tool-call-parser: kimi_k3
+      --reasoning-parser: kimi_k3
+
+vllm-moe-glm52-744b-bf16-nodes:
+  inherits: _vllm_nodes
+  tags:
+    - moe
+    - bf16
+    - multinode
+  url: https://huggingface.co/zai-org/GLM-5.2
+  client:
+    argv:
+      --model: zai-org/GLM-5.2
+  server:
+    argv:
+      zai-org/GLM-5.2: true
+      --dtype: bfloat16
+      --enable-auto-tool-choice: true
+      --tool-call-parser: glm47
+      --reasoning-parser: glm45
+
+vllm-moe-glm52-744b-fp8-nodes:
+  inherits: _vllm_nodes
+  tags:
+    - moe
+    - fp8
+    - multinode
+  url: https://huggingface.co/zai-org/GLM-5.2-FP8
+  client:
+    argv:
+      --model: zai-org/GLM-5.2-FP8
+  server:
+    argv:
+      zai-org/GLM-5.2-FP8: true
+      --kv-cache-dtype: fp8
+      --enable-auto-tool-choice: true
+      --tool-call-parser: glm47
+      --reasoning-parser: glm45

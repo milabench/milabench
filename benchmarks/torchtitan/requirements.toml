@@ -1,0 +1,28 @@
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "torch",
+    "transformers>=5.9.0,<6",
+    "datasets>=3.6.0,<4.8.0",
+    "tokenizers>=0.15.0",
+    "safetensors",
+    "tyro",
+    "tensorboard",
+    "wandb",
+    "einops",
+    "pillow",
+    "spmd_types==0.2.1",
+    "torchdata>=0.8.0",
+    "huggingface_hub",
+    "argklass",
+    "torchtitan @ git+https://github.com/pytorch/torchtitan.git",
+]
+
+[cuda]
+dependencies = []
+
+[rocm]
+dependencies = []
+
+[xpu]
+enabled = false

@@ -2,6 +2,7 @@ import os
 
 from milabench.pack import Package
 import milabench.commands as cmd
+from milabench.commands.ray import RayCluster
 from milabench.utils import assemble_options
 
 
@@ -56,6 +57,10 @@ class VLLM(Package):
     async def prepare(self):
         await super().prepare()  # super() call executes prepare_script
 
+    @property
+    def num_machines(self):
+        return max(1, int(self.config.get("num_machines", 1)))
+
     def client_argv(self, prepare=False):
         args = self.config.get("client", {}).get("argv", [])
 
@@ -66,7 +71,14 @@ class VLLM(Package):
         return assemble_options(args)
 
     def server_argv(self, prepare=False):
-        return assemble_options(self.config.get("server", {}).get("argv", []))
+        args = assemble_options(self.config.get("server", {}).get("argv", []))
+        if self.num_machines > 1 and not any(
+            a == "--distributed-executor-backend"
+            or str(a).startswith("--distributed-executor-backend=")
+            for a in args
+        ):
+            args.extend(["--distributed-executor-backend", "ray"])
+        return args
 
     @property
     def argv(self):
@@ -75,7 +87,10 @@ class VLLM(Package):
     def build_run_plan(self):
         main = self.dirs.code / self.main_script
         pack = cmd.PackCommand(self, *self.argv, lazy=True)
-        return cmd.VoirCommand(pack, cwd=main.parent).use_stdout()
+        workload = cmd.VoirCommand(pack, cwd=main.parent).use_stdout()
+        if self.num_machines > 1:
+            return RayCluster(workload)
+        return workload
 
 
 __pack__ = VLLM

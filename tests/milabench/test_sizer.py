@@ -22,7 +22,11 @@ from milabench.sizer import (
     _fixed_overhead,
     _fit_torchmem_vs_batch,
     _obs_pair_octets,
+<<<<<<< HEAD
     _torch_backend_info,
+=======
+    _per_gpu_memory_mib,
+>>>>>>> b3c6727 (New torchtitan benchmark concept)
 )
 
 
@@ -188,9 +192,9 @@ class TestBenchStats:
         assert bs.rc == []
         assert bs.early_stopped == []
 
-    def test_max_memory_usage_uses_peak_when_available(self):
+    def test_max_memory_usage_prefers_torchmem(self):
         bs = BenchStats("b")
-        bs.peak_usage += 500
+        bs.torchmem_usage += 500
         bs.max_usage += 100
         assert bs.max_memory_usage() == 500
 
@@ -203,6 +207,110 @@ class TestBenchStats:
     def test_max_memory_usage_no_data(self):
         bs = BenchStats("b")
         assert bs.max_memory_usage() == float("-inf")
+
+    def test_has_stopped_early_false_when_empty(self):
+        bs = BenchStats("b")
+        assert bs.has_stopped_early() is False
+
+    def test_has_stopped_early_true(self):
+        bs = BenchStats("b")
+        bs.early_stopped.append(True)
+        assert bs.has_stopped_early() is True
+
+    def test_has_stopped_early_last_false(self):
+        bs = BenchStats("b")
+        bs.early_stopped.append(True)
+        bs.early_stopped.append(False)
+        assert bs.has_stopped_early() is False
+
+    def test_statstream_fields_accumulate(self):
+        bs = BenchStats("b")
+        bs.perf += 10.0
+        bs.perf += 20.0
+        assert bs.perf.avg == 15.0
+        assert bs.perf.current_count == 2
+
+
+class TestPerGpuMemoryMib:
+    def test_none_on_empty(self):
+        assert _per_gpu_memory_mib(None) is None
+        assert _per_gpu_memory_mib({}) is None
+
+    def test_single_device(self):
+        assert _per_gpu_memory_mib({"0": {"memory": [31240, 192000]}}) == 31240
+
+    def test_multi_device_is_peak_not_sum(self):
+        gpudata = {
+            str(i): {"memory": [31240 + i, 192000]} for i in range(8)
+        }
+        # Sum would be ~249960; we keep the per-GPU peak.
+        assert _per_gpu_memory_mib(gpudata) == 31247
+        assert _per_gpu_memory_mib(gpudata) != sum(
+            d["memory"][0] for d in gpudata.values()
+        )
+
+    def test_min_load_skips_idle_ddp_init_spike(self):
+        # Real spike shape from run.out: ~249k on every GPU at load ~0.1
+        spike = {
+            str(i): {"memory": [246000 + i * 100, 294896], "load": 0.1}
+            for i in range(8)
+        }
+        assert _per_gpu_memory_mib(spike, min_load=0.3) is None
+
+        steady = {
+            str(i): {"memory": [32000 + i, 294896], "load": 0.95}
+            for i in range(8)
+        }
+        assert _per_gpu_memory_mib(steady, min_load=0.3) == 32007
+
+
+class TestMemoryUsageExtractorPerGpu:
+    def test_gpudata_records_per_gpu_peak_not_cluster_sum(self, tmp_path, monkeypatch):
+        save = tmp_path / "scaling.yaml"
+        save.write_text("version: 2.0\n")
+
+        opts = MagicMock()
+        opts.save = str(save)
+        opts.config = str(save)
+        monkeypatch.setattr(SizerOptions, "instance", staticmethod(lambda: opts))
+
+        layer = MemoryUsageExtractor()
+        layer.filepath = str(save)
+
+        pack = MagicMock()
+        pack.config = {"name": "resnet152-ddp-gpus"}
+
+        gpudata = {
+            str(i): {"memory": [31240, 192000], "load": 0.95} for i in range(8)
+        }
+        entry = MagicMock()
+        entry.pack = pack
+        entry.data = {"gpudata": gpudata}
+
+        layer.on_start(entry)
+        layer.on_data(entry)
+
+        # Idle multi-GPU SMI spike must not raise the peak.
+        spike = {
+            str(i): {"memory": [249924, 294896], "load": 0.08} for i in range(8)
+        }
+        entry.data = {"gpudata": spike}
+        layer.on_data(entry)
+        layer.on_batch_size_set(pack, None, 256)
+        layer.on_cpu_count_set(pack, None, 8)
+        entry.data = {"rate": 13000.0}
+        layer.on_data(entry)
+        entry.data = {"return_code": 0}
+        layer.on_end(entry)
+
+        stats = layer._benchstat["resnet152-ddp-gpus"]
+        assert stats.max_usage.current_count == 1
+        assert int(stats.max_usage.max) == 31240
+        # Cluster sum of one poll — must not be what we store.
+        assert int(stats.max_usage.max) != 31240 * 8
+
+        obs = layer.memory["resnet152-ddp-gpus"]["observations"][-1]
+        assert obs["memory"] == "31240 MiB"
 
     def test_has_stopped_early_false_when_empty(self):
         bs = BenchStats("b")

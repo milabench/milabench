@@ -1,0 +1,126 @@
+# Local bring-up config for torchtitan (pretrain + SFT × 3 models).
+# Usage:
+#   milabench install --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
+#   milabench prepare --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
+#   milabench run     --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
+
+include:
+  - ../../config/_defaults.yaml
+
+_torchtitan:
+  inherits: _defaults
+  definition: .
+  enabled: true
+  install_variant: unpinned
+  install_group: torch
+  weight: 0.0
+  max_duration: 3600
+  tags:
+    - nlp
+    - llm
+    - torchtitan
+  plan:
+    method: njobs
+    n: 1
+  voir:
+    options:
+      stop: 30
+  argv:
+    --module: tt_configs
+    --training.steps: 40
+    --metrics.log_freq: 1
+
+# --- Qwen3-4B dense ---
+
+torchtitan-qwen3-4b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+  tags:
+    - multigpu
+    - pretrain
+  argv:
+    --module: tt_configs
+    --config: qwen3_4b_pretrain
+    --training.steps: 40
+
+torchtitan-qwen3-4b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+  tags:
+    - multigpu
+    - sft
+  argv:
+    --module: tt_configs
+    --config: qwen3_4b_sft
+    --training.steps: 40
+
+# --- Qwen3-30B-A3B MoE ---
+
+torchtitan-qwen3-30b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-30B-A3B
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: qwen3_30b_pretrain
+    --training.steps: 40
+    --training.seq_len: 2048
+
+torchtitan-qwen3-30b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-30B-A3B
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: qwen3_30b_sft
+    --training.steps: 40
+
+# --- GLM-5 MoE+DSA (FSDP+EP only) ---
+
+torchtitan-glm5-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/zai-org/GLM-5
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 14400
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: glm5_pretrain
+    --training.steps: 20
+    --training.seq_len: 1024
+    --parallelism.tensor_parallel_degree: 1
+    --parallelism.context_parallel_degree: 1
+
+torchtitan-glm5-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/zai-org/GLM-5
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 14400
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: glm5_sft
+    --training.steps: 20
+    --training.seq_len: 1024
+    --parallelism.tensor_parallel_degree: 1
+    --parallelism.context_parallel_degree: 1

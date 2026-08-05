@@ -38,6 +38,7 @@ benchmarks/llm/tune/
 benchmarks/vjepa/jepa
 benchmarks/llm/bench/original
 benchmarks/_extern/
+benchmarks/torchtitan/assets
 
 scripts/inventory.yaml
 output/
