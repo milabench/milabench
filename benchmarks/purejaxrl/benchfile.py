@@ -1,4 +1,5 @@
 from milabench.pack import Package
+from milabench.commands import PackCommand, WrapperCommand
 
 
 class Template(Package):
@@ -30,6 +31,9 @@ class Template(Package):
     async def prepare(self):
         await super().prepare()  # super() call executes prepare_script
 
+    def build_run_plan(self):
+        # No Voir: run `python main.py <argv>` and push metrics via stdout.
+        return WrapperCommand(PackCommand(self, lazy=True), "python").use_stdout()
 
 
 __pack__ = Template

@@ -156,6 +156,14 @@ ppo:
   argv:
     --total_timesteps: 100000
 
+# ---- torchatari ----
+
+torchatari:
+  argv:
+    --total-timesteps: 100000
+    --num-envs: 16
+    --num-minibatches: 4
+
 # ---- geo_gnn ----
 
 pna:

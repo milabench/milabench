@@ -13,7 +13,7 @@ dependencies = [
 
 [rocm]
 dependencies = [
-    "jax[rocm]",
+    "jax-rocm7-plugin",
 ]
 
 [hpu]

@@ -10,7 +10,7 @@ from flax.linen.initializers import constant, orthogonal
 from typing import Sequence, NamedTuple, Any
 from flax.training.train_state import TrainState
 import distrax
-from benchmate.metrics import give_push
+from benchmate.metrics import sumggle_push
 
 from wrappers import (
     LogWrapper,
@@ -77,10 +77,8 @@ class Transition(NamedTuple):
 
 def make_train(config):
     from benchmate.timings import StepTimer
-    from benchmate.jaxmem import memory_peak_fetcher
-    
-    step_timer = StepTimer(give_push())
-    fetch_memory_peak = memory_peak_fetcher()
+
+    step_timer = StepTimer(sumggle_push())
 
     config["NUM_UPDATES"] = (
         config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
@@ -297,7 +295,6 @@ def make_train(config):
 
                 step_timer.step(config["NUM_ENVS"] * config["NUM_STEPS"])
                 step_timer.log(loss=loss)
-                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
                 step_timer.end()
 
             def _do_callback(_metrics):
@@ -385,13 +382,12 @@ def main(args: Arguments = None):
     train_jit = jax.jit(make_train(config))
     compiled_fn = train_jit.lower(rng).compile()
 
+    from benchmate.monitor import bench_monitor
     from benchmate.profiler import jax_profiler
 
-    # GPU polling comes from voirfile_monitor; bench_monitor() smuggles OSC
-    # sequences on stdout that show up as garbage when use_stdout is off.
-    with jax_profiler():
-        out = compiled_fn(rng)
-
+    with bench_monitor():
+        with jax_profiler():
+            out = compiled_fn(rng)
 
 if __name__ == "__main__":
     main()

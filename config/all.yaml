@@ -157,6 +157,10 @@ cleanrljax:
   enabled: false
   weight: 0.0
 
+torchatari:
+  enabled: true
+  weight: 1.0
+
 # Geo
 dimenet:
   enabled: true

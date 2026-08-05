@@ -1,0 +1,35 @@
+[common]
+dependencies = [
+    "voir",
+    "torch",
+    "transformers",
+    "peft",
+    "datasets",
+    "beaker",
+    "ray",
+    "wandb",
+    "deepspeed",
+    "accelerate",
+    "litellm",
+    "langdetect",
+    "absl-py",
+    "immutabledict",
+    "nltk",
+    "ai2-olmo-core",
+]
+
+[cuda]
+dependencies = [
+    "flash-attn",
+    # flash-attn-3 is flash-attn-2 with different arch support
+    "flash-attn-4",
+]
+
+[rocm]
+dependencies = []
+
+[hpu]
+enabled = false
+
+[xpu]
+enabled = false

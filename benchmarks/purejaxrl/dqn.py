@@ -15,7 +15,7 @@ import gymnax
 from gymnax.wrappers.purerl import FlattenObservationWrapper, LogWrapper
 import flashbax as fbx
 
-from benchmate.metrics import give_push
+from benchmate.metrics import sumggle_push
 
 
 
@@ -52,9 +52,8 @@ def make_train(config):
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // config["NUM_ENVS"]
 
     from benchmate.timings import StepTimer
-    from benchmate.jaxmem import memory_peak_fetcher
-    step_timer = StepTimer(give_push())
-    fetch_memory_peak = memory_peak_fetcher()
+
+    step_timer = StepTimer(sumggle_push())
 
     basic_env, env_params = gymnax.make(config["ENV_NAME"])
     env = FlattenObservationWrapper(basic_env)
@@ -249,7 +248,6 @@ def make_train(config):
                 
                 step_timer.step(delta.item())
                 step_timer.log(returns=returns, loss=loss)
-                step_timer.log(memory_peak=fetch_memory_peak(), units="MiB")
                 step_timer.end()
 
             def _do_callback(_metrics):
@@ -383,12 +381,12 @@ def main(args: Arguments = None):
     train_vjit = jax.jit(jax.vmap(make_train(config), in_axes=(0,)))
     compiled_fn = train_vjit.lower(rngs).compile()
 
+    from benchmate.monitor import bench_monitor
     from benchmate.profiler import jax_profiler
-    # GPU polling comes from voirfile_monitor; bench_monitor() smuggles OSC
-    # sequences on stdout that show up as garbage when use_stdout is off.
-    with jax_profiler():
-        outs = jax.block_until_ready(compiled_fn(rngs))
 
+    with bench_monitor():
+        with jax_profiler():
+            outs = jax.block_until_ready(compiled_fn(rngs))
 
 if __name__ == "__main__":
     main()
