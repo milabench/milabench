@@ -40,7 +40,7 @@ class VLLM(Package):
     def make_env(self):
         env = super().make_env()
         env["XDG_CACHE_HOME"] = str(self.dirs.cache)
-    
+
         env["FLASHINFER_CACHE_DIR "] = str(self.dirs.cache / "flashinfer")
         env["FLASHINFER_CUBIN_DIR "] = str(self.dirs.cache / "flashinfer" / "cubins")
 
@@ -84,11 +84,35 @@ class VLLM(Package):
     def argv(self):
         return self.server_argv() + ['--'] + self.client_argv()
 
+    def uses_ray(self) -> bool:
+        """True for multi-node or when the server explicitly asks for Ray."""
+        if self.num_machines > 1:
+            return True
+        args = self.server_argv()
+        for i, a in enumerate(args):
+            s = str(a)
+            if s.startswith("--distributed-executor-backend="):
+                return s.split("=", 1)[1] == "ray"
+            if s == "--distributed-executor-backend":
+                return i + 1 < len(args) and str(args[i + 1]) == "ray"
+        return False
+
+    def build_prepare_plan(self):
+        # Prefer prepare-friendly client argv (1 prompt) while still downloading
+        # the server model from the positional / server argv.
+        prep = self.dirs.code / self.prepare_script
+        if self.prepare_script is None or not prep.exists():
+            return cmd.VoidCommand(self)
+        argv = self.server_argv(prepare=True) + ["--"] + self.client_argv(prepare=True)
+        return cmd.PackCommand(
+            self, prep, *argv, env=self.make_env(), cwd=prep.parent
+        )
+
     def build_run_plan(self):
         main = self.dirs.code / self.main_script
         pack = cmd.PackCommand(self, *self.argv, lazy=True)
         workload = cmd.VoirCommand(pack, cwd=main.parent).use_stdout()
-        if self.num_machines > 1:
+        if self.uses_ray():
             return RayCluster(workload)
         return workload
 

@@ -5,7 +5,10 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
-import gym
+try:
+    import gymnasium as gym
+except ImportError:  # pragma: no cover
+    import gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -29,11 +32,25 @@ def make_environments(args):
             reward_clip=True,
             seed=args.seed,
         )
-        envs.num_envs = args.num_envs
-        envs.single_action_space = envs.action_space
-        envs.single_observation_space = envs.observation_space
+        # Newer envpool exposes num_envs as a read-only property.
+        if not hasattr(type(envs), "num_envs") or not isinstance(
+            getattr(type(envs), "num_envs", None), property
+        ):
+            envs.num_envs = args.num_envs
+        if not hasattr(envs, "single_action_space"):
+            envs.single_action_space = envs.action_space
+        if not hasattr(envs, "single_observation_space"):
+            envs.single_observation_space = envs.observation_space
         envs = RecordEpisodeStatistics(envs)
-        assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported"
+        action_space = envs.action_space
+        # envpool may return gymnasium / custom Discrete-like spaces
+        if not (
+            isinstance(action_space, gym.spaces.Discrete)
+            or getattr(action_space, "n", None) is not None
+        ):
+            raise AssertionError(
+                f"only discrete action space is supported, got {type(action_space)!r}"
+            )
 
         return envs
     except ModuleNotFoundError:

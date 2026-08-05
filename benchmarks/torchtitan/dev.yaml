@@ -43,6 +43,29 @@ torchtitan-qwen3-4b-pretrain:
     --config: qwen3_4b_pretrain
     --training.steps: 40
 
+# Short smoke for this machine (tokenizer + tiny c4_test only)
+torchtitan-qwen3-4b-pretrain-smoke:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+  tags:
+    - multigpu
+    - pretrain
+    - smoke
+  max_duration: 900
+  # Single-GPU smoke: 8-way torchrun was hanging in futex before train under the
+  # glibc-2.38 python wrapper; multi-GPU covered by openinstruct/vllm smokes.
+  devices: [0]
+  voir:
+    options:
+      stop: 10
+      skip: 2
+  argv:
+    --module: tt_configs
+    --config: qwen3_4b_pretrain
+    --training.steps: 15
+    --training.seq_len: 512
+    --training.local_batch_size: 1
+
 torchtitan-qwen3-4b-sft:
   inherits: _torchtitan
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
@@ -53,6 +76,25 @@ torchtitan-qwen3-4b-sft:
     --module: tt_configs
     --config: qwen3_4b_sft
     --training.steps: 40
+
+torchtitan-qwen3-4b-sft-smoke:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+  tags:
+    - multigpu
+    - sft
+    - smoke
+  max_duration: 1200
+  voir:
+    options:
+      stop: 8
+      skip: 2
+  argv:
+    --module: tt_configs
+    --config: qwen3_4b_sft
+    --training.steps: 10
+    --training.seq_len: 512
+    --training.local_batch_size: 1
 
 # --- Qwen3-30B-A3B MoE ---
 

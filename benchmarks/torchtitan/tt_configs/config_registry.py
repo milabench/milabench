@@ -50,6 +50,16 @@ from torchtitan.tools.profiler import Profiler
 
 
 def _data_dir() -> Path:
+    for key in ("MILABENCH_DIR_DATA",):
+        if os.environ.get(key):
+            return Path(os.environ[key])
+    base = os.environ.get("MILABENCH_BASE")
+    if base:
+        return Path(base) / "data"
+    # Fallback for this machine's shared milabench base.
+    shared = Path("/data/results/data")
+    if shared.exists():
+        return shared
     return Path(os.environ.get("MILABENCH_DIR_DATA", "."))
 
 

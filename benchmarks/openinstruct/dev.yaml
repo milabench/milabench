@@ -1,7 +1,10 @@
 # Local bring-up config for AllenAI open-instruct SFT.
+# Modern Llama 3.x Instruct family at multiple sizes.
+#
 # Usage:
-#   milabench install --config benchmarks/openinstruct/dev.yaml --select openinstruct-sft-gpus
-#   milabench run     --config benchmarks/openinstruct/dev.yaml --select openinstruct-sft-gpus
+#   milabench install --config benchmarks/openinstruct/dev.yaml --select openinstruct-sft-1b
+#   milabench prepare --config benchmarks/openinstruct/dev.yaml --select openinstruct-sft-1b
+#   milabench run     --config benchmarks/openinstruct/dev.yaml --select openinstruct-sft-1b
 
 include:
   - ../../config/_defaults.yaml
@@ -14,22 +17,27 @@ _openinstruct:
   install_group: torch
   weight: 0.0
   max_duration: 3600
+  # Model load + tokenize exceeds default voir stop=60s.
+  voir:
+    options:
+      stop: 900
+  env:
+    BEAKER_ASSIGNED_CPU_COUNT: '8'
+    HF_DATASETS_NUM_PROC: '8'
   tags:
     - nlp
     - llm
     - openinstruct
+  # Single job (not per_gpu) so we don't spawn 8× full SFT preprocess storms.
   plan:
-    method: per_gpu
+    method: njobs
+    n: 1
   argv:
-    - --model_name_or_path
-    - meta-llama/Llama-3.1-8B
-    - --tokenizer_name
-    - meta-llama/Llama-3.1-8B
     - --use_slow_tokenizer
     - --max_seq_length
-    - 4096
+    - 2048
     - --preprocessing_num_workers
-    - 128
+    - 4
     - --per_device_train_batch_size
     - 1
     - --gradient_accumulation_steps
@@ -43,7 +51,171 @@ _openinstruct:
     - --weight_decay
     - 0.0
     - --num_train_epochs
+    - 1
+    - --max_train_steps
+    - 30
+    - --max_train_samples
+    - 256
+    - --logging_steps
+    - 1
+    - --model_revision
+    - main
+    - --dataset_mixer_list
+    - allenai/tulu-3-sft-personas-algebra
+    - 1.0
+    - --checkpointing_steps
+    - 10000
+    - --seed
+    - 123
+
+# --- Llama-3.2-1B-Instruct ---
+
+openinstruct-sft-1b:
+  inherits: _openinstruct
+  tags:
+    - monogpu
+    - smoke
+  env:
+    HIP_VISIBLE_DEVICES: '0'
+    ROCR_VISIBLE_DEVICES: '0'
+  max_duration: 1200
+  url: https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct
+  argv:
+    - --model_name_or_path
+    - meta-llama/Llama-3.2-1B-Instruct
+    - --tokenizer_name
+    - meta-llama/Llama-3.2-1B-Instruct
+    - --use_slow_tokenizer
+    - --max_seq_length
+    - 1024
+    - --preprocessing_num_workers
+    - 4
+    - --per_device_train_batch_size
+    - 1
+    - --gradient_accumulation_steps
+    - 1
+    - --learning_rate
+    - 5e-06
+    - --lr_scheduler_type
+    - linear
+    - --warmup_ratio
+    - 0.03
+    - --weight_decay
+    - 0.0
+    - --num_train_epochs
+    - 1
+    - --max_train_steps
+    - 20
+    - --max_train_samples
+    - 128
+    - --output_dir
+    - output/sft_1b
+    - --logging_steps
+    - 1
+    - --model_revision
+    - main
+    - --dataset_mixer_list
+    - allenai/tulu-3-sft-personas-algebra
+    - 1.0
+    - --checkpointing_steps
+    - 10000
+    - --dataset_mix_dir
+    - output/sft_1b
+    - --exp_name
+    - llama32-1b-instruct-sft
+    - --seed
+    - 123
+
+# --- Llama-3.2-3B-Instruct ---
+
+openinstruct-sft-3b:
+  inherits: _openinstruct
+  tags:
+    - monogpu
+  env:
+    HIP_VISIBLE_DEVICES: '0'
+    ROCR_VISIBLE_DEVICES: '0'
+  max_duration: 1800
+  url: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+  argv:
+    - --model_name_or_path
+    - meta-llama/Llama-3.2-3B-Instruct
+    - --tokenizer_name
+    - meta-llama/Llama-3.2-3B-Instruct
+    - --use_slow_tokenizer
+    - --max_seq_length
+    - 1024
+    - --preprocessing_num_workers
+    - 4
+    - --per_device_train_batch_size
+    - 1
+    - --gradient_accumulation_steps
+    - 1
+    - --learning_rate
+    - 5e-06
+    - --lr_scheduler_type
+    - linear
+    - --warmup_ratio
+    - 0.03
+    - --weight_decay
+    - 0.0
+    - --num_train_epochs
+    - 1
+    - --max_train_steps
+    - 20
+    - --max_train_samples
+    - 128
+    - --output_dir
+    - output/sft_3b
+    - --logging_steps
+    - 1
+    - --model_revision
+    - main
+    - --dataset_mixer_list
+    - allenai/tulu-3-sft-personas-algebra
+    - 1.0
+    - --checkpointing_steps
+    - 10000
+    - --dataset_mix_dir
+    - output/sft_3b
+    - --exp_name
+    - llama32-3b-instruct-sft
+    - --seed
+    - 123
+
+# --- Llama-3.1-8B-Instruct ---
+
+_openinstruct_8b:
+  inherits: _openinstruct
+  url: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+  argv:
+    - --model_name_or_path
+    - meta-llama/Llama-3.1-8B-Instruct
+    - --tokenizer_name
+    - meta-llama/Llama-3.1-8B-Instruct
+    - --use_slow_tokenizer
+    - --max_seq_length
+    - 1024
+    - --preprocessing_num_workers
+    - 4
+    - --per_device_train_batch_size
+    - 1
+    - --gradient_accumulation_steps
     - 2
+    - --learning_rate
+    - 5e-06
+    - --lr_scheduler_type
+    - linear
+    - --warmup_ratio
+    - 0.03
+    - --weight_decay
+    - 0.0
+    - --num_train_epochs
+    - 1
+    - --max_train_steps
+    - 20
+    - --max_train_samples
+    - 128
     - --output_dir
     - output/sft_8b
     - --logging_steps
@@ -51,32 +223,99 @@ _openinstruct:
     - --model_revision
     - main
     - --dataset_mixer_list
-    - allenai/tulu-3-sft-mixture
+    - allenai/tulu-3-sft-personas-algebra
     - 1.0
     - --checkpointing_steps
-    - epoch
+    - 10000
     - --dataset_mix_dir
     - output/sft_8b
     - --exp_name
-    - tulu-3-8b-sft
+    - llama31-8b-instruct-sft
     - --seed
     - 123
 
-openinstruct-sft-single:
-  inherits: _openinstruct
+openinstruct-sft-8b:
+  inherits: _openinstruct_8b
   tags:
     - monogpu
-  plan:
-    method: per_gpu
+  env:
+    HIP_VISIBLE_DEVICES: '0'
+    ROCR_VISIBLE_DEVICES: '0'
 
-openinstruct-sft-gpus:
-  inherits: _openinstruct
+openinstruct-sft-8b-gpus:
+  inherits: _openinstruct_8b
   tags:
     - multigpu
-  plan:
-    method: njobs
-    n: 1
   deepspeed:
     --use_deepspeed: true
     --deepspeed_config_file: configs/ds_configs/stage3_no_offloading_accelerate.conf
     --deepspeed_multinode_launcher: standard
+
+openinstruct-sft-single:
+  inherits: openinstruct-sft-8b
+
+openinstruct-sft-gpus:
+  inherits: openinstruct-sft-8b-gpus
+
+# --- Llama-3.1-70B-Instruct (multi-GPU DeepSpeed) ---
+
+openinstruct-sft-70b-gpus:
+  inherits: _openinstruct
+  tags:
+    - multigpu
+  max_duration: 7200
+  url: https://huggingface.co/meta-llama/Llama-3.1-70B-Instruct
+  # Accelerate DeepSpeed (milabench reads these keys, not the nested deepspeed: map).
+  use_deepspeed: true
+  zero_stage: 3
+  deepspeed_config_file: configs/ds_configs/stage3_no_offloading_accelerate.conf
+  deepspeed:
+    --use_deepspeed: true
+    --deepspeed_config_file: configs/ds_configs/stage3_no_offloading_accelerate.conf
+    --deepspeed_multinode_launcher: standard
+  argv:
+    - --model_name_or_path
+    - meta-llama/Llama-3.1-70B-Instruct
+    - --tokenizer_name
+    - meta-llama/Llama-3.1-70B-Instruct
+    - --use_slow_tokenizer
+    - --max_seq_length
+    - 1024
+    - --preprocessing_num_workers
+    - 4
+    - --per_device_train_batch_size
+    - 1
+    - --gradient_accumulation_steps
+    - 4
+    - --learning_rate
+    - 5e-06
+    - --lr_scheduler_type
+    - linear
+    - --warmup_ratio
+    - 0.03
+    - --weight_decay
+    - 0.0
+    - --num_train_epochs
+    - 1
+    - --max_train_steps
+    - 20
+    - --max_train_samples
+    - 128
+    - --output_dir
+    - output/sft_70b
+    - --skip_model_save
+    - --logging_steps
+    - 1
+    - --model_revision
+    - main
+    - --dataset_mixer_list
+    - allenai/tulu-3-sft-personas-algebra
+    - 1.0
+    - --checkpointing_steps
+    - 10000
+    - --dataset_mix_dir
+    - output/sft_70b
+    - --exp_name
+    - llama31-70b-instruct-sft
+    - --seed
+    - 123

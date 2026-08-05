@@ -14,7 +14,9 @@ from huggingface_hub import snapshot_download
 # Bench name → (hf_repo_id, mode)
 BENCHES = {
     "torchtitan-qwen3-4b-pretrain": ("Qwen/Qwen3-4B-Instruct-2507", "pretrain"),
+    "torchtitan-qwen3-4b-pretrain-smoke": ("Qwen/Qwen3-4B-Instruct-2507", "pretrain"),
     "torchtitan-qwen3-4b-sft": ("Qwen/Qwen3-4B-Instruct-2507", "sft"),
+    "torchtitan-qwen3-4b-sft-smoke": ("Qwen/Qwen3-4B-Instruct-2507", "sft"),
     "torchtitan-qwen3-30b-pretrain": ("Qwen/Qwen3-30B-A3B", "pretrain"),
     "torchtitan-qwen3-30b-sft": ("Qwen/Qwen3-30B-A3B", "sft"),
     "torchtitan-glm5-pretrain": ("zai-org/GLM-5", "pretrain"),

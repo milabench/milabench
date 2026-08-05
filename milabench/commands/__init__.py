@@ -1135,11 +1135,15 @@ class AccelerateLaunchCommand(SingleCmdCommand):
         assert nproc > 0, f"nproc: {nproc} num_machines: {num_machines} ngpu: {ngpu}"
 
         if self.pack.config.get("use_deepspeed", False):
+            zero_stage = self.pack.config.get("zero_stage", 2)
             deepspeed_argv = [
                 "--use_deepspeed",
                 "--deepspeed_multinode_launcher=standard",
-                "--zero_stage=2",
+                f"--zero_stage={zero_stage}",
             ]
+            ds_cfg = self.pack.config.get("deepspeed_config_file")
+            if ds_cfg:
+                deepspeed_argv.append(f"--deepspeed_config_file={ds_cfg}")
         elif ngpu > 1:
             deepspeed_argv = ["--multi_gpu"]
         else:

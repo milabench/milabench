@@ -1,9 +1,9 @@
 from dataclasses import dataclass
+import time
 
 from voir import configurable
 from voir.phase import StopProgram
 from benchmate.monitor import voirfile_monitor
-from benchmate.observer import BenchObserver
 from benchmate.benchrun import forward_voir_file
 
 
@@ -26,38 +26,55 @@ def instrument_main(ov, options: Config):
 
     yield ov.phases.load_script
 
-    # tokens ≈ local_batch * seq_len; use 1 so rate ≈ steps/s until we refine.
-    observer = BenchObserver(
-        earlystop=options.stop + options.skip,
-        batch_size_fn=lambda _batch: 1,
-        raise_stop_program=True,
-    )
+    # Smoke argv uses seq_len=512, local_batch_size=1 → tokens/step ≈ 512.
+    # Full runs still get a usable items/s signal; refine later if needed.
+    tokens_per_step = 512
+    early = int(options.stop) + int(options.skip)
+    state = {"t": None, "n": 0}
+
+    def emit_rate():
+        now = time.perf_counter()
+        prev = state["t"]
+        state["t"] = now
+        if prev is None:
+            return
+        dt = now - prev
+        if dt <= 0:
+            return
+        ov.give(rate=tokens_per_step / dt, units="items/s", task="train", time=time.time())
+        state["n"] += 1
+        # Do not raise StopProgram from inside fwd/bwd — it races torchrun cleanup
+        # under the glibc wrapper. Smoke uses a tiny --training.steps instead.
 
     def on_loss(loss):
         try:
             value = float(loss.detach().item()) if hasattr(loss, "detach") else float(loss)
+            ov.give(loss=value, task="train", time=time.time())
         except Exception:
-            value = float(loss)
-        observer.record_loss(value)
-        observer.step()
+            pass
+        emit_rate()
         return loss
 
-    # Probe the HF / core trainer step loss when available.
-    for probe_path in (
-        "//HFTransformerTrainer/forward_backward_step > loss",
-        "//Trainer/forward_backward_step > loss",
-        "//HFTransformerTrainer/train_step > loss",
-        "//Trainer/train_step > loss",
-    ):
-        try:
-            probe = ov.probe(probe_path, overridable=True)
-            probe["loss"].override(on_loss)
-            break
-        except Exception:
-            continue
+    # Ptera probes are brittle under torch.compile / decorators; patch the
+    # Trainer method after the script is loaded so rates always flow.
+    try:
+        from torchtitan.trainer import Trainer
+
+        if not getattr(Trainer.forward_backward_step, "_milabench_rate_wrapped", False):
+            _orig = Trainer.forward_backward_step
+
+            def _wrapped(self, *args, **kwargs):
+                loss = _orig(self, *args, **kwargs)
+                return on_loss(loss)
+
+            _wrapped._milabench_rate_wrapped = True
+            Trainer.forward_backward_step = _wrapped
+            print("[voirfile] wrapped Trainer.forward_backward_step for rates", flush=True)
+    except Exception as exc:
+        print(f"[voirfile] wrap failed: {exc}", flush=True)
 
     with forward_voir_file():
         try:
             yield ov.phases.run_script
         except StopProgram:
-            print("early stopped")
+            print("early stopped", flush=True)

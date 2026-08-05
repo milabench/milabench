@@ -11,4 +11,6 @@ dependencies = [
     "cantilever",
     "stable-baselines3",
     "ale-py",
+    "AutoROM",
+    "AutoROM.accept-rom-license",
 ]

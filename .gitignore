@@ -60,7 +60,7 @@ benchmarks/simple
 benchmarks/voir
 benchmarks/*/base/
 benchmarks/lightning/lightning_logs/
-
+benchmarks/torchtitan/outputs
 benchmarks/*/src/
 
 *.new.yml

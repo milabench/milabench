@@ -1,17 +1,59 @@
+# Local bring-up / smoke for torchatari (PPO + Atari via envpool).
+# Usage:
+#   milabench install --config benchmarks/torchatari/dev.yaml --select torchatari-smoke
+#   milabench prepare --config benchmarks/torchatari/dev.yaml --select torchatari-smoke
+#   milabench run     --config benchmarks/torchatari/dev.yaml --select torchatari-smoke
 
-torchatari:
-  max_duration: 600
+include:
+  - ../../config/_defaults.yaml
+
+_torchatari:
   inherits: _defaults
   definition: .
+  enabled: true
   install_variant: unpinned
   install_group: torch
+  weight: 0.0
+  max_duration: 600
+  tags:
+    - rl
+    - gym
+    - torchatari
   plan:
     method: per_gpu
-
+  voir:
+    options:
+      stop: 20
+      skip: 5
   argv:
     --num-minibatches: 16
     --update-epochs: 4
     --num-steps: 128
     --num-envs: auto({cpu_per_gpu}, 128)
     --total-timesteps: 1000000
+    --env-id: Breakout-v5
+
+# Full-ish local run (still capped by voir stop)
+torchatari:
+  inherits: _torchatari
+  tags:
+    - monogpu
+
+# Small smoke for this machine
+torchatari-smoke:
+  inherits: _torchatari
+  tags:
+    - monogpu
+    - smoke
+  max_duration: 300
+  voir:
+    options:
+      stop: 10
+      skip: 2
+  argv:
+    --num-minibatches: 4
+    --update-epochs: 2
+    --num-steps: 64
+    --num-envs: 16
+    --total-timesteps: 100000
     --env-id: Breakout-v5

@@ -75,8 +75,10 @@ vllm-dense-physics-gpus:
 
 vllm-moe-code-gpus:
   inherits: _vllm
+  enabled: true
 
   num_machines: 1
+  max_duration: 3600
   tags:
     - multigpu
 
@@ -90,6 +92,7 @@ vllm-moe-code-gpus:
       --dataset-path: vdaita/edit_10k_char
       --hf-name: vdaita/edit_10k_char
       --num-prompts: 500
+      --ready-check-timeout-sec: 1800
 
   server:
    argv:
@@ -106,6 +109,10 @@ vllm-moe-code-gpus:
       --tool-call-parser: mistral
       --enable-auto-tool-choice: true
       --limit-mm-per-prompt: '{"image":10}'
+      # # Default max len 131072 OOMs/crashes a worker during CUDA-graph capture on TP=8.
+      --max-model-len: 8192
+      --enforce-eager: true
+      --gpu-memory-utilization: 0.85
 
 vllm-whisper-gpus:
   # Does not work, the model seems to never return
@@ -251,3 +258,39 @@ vllm-moe-glm52-744b-fp8-nodes:
       --enable-auto-tool-choice: true
       --tool-call-parser: glm47
       --reasoning-parser: glm45
+
+# -----------------------------------------------------------------------------
+# Single-node Ray bring-up with a modern LLM (Llama-3.1-8B-Instruct)
+# -----------------------------------------------------------------------------
+
+vllm-ray-smoke:
+  inherits: _vllm
+  enabled: true
+  num_machines: 1
+  max_duration: 1800
+  tags:
+    - smoke
+    - ray
+    - multigpu
+  plan:
+    method: njobs
+    n: 1
+  client:
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+      --served-model-name: model
+      --dataset-name: random
+      --num-prompts: 16
+      --max-concurrency: 8
+      --ready-check-timeout-sec: 1200
+      --label: milabench
+      --backend: openai
+  server:
+    argv:
+      meta-llama/Llama-3.1-8B-Instruct: true
+      --served-model-name: model
+      --dtype: bfloat16
+      # TP=1 smoke first: TP=2 mp loads but EngineCore was cancelled mid-ready under
+      # overlapping kills; Ray workers don't inherit the glibc-2.38 python wrapper.
+      --tensor-parallel-size: 1
+      --gpu-memory-utilization: 0.7

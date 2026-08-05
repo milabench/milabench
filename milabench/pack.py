@@ -832,7 +832,21 @@ class Package(BasePackage):
 
     def resolve_argument(self, name, default):
         """Resolve as single placeholder argument"""
-        placeholder = self.config.get("argv", {}).get(name)
+        argv = self.config.get("argv", {})
+        placeholder = None
+        if isinstance(argv, dict):
+            placeholder = argv.get(name)
+        elif isinstance(argv, list):
+            # list form: [..., "--cpus_per_gpu", "8", ...] or ["--cpus_per_gpu=8"]
+            key = name if name.startswith("-") else f"--{name.lstrip('-')}"
+            for i, a in enumerate(argv):
+                s = str(a)
+                if s == key and i + 1 < len(argv):
+                    placeholder = argv[i + 1]
+                    break
+                if s.startswith(key + "="):
+                    placeholder = s.split("=", 1)[1]
+                    break
         if placeholder:
             return self.resolve_placeholder(placeholder)
         return default
