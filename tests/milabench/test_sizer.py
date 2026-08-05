@@ -22,11 +22,7 @@ from milabench.sizer import (
     _fixed_overhead,
     _fit_torchmem_vs_batch,
     _obs_pair_octets,
-<<<<<<< HEAD
     _torch_backend_info,
-=======
-    _per_gpu_memory_mib,
->>>>>>> b3c6727 (New torchtitan benchmark concept)
 )
 
 
