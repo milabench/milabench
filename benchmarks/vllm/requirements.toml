@@ -26,6 +26,13 @@ dependencies = [
     "torchcodec",
 ]
 
+[cpu]
+dependencies = [
+    # Version (+cpu) comes from platforms.toml [cpu.constraints] / [compat.vllm]
+    "vllm",
+    "vllm[bench]",
+]
+
 [hpu]
 enabled = false
 

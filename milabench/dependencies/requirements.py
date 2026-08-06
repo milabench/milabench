@@ -14,7 +14,7 @@ except ModuleNotFoundError:
 from .platforms import PlatformConfig
 
 
-SUPPORTED_BACKENDS = ("cuda", "rocm", "hpu", "xpu")
+SUPPORTED_BACKENDS = ("cuda", "rocm", "cpu", "hpu", "xpu")
 
 
 @dataclass

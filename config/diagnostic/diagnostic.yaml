@@ -36,3 +36,99 @@ torchsrun:
     --repeats: 30
     --warmup: 5
     --size-mb: 64
+
+# -----------------------------------------------------------------------------
+# Multi-node Ray + vLLM CPU smoke (reuse benchmarks/vllm).
+# Tiny OPT-125m (12 heads / 12 layers) so TP=2|4 and PP=2|4 are divisible.
+# Goal: exercise milabench RayCluster + vllm serve path before GPU multi-node.
+# -----------------------------------------------------------------------------
+_vllm:
+  inherits: _defaults
+  definition: ../../benchmarks/vllm
+  group: vllm
+  install_group: torch
+  weight: 0.0
+  tags:
+    - diagnostic
+    - vllm
+    - nobatch
+  server:
+    argv:
+      --served-model-name: model
+      --dtype: float32
+  client:
+    argv:
+      --model: facebook/opt-125m
+      --served-model-name: model
+      --request-rate: inf
+      --dataset-name: random
+      --label: milabench
+      --backend: openai
+      --num-prompts: 4
+      --endpoint: /v1/completions
+      --ready-check-timeout-sec: 1800
+
+_vllm_nodes:
+  inherits: _vllm
+  num_machines: 2
+  max_duration: 1800
+  enabled: true
+  weight: 0
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - multinode
+    - diagnostic
+  env:
+    # GiB reserved for KV cache on the CPU backend
+    VLLM_CPU_KVCACHE_SPACE: "4"
+  client:
+    argv:
+      --dataset-name: random
+      --num-prompts: 4
+      --max-concurrency: 1
+      --ready-check-timeout-sec: 1800
+  server:
+    argv:
+      facebook/opt-125m: true
+      --distributed-executor-backend: ray
+      --dtype: float32
+      --max-model-len: 256
+      --max-num-seqs: 1
+
+# Tensor parallel across nodes (TP == num_machines, PP = 1)
+vllm-opt-125m-fp32-tp-nodes:
+  inherits: _vllm_nodes
+  num_machines: 2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+      --pipeline-parallel-size: 1
+
+vllm-opt-125m-fp32-tp-4nodes:
+  inherits: _vllm_nodes
+  num_machines: 4
+  server:
+    argv:
+      --tensor-parallel-size: 4
+      --pipeline-parallel-size: 1
+
+# Pipeline parallel across nodes (PP == num_machines, TP = 1)
+vllm-opt-125m-fp32-pp-nodes:
+  inherits: _vllm_nodes
+  num_machines: 2
+  server:
+    argv:
+      --tensor-parallel-size: 1
+      --pipeline-parallel-size: 2
+
+vllm-opt-125m-fp32-pp-4nodes:
+  inherits: _vllm_nodes
+  num_machines: 4
+  server:
+    argv:
+      --tensor-parallel-size: 1
+      --pipeline-parallel-size: 4
