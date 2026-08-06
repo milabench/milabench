@@ -171,7 +171,7 @@ llm-chat-completion:
     --model: meta-llama/Llama-3.1-8B-Instruct
     --dataset: hendrydong/gpqa_diamond
     --split: "test"
-    --batch_size: "auto_batch(1)"
+    --batch_size: "auto_batch(32)"
 
 
 #

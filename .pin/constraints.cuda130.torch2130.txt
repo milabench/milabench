@@ -101,18 +101,18 @@ nvidia-cusparse==12.6.3.3
     #   nvidia-cusolver
 nvidia-cusparselt-cu13==0.8.1
     # via torch
-nvidia-cutlass-dsl==4.6.1
+nvidia-cutlass-dsl==4.6.2
     # via
     #   flash-attn-4
     #   flashinfer-python
     #   quack-kernels
-nvidia-cutlass-dsl-libs-base==4.6.1
+nvidia-cutlass-dsl-libs-base==4.6.2
     # via
     #   nvidia-cutlass-dsl
     #   nvidia-cutlass-dsl-libs-cu12
-nvidia-cutlass-dsl-libs-core==4.6.1
+nvidia-cutlass-dsl-libs-core==4.6.2
     # via nvidia-cutlass-dsl-libs-base
-nvidia-cutlass-dsl-libs-cu12==4.6.1
+nvidia-cutlass-dsl-libs-cu12==4.6.2
     # via nvidia-cutlass-dsl
 nvidia-ml-py==13.610.43
     # via flashinfer-python
@@ -155,7 +155,7 @@ protobuf==6.33.6
     #   wandb
 pyg-lib==0.8.0+pt213cu130
     # via -r requirements.in
-quack-kernels==0.6.2
+quack-kernels==0.6.3
     # via flash-attn-4
 setuptools==83.0.0
     # via

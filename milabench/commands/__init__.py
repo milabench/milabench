@@ -349,6 +349,11 @@ class WorkingDir(WrapperCommand):
         if nccl_ifname:
             args.append(f"NCCL_SOCKET_IFNAME={nccl_ifname}")
 
+        # `env -` clears the process environment, so re-inject system.env
+        # (resolved at system-config load; also applied via pack.make_env).
+        for k, v in (cmd.pack.config.get("system") or {}).get("env", {}).items():
+            args.append(f"{k}={v}")
+
         super().__init__(cmd, *args)
 
 

@@ -4,6 +4,17 @@ system:
   # sshkey used in remote milabench operations
   sshkey: ~/.ssh/id_ed25519
 
+  # Extra environment variables forwarded to every benchmark process.
+  # These survive milabench's `env -` wipe (used by WorkingDir launches).
+  # Use "<FORWARD>" to copy the value from milabench's own environment at
+  # system-config load time (resolved to a concrete value in saved state).
+  # env:
+  #   ROCM_PATH: /opt/rocm
+  #   ROCM_HOME: /opt/rocm
+  #   LD_LIBRARY_PATH: "<FORWARD>"
+  #   LD_PRELOAD: "<FORWARD>"
+  #   HSA_NO_SCRATCH_RECLAIM: "1"
+
   # options:
   #   network:
   #     gloo_ifname: enP7s7

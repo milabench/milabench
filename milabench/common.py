@@ -119,7 +119,8 @@ def get_default_system(base, run_name="none", arch="none"):
             "runs": option("dirs.runs", str, default="${system.base}/runs"),
             "extra": option("dirs.extra", str, default="${system.base}/extra"),
             "cache": option("dirs.cache", str, default="${system.base}/cache"),
-        }
+        },
+        "env": {},
     }
 
 
@@ -238,6 +239,9 @@ def _get_multipack(
 
     if args.config is None:
         sys.exit("Error: CONFIG argument not provided and no $MILABENCH_CONFIG")
+
+    if args.system is None:
+        args.system = os.environ.get("MILABENCH_SYSTEM", None)
 
     if args.select and isinstance(args.select, str):
         args.select = set(args.select.split(","))

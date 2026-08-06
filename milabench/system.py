@@ -464,6 +464,28 @@ class SystemConfig:
     use_uv: bool = defaultfield("use_uv", bool, 0)
     executor: Executor = field(default_factory=Executor)
 
+    # Extra environment variables to forward to the benchmark.
+    # Use "<FORWARD>" as the value to copy the variable from milabench's own
+    # process environment at system-config load time.
+    env: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def environ(system_conf):
+        """Yield ``(key, value)`` pairs from ``system.env``, resolving forwards.
+
+        A value of ``"<FORWARD>"`` is replaced with ``os.environ[key]`` when
+        present; missing forwards are skipped. Call this once when the system
+        config is finalized so saved state stores concrete values.
+        """
+        def resolve_value(key, value):
+            if value == "<FORWARD>":
+                return os.environ.get(key)
+            return value
+
+        for k, v in (system_conf.get("env") or {}).items():
+            if (value := resolve_value(k, v)) is not None:
+                yield str(k), str(value)
+
 
 def check_node_config(nodes):
     mandatory_fields = ["name", "ip", "user"]
@@ -514,6 +536,10 @@ def build_system_config(config_file, defaults=None, gpu=True):
 
     self = resolve_addresses(system["nodes"])
     system["self"] = self
+
+    # Resolve <FORWARD> placeholders into concrete values now, so anything
+    # that later reads or dumps the system config sees the final env.
+    system["env"] = dict(SystemConfig.environ(system))
 
     return config
 

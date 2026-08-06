@@ -527,8 +527,11 @@ class Package(BasePackage):
         }
 
         env["OMP_NUM_THREADS"] = resolve_placeholder(self, "{cpu_per_gpu}")
-
         env["MILABENCH_CONFIG"] = json.dumps(self.config)
+
+        # Extra env vars from the system config (already resolved at load time).
+        for k, v in (self.config.get("system") or {}).get("env", {}).items():
+            env[str(k)] = str(v)
 
         if self.phase == "prepare" or self.phase == "run":
             # XDG_CACHE_HOME controls basically all caches (pip, torch, huggingface,

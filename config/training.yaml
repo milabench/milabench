@@ -599,6 +599,7 @@ llm-full-mp-gpus:
     options:
       stop: 30
   inherits: _llm
+  max_duration: 3600
 
   url: https://huggingface.co/meta-llama/Llama-3.1-70B
   tags:

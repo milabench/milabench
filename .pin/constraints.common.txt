@@ -81,7 +81,7 @@ blobfile==3.1.0
     # via
     #   -r requirements.in
     #   torchtune
-blosc2==4.10.0
+blosc2==4.10.1
     # via tables
 boto3==1.43.65
     # via cached-path
@@ -167,7 +167,7 @@ decorator==5.3.1
     # via tfp-nightly
 decord2==3.4.0
     # via -r requirements.in
-deepspeed==0.19.3
+deepspeed==0.19.4
     # via -r requirements.in
 defusedxml==0.7.1
     # via nltk
@@ -301,26 +301,26 @@ glfw==2.10.2
     # via
     #   envpool
     #   mujoco
-google-api-core==2.33.0
+google-api-core==2.34.0
     # via
     #   google-cloud-core
     #   google-cloud-storage
-google-auth==2.56.2
+google-auth==2.56.3
     # via
     #   google-api-core
     #   google-cloud-core
     #   google-cloud-storage
-google-cloud-core==2.6.0
+google-cloud-core==2.6.1
     # via google-cloud-storage
-google-cloud-storage==3.13.0
+google-cloud-storage==3.13.1
     # via cached-path
 google-crc32c==1.8.0
     # via
     #   google-cloud-storage
     #   google-resumable-media
-google-resumable-media==2.10.0
+google-resumable-media==2.10.1
     # via google-cloud-storage
-googleapis-common-protos==1.75.0
+googleapis-common-protos==1.75.1
     # via google-api-core
 gpytorch==1.15.2
     # via
@@ -367,7 +367,7 @@ httpx==0.28.1
     #   huggingface-hub
     #   litellm
     #   openai
-huggingface-hub==1.26.0
+huggingface-hub==1.26.1
     # via
     #   -r requirements.in
     #   accelerate
@@ -762,7 +762,7 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-proto-plus==1.28.2
+proto-plus==1.28.3
     # via google-api-core
 psutil==7.2.2
     # via
@@ -1091,7 +1091,7 @@ torchmetrics==1.0.3
     #   torchrec
 torchprofile==0.1.0
     # via -r requirements.in
-torchtitan @ git+https://github.com/pytorch/torchtitan.git@bcc09297a1d892e0ccf6a41fc367e76aab02475b
+torchtitan @ git+https://github.com/pytorch/torchtitan.git@ecae62f1591c3a73ed78a25d7c68f249bd61caa6
     # via -r requirements.in
 torchtune @ git+https://github.com/meta-pytorch/torchtune.git@50a2b8f77f00c052b5ca43562aeb3f32c34d88ef
     # via -r requirements.in
