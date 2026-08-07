@@ -1,19 +1,33 @@
 from argparse import ArgumentParser
-import subprocess
-import warnings
-import threading
-import time
-import signal
+import json
 import os
+import subprocess
+import sys
+import threading
 
 import numpy as np
 import torchcompat.core as accelerator
 from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, BenchmarkMetrics, MILLISECONDS_TO_SECONDS_CONVERSION
 from transformers import PreTrainedTokenizerBase
 import vllm.benchmarks.datasets as datasets
-from benchmate.timeline import timeline, TimelineConfig
+from benchmate.timeline import timeline, TimelineConfig, _default_db_path
 
 push_metric = None
+
+
+def _run_description() -> str:
+    raw = os.environ.get("MILABENCH_CONFIG")
+    if not raw:
+        return "vllm"
+    try:
+        cfg = json.loads(raw)
+    except json.JSONDecodeError:
+        return "vllm"
+    name = cfg.get("name") or ".".join(cfg.get("tag", []))
+    model = (cfg.get("client") or {}).get("argv", {}).get("--model")
+    if model:
+        return f"{name} ({model})"
+    return name or "vllm"
 
 
 def log_request(input_requests: list[SampleRequest], outputs: list[RequestFuncOutput]):
@@ -56,7 +70,15 @@ def calculate_metrics(
     # log_request(input_requests, outputs)
 
     config = TimelineConfig()
-    for sampled_obs in timeline(outputs, config=config):
+    description = _run_description()
+    db_path = _default_db_path()
+    print(f"[timeline] database path: {db_path}", flush=True)
+
+    for sampled_obs in timeline(
+        outputs,
+        config=config,
+        description=description,
+    ):
         push_metric(**sampled_obs)
 
     actual_output_lens: list[int] = []
@@ -269,40 +291,72 @@ class InferenceServerError(BaseException):
     pass
 
 
-def monitor_process(proc):
-    """Wait for subprocess to fail, then terminate the main process."""
-    while True:
-        ret = proc.poll()
-        if ret is not None:
-            if ret != 0:
-                print(f"\n[ERROR] vLLM server exited with code {ret}", file=sys.stderr)
-                return ret
-            break
-        time.sleep(0.5)
+class InferenceServer:
+    """Run vLLM serve and abort the benchmark if the server exits abnormally."""
+
+    def __init__(self, argv):
+        server_args = ["vllm", "serve", *argv]
+        print("SERVER:", " ".join(server_args), flush=True)
+        self.proc = subprocess.Popen(server_args)
+        self.returncode: int | None = None
+        self._failed = threading.Event()
+        self._watch = threading.Thread(target=self._monitor, daemon=True)
+        self._watch.start()
+
+    def _monitor(self):
+        self.returncode = self.proc.wait()
+        if self.returncode != 0:
+            print(
+                f"\n[ERROR] vLLM server exited with code {self.returncode}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._failed.set()
+
+    def check(self):
+        if self._failed.is_set():
+            raise InferenceServerError(
+                f"vLLM server exited early (code {self.returncode})"
+            )
+
+    def shutdown(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.shutdown()
+        return False
+
+
+def _run_benchmark(bench_argv, error_box: list):
+    try:
+        benchmark(bench_argv)
+    except BaseException as exc:
+        error_box.append(exc)
 
 
 def inference_server(argv):
-    # vllm serve meta-llama/Meta-Llama-3-8B-Instruct --dtype bfloat16 
-
-    server_args = ["vllm", "serve"] + argv
-
-    print("SERVER:", " ".join(server_args))
-
-    proc = subprocess.Popen(server_args)
-
-    monitor = threading.Thread(target=monitor_process, args=(proc,), daemon=True)
-    monitor.start()
-
-    return proc
+    """Deprecated: use InferenceServer context manager."""
+    return InferenceServer(argv).proc
 
 
 def split_args(argv):
+    sep = len(argv)
     for i, arg in enumerate(argv):
         if arg == "--":
+            sep = i
             break
-    
-    server_argv = argv[1:i]
-    bench_argv = argv[(i + 1):]
+
+    server_argv = argv[1:sep]
+    bench_argv = argv[(sep + 1):]
 
     args = []
     for arg in server_argv:
@@ -311,9 +365,8 @@ def split_args(argv):
             args.append("--config")
         else:
             args.append(arg)
-    server_argv = args
 
-    return server_argv, bench_argv
+    return args, bench_argv
 
 
 def main(argv):
@@ -329,20 +382,23 @@ def main(argv):
     observer, bench_monitor= prepare_voir()
 
     with bench_monitor() as log:
-        try:
-            with inference_server(server_argv) as proc:
-                try:
-                    benchmark(bench_argv)
-                finally:
-                    proc.terminate()
-                    time.sleep(10)
+        with InferenceServer(server_argv) as server:
+            bench_error: list[BaseException] = []
+            bench_thread = threading.Thread(
+                target=_run_benchmark,
+                args=(bench_argv, bench_error),
+                daemon=True,
+            )
+            bench_thread.start()
 
-                    ret = proc.poll()
-                    if ret is None:
-                        proc.kill()
-                    
-        except Exception:
-            raise
+            while bench_thread.is_alive():
+                server.check()
+                bench_thread.join(timeout=0.5)
+
+            server.check()
+
+            if bench_error:
+                raise bench_error[0]
 
 
 if __name__ == "__main__":

@@ -859,7 +859,13 @@ def new_argument_resolver(pack):
                 name, newvalue = newvalue.split("=", maxsplit=1)
                 finalize_val = lambda x: f"{name}={x}"
 
-            if newvalue.startswith("auto") or newvalue.startswith("expr") :
+            # Only evaluate milabench placeholder calls (auto/expr/auto_batch(...)),
+            # not literal argument values like vLLM's --dtype auto.
+            if (
+                newvalue.startswith("auto(")
+                or newvalue.startswith("expr(")
+                or newvalue.startswith("auto_batch(")
+            ):
                 newvalue = str(eval(newvalue, {"auto": cpu, "expr": expr, "auto_batch": batch_resize}, {}))
             
             return finalize_val(newvalue)

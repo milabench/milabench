@@ -75,6 +75,7 @@ class _Request(_Base):
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
     run_id         = Column(Integer, ForeignKey("runs.run_id"), nullable=False, index=True)
+    request_id     = Column(String(128))
     start_time     = Column(Float)
     latency        = Column(Float)
     prompt_len     = Column(Integer)
@@ -84,16 +85,21 @@ class _Request(_Base):
     itl_json       = Column(JSON)
     success        = Column(Boolean)
     error          = Column(Text)
+    prompt         = Column(Text)
     generated_text = Column(Text)
 
     run = relationship("_Run", back_populates="requests")
 
 
 def _default_db_path() -> Path:
+    explicit = os.environ.get("MILABENCH_TIMELINE_DB")
+    if explicit:
+        return Path(explicit)
     runs_dir = os.environ.get("MILABENCH_DIR_RUNS")
     if runs_dir:
         return Path(runs_dir) / "benchmark_results.db"
     return Path("benchmark_results.db")
+
 
 
 class ResultStore:
@@ -115,7 +121,7 @@ class ResultStore:
         description: str = "",
         config: TimelineConfig | None = None,
     ) -> int:
-        """Persist raw RequestFuncOutput dicts. Returns the new run_id."""
+        """Persist request metrics. Counts are stored; prompt/generated text are not."""
         config_json = asdict(config) if config else None
 
         run = _Run(description=description, config_json=config_json)
@@ -123,6 +129,7 @@ class ResultStore:
             if not isinstance(o, dict):
                 o = asdict(o)
             run.requests.append(_Request(
+                request_id     = o.get("request_id"),
                 start_time     = o.get("start_time"),
                 latency        = o.get("latency"),
                 prompt_len     = o.get("prompt_len"),
@@ -132,13 +139,21 @@ class ResultStore:
                 itl_json       = o.get("itl", []),
                 success        = bool(o.get("success", False)),
                 error          = o.get("error", ""),
-                generated_text = o.get("generated_text", ""),
+                prompt         = None,
+                generated_text = None,
             ))
 
         with self.Session() as session:
             session.add(run)
             session.commit()
-            return run.run_id
+            run_id = run.run_id
+
+        db_path = self.engine.url.database
+        print(
+            f"[timeline] saved {len(outputs)} requests -> {db_path} (run_id={run_id})",
+            flush=True,
+        )
+        return run_id
 
     def load(self, run_id: int | None = None) -> list[dict]:
         """Load results for a run. Loads the latest run when run_id is None."""
@@ -156,6 +171,7 @@ class ResultStore:
             )
             return [
                 {
+                    "request_id":     r.request_id or "",
                     "start_time":     r.start_time,
                     "latency":        r.latency,
                     "prompt_len":     r.prompt_len,
@@ -165,7 +181,6 @@ class ResultStore:
                     "itl":            r.itl_json if r.itl_json else [],
                     "success":        bool(r.success),
                     "error":          r.error or "",
-                    "generated_text": r.generated_text or "",
                 }
                 for r in rows
             ]
@@ -524,21 +539,25 @@ class TimelineProcessor:
         self.samples = [self.start + step * (i + 1) for i in range(num)]
         return num
 
-    def __call__(self, outputs: list[RequestFuncOutput], number=None):
+    def __call__(self, outputs: list[RequestFuncOutput], number=None, persist=True):
         if number is not None:
             self.config.num_buckets = number
+
+        if not outputs:
+            return []
 
         jobs = [JobAdapter(convert(l)) for l in outputs]
         jobs.sort(key=lambda item: item.start)
 
-        self.save_normalized_data(jobs)
+        if persist:
+            self.save_normalized_data(jobs)
     
         return self.method_2(jobs)
 
-    def save_normalized_data(self, jobs, db_path=None):
+    def save_normalized_data(self, jobs, db_path=None, description=""):
         outputs = [j.data for j in jobs]
         store = ResultStore(db_path)
-        store.save(outputs, config=self.config)
+        store.save(outputs, description=description, config=self.config)
 
     def method_2(self, jobs: list[Job]):
         cfg = self.config
@@ -685,14 +704,24 @@ class TimelineProcessor:
         return jobs
 
 
-def timeline(outputs, number=None, config: TimelineConfig | None = None):
+def timeline(
+    outputs,
+    number=None,
+    config: TimelineConfig | None = None,
+    persist: bool = True,
+    description: str = "",
+):
     if config is None:
         config = TimelineConfig()
     if number is not None:
         config.num_buckets = number
 
     proc = TimelineProcessor(config)
-    proc(outputs)
+    if persist and outputs:
+        jobs = [JobAdapter(convert(l)) for l in outputs]
+        jobs.sort(key=lambda item: item.start)
+        proc.save_normalized_data(jobs, description=description)
+    proc(outputs, persist=False)
     return proc.output
 
 

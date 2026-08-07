@@ -40,6 +40,7 @@ class VLLM(Package):
     def make_env(self):
         env = super().make_env()
         env["XDG_CACHE_HOME"] = str(self.dirs.cache)
+        env["MILABENCH_TIMELINE_DB"] = str(self.dirs.runs / "benchmark_results.db")
 
         env["FLASHINFER_CACHE_DIR "] = str(self.dirs.cache / "flashinfer")
         env["FLASHINFER_CUBIN_DIR "] = str(self.dirs.cache / "flashinfer" / "cubins")
