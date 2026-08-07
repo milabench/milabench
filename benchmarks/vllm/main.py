@@ -11,6 +11,12 @@ from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, BenchmarkMet
 from transformers import PreTrainedTokenizerBase
 import vllm.benchmarks.datasets as datasets
 from benchmate.timeline import timeline, TimelineConfig, _default_db_path
+from server_backends import (
+    InferenceServerError,
+    build_server_command,
+    resolved_server_backend,
+    resolved_server_command,
+)
 
 push_metric = None
 
@@ -287,16 +293,14 @@ def prepare_voir():
 
 
 
-class InferenceServerError(BaseException):
-    pass
-
-
 class InferenceServer:
-    """Run vLLM serve and abort the benchmark if the server exits abnormally."""
+    """Run an inference server and abort the benchmark if it exits abnormally."""
 
-    def __init__(self, argv):
-        server_args = ["vllm", "serve", *argv]
+    def __init__(self, argv, *, backend: str | None = None, command: list[str] | None = None):
+        backend = backend or resolved_server_backend()
+        server_args = build_server_command(argv, backend=backend, command=command)
         print("SERVER:", " ".join(server_args), flush=True)
+        self.backend = backend
         self.proc = subprocess.Popen(server_args)
         self.returncode: int | None = None
         self._failed = threading.Event()
@@ -307,7 +311,7 @@ class InferenceServer:
         self.returncode = self.proc.wait()
         if self.returncode != 0:
             print(
-                f"\n[ERROR] vLLM server exited with code {self.returncode}",
+                f"\n[ERROR] {self.backend} server exited with code {self.returncode}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -316,7 +320,7 @@ class InferenceServer:
     def check(self):
         if self._failed.is_set():
             raise InferenceServerError(
-                f"vLLM server exited early (code {self.returncode})"
+                f"{self.backend} server exited early (code {self.returncode})"
             )
 
     def shutdown(self):

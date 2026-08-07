@@ -294,3 +294,74 @@ vllm-ray-smoke:
       # overlapping kills; Ray workers don't inherit the glibc-2.38 python wrapper.
       --tensor-parallel-size: 1
       --gpu-memory-utilization: 0.7
+
+# -----------------------------------------------------------------------------
+# Arch-specific serving stacks (same benchmark name, vendor-optimal server)
+# -----------------------------------------------------------------------------
+
+_serving:
+  inherits: _vllm
+  group: serving
+
+  client:
+    argv:
+      --dataset-name: random
+      --request-rate: inf
+      --label: milabench
+      --backend: openai
+      --ready-check-timeout-sec: 3600
+
+serving-moe-kimi-k3-mxfp4-gpus:
+  inherits: _serving
+  enabled: true
+  num_machines: 1
+  max_duration: 3600
+  tags:
+    - multigpu
+    - moe
+    - mxfp4
+  plan:
+    method: njobs
+    n: 1
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+  url: https://huggingface.co/moonshotai/Kimi-K3
+
+  client:
+    argv:
+      --num-prompts: 64
+      --max-concurrency: 64
+
+  variants:
+    cuda:
+      server:
+        backend: vllm
+        argv:
+          moonshotai/Kimi-K3: true
+          --trust-remote-code: true
+          --tensor-parallel-size: "{gpu_count}"
+          --max-model-len: 16384
+          --gpu-memory-utilization: 0.9
+      client:
+        argv:
+          --model: moonshotai/Kimi-K3
+
+    rocm:
+      server:
+        backend: atom
+        argv:
+          --model: Kimi-K3
+          -tp: "{gpu_count}"
+          --kv_cache_dtype: fp8
+          --trust-remote-code: true
+          --max-model-len: 16384
+          --max-num-seqs: 64
+          --max-num-batched-tokens: 16384
+          --gpu-memory-utilization: 0.93
+          --block-size: 128
+          --no-enable_prefix_caching: true
+          --online_quant_config: '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
+      client:
+        argv:
+          --model: Kimi-K3

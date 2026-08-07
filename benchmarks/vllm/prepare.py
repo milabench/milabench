@@ -10,7 +10,7 @@ def arguments():
     argv = [arg for arg in sys.argv[1:] if arg != '--']
 
     parser = ArgumentParser()
-    parser.add_argument('server_model', type=str, help='Model to use for the server')
+    parser.add_argument('server_model', type=str, nargs='?', default=None, help='Model to use for the server')
     parser.add_argument('--model', type=str, help='Model name (client-side)')
     parser.add_argument('--dataset-name', type=str, help='Dataset name (random, hf, etc.)')
     parser.add_argument('--dataset-path', type=str, help='Path to HuggingFace dataset')
@@ -59,6 +59,12 @@ def main():
         download_hf_dataset(args.hf_name, args.hf_split)
 
     model = args.model or args.server_model
+    hf_aliases = {
+        "Kimi-K3": "moonshotai/Kimi-K3",
+    }
+    model = hf_aliases.get(model, model)
+    if model is None:
+        raise SystemExit("prepare: no model found in server positional or --model")
     download_hf_model(model)
 
     setup_flashinfer()

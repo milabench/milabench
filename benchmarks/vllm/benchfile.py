@@ -3,6 +3,7 @@ import os
 from milabench.pack import Package
 import milabench.commands as cmd
 from milabench.commands.ray import RayCluster
+from milabench.merge import merge
 from milabench.utils import assemble_options
 
 
@@ -62,18 +63,35 @@ class VLLM(Package):
     def num_machines(self):
         return max(1, int(self.config.get("num_machines", 1)))
 
+    def _arch(self) -> str:
+        return self.config.get("system", {}).get("arch", "cuda")
+
+    def _variant(self) -> dict:
+        return (self.config.get("variants") or {}).get(self._arch(), {})
+
+    def _merged_section(self, name: str, *, prepare: bool = False) -> dict:
+        shared = dict(self.config.get(name, {}) or {})
+        variant = dict(self._variant().get(name, {}) or {})
+        argv = merge(shared.get("argv", {}), variant.get("argv", {}))
+        if prepare and name == "client" and isinstance(argv, dict):
+            argv = merge(argv, {"--num-prompts": 1})
+        merged = merge(shared, variant)
+        merged["argv"] = argv
+        return merged
+
+    def server_backend(self) -> str:
+        return self._merged_section("server").get("backend", "vllm")
+
+    def server_command(self) -> list[str] | None:
+        command = self._merged_section("server").get("command")
+        return list(command) if command else None
+
     def client_argv(self, prepare=False):
-        args = self.config.get("client", {}).get("argv", [])
-
-        if prepare and isinstance(args, dict):
-            args['--num-prompts'] = 1
-            # args['--prepare'] = True
-
-        return assemble_options(args)
+        return assemble_options(self._merged_section("client", prepare=prepare)["argv"])
 
     def server_argv(self, prepare=False):
-        args = assemble_options(self.config.get("server", {}).get("argv", []))
-        if self.num_machines > 1 and not any(
+        args = assemble_options(self._merged_section("server", prepare=prepare)["argv"])
+        if self.server_backend() == "vllm" and self.num_machines > 1 and not any(
             a == "--distributed-executor-backend"
             or str(a).startswith("--distributed-executor-backend=")
             for a in args
@@ -87,6 +105,8 @@ class VLLM(Package):
 
     def uses_ray(self) -> bool:
         """True for multi-node or when the server explicitly asks for Ray."""
+        if self.server_backend() != "vllm":
+            return False
         if self.num_machines > 1:
             return True
         args = self.server_argv()

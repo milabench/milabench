@@ -22,6 +22,10 @@ dependencies = [
 dependencies = [
     # vLLM installed manually for now (platforms.toml [vllm.rocm] kept for later)
     # "vllm",
+    # ATOM serving (serving-* benchmarks): install atom + amd-aiter wheels from the
+    # milabench ROCm release (build with `make GPU_BACKEND=rocm atom`).
+    # MoE EP may also need amd_mori.
+    # "atom",
     # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
     "torchcodec",
 ]

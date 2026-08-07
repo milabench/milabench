@@ -21,6 +21,13 @@ def is_system_capable_with_reasons(pack) -> bool:
             is_compatible = False
             whys.append(condition)
 
+    variants = pack.config.get("variants")
+    if variants:
+        arch = capability_context.get("arch")
+        if arch not in variants:
+            is_compatible = False
+            whys.append(f"variants[{arch!r}] is not defined")
+
     return is_compatible, whys
 
 
