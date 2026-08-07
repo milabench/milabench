@@ -88,6 +88,10 @@ bert-tf32-fp16:
   - {batch_size: 376, cpu: 8, memory: 166834 MiB, perf: 1112.01, time: 1785838836, torchmem: 142646 MiB}
 convnext_large-fp16:
   observations:
+  - {backend: 7.2.26015, batch_size: 1, cpu: 8, flavor: rocm7.2, memory: 4661 MiB, perf: 16.59, time: 1786054431, torch: 2.11.0, torchmem: 2211 MiB}
+  - {backend: 7.2.26015, batch_size: 128, cpu: 8, flavor: rocm7.2, memory: 284 MiB, perf: 505.71, time: 1786056047, torch: 2.11.0, torchmem: 25141 MiB}
+  - {backend: 7.2.26015, batch_size: 208, cpu: 8, flavor: rocm7.2, memory: 284 MiB, perf: 522.52, time: 1786058704, torch: 2.11.0, torchmem: 39651 MiB}
+  - {backend: 7.2.26015, batch_size: 440, cpu: 8, flavor: rocm7.2, memory: 284 MiB, perf: 531.13, time: 1786063303, torch: 2.11.0, torchmem: 82105 MiB}
   - {batch_size: 1, cpu: 8, memory: 4601 MiB, perf: 21.15, time: 1785793258, torchmem: 2211 MiB}
   - {batch_size: 32, cpu: 8, memory: 10489 MiB, perf: 366.37, time: 1785702881, torchmem: 7590 MiB}
   - {batch_size: 64, cpu: 8, memory: 26577 MiB, perf: 478.95, time: 1785706576, torchmem: 13430 MiB}
@@ -160,6 +164,7 @@ convnext_large-tf32:
   - {batch_size: 792, cpu: 8, memory: 287770 MiB, perf: 294.45, time: 1785861827, torchmem: 264945 MiB}
 convnext_large-tf32-fp16:
   observations:
+  - {backend: 7.2.26015, batch_size: 1, cpu: 8, flavor: rocm7.2, memory: 4512 MiB, perf: 20.0, time: 1786054465, torch: 2.11.0, torchmem: 2211 MiB}
   - {batch_size: 1, cpu: 8, memory: 4601 MiB, perf: 20.01, time: 1785793330, torchmem: 2211 MiB}
   - {batch_size: 32, cpu: 8, memory: 11357 MiB, perf: 365.39, time: 1785702955, torchmem: 7590 MiB}
   - {batch_size: 64, cpu: 8, memory: 25175 MiB, perf: 483.31, time: 1785706654, torchmem: 13430 MiB}
@@ -657,3 +662,27 @@ whisper-transcribe-single:
   - {batch_size: 136, cpu: 0, memory: 42024 MiB, perf: 38.41, time: 1785811630, torchmem: 37973 MiB}
   - {batch_size: 288, cpu: 0, memory: 84402 MiB, perf: 40.07, time: 1785835508, torchmem: 77049 MiB}
   - {batch_size: 296, cpu: 0, memory: 87004 MiB, perf: 40.17, time: 1785826944, torchmem: 79089 MiB}
+llm-full-mp-gpus:
+  observations:
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94528 MiB, perf: 493.88, time: 1786125031, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94529 MiB, perf: 507.1, time: 1786125177, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94529 MiB, perf: 561.98, time: 1786125796, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94529 MiB, perf: 500.03, time: 1786125953, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94527 MiB, perf: 550.46, time: 1786127066, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94527 MiB, perf: 503.45, time: 1786129125, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 1, cpu: 0, flavor: rocm7.2, memory: 94529 MiB, perf: 562.59, time: 1786129264, torch: 2.11.0, torchmem: 74021 MiB}
+  - {backend: 7.2.26015, batch_size: 2, cpu: 0, flavor: rocm7.2, memory: 96449 MiB, perf: 1194.75, time: 1786125335, torch: 2.11.0, torchmem: 74545 MiB}
+  - {backend: 7.2.26015, batch_size: 2, cpu: 0, flavor: rocm7.2, memory: 96450 MiB, perf: 1299.53, time: 1786126099, torch: 2.11.0, torchmem: 74545 MiB}
+  - {backend: 7.2.26015, batch_size: 2, cpu: 0, flavor: rocm7.2, memory: 96450 MiB, perf: 1360.68, time: 1786127212, torch: 2.11.0, torchmem: 74545 MiB}
+  - {backend: 7.2.26015, batch_size: 3, cpu: 0, flavor: rocm7.2, memory: 96452 MiB, perf: 1976.86, time: 1786125487, torch: 2.11.0, torchmem: 74587 MiB}
+  - {backend: 7.2.26015, batch_size: 4, cpu: 0, flavor: rocm7.2, memory: 96765 MiB, perf: 2484.3, time: 1786125651, torch: 2.11.0, torchmem: 74631 MiB}
+  - {backend: 7.2.26015, batch_size: 4, cpu: 0, flavor: rocm7.2, memory: 96767 MiB, perf: 2255.33, time: 1786127387, torch: 2.11.0, torchmem: 74631 MiB}
+  - {backend: 7.2.26015, batch_size: 8, cpu: 0, flavor: rocm7.2, memory: 100863 MiB, perf: 4188.88, time: 1786127574, torch: 2.11.0, torchmem: 74906 MiB}
+  - {backend: 7.2.26015, batch_size: 10, cpu: 0, flavor: rocm7.2, memory: 102719 MiB, perf: 4948.14, time: 1786126300, torch: 2.11.0, torchmem: 75090 MiB}
+  - {backend: 7.2.26015, batch_size: 16, cpu: 0, flavor: rocm7.2, memory: 114122 MiB, perf: 6174.0, time: 1786127829, torch: 2.11.0, torchmem: 76746 MiB}
+  - {backend: 7.2.26015, batch_size: 18, cpu: 0, flavor: rocm7.2, memory: 122462 MiB, perf: 6938.09, time: 1786126550, torch: 2.11.0, torchmem: 77244 MiB}
+  - {backend: 7.2.26015, batch_size: 32, cpu: 0, flavor: rocm7.2, memory: 142370 MiB, perf: 8346.48, time: 1786128199, torch: 2.11.0, torchmem: 87033 MiB}
+  - {backend: 7.2.26015, batch_size: 34, cpu: 0, flavor: rocm7.2, memory: 150736 MiB, perf: 8808.16, time: 1786126919, torch: 2.11.0, torchmem: 88931 MiB}
+  - {backend: 7.2.26015, batch_size: 64, cpu: 0, flavor: rocm7.2, memory: 221700 MiB, perf: 10960.42, time: 1786128762, torch: 2.11.0, torchmem: 122557 MiB}
+  - {backend: 7.2.26015, batch_size: 80, cpu: 0, flavor: rocm7.2, memory: 261556 MiB, perf: 10886.21, time: 1786129966, torch: 2.11.0, torchmem: 140524 MiB}
+
