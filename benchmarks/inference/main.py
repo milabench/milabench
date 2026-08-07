@@ -309,12 +309,13 @@ class ChatBenchmark(InferenceBenchmark):
         super().__init__()
         self.dataset = None
         self.tok_per_sec = True
+        self.tokenizer = None
 
     def transform(self, item):
         return item["problem"]
 
     def get_batch_size(self, item):
-        return len(item) * 100
+        return len(item)
 
     def load_dataset(self, observer, args):
         dataset = load_dataset(
@@ -327,57 +328,52 @@ class ChatBenchmark(InferenceBenchmark):
         return self.dataset
 
     def load_model(self, args, device):
-        import transformers
- 
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        # TextGenerationPipeline
-        pipe = transformers.pipeline(
-            "text-generation",
-            model=args.model,
-            # model_kwargs={"dtype": torch.bfloat16},
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            torch_dtype=torch.bfloat16,
             device_map="auto",
         )
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
 
-        pipe.tokenizer = TokenizerWrapper(pipe.tokenizer)
+        self.tokenizer = TokenizerWrapper(tokenizer)
+        model_device = next(model.parameters()).device
 
-        def async_generation(inputs, **kwargs):
-            from transformers.generation.streamers import TextIteratorStreamer
-            from threading import Thread
-            import time
+        def inference_pipe(batch, generate_kwargs, batch_size):
+            inputs = self.tokenizer(
+                batch, return_tensors="pt", padding=True, truncation=True
+            )
+            inputs = {k: v.to(model_device) for k, v in inputs.items()}
 
-            streamer = TextIteratorStreamer(pipe.tokenizer)
-            model = pipe.model
+            with torch.inference_mode():
+                generated_ids = model.generate(**inputs, **generate_kwargs)
 
-            generation_kwargs = {
-                **inputs, 
-                "streamer": streamer, 
-                **kwargs,
-                # max_new_tokens=20
-            }
-
-            thread = Thread(target=model.generate, kwargs=generation_kwargs)
-            thread.start()
-
-            start = time.time()
-            for txt in streamer:
-                yield start, time.time(), txt
+            input_lengths = inputs["attention_mask"].sum(dim=1)
+            outputs = []
+            for i in range(generated_ids.shape[0]):
+                new_tokens = generated_ids[i, input_lengths[i] :].tolist()
+                outputs.append([{"generated_token_ids": new_tokens}])
+            return outputs
 
         kwargs = dict(args.kwargs) or chat_default_generation_args
-        return pipe, kwargs
+        return inference_pipe, kwargs
 
     def run(self, pipe, batch, kwargs):
-        outputs = pipe(batch, return_tensors=True, **kwargs)
+        outputs = pipe(batch, generate_kwargs=kwargs, batch_size=len(batch))
 
         if self.tok_per_sec:
             tok_out = 0
             for out in outputs:
                 for o in out:
-                    tok_out += len(o['generated_token_ids'])
-            
-            tok_tot = pipe.tokenizer.tok_in + tok_out
+                    tok_out += len(o["generated_token_ids"])
+
+            tok_tot = self.tokenizer.tok_in + tok_out
             self.dataset.step(tok_tot)
-            pipe.tokenizer.tok_in = 0
-        
+            self.tokenizer.tok_in = 0
+
         return outputs
 
 

@@ -5,9 +5,7 @@ import torch
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from datasets import load_dataset
-from PIL import Image
 from torch.utils.data import DataLoader
-from torch.utils.data.dataloader import default_collate
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 
 import argklass
@@ -16,6 +14,7 @@ import torchcompat.core as compat
 
 
 def apply_chat_template(texts):
+    """Format one sample's conversation list into a LLaVA prompt."""
     formatted_conversation = "<image>\n"
     for conversation in texts:
         formatted_conversation += f"Human: {conversation['user'][0]}\n"
@@ -23,15 +22,18 @@ def apply_chat_template(texts):
     return formatted_conversation.strip()
 
 
-def custom_collate(batch):
-    if isinstance(batch[0], dict):
-        return {key: custom_collate([d[key] for d in batch]) for key in batch[0].keys()}
-    elif isinstance(batch[0], (list, tuple)):
-        return [custom_collate(samples) for samples in zip(*batch)]
-    elif isinstance(batch[0], Image.Image):
-        return batch  # Return PIL images as is
-    else:
-        return default_collate(batch)
+def llava_collate(batch):
+    """Flatten cauldron samples into lists the processor can batch."""
+    images = []
+    texts = []
+    for item in batch:
+        sample_images = item["images"]
+        if isinstance(sample_images, (list, tuple)):
+            images.append(sample_images[0] if len(sample_images) == 1 else sample_images)
+        else:
+            images.append(sample_images)
+        texts.append(item["texts"])
+    return {"images": images, "texts": texts}
 
 
 @dataclass
@@ -75,16 +77,12 @@ def main():
         dataset, 
         batch_size=args.batch_size, 
         shuffle=True, 
-        collate_fn=custom_collate,
+        collate_fn=llava_collate,
         num_workers=args.num_workers
     )
 
     def batch_size_fn(batch):
-        return (
-            len(batch[1]["images"])
-            if isinstance(batch, tuple)
-            else len(batch["images"])
-        )
+        return len(batch["images"])
 
     observer = BenchObserver(
         batch_size_fn=batch_size_fn, earlystop=70, raise_stop_program=True,
@@ -97,16 +95,11 @@ def main():
 
     for epoch in range(args.epochs):
         for i, batch in enumerate(observer.iterate(dataloader)):
-            images = batch["images"][0]  # Access the first item in the list of images
-            texts = batch["texts"]
-            prompt = apply_chat_template(texts)
-
-            image = images[0] if isinstance(images, (list, tuple)) else images
-            if isinstance(image, (list, tuple)) and len(image) == 1:
-                image = image[0]
+            images = batch["images"]
+            prompts = [apply_chat_template(texts) for texts in batch["texts"]]
 
             inputs = processor(
-                text=prompt, images=image, return_tensors="pt", padding=True
+                text=prompts, images=images, return_tensors="pt", padding=True
             )
 
             labels = inputs["input_ids"].clone()
