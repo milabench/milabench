@@ -4,7 +4,7 @@
 # Reproduces the InferenceMAX/InferenceX benchmark methodology from SemiAnalysis:
 #   - Random token sequences (no prefix caching)
 #   - Request rate: infinite (saturate the server)
-#   - Input length varies uniformly between 80-100% of specified ISL
+#   - Input/output lengths vary uniformly ±20% around specified ISL/OSL (vLLM native semantics)
 #   - Concurrency sweep to map the throughput vs latency Pareto frontier
 #   - Three workload scenarios per model:
 #       Chat:          ISL=1024, OSL=1024
@@ -80,7 +80,7 @@ _inferencemax:
 
   client:
     argv:
-      --random-range-ratio: 0.8
+      --random-range-ratio: 0.2
       --ignore-eos: true
 
   server:
@@ -89,7 +89,7 @@ _inferencemax:
       --gpu-memory-utilization: 0.9
       --no-enable-prefix-caching: true
       --max-num-batched-tokens: 8192
-      --max-model-len: 10240
+      --max-model-len: 12288
 
 # --- Dense: Llama 3.3 70B FP8 ---
 # InferenceMAX precision: FP8 (weight quantization + FP8 KV cache)

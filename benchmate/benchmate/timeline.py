@@ -95,7 +95,20 @@ def _default_db_path() -> Path:
     explicit = os.environ.get("MILABENCH_TIMELINE_DB")
     if explicit:
         return Path(explicit)
+
     runs_dir = os.environ.get("MILABENCH_DIR_RUNS")
+    run_name = None
+    cfg_raw = os.environ.get("MILABENCH_CONFIG")
+    if cfg_raw:
+        try:
+            run_name = json.loads(cfg_raw).get("run_name")
+        except json.JSONDecodeError:
+            pass
+
+    if runs_dir and run_name:
+        if run_name[0] in ("/", ".", "~"):
+            return Path(run_name).expanduser() / "benchmark_results.db"
+        return Path(runs_dir) / run_name / "benchmark_results.db"
     if runs_dir:
         return Path(runs_dir) / "benchmark_results.db"
     return Path("benchmark_results.db")

@@ -1,0 +1,124 @@
+# =============================================================================
+# Experimental benchmarks (Open-Instruct, TorchTitan, vLLM+Ray)
+#
+# Aggregates the per-benchmark dev configs added for ROCm bring-up.
+#
+# Usage:
+#   milabench install --config config/experimental.yaml --base $MILABENCH_BASE
+#   milabench prepare --config config/experimental.yaml --base $MILABENCH_BASE
+#   milabench run     --config config/experimental.yaml --base $MILABENCH_BASE
+#
+# Smokes only:
+#   milabench run --config config/experimental.yaml --select \
+#     openinstruct-sft-1b,torchtitan-qwen3-4b-pretrain-smoke,vllm-ray-smoke
+# =============================================================================
+
+include:
+  - ../benchmarks/openinstruct/dev.yaml
+  - ../benchmarks/torchtitan/dev.yaml
+  - ../benchmarks/vllm/dev.yaml
+
+# -----------------------------------------------------------------------------
+# Open-Instruct (AllenAI SFT)
+# -----------------------------------------------------------------------------
+
+openinstruct-sft-1b:
+  enabled: true
+  weight: 1.0
+
+openinstruct-sft-3b:
+  enabled: true
+  weight: 1.0
+
+openinstruct-sft-8b:
+  enabled: true
+  weight: 1.0
+
+openinstruct-sft-8b-gpus:
+  enabled: true
+  weight: 1.0
+
+openinstruct-sft-single:
+  enabled: false
+  weight: 0.0
+
+openinstruct-sft-gpus:
+  enabled: false
+  weight: 0.0
+
+openinstruct-sft-70b-gpus:
+  enabled: true
+  weight: 1.0
+
+# -----------------------------------------------------------------------------
+# TorchTitan (pretrain + SFT)
+# -----------------------------------------------------------------------------
+
+torchtitan-qwen3-4b-pretrain-smoke:
+  enabled: true
+  weight: 1.0
+
+torchtitan-qwen3-4b-sft-smoke:
+  enabled: true
+  weight: 1.0
+
+torchtitan-qwen3-4b-pretrain:
+  enabled: true
+  weight: 1.0
+
+torchtitan-qwen3-4b-sft:
+  enabled: true
+  weight: 1.0
+
+torchtitan-qwen3-30b-pretrain:
+  enabled: true
+  weight: 1.0
+
+torchtitan-qwen3-30b-sft:
+  enabled: true
+  weight: 1.0
+
+torchtitan-glm5-pretrain:
+  enabled: true
+  weight: 1.0
+
+torchtitan-glm5-sft:
+  enabled: true
+  weight: 1.0
+
+# -----------------------------------------------------------------------------
+# vLLM + Ray (single-node smoke + multi-node MoE)
+# -----------------------------------------------------------------------------
+
+vllm-ray-smoke:
+  enabled: true
+  weight: 1.0
+
+vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
+  enabled: true
+  weight: 1.0
+
+vllm-moe-glm52-744b-bf16-nodes:
+  enabled: true
+  weight: 1.0
+
+vllm-moe-glm52-744b-fp8-nodes:
+  enabled: true
+  weight: 1.0
+
+# Legacy vLLM dev entries (included via vllm/dev.yaml, off by default here)
+vllm-single:
+  enabled: false
+  weight: 0.0
+
+vllm-dense-physics-gpus:
+  enabled: false
+  weight: 0.0
+
+vllm-moe-code-gpus:
+  enabled: false
+  weight: 0.0
+
+vllm-whisper-gpus:
+  enabled: false
+  weight: 0.0
