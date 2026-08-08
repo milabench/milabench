@@ -28,7 +28,6 @@ flux_default_generation_args = {
     "guidance_scale": 3.5,
     "num_inference_steps": 50,
     "max_sequence_length": 512,
-    "generator": torch.Generator(accelerator.device_type).manual_seed(0)
 }
 
 chat_default_generation_args = {
@@ -110,28 +109,35 @@ class WhisperBenchmark(InferenceBenchmark):
             device=device,
         )
 
-        kwargs = dict(args.kwargs) or whisper_defaults_generation_args
-        return pipe, kwargs
+        return pipe, {}
 
     def custom_pipeline(self, model, processor, device):
         def inference_pipe(batch, generate_kwargs, batch_size):
-            # processor expects numpy ....
             audio = [x["array"].numpy() for x in batch]
 
+            # Whisper encoder requires fixed 3000 mel frames (30s); padding=True
+            # only pads to the longest clip in the batch.
             inputs = processor(
-                audio, 
-                return_tensors="pt", 
-                #truncation=False, 
-                #padding="longest", 
-                #return_attention_mask=True, 
-                sampling_rate=16_000
+                audio,
+                return_tensors="pt",
+                padding="max_length",
+                return_attention_mask=True,
+                sampling_rate=16_000,
             )
 
-            with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                features = inputs.input_features.to(device).to(torch.bfloat16)
-                generated_ids = model.generate(input_features=features)
+            generate_inputs = {
+                "input_features": inputs.input_features.to(device).to(torch.bfloat16),
+            }
+            if "attention_mask" in inputs:
+                generate_inputs["attention_mask"] = inputs.attention_mask.to(device)
+
+            with torch.inference_mode(), torch.autocast(
+                device_type=accelerator.device_type, dtype=torch.bfloat16
+            ):
+                generated_ids = model.generate(**generate_inputs, **generate_kwargs)
 
             return processor.batch_decode(generated_ids, skip_special_tokens=True)
+
         return inference_pipe, {}
 
     def load_model(self, args, device):
@@ -149,10 +155,12 @@ class WhisperBenchmark(InferenceBenchmark):
 
         processor = AutoProcessor.from_pretrained(args.model)
 
+        kwargs = dict(args.kwargs) if args.kwargs else whisper_defaults_generation_args
+
         if False:
-            pipe, kwargs = self.huggingface_pipeline(model, processor, device)
+            pipe, _ = self.huggingface_pipeline(model, processor, device)
         else:
-            pipe, kwargs = self.custom_pipeline(model, processor, device)
+            pipe, _ = self.custom_pipeline(model, processor, device)
 
         # try:
         #     pipe = torch.compile(pipe, backend="inductor", mode="max-autotune")
@@ -162,24 +170,14 @@ class WhisperBenchmark(InferenceBenchmark):
         return pipe, kwargs
 
     def run(self, pipe, batch, kwargs):
+        if isinstance(batch, dict):
+            batch = [batch]
+        if not batch:
+            raise ValueError("whisper batch is empty")
         return pipe(batch, generate_kwargs=kwargs, batch_size=len(batch))
 
     def get_batch_size(self, x):
         return len(x)
-        # Audio is padded anyway
-        # Audio is Samples/sec
-        # Image is Img/Sec
-        # Chat is Token/Sec
-        samples = 0
-        for item in x:
-            # 16000 is usually the sampling rate
-            # This is used to reduce the score so it is more readable
-            # also this makes the score be the number of seconds
-            # processed in one seconds
-            #
-            samples += item["array"].shape[0] / 16000
-        
-        return samples
 
     def transform(self, item):
         audio = item["audio"]
@@ -211,11 +209,8 @@ class FluxBenchmark(InferenceBenchmark):
         pipe = FluxPipeline.from_pretrained(
             args.model, 
             torch_dtype=torch.bfloat16,
-            device_map="cuda"
-            # Unexpected by FLux
-            # dtype=args.dtype,
-            # device=device,
-        ) # .to("cuda")
+            device_map=accelerator.device_type,
+        )
 
         if False:
             models = {
@@ -270,24 +265,34 @@ class FluxBenchmark(InferenceBenchmark):
 
     def on_step(self, pipe, step: int, timestep: int, kwargs):
         self.dataset.acc_batch_size = self.bs
-
         should_stop = self.dataset.step()
-        # Here we measure the time it takes to do a denoising step
-        # not to generate a whole image because it takes too long
-        self.dataset.acc_batch_size = self.bs
         return {}
 
     def run(self, pipe, batch, kwargs):
-        output = pipe(batch, 
+        if isinstance(batch, str):
+            batch = [batch]
+        if not batch:
+            raise ValueError("txt-to-image flux batch is empty")
+
+        # Keep metrics aligned with the prompts actually sent to the pipeline.
+        self.bs = len(batch)
+
+        call_kwargs = dict(kwargs)
+        generator = call_kwargs.get("generator")
+        if generator is None:
+            call_kwargs["generator"] = [
+                torch.Generator(accelerator.device_type).manual_seed(0)
+                for _ in range(self.bs)
+            ]
+        elif not isinstance(generator, list):
+            call_kwargs["generator"] = [generator] * self.bs
+
+        return pipe(
+            batch,
             callback_on_step_end_tensor_inputs=[],
-            callback_on_step_end=self.on_step, 
-            **kwargs
+            callback_on_step_end=self.on_step,
+            **call_kwargs,
         )
-        
-        # for img in output.images:
-        #     img.save(f"/tmp/data/flux_{self.i}.png")
-        #     self.i += 1
-        return output
 
 
 

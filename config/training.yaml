@@ -673,7 +673,7 @@ dqn:
     dqn: true
     --num_envs: auto({cpu_per_gpu}, 128)
     --buffer_size: 131072
-    --buffer_batch_size: 65536
+    --buffer_batch_size: "auto_batch(4096)"
     --env_name: SpaceInvaders-MinAtar
     --training_interval: 10
     --total_timesteps: 2000000
@@ -683,7 +683,7 @@ ppo:
   argv:
     ppo: true
     --num_envs: auto({cpu_per_gpu}, 128)
-    --num_steps: 10
+    --num_steps: "auto_batch(16)"
     --num_minibatches: 32
     --update_epochs: 4
     --env_name: hopper

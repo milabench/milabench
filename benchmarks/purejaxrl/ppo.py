@@ -359,6 +359,14 @@ def main(args: Arguments = None):
     if args is None:
         args = Arguments()
 
+    rollout = args.num_envs * args.num_steps
+    if rollout % args.num_minibatches != 0:
+        raise ValueError(
+            f"num_envs={args.num_envs} * num_steps={args.num_steps} "
+            f"= {rollout} must be divisible by "
+            f"num_minibatches={args.num_minibatches}"
+        )
+
     config = {
         "LR": args.lr,
         "NUM_ENVS": args.num_envs,

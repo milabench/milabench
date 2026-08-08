@@ -316,8 +316,8 @@ def make_train(config):
 
 @dataclass
 class Arguments:
-    num_envs: int = 10                  # No impact on memory
-    buffer_size: int = 10000            # No impact on memory
+    num_envs: int = 10
+    buffer_size: int = 10000
     buffer_batch_size: int = 128
     total_timesteps: int = 100_000      # No impact on memory
     epsilon_start: float =  1.0
@@ -353,6 +353,12 @@ _DTYPE_MAP = {
 def main(args: Arguments = None):
     if args is None:
         args = Arguments()
+
+    if args.buffer_batch_size > args.buffer_size:
+        raise ValueError(
+            f"buffer_batch_size={args.buffer_batch_size} must be <= "
+            f"buffer_size={args.buffer_size}"
+        )
 
     config = {
         "NUM_ENVS": args.num_envs,
