@@ -303,15 +303,14 @@ focalnet:
     --model: focalnet_base_lrf
 
 brax:
-  # Brax requires very specific sizes to work
-  # so the resizer is not capable of handling resizing this bench
+  # batch-size sets PPO minibatch width; main.py derives num_envs from
+  # batch_size * num_minibatches so scaling sweeps change parallel rollouts.
   inherits: _defaults
   tags:
     - rl
     - jax
     - multigpu
     - gym
-    - nobatch
   definition: ../benchmarks/brax
   group: brax
   install_group: torch
@@ -322,7 +321,6 @@ brax:
     --episode-length: 20
     --batch-size: "auto_batch(1024)"
     --num-minibatches: 32
-    --num-envs: 8192
 
 _diffusion:
   inherits: _defaults

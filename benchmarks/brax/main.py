@@ -21,6 +21,25 @@ ensure_device_put_compat()
 
 from brax import envs
 from brax.training.agents.ppo.train import train
+import jax
+
+
+def resolve_num_envs(batch_size: int, num_minibatches: int) -> int:
+    """Match Brax PPO rollout width with parallel env simulation.
+
+    Brax requires ``batch_size * num_minibatches % num_envs == 0`` and
+    ``num_envs % device_count == 0``. Setting ``num_envs = batch_size *
+    num_minibatches`` satisfies the first constraint; the sizer should pick
+    batch sizes whose product is divisible by the local JAX device count.
+    """
+    num_envs = batch_size * num_minibatches
+    device_count = max(jax.process_count() * jax.local_device_count(), 1)
+    if num_envs % device_count != 0:
+        raise ValueError(
+            f"batch_size={batch_size} * num_minibatches={num_minibatches} "
+            f"= {num_envs} must be divisible by JAX device_count={device_count}"
+        )
+    return num_envs
 
 
 def run():
@@ -90,8 +109,11 @@ def run():
 
     args = parser.parse_args()
 
-    # args.num_envs = (args.batch_size * args.num_minibatches)  
-
+    args.num_envs = resolve_num_envs(args.batch_size, args.num_minibatches)
+    print(
+        f"brax PPO: batch_size={args.batch_size}, "
+        f"num_minibatches={args.num_minibatches}, num_envs={args.num_envs}"
+    )
 
     train(
         environment=envs.get_environment(env_name=args.env),
