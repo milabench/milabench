@@ -94,6 +94,21 @@ vllm-ray-smoke:
   enabled: true
   weight: 1.0
 
+# Single-node Kimi-K3 inference (ATOM on ROCm, vLLM on CUDA)
+serving-moe-kimi-k3-mxfp4-gpus:
+  enabled: true
+  weight: 1.0
+
+# Single-node GLM-5.2 IndexShare inference (ATOM FP8 on ROCm — ATOM GLM-5 recipe)
+serving-moe-glm52-fp8-gpus:
+  enabled: true
+  weight: 1.0
+
+# Single-node GLM-5.2 IndexShare MXFP4 (ATOM on MI355 — amd/GLM-5.2-MXFP4)
+serving-moe-glm52-mxfp4-gpus:
+  enabled: true
+  weight: 1.0
+
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
   enabled: true
   weight: 1.0

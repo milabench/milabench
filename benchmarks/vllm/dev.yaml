@@ -365,3 +365,103 @@ serving-moe-kimi-k3-mxfp4-gpus:
       client:
         argv:
           --model: Kimi-K3
+
+# GLM-5.2 IndexShare (ATOM on ROCm — see ROCm/ATOM recipes/GLM-5.md)
+serving-moe-glm52-fp8-gpus:
+  inherits: _serving
+  enabled: true
+  num_machines: 1
+  max_duration: 3600
+  tags:
+    - multigpu
+    - moe
+    - fp8
+    - indexshare
+  plan:
+    method: njobs
+    n: 1
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+  url: https://huggingface.co/zai-org/GLM-5.2-FP8
+  env:
+    AITER_QUICK_REDUCE_QUANTIZATION: INT4
+    AITER_USE_FLYDSL_MOE_SORTING: '1'
+
+  client:
+    argv:
+      --num-prompts: 640
+      --max-concurrency: 64
+
+  variants:
+    cuda:
+      server:
+        backend: vllm
+        argv:
+          zai-org/GLM-5.2-FP8: true
+          --tensor-parallel-size: "{gpu_count}"
+          --kv-cache-dtype: fp8
+          --enable-auto-tool-choice: true
+          --tool-call-parser: glm47
+          --reasoning-parser: glm45
+      client:
+        argv:
+          --model: zai-org/GLM-5.2-FP8
+
+    rocm:
+      server:
+        backend: atom
+        argv:
+          --model: zai-org/GLM-5.2-FP8
+          -tp: "{gpu_count}"
+          --kv_cache_dtype: fp8
+          --no-enable_prefix_caching: true
+          --max-num-seqs: 64
+          --max-num-batched-tokens: 16384
+          --online_quant_config: '{"global_quant_config":"ptpc_fp8","layer_quant_config":{"model.layers.*.mlp.experts":"per_block_fp8"},"exclude_layer":["lm_head","model.embed_tokens","*.mlp.gate"]}'
+      client:
+        argv:
+          --model: zai-org/GLM-5.2-FP8
+
+# GLM-5.2 IndexShare MXFP4 (ATOM on MI355 — ROCm/ATOM recipes/GLM-5.md)
+serving-moe-glm52-mxfp4-gpus:
+  inherits: _serving
+  enabled: true
+  num_machines: 1
+  max_duration: 3600
+  tags:
+    - multigpu
+    - moe
+    - mxfp4
+    - indexshare
+  plan:
+    method: njobs
+    n: 1
+  requires_capabilities:
+    - "arch == 'rocm'"
+    - "gpu.get('count', 0) >= 4"
+  url: https://huggingface.co/amd/GLM-5.2-MXFP4
+  env:
+    AITER_QUICK_REDUCE_QUANTIZATION: INT4
+    AITER_USE_FLYDSL_MOE_SORTING: '1'
+
+  client:
+    argv:
+      --num-prompts: 640
+      --max-concurrency: 64
+
+  variants:
+    rocm:
+      server:
+        backend: atom
+        argv:
+          --model: amd/GLM-5.2-MXFP4
+          -tp: "4"
+          --kv_cache_dtype: fp8
+          --no-enable_prefix_caching: true
+          --max-num-seqs: 64
+          --max-num-batched-tokens: 16384
+          --online_quant_config: '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*.mlp.gate","*expert*"]}'
+      client:
+        argv:
+          --model: amd/GLM-5.2-MXFP4

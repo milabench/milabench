@@ -61,6 +61,8 @@ def main():
     model = args.model or args.server_model
     hf_aliases = {
         "Kimi-K3": "moonshotai/Kimi-K3",
+        "GLM-5.2-FP8": "zai-org/GLM-5.2-FP8",
+        "GLM-5.2-MXFP4": "amd/GLM-5.2-MXFP4",
     }
     model = hf_aliases.get(model, model)
     if model is None:

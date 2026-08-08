@@ -174,6 +174,100 @@ def _obs_mib_int(obs, key):
     return int(str(value).split(" ")[0])
 
 
+OBSERVATION_METADATA_KEYS = ("backend", "flavor", "torch", "torch_local")
+
+OBSERVATION_FIELD_ORDER = (
+    "batch_size",
+    "perf",
+    "cpu",
+    "memory",
+    "torchmem",
+    "jaxmem",
+    "time",
+    *OBSERVATION_METADATA_KEYS,
+)
+
+
+def _normalize_observation(obs):
+    if not isinstance(obs, dict):
+        return obs
+
+    ordered = {}
+    for key in OBSERVATION_FIELD_ORDER:
+        if key in obs:
+            ordered[key] = obs[key]
+
+    for key in sorted(obs):
+        if key not in ordered:
+            ordered[key] = obs[key]
+
+    return ordered
+
+
+def _normalize_scaling(scaling):
+    if not isinstance(scaling, dict):
+        return scaling
+
+    normalized = {}
+    for bench, data in scaling.items():
+        if bench == "version":
+            normalized[bench] = data
+            continue
+
+        if not isinstance(data, dict):
+            normalized[bench] = data
+            continue
+
+        observations = [
+            _normalize_observation(obs)
+            for obs in data.get("observations", [])
+        ]
+        normalized[bench] = {**data, "observations": observations}
+
+    return normalized
+
+
+def _dump_scaling_yaml(scaling, fp):
+    yaml.dump(
+        _normalize_scaling(scaling),
+        fp,
+        Dumper=compact_dump(),
+        width=float("inf"),
+        sort_keys=False,
+    )
+
+
+def _has_metadata_value(value):
+    return value is not None and value != ""
+
+
+def _metadata_template(observations):
+    """Build metadata fill-ins; earliest observation with a value wins per key."""
+    template = {}
+    for obs in sorted(observations, key=lambda o: o.get("time", 0)):
+        for key in OBSERVATION_METADATA_KEYS:
+            if key not in template and _has_metadata_value(obs.get(key)):
+                template[key] = obs[key]
+    return template
+
+
+def _apply_metadata_template(obs, template):
+    for key, value in template.items():
+        if not _has_metadata_value(obs.get(key)):
+            obs[key] = value
+    return obs
+
+
+def _metadata_templates_by_key(observations):
+    groups = defaultdict(list)
+    for obs in observations:
+        groups[(obs["batch_size"], obs["cpu"])].append(obs)
+    return {
+        key: _metadata_template(group)
+        for key, group in groups.items()
+    }
+
+
 def _fmt_mo(n_octets: float) -> str:
     """Format an octet count as mebibytes for logs (``1234.5 Mo``)."""
     return f"{n_octets / (1024 ** 2):.1f} Mo"
@@ -515,7 +609,9 @@ def compact_dump():
     from yaml.representer import SequenceNode, ScalarNode
 
     class CustomDumper(yaml.SafeDumper):
-        
+        # PyYAML 6 defaults sort_keys=True when omitted; preserve insertion order.
+        sort_keys = False
+
         def represent_sequence(self, tag, sequence, flow_style=None):
             value = []
             node = SequenceNode(tag, value, flow_style=flow_style)
@@ -720,7 +816,7 @@ class MemoryUsageExtractor(ValidationLayer):
     def save(self):
         if self.filepath is not None:
             with open(self.filepath, "w") as file:
-                yaml.dump(self.memory, file, Dumper=compact_dump(), width=float("inf"))
+                _dump_scaling_yaml(self.memory, file)
 
     def report(self, *args, **kwargs):
         for name, stats in self._benchstat.items():
@@ -900,6 +996,7 @@ def deduplicate_observation(scaling):
             continue
 
         observations = data.get("observations", [])
+        metadata_by_key = _metadata_templates_by_key(observations)
         duplicate_sets = defaultdict(list)
 
         for obs in observations:
@@ -965,6 +1062,10 @@ def deduplicate_observation(scaling):
                     merged["torchmem"] = f"{int(torchmem_stat.avg)} MiB"
                 if jaxmem_stat.current_count > 0:
                     merged["jaxmem"] = f"{int(jaxmem_stat.avg)} MiB"
+                _apply_metadata_template(
+                    merged,
+                    _metadata_template(data),
+                )
                 newobs.append(merged)
             else:
                 if (not should_generate_aggregate) and perf_stat.avg > 0 and merge_mem.avg > 0:
@@ -973,7 +1074,13 @@ def deduplicate_observation(scaling):
                 
                 for obs in data:
                     if obs["perf"] > 0:
-                        newobs.append(obs)
+                        newobs.append(dict(obs))
+
+        for obs in newobs:
+            _apply_metadata_template(
+                obs,
+                metadata_by_key.get((obs["batch_size"], obs["cpu"]), {}),
+            )
 
         # make sure observations are sorted
         newobs = list(sorted(newobs, key=lambda x: x["batch_size"]))
@@ -982,17 +1089,22 @@ def deduplicate_observation(scaling):
             "observations": newobs
         }
 
-    return deduplicated_scaling
+    return _normalize_scaling(deduplicated_scaling)
 
 
-def deduplicate_scaling_file(filepath):
+def deduplicate_scaling_file(filepath, output=None):
     with open(filepath, "r") as fp:
         memory = yaml.safe_load(fp) or {}
 
     newmem = deduplicate_observation(memory)
 
-    with open(f"{filepath}.new.yml", "w") as fp:
-        yaml.dump(newmem, fp, Dumper=compact_dump(), width=float("inf"))
+    if output is None:
+        output = f"{filepath}.new.yml"
+
+    with open(output, "w") as fp:
+        _dump_scaling_yaml(newmem, fp)
+
+    return newmem
 
 
 
@@ -1031,7 +1143,7 @@ def scaling_to_csv(filepath):
 
 
 
-def merge_scaling_files(*files):
+def merge_scaling_files(*files, output="merged.yaml"):
     all_data = defaultdict(lambda: {"observations": []})
 
     for file in files:
@@ -1043,22 +1155,20 @@ def merge_scaling_files(*files):
                 continue
 
             rows = all_data[k]["observations"]
-            
+
             rows.extend(items["observations"])
 
             all_data[k]["observations"] = list(sorted(rows, key=lambda x: x["batch_size"]))
 
-
     newmem = deduplicate_observation(dict(all_data))
 
-    with open("merged.yaml", "w") as fp:
-        yaml.dump(dict(newmem), fp, Dumper=compact_dump(), width=float("inf"))
-    
+    with open(output, "w") as fp:
+        _dump_scaling_yaml(dict(newmem), fp)
+
+    return newmem
+
 
 if __name__ == "__main__":
     import sys
-    # filepath = "/home/testroot/milabench/config/scaling/MI325.yaml"
-    # scaling_to_csv(filepath)
-    # deduplicate_scaling_file(filepath)
 
     merge_scaling_files(*sys.argv[1:])

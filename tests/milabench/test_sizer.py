@@ -1,5 +1,6 @@
 """Tests for pure-logic functions in milabench.sizer."""
 
+import io
 import time
 from collections import defaultdict
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from cantilever.core.statstream import StatStream
 from milabench.sizer import (
     BenchStats,
     MemoryUsageExtractor,
+    OBSERVATION_FIELD_ORDER,
     Sizer,
     SizerOptions,
     arch_to_device,
@@ -23,6 +25,7 @@ from milabench.sizer import (
     _fixed_overhead,
     _fit_torchmem_vs_batch,
     _obs_pair_octets,
+    _dump_scaling_yaml,
     _torch_backend_info,
 )
 
@@ -487,7 +490,52 @@ class TestDeduplicateObservation:
         obs = result["bench"]["observations"]
         assert len(obs) == 1
         assert obs[0]["batch_size"] == 32
-        assert obs[0]["time"] == t + 10
+
+    def test_metadata_carried_from_earliest_on_merge(self):
+        t = int(time.time())
+        scaling = {
+            "bench": {
+                "observations": [
+                    {
+                        **_obs(32, 8, 1000, 100.0, t),
+                        "backend": "7.2.26015",
+                        "flavor": "rocm7.2",
+                        "torch": "2.11.0",
+                    },
+                    _obs(32, 8, 1005, 101.0, t + 10),
+                ]
+            }
+        }
+        result = deduplicate_observation(scaling)
+        obs = result["bench"]["observations"]
+        assert len(obs) == 1
+        assert obs[0]["backend"] == "7.2.26015"
+        assert obs[0]["flavor"] == "rocm7.2"
+        assert obs[0]["torch"] == "2.11.0"
+
+    def test_earliest_metadata_wins_on_conflict(self):
+        t = int(time.time())
+        scaling = {
+            "bench": {
+                "observations": [
+                    {
+                        **_obs(32, 8, 5000, 500.0, t),
+                        "backend": "old-backend",
+                        "torch": "2.10.0",
+                    },
+                    {
+                        **_obs(32, 8, 1000, 100.0, t + 10),
+                        "backend": "new-backend",
+                        "torch": "2.11.0",
+                    },
+                ]
+            }
+        }
+        result = deduplicate_observation(scaling)
+        obs = sorted(result["bench"]["observations"], key=lambda o: o["time"])
+        assert len(obs) == 2
+        assert obs[0]["backend"] == "old-backend"
+        assert obs[1]["backend"] == "new-backend"
 
     def test_mixed_unique_and_duplicate(self):
         t = int(time.time())
@@ -543,6 +591,58 @@ class TestCompactDump:
         dumped = yaml.dump(data, Dumper=compact_dump())
         reloaded = yaml.safe_load(dumped)
         assert reloaded == data
+
+    def test_normalize_observation_field_order(self):
+        obs = deduplicate_observation(
+            {
+                "bench": {
+                    "observations": [
+                        {
+                            "perf": 783.15,
+                            "time": 1786027220,
+                            "cpu": 8,
+                            "batch_size": 32,
+                            "memory": "18325 MiB",
+                            "torchmem": "14045 MiB",
+                            "torch": "2.11.0",
+                            "flavor": "rocm7.2",
+                            "backend": "7.2.26015",
+                        }
+                    ]
+                }
+            }
+        )["bench"]["observations"][0]
+
+        assert list(obs.keys()) == [
+            key for key in OBSERVATION_FIELD_ORDER if key in obs
+        ]
+
+    def test_dump_preserves_observation_field_order(self):
+        scaling = deduplicate_observation(
+            {
+                "bench": {
+                    "observations": [
+                        {
+                            "perf": 783.15,
+                            "time": 1786027220,
+                            "cpu": 8,
+                            "batch_size": 32,
+                            "memory": "18325 MiB",
+                            "torchmem": "14045 MiB",
+                            "torch": "2.11.0",
+                            "flavor": "rocm7.2",
+                            "backend": "7.2.26015",
+                        }
+                    ]
+                }
+            }
+        )
+        buf = io.StringIO()
+        _dump_scaling_yaml(scaling, buf)
+        line = next(
+            line for line in buf.getvalue().splitlines() if "batch_size: 32" in line
+        )
+        assert line.lstrip().startswith("- {batch_size:")
 
 
 # ---------------------------------------------------------------------------
