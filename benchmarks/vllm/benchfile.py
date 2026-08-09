@@ -7,6 +7,41 @@ from milabench.merge import merge
 from milabench.utils import assemble_options
 
 
+# vLLM-only server flags; ATOM accepts --served-model-name and --trust-remote-code.
+_VLLM_ONLY_SERVER_FLAGS = frozenset(
+    {
+        "--dtype",
+        "--tensor-parallel-size",
+        "--distributed-executor-backend",
+        "--tokenizer-mode",
+        "--config_format",
+        "--load_format",
+        "--tool-call-parser",
+        "--enable-auto-tool-choice",
+        "--kv-cache-dtype",
+    }
+)
+
+
+def filter_vllm_server_argv_for_atom(argv: list) -> list:
+    """Drop vLLM-only server flags before launching ATOM."""
+    filtered: list = []
+    i = 0
+    while i < len(argv):
+        arg = str(argv[i])
+        if "=" in arg:
+            flag = arg.split("=", 1)[0]
+            if flag in _VLLM_ONLY_SERVER_FLAGS:
+                i += 1
+                continue
+        elif arg in _VLLM_ONLY_SERVER_FLAGS:
+            i += 2 if i + 1 < len(argv) and not str(argv[i + 1]).startswith("-") else 1
+            continue
+        filtered.append(argv[i])
+        i += 1
+    return filtered
+
+
 class VLLMParallel(cmd.Command):
     """This is like a torchrun but it handles the tensor parallel as well"""
     def __init__(self, base_cmd, dataparallel_gpu, tensorparallel_gpu):
@@ -91,6 +126,8 @@ class VLLM(Package):
 
     def server_argv(self, prepare=False):
         args = assemble_options(self._merged_section("server", prepare=prepare)["argv"])
+        if self.server_backend() == "atom":
+            args = filter_vllm_server_argv_for_atom(args)
         if self.server_backend() == "vllm" and self.num_machines > 1 and not any(
             a == "--distributed-executor-backend"
             or str(a).startswith("--distributed-executor-backend=")

@@ -23,6 +23,16 @@ def test_scaler_use_optimized(multipack, config):
         assert sizer.size(pack, "48Go") == 138
 
 
+def test_scaler_optimized_missing_benchmark(tmp_path):
+    path = tmp_path / "scaling.yaml"
+    path.write_text(yaml.safe_dump({"other-bench": {"observations": []}}))
+    sizer = Sizer(
+        SizerOptions(batch_size=None, auto=False, optimized=True),
+        path,
+    )
+    assert sizer.optimized("resnet50", "48Go") is None
+
+
 _values = [
     ("5Go", 27),  # Not a multiple of 8
     ("6Go", 32),

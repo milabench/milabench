@@ -310,6 +310,7 @@ _serving:
       --label: milabench
       --backend: openai
       --ready-check-timeout-sec: 3600
+      --trust-remote-code: true
 
 serving-moe-kimi-k3-mxfp4-gpus:
   inherits: _serving
@@ -351,7 +352,7 @@ serving-moe-kimi-k3-mxfp4-gpus:
       server:
         backend: atom
         argv:
-          --model: Kimi-K3
+          --model: moonshotai/Kimi-K3
           -tp: "{gpu_count}"
           --kv_cache_dtype: fp8
           --trust-remote-code: true
@@ -361,10 +362,11 @@ serving-moe-kimi-k3-mxfp4-gpus:
           --gpu-memory-utilization: 0.93
           --block-size: 128
           --no-enable_prefix_caching: true
-          --online_quant_config: '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
+          --enforce-eager: true
+          --online_quant_config: '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*self_attn.f_b_proj*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
       client:
         argv:
-          --model: Kimi-K3
+          --model: moonshotai/Kimi-K3
 
 # GLM-5.2 IndexShare (ATOM on ROCm — see ROCm/ATOM recipes/GLM-5.md)
 serving-moe-glm52-fp8-gpus:
@@ -413,11 +415,12 @@ serving-moe-glm52-fp8-gpus:
         backend: atom
         argv:
           --model: zai-org/GLM-5.2-FP8
-          -tp: "{gpu_count}"
+          -tp: "4"
           --kv_cache_dtype: fp8
           --no-enable_prefix_caching: true
           --max-num-seqs: 64
           --max-num-batched-tokens: 16384
+          --enforce-eager: true
           --online_quant_config: '{"global_quant_config":"ptpc_fp8","layer_quant_config":{"model.layers.*.mlp.experts":"per_block_fp8"},"exclude_layer":["lm_head","model.embed_tokens","*.mlp.gate"]}'
       client:
         argv:
@@ -461,6 +464,7 @@ serving-moe-glm52-mxfp4-gpus:
           --no-enable_prefix_caching: true
           --max-num-seqs: 64
           --max-num-batched-tokens: 16384
+          --enforce-eager: true
           --online_quant_config: '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*.mlp.gate","*expert*"]}'
       client:
         argv:

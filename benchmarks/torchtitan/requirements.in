@@ -13,4 +13,4 @@ spmd_types==0.2.1
 torchdata>=0.8.0
 huggingface_hub
 argklass
-torchtitan @ git+https://github.com/pytorch/torchtitan.git
+torchtitan @ git+https://github.com/pytorch/torchtitan.git@ecae62f1591c3a73ed78a25d7c68f249bd61caa6

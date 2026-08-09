@@ -38,6 +38,7 @@ from torchtitan.experiments.transformers_modeling_backend.pipeline import (
 from torchtitan.experiments.transformers_modeling_backend.state_dict_adapter import (
     HFTransformerStateDictAdapter,
 )
+from .state_dict_adapter import MilabenchMoeStateDictAdapter
 from torchtitan.experiments.transformers_modeling_backend.tokenizer import (
     HFBackendTokenizer,
 )
@@ -110,6 +111,11 @@ def _model_spec(flavor: str) -> ModelSpec:
             model_config=TitanMoeModelConfig(attn_mask_type="block_causal"),
         ),
     }
+    adapter = (
+        MilabenchMoeStateDictAdapter
+        if flavor in ("moe", "moe_sft")
+        else HFTransformerStateDictAdapter
+    )
     return ModelSpec(
         name="transformers_modeling_backend",
         flavor=flavor,
@@ -117,7 +123,7 @@ def _model_spec(flavor: str) -> ModelSpec:
         parallelize_fn=parallelize_hf_transformers,
         pipelining_fn=pipeline_hf_transformers,
         post_optimizer_build_fn=register_moe_load_balancing_hook,
-        state_dict_adapter=HFTransformerStateDictAdapter,
+        state_dict_adapter=adapter,
     )
 
 
@@ -245,16 +251,24 @@ def qwen3_30b_sft() -> TransformersBackendConfig:
     )
 
 
+def _glm5_parallelism(cfg: TransformersBackendConfig) -> TransformersBackendConfig:
+    # Upstream: TP/CP unsupported for GLM-5 DSA — FSDP+EP only.
+    cfg.parallelism.tensor_parallel_degree = 1
+    cfg.parallelism.context_parallel_degree = 1
+    cfg.parallelism.expert_parallel_degree = 8
+    # dp_shard stays -1 (auto → world_size on 8 GPUs); do not set to 1 with EP.
+    cfg.comm.init_timeout_seconds = 1800
+    cfg.comm.train_timeout_seconds = 600
+    return cfg
+
+
 def glm5_pretrain() -> TransformersBackendConfig:
     cfg = _base_pretrain(
         hf_model="zai-org/GLM-5",
         flavor="moe",
         seq_len=1024,
     )
-    # Upstream: TP/CP unsupported for GLM-5 DSA — FSDP+EP only.
-    cfg.parallelism.tensor_parallel_degree = 1
-    cfg.parallelism.context_parallel_degree = 1
-    return cfg
+    return _glm5_parallelism(cfg)
 
 
 def glm5_sft() -> TransformersBackendConfig:
@@ -263,6 +277,4 @@ def glm5_sft() -> TransformersBackendConfig:
         flavor="moe_sft",
         seq_len=1024,
     )
-    cfg.parallelism.tensor_parallel_degree = 1
-    cfg.parallelism.context_parallel_degree = 1
-    return cfg
+    return _glm5_parallelism(cfg)

@@ -344,7 +344,7 @@ class Sizer:
         self.prev_key = None
         if os.path.exists(config):
             with open(config, "r") as sconf:
-                self.scaling_config = yaml.safe_load(sconf)
+                self.scaling_config = yaml.safe_load(sconf) or {}
         else:
             print(config, "does not exist")
 
@@ -355,16 +355,18 @@ class Sizer:
         return SizerOptions()
 
     def benchscaling(self, benchmark):
+        scaling = self.scaling_config or {}
+
         # key
         if isinstance(benchmark, str):
-            return self.scaling_config.get(benchmark)
+            return scaling.get(benchmark)
 
         # benchmark config
         if isinstance(benchmark, dict) and "name" in benchmark:
-            return self.scaling_config.get(benchmark["name"])
+            return scaling.get(benchmark["name"])
 
         # pack
-        return self.scaling_config.get(benchmark.config["name"])
+        return scaling.get(benchmark.config["name"])
 
     def _scaling_v1(self, config):
         data = list(sorted(config["model"].items(), key=lambda x: x[0]))
@@ -529,9 +531,22 @@ class Sizer:
         return None
 
     def optimized(self, benchmark, capacity):
-        # Old V1 format
         config = self.benchscaling(benchmark)
 
+        if not config:
+            if isinstance(benchmark, str):
+                bench_name = benchmark
+            elif isinstance(benchmark, dict):
+                bench_name = benchmark.get("name", "?")
+            else:
+                bench_name = benchmark.config.get("name", "?")
+            syslog(
+                "No scaling data for {}; optimized sizing unavailable",
+                bench_name,
+            )
+            return None
+
+        # Old V1 format
         if "model" in config:
             return config["optimized"]
 

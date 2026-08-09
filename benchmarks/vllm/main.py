@@ -17,6 +17,7 @@ from server_backends import (
     resolved_server_backend,
     resolved_server_command,
 )
+from atom_aiter_compat import ensure_atom_aiter_compat
 
 push_metric = None
 
@@ -375,6 +376,8 @@ def split_args(argv):
 
 def main(argv):
     global push_metric 
+
+    ensure_atom_aiter_compat()
 
     # from argparse import ArgumentParser
     # parser = ArgumentParser()

@@ -73,6 +73,11 @@ SERVING_CONFIG = {
             "--num-prompts": 64,
         }
     },
+    "server": {
+        "argv": {
+            "--served-model-name": "model",
+        }
+    },
     "variants": {
         "cuda": {
             "server": {
@@ -92,13 +97,13 @@ SERVING_CONFIG = {
             "server": {
                 "backend": "atom",
                 "argv": {
-                    "--model": "Kimi-K3",
+                    "--model": "moonshotai/Kimi-K3",
                     "-tp": "8",
                 },
             },
             "client": {
                 "argv": {
-                    "--model": "Kimi-K3",
+                    "--model": "moonshotai/Kimi-K3",
                 }
             },
         },
@@ -136,9 +141,12 @@ class TestServingVariants:
         pack = _make_vllm_pack(mod, cfg)
 
         assert pack.server_backend() == "atom"
-        assert pack.server_argv()[:2] == ["--model", "Kimi-K3"]
+        assert "--model" in pack.server_argv()
+        assert "moonshotai/Kimi-K3" in pack.server_argv()
         assert "-tp" in pack.server_argv()
-        assert pack.client_argv()[-2:] == ["--model", "Kimi-K3"]
+        assert "--served-model-name" in pack.server_argv()
+        assert "--dtype" not in pack.server_argv()
+        assert pack.client_argv()[-2:] == ["--model", "moonshotai/Kimi-K3"]
         assert not pack.uses_ray()
 
     def test_missing_variant_fails_capability(self):
@@ -200,7 +208,7 @@ class TestServerCommandBuilder:
 
         cmd = mod.build_server_command(["--model", "Kimi-K3"], backend="atom")
         assert cmd[0] == mod.sys.executable
-        assert cmd[1:3] == ["-m", "atom.entrypoints.openai_server"]
+        assert cmd[1].endswith("atom_server_entry.py")
         assert cmd[-2:] == ["--model", "Kimi-K3"]
 
     def test_reads_backend_from_milabench_config(self, monkeypatch):

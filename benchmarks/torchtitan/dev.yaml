@@ -148,6 +148,8 @@ torchtitan-glm5-pretrain:
     --training.seq_len: 1024
     --parallelism.tensor_parallel_degree: 1
     --parallelism.context_parallel_degree: 1
+    --parallelism.expert_parallel_degree: 8
+    --comm.init_timeout_seconds: 1800
 
 torchtitan-glm5-sft:
   inherits: _torchtitan
@@ -166,3 +168,5 @@ torchtitan-glm5-sft:
     --training.seq_len: 1024
     --parallelism.tensor_parallel_degree: 1
     --parallelism.context_parallel_degree: 1
+    --parallelism.expert_parallel_degree: 8
+    --comm.init_timeout_seconds: 1800

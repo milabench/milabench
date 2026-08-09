@@ -13,9 +13,16 @@ class InferenceServerError(BaseException):
     pass
 
 
+def _atom_server_argv(argv: list) -> list:
+    # Run via milabench wrapper so aiter shims apply in the server subprocess.
+    here = os.path.dirname(os.path.abspath(__file__))
+    entry = os.path.join(here, "atom_server_entry.py")
+    return [sys.executable, entry, *argv]
+
+
 SERVER_BACKENDS = {
     "vllm": lambda argv: ["vllm", "serve", *argv],
-    "atom": lambda argv: [sys.executable, "-m", "atom.entrypoints.openai_server", *argv],
+    "atom": _atom_server_argv,
 }
 
 

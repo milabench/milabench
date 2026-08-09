@@ -6,6 +6,8 @@ from voir.phase import StopProgram
 from benchmate.monitor import voirfile_monitor
 from benchmate.benchrun import forward_voir_file
 
+from torch_compat import ensure_torchtitan_torch_compat
+
 
 @dataclass
 class Config:
@@ -58,6 +60,7 @@ def instrument_main(ov, options: Config):
     # Ptera probes are brittle under torch.compile / decorators; patch the
     # Trainer method after the script is loaded so rates always flow.
     try:
+        ensure_torchtitan_torch_compat()
         from torchtitan.trainer import Trainer
 
         if not getattr(Trainer.forward_backward_step, "_milabench_rate_wrapped", False):
