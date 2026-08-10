@@ -415,7 +415,7 @@ serving-moe-glm52-fp8-gpus:
         backend: atom
         argv:
           --model: zai-org/GLM-5.2-FP8
-          -tp: "4"
+          -tp: "{gpu_count}"
           --kv_cache_dtype: fp8
           --no-enable_prefix_caching: true
           --max-num-seqs: 64
@@ -442,7 +442,7 @@ serving-moe-glm52-mxfp4-gpus:
     n: 1
   requires_capabilities:
     - "arch == 'rocm'"
-    - "gpu.get('count', 0) >= 4"
+    - "gpu.get('count', 0) >= 8"
   url: https://huggingface.co/amd/GLM-5.2-MXFP4
   env:
     AITER_QUICK_REDUCE_QUANTIZATION: INT4
@@ -459,7 +459,7 @@ serving-moe-glm52-mxfp4-gpus:
         backend: atom
         argv:
           --model: amd/GLM-5.2-MXFP4
-          -tp: "4"
+          -tp: "{gpu_count}"
           --kv_cache_dtype: fp8
           --no-enable_prefix_caching: true
           --max-num-seqs: 64

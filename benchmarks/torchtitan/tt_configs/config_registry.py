@@ -257,8 +257,14 @@ def _glm5_parallelism(cfg: TransformersBackendConfig) -> TransformersBackendConf
     cfg.parallelism.context_parallel_degree = 1
     cfg.parallelism.expert_parallel_degree = 8
     # dp_shard stays -1 (auto → world_size on 8 GPUs); do not set to 1 with EP.
-    cfg.comm.init_timeout_seconds = 1800
-    cfg.comm.train_timeout_seconds = 600
+    # 744B MoE init/parallelize + SFT checkpoint load can take 30–60+ minutes.
+    cfg.comm.init_timeout_seconds = 7200
+    cfg.comm.train_timeout_seconds = 1800
+    # Flight recorder defaults (trace_buf_size=20000) enable extra NCCL
+    # monitoring; disable for long CPU-only GLM-5 init.
+    cfg.comm.trace_buf_size = 0
+    # MoE build uses CPU + per-layer EP shard (torch_compat); trainer still
+    # materializes EP/FSDP-local shards on GPU after parallelize_fn returns.
     return cfg
 
 

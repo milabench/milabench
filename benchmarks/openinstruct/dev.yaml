@@ -304,6 +304,15 @@ openinstruct-sft-70b-gpus:
     - --output_dir
     - output/sft_70b
     - --skip_model_save
+    - true
+    - --fused_optimizer
+    - false
+    - --push_to_hub
+    - false
+    - --try_auto_save_to_beaker
+    - false
+    - --try_launch_beaker_eval_jobs
+    - false
     - --logging_steps
     - 1
     - --model_revision

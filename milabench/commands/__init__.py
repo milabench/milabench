@@ -354,6 +354,10 @@ class WorkingDir(WrapperCommand):
         for k, v in (cmd.pack.config.get("system") or {}).get("env", {}).items():
             args.append(f"{k}={v}")
 
+        # Bench-specific env (e.g. torchtitan GLM-5 NCCL watchdog overrides).
+        for k, v in (cmd.pack.config.get("env") or {}).items():
+            args.append(f"{k}={v}")
+
         super().__init__(cmd, *args)
 
 

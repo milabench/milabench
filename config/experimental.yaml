@@ -4,23 +4,17 @@
 # Tuned for limited machine time: smokes off after bring-up, small models off,
 # focus on large-model training + MoE serving.
 #
-# Fix-loop status (2026-08-08):
+# Fix-loop status (2026-08-09):
 #
-# PASSED — disabled (enabled: false) after clean runs:
+# Final clean run — all 8 enabled:
 #   - openinstruct-sft-70b-gpus
 #   - torchtitan-qwen3-30b-pretrain
 #   - torchtitan-qwen3-30b-sft
-#
-# WIP — inference first (serving benches run before torchtitan in include order):
-#   - serving-moe-kimi-k3-mxfp4-gpus   (aiter 0.1.19.post2; exclude f_b_proj from ptpc_fp8)
-#   - serving-moe-glm52-fp8-gpus       (ATOM + --enforce-eager; torch.compile workaround)
-#   - serving-moe-glm52-mxfp4-gpus     (ATOM + --enforce-eager)
-#
-# PAUSED — torchtitan GLM-5 (re-enable after serving passes):
-#   - torchtitan-glm5-pretrain   (744B MoE; EP=8, auto dp_shard, comm timeout 1800s)
-#   - torchtitan-glm5-sft        (same + MoE HF checkpoint adapter)
-#
-# When all 8 pass individually, re-enable everything for one final clean run.
+#   - serving-moe-kimi-k3-mxfp4-gpus
+#   - serving-moe-glm52-fp8-gpus
+#   - serving-moe-glm52-mxfp4-gpus
+#   - torchtitan-glm5-pretrain  (744B MoE; needs multi-node for training)
+#   - torchtitan-glm5-sft
 # =============================================================================
 
 include:
@@ -57,7 +51,7 @@ openinstruct-sft-gpus:
   weight: 0.0
 
 openinstruct-sft-70b-gpus:
-  enabled: false
+  enabled: true
   weight: 1.0
   definition: ../benchmarks/openinstruct
 
@@ -113,7 +107,7 @@ vllm-whisper-gpus:
   weight: 0.0
 
 # -----------------------------------------------------------------------------
-# TorchTitan (pretrain + SFT) — paused until serving passes
+# TorchTitan (pretrain + SFT)
 # -----------------------------------------------------------------------------
 
 torchtitan-qwen3-4b-pretrain-smoke:
@@ -133,21 +127,21 @@ torchtitan-qwen3-4b-sft:
   weight: 0.0
 
 torchtitan-qwen3-30b-pretrain:
-  enabled: false
+  enabled: true
   weight: 1.0
   definition: ../benchmarks/torchtitan
 
 torchtitan-qwen3-30b-sft:
-  enabled: false
+  enabled: true
   weight: 1.0
   definition: ../benchmarks/torchtitan
 
 torchtitan-glm5-pretrain:
-  enabled: false
+  enabled: true
   weight: 1.0
   definition: ../benchmarks/torchtitan
 
 torchtitan-glm5-sft:
-  enabled: false
+  enabled: true
   weight: 1.0
   definition: ../benchmarks/torchtitan

@@ -131,42 +131,53 @@ torchtitan-qwen3-30b-sft:
 
 # --- GLM-5 MoE+DSA (FSDP+EP only) ---
 
-torchtitan-glm5-pretrain:
+_glm5_torchtitan:
   inherits: _torchtitan
+  max_duration: 14400
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  env:
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    NCCL_TIMEOUT: "7200"
+    TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC: "14400"
+    # GLM-5 meta parallelize can run 10–30+ min on CPU with no NCCL ops; the
+    # default heartbeat monitor (480s) aborts workers mid-init.
+    TORCH_NCCL_ENABLE_MONITORING: "0"
+    PYTHONFAULTHANDLER: "1"
+  voir:
+    options:
+      stop: 30
+      skip: 10
+
+torchtitan-glm5-pretrain:
+  inherits: _glm5_torchtitan
   url: https://huggingface.co/zai-org/GLM-5
   tags:
     - multigpu
     - pretrain
     - moe
-  max_duration: 14400
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
     --module: tt_configs
     --config: glm5_pretrain
     --training.steps: 20
     --training.seq_len: 1024
-    --parallelism.tensor_parallel_degree: 1
-    --parallelism.context_parallel_degree: 1
     --parallelism.expert_parallel_degree: 8
-    --comm.init_timeout_seconds: 1800
+    --comm.init_timeout_seconds: 7200
+    --comm.train_timeout_seconds: 1800
 
 torchtitan-glm5-sft:
-  inherits: _torchtitan
+  inherits: _glm5_torchtitan
   url: https://huggingface.co/zai-org/GLM-5
   tags:
     - multigpu
     - sft
     - moe
-  max_duration: 14400
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
     --module: tt_configs
     --config: glm5_sft
     --training.steps: 20
     --training.seq_len: 1024
-    --parallelism.tensor_parallel_degree: 1
-    --parallelism.context_parallel_degree: 1
     --parallelism.expert_parallel_degree: 8
-    --comm.init_timeout_seconds: 1800
+    --comm.init_timeout_seconds: 7200
+    --comm.train_timeout_seconds: 1800

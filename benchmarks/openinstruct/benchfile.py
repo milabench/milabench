@@ -31,6 +31,10 @@ class OpenInstruct(Package):
 
         # Upstream open-instruct expects flash_4; older ai2-olmo-core may lack it.
         self._patch_attn_backends(source_destination / "open_instruct" / "model_utils.py")
+        self._patch_finetune_skip_model_save(source_destination / "open_instruct" / "finetune.py")
+        self._patch_finetune_torchvision_shim(source_destination / "open_instruct" / "finetune.py")
+        self._patch_finetune_deepspeed_scheduler(source_destination / "open_instruct" / "finetune.py")
+        self._patch_finetune_rate_metric(source_destination / "open_instruct" / "finetune.py")
 
         # Upstream open-instruct expects an editable install of its own tree.
         await self.pip_install("-e", str(source_destination), "--no-deps")
@@ -65,6 +69,125 @@ for _name, _hf in (
     if _backend is not None:
         _OLMO_CORE_TO_HF_ATTN[_backend] = _hf
 '''
+        path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+
+    @staticmethod
+    def _patch_finetune_skip_model_save(path):
+        if not path.exists():
+            return
+        text = path.read_text(encoding="utf-8")
+        if "skip_model_save" in text:
+            return
+        field_needle = (
+            "    clean_checkpoints_at_end: bool = field(\n"
+            '        default=True, metadata={"help": "Whether to clean up all previous checkpoints at the end of the run."}\n'
+            "    )\n"
+        )
+        field_replacement = (
+            field_needle
+            + "    skip_model_save: bool = field(\n"
+            '        default=False, metadata={"help": "Skip writing the final merged model to output_dir."}\n'
+            "    )\n"
+        )
+        if field_needle not in text:
+            return
+        text = text.replace(field_needle, field_replacement, 1)
+        save_needle = (
+            "    if args.output_dir is not None:\n"
+            "        save_with_accelerate(\n"
+        )
+        save_replacement = (
+            "    if args.output_dir is not None and not args.skip_model_save:\n"
+            "        save_with_accelerate(\n"
+        )
+        if save_needle not in text:
+            return
+        path.write_text(text.replace(save_needle, save_replacement, 1), encoding="utf-8")
+
+    @staticmethod
+    def _patch_finetune_torchvision_shim(path):
+        """datasets 4.x imports VideoReader; ROCm torchvision omits it."""
+        if not path.exists():
+            return
+        text = path.read_text(encoding="utf-8")
+        marker = "_milabench_torchvision_videoreader_shim"
+        if marker in text:
+            return
+        needle = 'os.environ["NCCL_CUMEM_ENABLE"] = "0"  # NOQA\n'
+        shim = (
+            'os.environ["NCCL_CUMEM_ENABLE"] = "0"  # NOQA\n'
+            "try:\n"
+            "    from torchvision.io import VideoReader  # noqa: F401\n"
+            "except ImportError:\n"
+            "    import torchvision.io as _tv_io\n"
+            "\n"
+            "    class VideoReader:  # milabench: dummy for datasets 4.x on ROCm\n"
+            "        pass\n"
+            "\n"
+            f"    _tv_io.VideoReader = VideoReader  # {marker}\n"
+        )
+        if needle not in text:
+            return
+        path.write_text(text.replace(needle, shim, 1), encoding="utf-8")
+
+    @staticmethod
+    def _patch_finetune_deepspeed_scheduler(path):
+        """DeepSpeed ZeRO-3 reshapes optimizer param groups after prepare()."""
+        if not path.exists():
+            return
+        text = path.read_text(encoding="utf-8")
+        marker = "_milabench_deepspeed_scheduler_rebuild"
+        if marker in text:
+            return
+        needle = (
+            "    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(\n"
+            "        model, optimizer, train_dataloader, lr_scheduler\n"
+            "    )\n"
+        )
+        replacement = (
+            needle
+            + "\n"
+            "    if accelerator.state.deepspeed_plugin is not None:\n"
+            "        lr_scheduler = _create_scheduler(\n"
+            "            args, optimizer, num_training_steps_for_scheduler\n"
+            f"        )  # {marker}\n"
+        )
+        if needle not in text:
+            return
+        path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+
+    @staticmethod
+    def _patch_finetune_rate_metric(path):
+        """Emit voir/milabench rate metrics during training logs."""
+        if not path.exists():
+            return
+        text = path.read_text(encoding="utf-8")
+        marker = "_milabench_rate_metric"
+        if marker in text:
+            return
+        needle = (
+            "                    if args.with_tracking:\n"
+            "                        accelerator.log(metrics_to_log, step=completed_steps)\n"
+        )
+        replacement = (
+            "                    if accelerator.is_main_process:\n"
+            "                        print(\n"
+            '                            json.dumps(\n'
+            "                                {\n"
+            '                                    "task": "train",\n'
+            '                                    "rate": total_tokens\n'
+            "                                    / (time.perf_counter() - start_time),\n"
+            '                                    "units": "items/s",\n'
+            '                                    "time": time.time(),\n'
+            "                                }\n"
+            "                            ),\n"
+            "                            flush=True,\n"
+            f"                        )  # {marker}\n"
+            "                    if args.with_tracking:\n"
+            "                        accelerator.log(metrics_to_log, step=completed_steps)\n"
+        )
+        if needle not in text:
+            return
         path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
 
     def build_run_plan(self):
