@@ -35,11 +35,35 @@ def apply_runtime_compat() -> None:
     """Apply all shims before importing open_instruct training code."""
     _torchvision_videoreader_shim()
     _patch_accelerator_for_milabench()
+    _patch_hub_upload_noops()
 
 
 def bind_deepspeed_args(args) -> None:
     """Pass FlatArguments into the Accelerator.prepare wrapper."""
     _deepspeed_args["args"] = args
+
+
+def disable_external_uploads(args) -> None:
+    """Milabench runs must never push models/datasets or launch Beaker jobs."""
+    args.push_to_hub = False
+    args.try_auto_save_to_beaker = False
+    args.try_launch_beaker_eval_jobs = False
+    args.with_tracking = False
+    args.hf_metadata_dataset = None
+    args.gs_bucket_path = None
+
+
+def _patch_hub_upload_noops() -> None:
+    import open_instruct.model_utils as model_utils
+
+    if getattr(model_utils.push_folder_to_hub, "_milabench_noop", False):
+        return
+
+    def _noop_push_folder_to_hub(*_args, **_kwargs):
+        return None
+
+    _noop_push_folder_to_hub._milabench_noop = True  # type: ignore[attr-defined]
+    model_utils.push_folder_to_hub = _noop_push_folder_to_hub
 
 
 def enable_skip_model_save() -> None:

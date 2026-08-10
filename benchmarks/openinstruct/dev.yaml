@@ -65,6 +65,14 @@ _openinstruct:
     - 1.0
     - --checkpointing_steps
     - 10000
+    - --skip_model_save
+    - true
+    - --push_to_hub
+    - false
+    - --try_auto_save_to_beaker
+    - false
+    - --try_launch_beaker_eval_jobs
+    - false
     - --seed
     - 123
 

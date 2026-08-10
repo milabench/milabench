@@ -17,6 +17,7 @@ from benchmate.monitor import get_rank, setupvoir
 from compat import (
     apply_runtime_compat,
     bind_deepspeed_args,
+    disable_external_uploads,
     enable_skip_model_save,
     parse_milabench_argv,
 )
@@ -33,6 +34,7 @@ def run() -> None:
     parser = ArgumentParserPlus((FlatArguments, TokenizerConfig))
     args, tc = parser.parse_args_into_dataclasses()
 
+    disable_external_uploads(args)
     bind_deepspeed_args(args)
     if skip_model_save:
         enable_skip_model_save()
