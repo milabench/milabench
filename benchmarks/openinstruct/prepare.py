@@ -23,11 +23,13 @@ def arguments():
 
 
 def _hf_token():
-    return (
+    token = (
         os.environ.get("MILABENCH_HF_TOKEN")
         or os.environ.get("HF_TOKEN")
         or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     )
+    token = (token or "").strip()
+    return token or None
 
 
 def main() -> None:

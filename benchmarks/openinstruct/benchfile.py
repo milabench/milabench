@@ -29,6 +29,12 @@ class OpenInstruct(Package):
             except OSError:
                 pass
 
+        import sys
+        from pathlib import Path
+
+        code = Path(__file__).resolve().parent
+        if str(code) not in sys.path:
+            sys.path.insert(0, str(code))
         from compat import patch_upstream_model_utils
 
         patch_upstream_model_utils(source_destination / "open_instruct" / "model_utils.py")

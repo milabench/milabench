@@ -251,6 +251,90 @@ def qwen3_30b_sft() -> TransformersBackendConfig:
     )
 
 
+def mistral_7b_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="mistralai/Mistral-7B-v0.1",
+        flavor="dense",
+    )
+
+
+def mistral_7b_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="mistralai/Mistral-7B-v0.1",
+        flavor="dense_sft",
+    )
+
+
+def olmo_7b_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="allenai/OLMo-7B-hf",
+        flavor="dense",
+    )
+
+
+def olmo_7b_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="allenai/OLMo-7B-hf",
+        flavor="dense_sft",
+    )
+
+
+def mixtral_8x7b_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="mistralai/Mixtral-8x7B-v0.1",
+        flavor="moe",
+    )
+
+
+def mixtral_8x7b_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="mistralai/Mixtral-8x7B-v0.1",
+        flavor="moe_sft",
+    )
+
+
+def olmoe_7b_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="allenai/OLMoE-1B-7B-0924",
+        flavor="moe",
+    )
+
+
+def olmoe_7b_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="allenai/OLMoE-1B-7B-0924",
+        flavor="moe_sft",
+    )
+
+
+def gemma4_26b_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="google/gemma-4-26B-A4B",
+        flavor="moe",
+    )
+
+
+def gemma4_26b_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="google/gemma-4-26B-A4B",
+        flavor="moe_sft",
+    )
+
+
+def deepseek_v2_lite_pretrain() -> TransformersBackendConfig:
+    return _base_pretrain(
+        hf_model="deepseek-ai/DeepSeek-V2-Lite",
+        flavor="moe",
+    )
+
+
+def deepseek_v2_lite_sft() -> TransformersBackendConfig:
+    return _base_sft(
+        hf_model="deepseek-ai/DeepSeek-V2-Lite",
+        flavor="moe_sft",
+    )
+
+
 def _glm5_parallelism(cfg: TransformersBackendConfig) -> TransformersBackendConfig:
     # Upstream: TP/CP unsupported for GLM-5 DSA — FSDP+EP only.
     cfg.parallelism.tensor_parallel_degree = 1

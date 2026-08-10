@@ -19,6 +19,18 @@ BENCHES = {
     "torchtitan-qwen3-4b-sft-smoke": ("Qwen/Qwen3-4B-Instruct-2507", "sft"),
     "torchtitan-qwen3-30b-pretrain": ("Qwen/Qwen3-30B-A3B", "pretrain"),
     "torchtitan-qwen3-30b-sft": ("Qwen/Qwen3-30B-A3B", "sft"),
+    "torchtitan-mistral-7b-pretrain": ("mistralai/Mistral-7B-v0.1", "pretrain"),
+    "torchtitan-mistral-7b-sft": ("mistralai/Mistral-7B-v0.1", "sft"),
+    "torchtitan-olmo-7b-pretrain": ("allenai/OLMo-7B-hf", "pretrain"),
+    "torchtitan-olmo-7b-sft": ("allenai/OLMo-7B-hf", "sft"),
+    "torchtitan-mixtral-8x7b-pretrain": ("mistralai/Mixtral-8x7B-v0.1", "pretrain"),
+    "torchtitan-mixtral-8x7b-sft": ("mistralai/Mixtral-8x7B-v0.1", "sft"),
+    "torchtitan-olmoe-7b-pretrain": ("allenai/OLMoE-1B-7B-0924", "pretrain"),
+    "torchtitan-olmoe-7b-sft": ("allenai/OLMoE-1B-7B-0924", "sft"),
+    "torchtitan-gemma4-26b-pretrain": ("google/gemma-4-26B-A4B", "pretrain"),
+    "torchtitan-gemma4-26b-sft": ("google/gemma-4-26B-A4B", "sft"),
+    "torchtitan-deepseek-v2-lite-pretrain": ("deepseek-ai/DeepSeek-V2-Lite", "pretrain"),
+    "torchtitan-deepseek-v2-lite-sft": ("deepseek-ai/DeepSeek-V2-Lite", "sft"),
     "torchtitan-glm5-pretrain": ("zai-org/GLM-5", "pretrain"),
     "torchtitan-glm5-sft": ("zai-org/GLM-5", "sft"),
 }
@@ -83,6 +95,27 @@ def stage_datasets(data: Path, code: Path) -> None:
         print(f"Staged dataset {name} → {dst}")
 
 
+
+DEFAULT_SFT_CHAT_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'user' %}{{ message['content'] }}
+{% elif message['role'] == 'assistant' %}{{ message['content'] }}{% endif %}{% endfor %}"""
+
+
+def ensure_sft_chat_template(dest: Path) -> None:
+    """Models like Mistral-7B-v0.1 ship without chat templates; SFT needs one."""
+    jinja = dest / "chat_template.jinja"
+    if jinja.exists():
+        return
+    cfg_path = dest / "tokenizer_config.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text())
+        except json.JSONDecodeError:
+            cfg = {}
+        if cfg.get("chat_template"):
+            return
+    jinja.write_text(DEFAULT_SFT_CHAT_TEMPLATE)
+    print(f"Wrote default SFT chat template → {jinja}")
+
 def download_assets(repo_id: str, mode: str, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     patterns = list(TOKENIZER_PATTERNS) + list(CONFIG_PATTERNS)
@@ -98,6 +131,8 @@ def download_assets(repo_id: str, mode: str, dest: Path) -> None:
         allow_patterns=patterns,
         token=token,
     )
+    if mode == "sft":
+        ensure_sft_chat_template(dest)
     print(f"Assets ready at {dest}")
 
 

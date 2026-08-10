@@ -4,16 +4,9 @@
 # Tuned for limited machine time: smokes off after bring-up, small models off,
 # focus on large-model training + MoE serving.
 #
-# Fix-loop status (2026-08-09):
-#
-# Final clean run — 6 enabled (GLM-5 training disabled; OOM on single 8×288G node):
-#   - openinstruct-sft-70b-gpus
-#   - torchtitan-qwen3-30b-pretrain
-#   - torchtitan-qwen3-30b-sft
-#   - serving-moe-kimi-k3-mxfp4-gpus
-#   - serving-moe-glm52-fp8-gpus
-#   - serving-moe-glm52-mxfp4-gpus
-# Disabled: torchtitan-glm5-pretrain, torchtitan-glm5-sft (744B MoE; needs multi-node)
+# Fix-loop status (2026-08-10):
+# Bring-up loop for new torchtitan flavors (mistral/olmo/mixtral/olmoe/gemma/deepseek).
+# Old qwen3-30b disabled; final run enables all passing new flavors + serving/openinstruct.
 # =============================================================================
 
 include:
@@ -126,21 +119,77 @@ torchtitan-qwen3-4b-sft:
   weight: 0.0
 
 torchtitan-qwen3-30b-pretrain:
-  enabled: true
-  weight: 1.0
-  definition: ../benchmarks/torchtitan
+  enabled: false
+  weight: 0.0
 
 torchtitan-qwen3-30b-sft:
-  enabled: true
-  weight: 1.0
-  definition: ../benchmarks/torchtitan
+  enabled: false
+  weight: 0.0
 
 torchtitan-glm5-pretrain:
   enabled: false
   weight: 0.0
-  definition: ../benchmarks/torchtitan
 
 torchtitan-glm5-sft:
   enabled: false
   weight: 0.0
+
+torchtitan-mistral-7b-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-mistral-7b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-olmo-7b-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-olmo-7b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-mixtral-8x7b-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-mixtral-8x7b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-olmoe-7b-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-olmoe-7b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-gemma4-26b-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-gemma4-26b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-deepseek-v2-lite-pretrain:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+torchtitan-deepseek-v2-lite-sft:
+  enabled: true
+  weight: 1.0
   definition: ../benchmarks/torchtitan

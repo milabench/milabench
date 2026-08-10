@@ -1,4 +1,4 @@
-# Local bring-up config for torchtitan (pretrain + SFT × 3 models).
+# Local bring-up config for torchtitan (pretrain + SFT × dense + MoE models).
 # Usage:
 #   milabench install --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
 #   milabench prepare --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
@@ -96,6 +96,58 @@ torchtitan-qwen3-4b-sft-smoke:
     --training.seq_len: 512
     --training.local_batch_size: 1
 
+# --- Mistral-7B dense ---
+
+torchtitan-mistral-7b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/mistralai/Mistral-7B-v0.1
+  tags:
+    - multigpu
+    - pretrain
+  max_duration: 5400
+  argv:
+    --module: tt_configs
+    --config: mistral_7b_pretrain
+    --training.steps: 40
+
+torchtitan-mistral-7b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/mistralai/Mistral-7B-v0.1
+  tags:
+    - multigpu
+    - sft
+  max_duration: 5400
+  argv:
+    --module: tt_configs
+    --config: mistral_7b_sft
+    --training.steps: 40
+
+# --- OLMo-7B dense ---
+
+torchtitan-olmo-7b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/allenai/OLMo-7B-hf
+  tags:
+    - multigpu
+    - pretrain
+  max_duration: 5400
+  argv:
+    --module: tt_configs
+    --config: olmo_7b_pretrain
+    --training.steps: 40
+
+torchtitan-olmo-7b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/allenai/OLMo-7B-hf
+  tags:
+    - multigpu
+    - sft
+  max_duration: 5400
+  argv:
+    --module: tt_configs
+    --config: olmo_7b_sft
+    --training.steps: 40
+
 # --- Qwen3-30B-A3B MoE ---
 
 torchtitan-qwen3-30b-pretrain:
@@ -127,6 +179,138 @@ torchtitan-qwen3-30b-sft:
   argv:
     --module: tt_configs
     --config: qwen3_30b_sft
+    --training.steps: 40
+
+# --- Mixtral-8x7B MoE ---
+
+torchtitan-mixtral-8x7b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: mixtral_8x7b_pretrain
+    --training.steps: 40
+    --training.seq_len: 2048
+
+torchtitan-mixtral-8x7b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: mixtral_8x7b_sft
+    --training.steps: 40
+
+# --- OLMoE-1B-7B MoE ---
+
+torchtitan-olmoe-7b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: olmoe_7b_pretrain
+    --training.steps: 40
+    --training.seq_len: 2048
+
+torchtitan-olmoe-7b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: olmoe_7b_sft
+    --training.steps: 40
+
+# --- Gemma-4-26B-A4B MoE ---
+
+torchtitan-gemma4-26b-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/google/gemma-4-26B-A4B
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: gemma4_26b_pretrain
+    --training.steps: 40
+    --training.seq_len: 2048
+
+torchtitan-gemma4-26b-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/google/gemma-4-26B-A4B
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: gemma4_26b_sft
+    --training.steps: 40
+
+# --- DeepSeek-V2-Lite MoE ---
+
+torchtitan-deepseek-v2-lite-pretrain:
+  inherits: _torchtitan
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
+  tags:
+    - multigpu
+    - pretrain
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: deepseek_v2_lite_pretrain
+    --training.steps: 40
+    --training.seq_len: 2048
+
+torchtitan-deepseek-v2-lite-sft:
+  inherits: _torchtitan
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
+  tags:
+    - multigpu
+    - sft
+    - moe
+  max_duration: 7200
+  requires_capabilities:
+    - "gpu['count'] > 1"
+  argv:
+    --module: tt_configs
+    --config: deepseek_v2_lite_sft
     --training.steps: 40
 
 # --- GLM-5 MoE+DSA (FSDP+EP only) ---
