@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import os
-import re
 import sys
-import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from benchmate.metrics import ManualTimedIterator, default_event, sumggle_push
 from benchmate.monitor import get_rank
 
 _deepspeed_args: dict[str, Any] = {}
@@ -36,7 +34,7 @@ def parse_milabench_argv() -> bool:
 def apply_runtime_compat() -> None:
     """Apply all shims before importing open_instruct training code."""
     _torchvision_videoreader_shim()
-    _patch_accelerator_prepare_for_deepspeed()
+    _patch_accelerator_for_milabench()
 
 
 def bind_deepspeed_args(args) -> None:
@@ -55,33 +53,34 @@ def enable_skip_model_save() -> None:
     finetune.save_with_accelerate = _noop
 
 
-def install_rate_hook() -> None:
-    import open_instruct.finetune as finetune
+def _count_batch_tokens(batch) -> int:
+    """Match open-instruct/finetune.py batch token accounting."""
+    if "attention_mask" in batch:
+        return int(batch["attention_mask"].sum().item())
+    if "position_ids" in batch:
+        return int(batch["position_ids"].numel())
+    if "cu_seq_lens_q" in batch:
+        return int(batch["cu_seq_lens_q"][-1].item())
+    raise ValueError(f"Cannot count tokens in batch keys: {sorted(batch)}")
 
-    tps_re = re.compile(r"TPS:\s*([0-9.eE+-]+)")
-    orig_info = finetune.logger.info
 
-    def info(msg, *args, **kwargs):
-        orig_info(msg, *args, **kwargs)
-        if get_rank() not in (-1, 0):
-            return
-        text = msg % args if args else str(msg)
-        match = tps_re.search(text)
-        if not match:
-            return
-        print(
-            json.dumps(
-                {
-                    "task": "train",
-                    "rate": float(match.group(1)),
-                    "units": "items/s",
-                    "time": time.time(),
-                }
-            ),
-            flush=True,
-        )
+def _milabench_rank() -> int:
+    rank = get_rank()
+    return 0 if rank < 0 else rank
 
-    finetune.logger.info = info
+
+def _wrap_train_dataloader(loader, accelerator):
+    """CUDA-event timed loader; step() on each optimizer step."""
+    return ManualTimedIterator(
+        loader,
+        event_fn=default_event(),
+        rank=_milabench_rank(),
+        push=sumggle_push(),
+        device=accelerator.device,
+        earlystop=10**9,
+        raise_stop_program=False,
+        batch_size_fn=_count_batch_tokens,
+    )
 
 
 def patch_upstream_model_utils(path: Path) -> None:
@@ -129,28 +128,54 @@ def _torchvision_videoreader_shim() -> None:
         tv_io.VideoReader = VideoReader
 
 
-def _patch_accelerator_prepare_for_deepspeed() -> None:
+def _patch_accelerator_for_milabench() -> None:
     from accelerate import Accelerator
 
     if getattr(Accelerator.prepare, "_milabench_openinstruct", False):
         return
 
     orig_prepare = Accelerator.prepare
+    orig_accumulate = Accelerator.accumulate
 
     def prepare(self, *args, **kwargs):
         result = orig_prepare(self, *args, **kwargs)
-        if self.state.deepspeed_plugin is None:
-            return result
         flat_args = _deepspeed_args.get("args")
-        if flat_args is None or len(result) < 4:
-            return result
 
-        import open_instruct.finetune as finetune
+        if flat_args is not None and len(result) >= 4:
+            import open_instruct.finetune as finetune
 
-        model, optimizer, train_dataloader, lr_scheduler = result[:4]
-        num_steps = flat_args.max_train_steps
-        lr_scheduler = finetune._create_scheduler(flat_args, optimizer, num_steps)
-        return (model, optimizer, train_dataloader, lr_scheduler) + tuple(result[4:])
+            model, optimizer, train_dataloader, lr_scheduler = result[:4]
+
+            if self.state.deepspeed_plugin is not None:
+                num_steps = flat_args.max_train_steps
+                lr_scheduler = finetune._create_scheduler(flat_args, optimizer, num_steps)
+
+            timed = _wrap_train_dataloader(train_dataloader, self)
+            self._milabench_timed_loader = timed
+            self._milabench_logging_steps = flat_args.logging_steps or 1
+            self._milabench_opt_step = 0
+            train_dataloader = timed
+            result = (model, optimizer, train_dataloader, lr_scheduler) + tuple(result[4:])
+
+        return result
+
+    @contextmanager
+    def accumulate(self, *args, **kwargs):
+        with orig_accumulate(self, *args, **kwargs):
+            yield
+        timed = getattr(self, "_milabench_timed_loader", None)
+        if timed is None or not self.sync_gradients:
+            return
+        self._milabench_opt_step += 1
+        if self._milabench_opt_step % self._milabench_logging_steps != 0:
+            return
+        if timed.acc_batch_size <= 0:
+            return
+        # Record CUDA event span + token count, sync, then push (benchmate pattern).
+        timed.step()
+        timed._push()
 
     prepare._milabench_openinstruct = True
+    accumulate._milabench_openinstruct = True
     Accelerator.prepare = prepare
+    Accelerator.accumulate = accumulate

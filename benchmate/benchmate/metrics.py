@@ -663,8 +663,16 @@ class ManualTimedIterator(TimedIterator):
         
         if first_batches:
             while first_batches:
-                yield first_batches.pop()
-                
+                data = first_batches.pop()
+                self.accumulation_steps += 1
+                self.acc_batch_size += self.deduce_batch_size(data)
+
+                with lazy_record_timing("work", self.event_fn):
+                    yield data
+
+                if self.should_stop:
+                    break
+
         for data in iterator:
             # we have to compute the batch size now because 
             # step might be call before the execution returns to this  block

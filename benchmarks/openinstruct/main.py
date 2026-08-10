@@ -18,7 +18,6 @@ from compat import (
     apply_runtime_compat,
     bind_deepspeed_args,
     enable_skip_model_save,
-    install_rate_hook,
     parse_milabench_argv,
 )
 
@@ -29,8 +28,6 @@ def run() -> None:
 
     from open_instruct.finetune import FlatArguments, TokenizerConfig, main as finetune_main
     from open_instruct.utils import ArgumentParserPlus, check_oe_eval_internal
-
-    install_rate_hook()
 
     check_oe_eval_internal()
     parser = ArgumentParserPlus((FlatArguments, TokenizerConfig))

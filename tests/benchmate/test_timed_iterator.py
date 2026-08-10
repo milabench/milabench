@@ -142,3 +142,36 @@ def test_accumulation_steps_dataloader_is_small():
     # `expected_rate` computation looks wrong here
     # expected_rate : 195.12195121951217
     # empirical_rate: 239.94828507678048
+
+
+def test_manual_timed_iterator_prefetch_batch_counted(monkeypatch):
+    """Prefetched batches (BENCHMATE_BATCH_FETCH) must count toward step()."""
+    import benchmate.metrics as metrics
+
+    monkeypatch.setattr(metrics._flags, "force_batch_fetch", 1)
+
+    batch = [1, 2]
+    iterable = [(batch, 3) for _ in range(4)]
+    messages = []
+
+    def push(**kwargs):
+        messages.append(kwargs)
+
+    loader = ManualTimedIterator(
+        iterable,
+        event_fn=CPUEvent,
+        earlystop=10**9,
+        raise_stop_program=False,
+        push=push,
+        batch_size_fn=lambda x: len(x[0]),
+    )
+
+    for j, _ in enumerate(loader):
+        if (j + 1) % 2 == 0:
+            assert loader.acc_batch_size == len(batch) * 2
+            loader.step()
+            assert loader.acc_batch_size == 0
+
+    rates = [msg["rate"] for msg in messages if msg.get("rate") is not None]
+    assert rates, "expected at least one rate event"
+    assert all(rate > 0 for rate in rates)
