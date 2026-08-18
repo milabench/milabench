@@ -2,7 +2,7 @@
 
 Flow (sequential)::
 
-    ray start --head                 # local main
+    scripts/ray_start_head.sh        # detached ``ray start --head --block`` (local main)
     milabench slurm srun -x main -- ray start --address=...   # all workers
     wait until cluster size == expected
     <executor>                       # local main, against the live cluster
@@ -15,8 +15,9 @@ worker-specific argv.
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
-from textwrap import dedent
+from pathlib import Path
 
 from ..system import option
 from ..utils import select_nodes
@@ -37,6 +38,39 @@ def _ray_bin(pack) -> str:
 
 def _python_bin(pack) -> str:
     return f"{pack.config['dirs']['venv']}/bin/python"
+
+
+def ray_wait_script() -> str:
+    path = Path(__file__).resolve().parent.parent / "scripts" / "ray_wait.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"Ray wait script missing: {path}")
+    return str(path)
+
+
+def ray_start_head_script() -> str:
+    path = Path(__file__).resolve().parent.parent / "scripts" / "ray_start_head.sh"
+    if not path.is_file():
+        raise FileNotFoundError(f"Ray head start script missing: {path}")
+    return str(path)
+
+
+def ray_head_pidfile(pack) -> str:
+    runs = pack.config["dirs"]["runs"]
+    job = os.environ.get("SLURM_JOB_ID", "local")
+    return f"{runs}/ray-head.{job}.pid"
+
+
+_RAY_TAG = "ray"
+_NOLOG_TAG = "nolog"
+
+
+def _ray_step_tags(config) -> list[str]:
+    """Build ``[<bench>, …job suffixes…, ray, nolog]`` without stacking ray tags."""
+    name = config.get("name") or (config.get("tag") or [""])[0]
+    skip = {_RAY_TAG, _NOLOG_TAG}
+    skip |= {t for t in config.get("tag", []) if t.startswith("ray")}
+    suffixes = [t for t in config.get("tag", []) if t not in skip and t != name]
+    return [name, *suffixes, _RAY_TAG, _NOLOG_TAG]
 
 
 class RayCluster(SequenceCommand):
@@ -83,31 +117,43 @@ class RayCluster(SequenceCommand):
         config = self.executor.pack.config
         return select_nodes(config["system"]["nodes"], max_node_count(config))
 
-    def _nolog_pack(self, *extra_tags):
+    def _ray_pack(self):
         config = self.executor.pack.config
-        tags = [*config["tag"], *extra_tags, "nolog"]
-        return self.executor.pack.copy(clone_with(config, {"tag": tags}))
+        return self.executor.pack.copy(
+            clone_with(config, {"tag": _ray_step_tags(config)})
+        )
+
+    @property
+    def pack(self):
+        """Workload pack — not the first Ray bring-up step (see ``ListCommand.pack``)."""
+        return self.executor.pack
 
     def head_executor(self) -> Command:
-        """``ray start --head`` on the main node (local)."""
+        """Detached ``ray start --head --block`` on the main node (local).
+
+        See Ray's Slurm guide: the head must stay alive while workers join.
+        """
         main = _main_node(self.executor.pack.config)
-        pack = self._nolog_pack("ray-head")
+        pack = self._ray_pack()
         ip = node_address(main)
         port = self.resolve_port()
+        pidfile = ray_head_pidfile(pack)
         return CmdCommand(
             pack,
+            "/bin/bash",
+            ray_start_head_script(),
             _ray_bin(pack),
-            "start",
             "--head",
             f"--node-ip-address={ip}",
             f"--port={port}",
             *self.head_args,
+            env={"MILABENCH_RAY_HEAD_PIDFILE": pidfile},
         )
 
     def worker_executor(self) -> Command:
         """``ray start --address=...`` (same argv on every non-main node)."""
         main = _main_node(self.executor.pack.config)
-        pack = self._nolog_pack("ray-worker")
+        pack = self._ray_pack()
         address = f"{node_address(main)}:{self.resolve_port()}"
         return CmdCommand(
             pack,
@@ -119,60 +165,62 @@ class RayCluster(SequenceCommand):
 
     def wait_executor(self) -> Command:
         """Poll until the Ray cluster has the expected number of alive nodes."""
-        pack = self._nolog_pack("ray-wait")
+        pack = self._ray_pack()
+        main = _main_node(self.executor.pack.config)
+        address = f"{node_address(main)}:{self.resolve_port()}"
         expected = len(self.selected_nodes())
         timeout = self.resolve_init_timeout()
-        script = dedent(
-            f"""\
-            import sys
-            import time
-
-            import ray
-
-            expected = {expected}
-            timeout = {timeout}
-            ray.init(address="auto")
-            deadline = time.time() + timeout
-            alive = 0
-            while time.time() < deadline:
-                alive = sum(1 for n in ray.nodes() if n.get("Alive"))
-                if alive >= expected:
-                    print(f"Ray cluster ready: {{alive}}/{{expected}}")
-                    sys.exit(0)
-                print(f"Waiting for Ray workers: {{alive}}/{{expected}}")
-                time.sleep(5)
-            print(f"Timed out waiting for Ray cluster: {{alive}}/{{expected}}")
-            sys.exit(1)
-            """
+        return CmdCommand(
+            pack,
+            _python_bin(pack),
+            ray_wait_script(),
+            "--address",
+            address,
+            "--expected",
+            str(expected),
+            "--timeout",
+            str(timeout),
         )
-        return CmdCommand(pack, _python_bin(pack), "-c", script)
 
     def head_stop_executor(self) -> Command:
         """``ray stop`` on the main node (local)."""
-        pack = self._nolog_pack("ray-stop-head")
-        return CmdCommand(pack, _ray_bin(pack), "stop")
+        pack = self._ray_pack()
+        pidfile = ray_head_pidfile(pack)
+        return CmdCommand(
+            pack,
+            "/bin/bash",
+            "-c",
+            f"{_ray_bin(pack)} stop; rm -f {pidfile}",
+        )
 
     def worker_stop_executor(self) -> Command:
         """``ray stop`` on every non-main node."""
-        pack = self._nolog_pack("ray-stop-worker")
+        pack = self._ray_pack()
         return CmdCommand(pack, _ray_bin(pack), "stop")
 
     def workload_executor(self) -> Command:
         """User command on the head; owns milabench/voir metrics."""
         return self.executor
 
+    def _head_managed_externally(self) -> bool:
+        return os.environ.get("MILABENCH_RAY_HEAD_EXTERNAL") == "1"
+
     @property
     def executors(self):
         nodes = self.selected_nodes()
+        external_head = self._head_managed_externally()
 
-        steps = [self.head_executor()]
+        steps = []
+        if not external_head:
+            steps.append(self.head_executor())
         if len(nodes) > 1:
             steps.append(SrunExceptMain(self.worker_executor()))
         steps.append(self.wait_executor())
         steps.append(self.workload_executor())
         if len(nodes) > 1:
             steps.append(SrunExceptMain(self.worker_stop_executor()))
-        steps.append(self.head_stop_executor())
+        if not external_head:
+            steps.append(self.head_stop_executor())
         return steps
 
     def set_run_options(self, **kwargs):

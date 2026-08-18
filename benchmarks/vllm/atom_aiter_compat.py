@@ -69,6 +69,11 @@ def ensure_atom_aiter_shuffle_compat() -> None:
 
 
 def ensure_atom_aiter_compat() -> None:
+    try:
+        import aiter  # noqa: F401
+    except ImportError:
+        return
+
     from patch_aiter_for_atom import patch_aiter_shuffle
 
     patch_aiter_shuffle()

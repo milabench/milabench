@@ -6,6 +6,9 @@
 cuda = "130"
 rocm = "7.2"
 torch = "2.10.0"
+# CPU has no real version dimension; placeholder so [vllm.cpu] keys
+# ("torch,backend_version") and compat conditions can address it.
+cpu = "0"
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -70,18 +73,19 @@ index-url = "https://pypi.org/simple"
 extra-index-url = [
     "https://download.pytorch.org/whl/cpu",
 ]
-find-links = [
-    # Official +cpu wheels live on GitHub Releases (not PyPI)
-    "https://github.com/vllm-project/vllm/releases/expanded_assets/v{vllm}",
-]
+# Official +cpu vLLM wheels live on GitHub Releases, not PyPI. The find-links
+# for the resolved version is injected automatically from [vllm.cpu] below
+# (same mechanism as [vllm.cuda]/[vllm.rocm]) -- do not hardcode a URL here.
 
 [cpu.constraints]
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
 pydantic = ">=2,<3"
-# CPU has no version tag in discovery (backend_version=""); pin here so
-# [compat.vllm] cuda/rocm rules are not needed for cpu installs.
-vllm = "=={vllm}+cpu"
+# vLLM's own version pin comes from the [vllm.cpu] exact map below, not from
+# a template here -- {vllm} is not a defined variable and previously caused
+# `milabench install`/`milabench pin` to crash with KeyError('vllm') for
+# every cpu backend, silently falling back to an unpinned, unconstrained
+# `pip install vllm` that resolves the plain (CUDA-oriented) PyPI wheel.
 
 # ─── HPU Backend ──────────────────────────────────────────────────────────────
 
@@ -152,6 +156,13 @@ pydantic = ">=2,<3"
 "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
 "2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
+
+[vllm.cpu]
+# backend_version is the "cpu" placeholder from [vars] (always "0").
+# Each entry verified against the wheel's own METADATA (Requires-Dist: torch==...).
+"2.10.0,0" = { version = "0.19.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.11.0,0" = { version = "0.26.0+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
+"2.13.0,0" = { version = "0.27.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.27.1" }
 
 [vllm.rocm]
 # Official index: https://wheels.vllm.ai/rocm/{vllm}/{rocmNNN}/

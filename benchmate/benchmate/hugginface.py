@@ -3,14 +3,19 @@
 def download_hf_model(model_id, token=None, cache_dir=None, ignore_patterns=None):
     from huggingface_hub import snapshot_download
 
-    if ignore_patterns is None:
-        # Default patterns to ignore
-        ignore_patterns = ["*.git*", "*.md", "*.txt", "*.onnx"]
-
+    # No default ignore_patterns: at server start, vllm's own get_model_path()
+    # independently calls snapshot_download() with no filter and, running
+    # offline (HF_HUB_OFFLINE=1) on compute nodes with no internet, rejects
+    # the cache with IncompleteSnapshotError for any file missing from the
+    # full upstream tree -- including ones we'd have deliberately skipped
+    # (.gitattributes, LICENSE.md, README.md, merges.txt, ...). Since that
+    # check can't be told about a partial download, the local snapshot must
+    # be complete; only skip files when the caller explicitly passes patterns.
     snapshot_kwargs = {
         "repo_id": model_id,
-        "ignore_patterns": ignore_patterns,
     }
+    if ignore_patterns:
+        snapshot_kwargs["ignore_patterns"] = ignore_patterns
 
     if cache_dir:
         snapshot_kwargs["cache_dir"] = cache_dir

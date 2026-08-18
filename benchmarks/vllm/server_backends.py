@@ -6,11 +6,16 @@ import json
 import os
 import sys
 
-from milabench.merge import merge
-
 
 class InferenceServerError(BaseException):
     pass
+
+
+def _merge_dicts(base: dict, override: dict) -> dict:
+    """Shallow merge for bench config sections (override wins on key clashes)."""
+    merged = dict(base)
+    merged.update(override)
+    return merged
 
 
 def _atom_server_argv(argv: list) -> list:
@@ -40,7 +45,7 @@ def _merged_server_section(cfg: dict) -> dict:
     arch = cfg.get("system", {}).get("arch", "cuda")
     shared = dict(cfg.get("server", {}) or {})
     variant = dict((cfg.get("variants") or {}).get(arch, {}).get("server", {}) or {})
-    return merge(shared, variant)
+    return _merge_dicts(shared, variant)
 
 
 def resolved_server_backend(cfg: dict | None = None) -> str:

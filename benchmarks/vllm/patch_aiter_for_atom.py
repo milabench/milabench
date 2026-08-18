@@ -56,6 +56,8 @@ def _invalidate_shuffle_cache() -> None:
 
 def patch_aiter_shuffle() -> None:
     shuffle_path = _shuffle_path()
+    if not shuffle_path.is_file():
+        return
     text = shuffle_path.read_text()
     if "def interleave_gate_up_rows" in text and "def moe_shuffle_weight" in text:
         return

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from milabench.commands import PackCommand, VoirCommand
-from milabench.commands.ray import RayCluster
+from milabench.commands import NJobs, PackCommand, VoirCommand
+from milabench.commands.ray import RayCluster, _ray_step_tags
 from milabench.merge import merge
 from milabench.pack import BasePackage
 
@@ -109,9 +109,14 @@ class TestRayClusterPlan:
         assert len(steps) == 6
         head_start, worker_start, wait, work, worker_stop, head_stop = steps
 
-        assert "start" in head_start.argv()
-        assert "--head" in head_start.argv()
-        assert "172.30.1.1" in " ".join(head_start.argv())
+        head_argv = head_start.argv()
+        assert head_argv[0] == "/bin/bash"
+        assert any(a.endswith("ray_start_head.sh") for a in head_argv)
+        assert "--head" in head_argv
+        assert "172.30.1.1" in " ".join(head_argv)
+        assert head_start.options.get("env", {}).get("MILABENCH_RAY_HEAD_PIDFILE")
+
+        assert head_start.pack.config["tag"] == _ray_step_tags(pack.config)
 
         worker_argv = worker_start.argv()
         assert worker_argv[:4] == ["milabench", "slurm", "srun", "-x"]
@@ -120,8 +125,13 @@ class TestRayClusterPlan:
 
         wait_argv = wait.argv()
         assert wait_argv[0].endswith("/bin/python")
-        assert "-c" in wait_argv
-        assert "Ray cluster ready" in wait_argv[wait_argv.index("-c") + 1]
+        assert "ray_wait.py" in wait_argv[-1] or any(
+            a.endswith("ray_wait.py") for a in wait_argv
+        )
+        assert "--address" in wait_argv
+        assert "172.30.1.1:6379" in wait_argv
+        assert "--expected" in wait_argv
+        assert "2" in wait_argv
 
         assert work is workload
 
@@ -129,7 +139,29 @@ class TestRayClusterPlan:
         assert worker_stop_argv[:4] == ["milabench", "slurm", "srun", "-x"]
         assert worker_stop_argv[-2:] == ["/tmp/venv/bin/ray", "stop"]
 
-        assert head_stop.argv() == ["/tmp/venv/bin/ray", "stop"]
+        assert head_stop.argv()[0] == "/bin/bash"
+        assert "ray stop" in " ".join(head_stop.argv())
+        assert "ray-head" in " ".join(head_stop.argv())  # pidfile name
+
+    def test_njobs_does_not_duplicate_ray_tags(self):
+        pack = _stub_pack(num_machines=2)
+        workload = PackCommand(pack, "main.py")
+        plan = NJobs(RayCluster(workload), 1)
+
+        assert plan.pack.config["tag"] == [
+            "vllm-moe-glm52-744b-bf16-nodes",
+            "0",
+        ]
+
+        ray_plan = plan.executors[0]
+        head_start = ray_plan.executors[0]
+        assert head_start.pack.config["tag"] == [
+            "vllm-moe-glm52-744b-bf16-nodes",
+            "0",
+            "ray",
+            "nolog",
+        ]
+        assert head_start.pack.tag == "vllm-moe-glm52-744b-bf16-nodes.0.ray.nolog"
 
     def test_single_node_skips_workers(self):
         pack = _stub_pack(num_machines=1, nodes=NODES[:1])

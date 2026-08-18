@@ -216,6 +216,28 @@ class ListCommand(Command):
             exec.set_run_options(**kwargs)
         return self
 
+    async def execute(self, phase="run", timeout=False, timeout_delay=600, **kwargs):
+        """Run each child plan in parallel via its own ``execute()``."""
+        run_kwargs = {
+            **self._kwargs,
+            **kwargs,
+            "phase": phase,
+            "timeout": timeout,
+            "timeout_delay": timeout_delay,
+        }
+        tasks = [
+            asyncio.create_task(executor.execute(**run_kwargs))
+            for executor in self.executors
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        error_count = 0
+        for result in results:
+            if isinstance(result, BaseException):
+                error_count += 1
+            elif result:
+                error_count += int(result)
+        return error_count
+
     def copy(self, pack):
         """Copy the execution plan but use a different pack"""
         copy = deepcopy(self)

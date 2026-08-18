@@ -88,6 +88,15 @@ _vllm_nodes:
   client:
     argv:
       --dataset-name: random
+      # Random dataset defaults (input 1024 / output 128) already exceed the
+      # server's --max-model-len: 256 below before even accounting for the
+      # BPE encode/decode round-trip on random token ids, which can further
+      # shrink or grow the re-tokenized prompt vllm actually sees server-side
+      # ("VLLMValidationError: max context length is 256 ... total of at
+      # least 257"). Keep well under the cap instead of relying on incidental
+      # tokenizer round-trip behavior to just barely squeak under it.
+      --random-input-len: 64
+      --random-output-len: 64
       --num-prompts: 4
       --max-concurrency: 1
       --ready-check-timeout-sec: 1800
