@@ -15,7 +15,7 @@ from .. import pack
 from ..fs import XPath
 from ..merge import merge
 from ..utils import select_nodes
-from .executors import execute_command
+from .executors import execute_command, get_or_create_warden
 from ..system import option, DockerConfig
 
 def max_node_count(config):
@@ -136,9 +136,9 @@ class Command:
     def argv(self):
         raise NotImplementedError()
 
-    async def execute(self, phase="run", timeout=False, timeout_delay=600, **kwargs):
+    async def execute(self, phase="run", timeout=False, timeout_delay=600, warden=None, **kwargs):
         """Execute all the commands and return the aggregated results"""
-        return await execute_command(self, phase, timeout, timeout_delay, **kwargs)
+        return await execute_command(self, phase, timeout, timeout_delay, warden=warden, **kwargs)
 
     def __repr__(self) -> str:
         typename = f"{type(self).__name__}"
@@ -216,8 +216,16 @@ class ListCommand(Command):
             exec.set_run_options(**kwargs)
         return self
 
-    async def execute(self, phase="run", timeout=False, timeout_delay=600, **kwargs):
-        """Run each child plan in parallel via its own ``execute()``."""
+    async def execute(
+        self, phase="run", timeout=False, timeout_delay=600,
+        warden=None, resource_cleaner=True, with_gpu_warden=True, **kwargs
+    ):
+        """Run each child plan in parallel via its own ``execute()``.
+
+        A single warden is shared across all children (see
+        ``get_or_create_warden``) so that one child's cleanup does not kill
+        another child's still-running processes.
+        """
         run_kwargs = {
             **self._kwargs,
             **kwargs,
@@ -225,11 +233,12 @@ class ListCommand(Command):
             "timeout": timeout,
             "timeout_delay": timeout_delay,
         }
-        tasks = [
-            asyncio.create_task(executor.execute(**run_kwargs))
-            for executor in self.executors
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+            tasks = [
+                asyncio.create_task(executor.execute(**run_kwargs, warden=warden))
+                for executor in self.executors
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
         error_count = 0
         for result in results:
             if isinstance(result, BaseException):
@@ -1013,7 +1022,11 @@ class SequenceCommand(ListCommand):
         **kwargs: kwargs to be passed to the `pack.execute()`
     """
 
-    async def execute(self, **kwargs):
+    async def execute(self, warden=None, resource_cleaner=True, with_gpu_warden=True, **kwargs):
+        """Run each child plan in sequence, sharing a single warden across
+        them (see ``get_or_create_warden``) so cleanup only happens once,
+        after the whole sequence completes.
+        """
         error_count = 0
 
         def on_message(msg):
@@ -1028,11 +1041,12 @@ class SequenceCommand(ListCommand):
         loop = asyncio.get_running_loop()
         loop._callbacks.append(on_message)
 
-        for executor in self.executors:
-            await executor.execute(**{**self._kwargs, **kwargs})
+        with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+            for executor in self.executors:
+                await executor.execute(**{**self._kwargs, **kwargs}, warden=warden)
 
-            if error_count > 0:
-                break
+                if error_count > 0:
+                    break
 
         loop._callbacks.remove(on_message)
         return error_count

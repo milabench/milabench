@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import contextmanager
 
 import pytest
 
@@ -331,3 +332,62 @@ def test_execute_command():
 
     assert len(messages) == 2
     assert messages[-1].data["return_code"] == 0
+
+
+def test_get_or_create_warden_reuses_existing_warden():
+    """A child execution must not open its own process_cleaner: it kills
+    every process using the GPU on enter/exit, so opening it more than once
+    for one execution tree makes concurrent siblings kill each other."""
+    from milabench.commands.executors import get_or_create_warden
+
+    sentinel = object()
+    with get_or_create_warden(sentinel) as warden:
+        assert warden is sentinel
+
+
+def test_get_or_create_warden_creates_one_when_root(monkeypatch):
+    import milabench.commands.executors as executors_mod
+
+    created = []
+
+    @contextmanager
+    def fake_process_cleaner(**kwargs):
+        obj = object()
+        created.append(obj)
+        yield obj
+
+    monkeypatch.setattr(executors_mod, "process_cleaner", fake_process_cleaner)
+
+    with executors_mod.get_or_create_warden(None) as warden:
+        assert warden is created[0]
+
+    assert len(created) == 1
+
+
+def test_sequence_command_shares_one_warden_across_children(monkeypatch):
+    """SequenceCommand.execute() recurses into each child's own execute(),
+    which used to each open a fresh process_cleaner (killing every other
+    GPU process on enter/exit -- see get_or_create_warden's docstring).
+    A single warden must now be shared across the whole tree."""
+    from milabench.commands import SequenceCommand
+    import milabench.commands.executors as executors_mod
+
+    calls = []
+    real_process_cleaner = executors_mod.process_cleaner
+
+    @contextmanager
+    def counting_process_cleaner(*args, **kwargs):
+        calls.append(1)
+        with real_process_cleaner(*args, **kwargs) as warden:
+            yield warden
+
+    monkeypatch.setattr(executors_mod, "process_cleaner", counting_process_cleaner)
+
+    executor1 = PackCommand(benchio(), "--start", "2", "--end", "5")
+    executor2 = PackCommand(benchio(), "--start", "2", "--end", "5")
+    plan = SequenceCommand(VoirCommand(executor1), VoirCommand(executor2))
+
+    for _ in proceed(plan.execute()):
+        pass
+
+    assert len(calls) == 1

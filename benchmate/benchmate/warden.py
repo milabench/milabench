@@ -182,18 +182,21 @@ def pipe_warden(enabled: bool = True):
 
 
 def preserve_pidfile_paths() -> list[str]:
-    """Pidfiles listing process IDs that must survive ``children_warden``."""
+    """Pidfiles listing process IDs that must survive ``children_warden``.
+
+    Used to carve out a detached local Ray head process from milabench's own
+    PID tree that RayCluster used to spawn directly (reparented to
+    milabench's subreaper once its launching wrapper exited). RayCluster no
+    longer runs any Ray process locally -- head and workers alike are
+    dispatched to their own nodes via a single symmetric `milabench slurm
+    srun`, and torn down by killing that srun client, not by milabench
+    tracking a Ray pidfile. Nothing populates a ray-specific pidfile here
+    anymore; only the generic explicit override remains.
+    """
     paths: list[str] = []
     explicit = os.environ.get("MILABENCH_PRESERVE_PIDFILE")
     if explicit:
         paths.append(explicit)
-    base = os.environ.get("MILABENCH_BASE")
-    job = os.environ.get("SLURM_JOB_ID")
-    if base and job:
-        paths.append(os.path.join(base, "runs", f"ray-head.{job}.pid"))
-    ray_head = os.environ.get("MILABENCH_RAY_HEAD_PIDFILE")
-    if ray_head:
-        paths.append(ray_head)
     return paths
 
 
@@ -477,8 +480,12 @@ def destroy(*processes, step=1, timeout=30):
 
 
 @contextmanager
-def process_cleaner(timeout=30, with_gpu_warden=True):
+def process_cleaner(timeout=30, with_gpu_warden=True, enabled=True):
     """Delay signal handling until all the processes have been killed"""
+
+    if not enabled:
+        yield []
+        return 
 
     def kill_everything(processes):
         def _():

@@ -1,63 +1,82 @@
-"""Ray cluster bring-up via srun, then run a workload on the head (main) node.
+"""Ray cluster bring-up via a single symmetric srun, then run a workload on
+the head (main) node.
 
-Flow (sequential)::
+Shape (using plain existing composition, nothing custom)::
 
-    scripts/ray_start_head.sh        # detached ``ray start --head --block`` (local main)
-    milabench slurm srun -x main -- ray start --address=...   # all workers
-    wait until cluster size == expected
-    <executor>                       # local main, against the live cluster
-    milabench slurm srun -x main -- ray stop   # workers
-    ray stop                         # head
+    ListCommand(
+        bringup_executor(),          # milabench slurm srun -- rayrun ...
+        SequenceCommand(
+            wait_executor(),          # raywait --expected N
+            workload_executor(),      # local main, against the live cluster
+            stop_executor(),          # milabench slurm srun -- ray stop
+        ),
+    )
 
-Per-node identity / placement is left to Slurm; milabench does not fan out
-worker-specific argv.
+``rayrun``/``raywait`` are benchmate console scripts (see
+benchmate/ray_node.py, benchmate/ray_wait.py) -- installed alongside the
+venv's other tools (like ``benchrun``), not milabench-relative script paths.
+
+``bringup_executor()`` never returns on its own: every node's ``ray start
+... --block`` runs as *that srun task's own foreground process* (see
+benchmate/ray_node.py), so the whole symmetric srun step blocks for the
+cluster's lifetime. ``ListCommand.execute()`` already runs its children
+concurrently via ``asyncio.gather`` and waits for both -- once
+``stop_executor()`` (the sequence's last step) runs ``ray stop`` on every
+node, each node's local raylet/GCS dies, which is what the blocking
+``ray start --block`` process on that same node is waiting on, so it returns
+on its own and the bring-up step completes. No process-handle bookkeeping
+or custom async orchestration needed on milabench's side; it's a plain
+fork-join over primitives every other multi-step Command already uses.
+
+Head vs. worker role is decided by each node comparing its own resolved IP
+against the given head IP (see benchmate/ray_node.py) -- not by Slurm's own
+node ordering/SLURM_NODEID, which is not guaranteed to put milabench's
+designated main node first.
+
+This replaced an earlier asymmetric design (detached local head + separate
+`srun -x main` for workers) that was found to make freshly-joined worker
+nodes get marked dead by Ray's GCS health check within seconds of joining,
+reproducibly, across many runs -- see the ray_smoke diagnostic benchmark.
+A single symmetric srun step (head and workers as tasks of the same step,
+`ray start --block` on all of them) did not reproduce that failure in
+standalone testing (ray_symmetric_test.sbatch).
 """
 
 from __future__ import annotations
 
 import os
 from copy import deepcopy
-from pathlib import Path
 
 from ..system import option
 from ..utils import select_nodes
 from . import (
     CmdCommand,
     Command,
+    ListCommand,
     SequenceCommand,
     clone_with,
     max_node_count,
     node_address,
 )
-from .srun import SrunExceptMain, _main_node
+from .srun import SrunCommand, _main_node
 
 
 def _ray_bin(pack) -> str:
     return f"{pack.config['dirs']['venv']}/bin/ray"
 
 
-def _python_bin(pack) -> str:
-    return f"{pack.config['dirs']['venv']}/bin/python"
+def _rayrun_bin(pack) -> str:
+    return f"{pack.config['dirs']['venv']}/bin/rayrun"
 
 
-def ray_wait_script() -> str:
-    path = Path(__file__).resolve().parent.parent / "scripts" / "ray_wait.py"
-    if not path.is_file():
-        raise FileNotFoundError(f"Ray wait script missing: {path}")
-    return str(path)
+def _raywait_bin(pack) -> str:
+    return f"{pack.config['dirs']['venv']}/bin/raywait"
 
 
-def ray_start_head_script() -> str:
-    path = Path(__file__).resolve().parent.parent / "scripts" / "ray_start_head.sh"
-    if not path.is_file():
-        raise FileNotFoundError(f"Ray head start script missing: {path}")
-    return str(path)
-
-
-def ray_head_pidfile(pack) -> str:
+def ray_ready_marker(pack) -> str:
     runs = pack.config["dirs"]["runs"]
     job = os.environ.get("SLURM_JOB_ID", "local")
-    return f"{runs}/ray-head.{job}.pid"
+    return f"{runs}/ray-ready.{job}"
 
 
 _RAY_TAG = "ray"
@@ -79,8 +98,6 @@ class RayCluster(SequenceCommand):
     Arguments:
         executor: workload to run on the head once the cluster is up
         port: Ray GCS port (default ``MILABENCH_RAY_PORT`` / ``ray.port``, else 6379)
-        head_args: extra argv for ``ray start --head``
-        worker_args: extra argv for worker ``ray start --address=...``
         init_timeout: seconds to wait for all nodes to join (default
             ``MILABENCH_RAY_INIT_TIMEOUT`` / ``ray.init_timeout``, else 600)
     """
@@ -90,8 +107,6 @@ class RayCluster(SequenceCommand):
         executor: Command,
         *,
         port: int | None = None,
-        head_args: tuple[str, ...] = (),
-        worker_args: tuple[str, ...] = (),
         init_timeout: int | None = None,
         **kwargs,
     ) -> None:
@@ -99,8 +114,6 @@ class RayCluster(SequenceCommand):
         self.options.update(kwargs)
         self.executor = executor
         self.port = port
-        self.head_args = tuple(head_args)
-        self.worker_args = tuple(worker_args)
         self.init_timeout = init_timeout
 
     def resolve_port(self) -> int:
@@ -125,43 +138,39 @@ class RayCluster(SequenceCommand):
 
     @property
     def pack(self):
-        """Workload pack — not the first Ray bring-up step (see ``ListCommand.pack``)."""
+        """Workload pack — not the bring-up step (see ``ListCommand.pack``)."""
         return self.executor.pack
 
-    def head_executor(self) -> Command:
-        """Detached ``ray start --head --block`` on the main node (local).
+    def bringup_executor(self) -> Command:
+        """One symmetric ``rayrun`` dispatch across every node.
 
-        See Ray's Slurm guide: the head must stay alive while workers join.
+        Blocks for the cluster's whole lifetime (see module docstring and
+        benchmate/ray_node.py) -- run concurrently with the wait/workload/
+        stop sequence via ``ListCommand`` in ``executors``, not awaited on
+        its own.
         """
         main = _main_node(self.executor.pack.config)
         pack = self._ray_pack()
         ip = node_address(main)
+        hostname = main.get("hostname") or main.get("name") or ip
         port = self.resolve_port()
-        pidfile = ray_head_pidfile(pack)
-        return CmdCommand(
+        cmd = CmdCommand(
             pack,
-            "/bin/bash",
-            ray_start_head_script(),
+            _rayrun_bin(pack),
+            "--ray-bin",
             _ray_bin(pack),
-            "--head",
-            f"--node-ip-address={ip}",
-            f"--port={port}",
-            *self.head_args,
-            env={"MILABENCH_RAY_HEAD_PIDFILE": pidfile},
+            "--head-ip",
+            ip,
+            "--head-hostname",
+            hostname,
+            "--port",
+            str(port),
+            "--ready-marker",
+            ray_ready_marker(pack),
+            "--timeout",
+            str(self.resolve_init_timeout()),
         )
-
-    def worker_executor(self) -> Command:
-        """``ray start --address=...`` (same argv on every non-main node)."""
-        main = _main_node(self.executor.pack.config)
-        pack = self._ray_pack()
-        address = f"{node_address(main)}:{self.resolve_port()}"
-        return CmdCommand(
-            pack,
-            _ray_bin(pack),
-            "start",
-            f"--address={address}",
-            *self.worker_args,
-        )
+        return SrunCommand(cmd)
 
     def wait_executor(self) -> Command:
         """Poll until the Ray cluster has the expected number of alive nodes."""
@@ -172,8 +181,7 @@ class RayCluster(SequenceCommand):
         timeout = self.resolve_init_timeout()
         return CmdCommand(
             pack,
-            _python_bin(pack),
-            ray_wait_script(),
+            _raywait_bin(pack),
             "--address",
             address,
             "--expected",
@@ -182,21 +190,16 @@ class RayCluster(SequenceCommand):
             str(timeout),
         )
 
-    def head_stop_executor(self) -> Command:
-        """``ray stop`` on the main node (local)."""
-        pack = self._ray_pack()
-        pidfile = ray_head_pidfile(pack)
-        return CmdCommand(
-            pack,
-            "/bin/bash",
-            "-c",
-            f"{_ray_bin(pack)} stop; rm -f {pidfile}",
-        )
+    def stop_executor(self) -> Command:
+        """``ray stop`` on every node (one symmetric srun, same as bring-up).
 
-    def worker_stop_executor(self) -> Command:
-        """``ray stop`` on every non-main node."""
+        Kills the local raylet/GCS on each node, which is what that node's
+        blocking ``ray start --block`` (from bringup_executor) is waiting
+        on -- causes the bring-up step to return on its own once this runs.
+        """
         pack = self._ray_pack()
-        return CmdCommand(pack, _ray_bin(pack), "stop")
+        cmd = CmdCommand(pack, _ray_bin(pack), "stop")
+        return SrunCommand(cmd)
 
     def workload_executor(self) -> Command:
         """User command on the head; owns milabench/voir metrics."""
@@ -207,21 +210,18 @@ class RayCluster(SequenceCommand):
 
     @property
     def executors(self):
-        nodes = self.selected_nodes()
-        external_head = self._head_managed_externally()
+        if self._head_managed_externally():
+            return [SequenceCommand(self.wait_executor(), self.workload_executor())]
 
-        steps = []
-        if not external_head:
-            steps.append(self.head_executor())
-        if len(nodes) > 1:
-            steps.append(SrunExceptMain(self.worker_executor()))
-        steps.append(self.wait_executor())
-        steps.append(self.workload_executor())
-        if len(nodes) > 1:
-            steps.append(SrunExceptMain(self.worker_stop_executor()))
-        if not external_head:
-            steps.append(self.head_stop_executor())
-        return steps
+        return [
+            ListCommand(
+                self.bringup_executor(), 
+                SequenceCommand(
+                    self.wait_executor(),
+                    self.workload_executor(),
+                    self.stop_executor())
+            )
+        ]
 
     def set_run_options(self, **kwargs):
         self.executor.set_run_options(**kwargs)

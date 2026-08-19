@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wait until a Ray cluster has the expected number of alive nodes."""
+"""raywait: wait until a Ray cluster has the expected number of alive nodes."""
 
 import argparse
 import sys

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import traceback
+from contextlib import contextmanager
 
 from benchmate.warden import process_cleaner
 
@@ -9,6 +10,23 @@ from ..metadata import machine_metadata
 from ..structs import BenchLogEntry
 from ..syslog import syslog
 from ..system import overrides_snapshot, option
+
+
+@contextmanager
+def get_or_create_warden(warden, with_gpu_warden=True, resource_cleaner=True):
+    """Reuse an existing process warden, or create one if this is the root of the execution tree.
+
+    ``process_cleaner`` kills every process currently using the GPU on
+    enter/exit (see ``gpu_warden``). Opening it more than once for the same
+    execution tree (e.g. once per nested ``Command``) makes concurrent
+    siblings kill each other's processes, so only the root of the tree
+    should create it; everyone below should reuse the same instance.
+    """
+    if warden is not None:
+        yield warden
+    else:
+        with process_cleaner(with_gpu_warden=with_gpu_warden, enabled=resource_cleaner) as warden:
+            yield warden
 
 
 async def execute(pack, *args, cwd=None, env={}, external=False, use_stdout=False, **kwargs):
@@ -88,9 +106,14 @@ def get_executor_timeout(provided):
 
 
 async def execute_command(
-    command, phase="run", timeout=False, timeout_delay=600, with_gpu_warden=True, **kwargs
+    command, phase="run", timeout=False, timeout_delay=600, resource_cleaner=True, with_gpu_warden=True, warden=None, **kwargs
 ):
-    """Execute all the commands and return the aggregated results"""
+    """Execute all the commands and return the aggregated results
+
+    ``warden`` should only be provided when this call is a child of a larger
+    execution tree that already owns a warden (see ``get_or_create_warden``).
+    Left to its default, this call creates its own, acting as the root.
+    """
     packs = {}
     coro = []
     for pack in command.packs():
@@ -98,7 +121,7 @@ async def execute_command(
 
     max_delay = timeout_delay
 
-    with process_cleaner(with_gpu_warden=with_gpu_warden) as warden:
+    with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
         for pack, argv, _kwargs in command.commands():
             await pack.send(event="config", data=pack.config)
 

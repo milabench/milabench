@@ -38,6 +38,56 @@ torchsrun:
     --size-mb: 64
 
 # -----------------------------------------------------------------------------
+# Ray cluster placement smoke test (independent of vllm: vllm's own
+# vllm/platforms/cpu.py forces the local "mp" executor whenever world_size > 1
+# on CPU, so the vllm-nodes benchmarks below never actually exercise
+# multi-node Ray). Pins one task per node via a STRICT_SPREAD placement
+# group and checks each ran on a distinct hostname.
+# -----------------------------------------------------------------------------
+_ray_smoke:
+  inherits: _defaults
+  definition: ../../benchmarks/ray_smoke
+  install_group: torch
+  weight: 0.0
+  max_duration: 300
+  tags:
+    - multinode
+    - diagnostic
+    - nobatch
+    - ray
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --repeats: 30
+    --warmup: 5
+    --size-mb: 64
+
+ray-cluster-smoke:
+  inherits: _ray_smoke
+  num_machines: 2
+  enabled: true
+  weight: 0
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+
+ray-cluster-smoke-3nodes:
+  inherits: _ray_smoke
+  num_machines: 3
+  enabled: true
+  weight: 0
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+
+ray-cluster-smoke-4nodes:
+  inherits: _ray_smoke
+  num_machines: 4
+  enabled: true
+  weight: 0
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+
+# -----------------------------------------------------------------------------
 # Multi-node Ray + vLLM CPU smoke (reuse benchmarks/vllm).
 # Tiny OPT-125m (12 heads / 12 layers) so TP=2|4 and PP=2|4 are divisible.
 # Goal: exercise milabench RayCluster + vllm serve path before GPU multi-node.

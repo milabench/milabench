@@ -93,11 +93,6 @@ def _stub_pack(*, num_machines=2, devices=(0, 1), nodes=None):
     )
 
 
-def _flat_argv(plan):
-    """Flatten argv lists from ``plan.commands()`` for assertions."""
-    return [list(argv) for _pack, argv, _kwargs in plan.commands()]
-
-
 class TestRayClusterPlan:
     def test_multi_node_sequence(self):
         pack = _stub_pack(num_machines=2)
@@ -105,29 +100,30 @@ class TestRayClusterPlan:
         plan = RayCluster(workload)
         steps = plan.executors
 
-        # head start, worker start (srun), wait, workload, worker stop (srun), head stop
-        assert len(steps) == 6
-        head_start, worker_start, wait, work, worker_stop, head_stop = steps
+        # ListCommand(bringup, SequenceCommand(wait, workload, stop)): a
+        # fork-join, not a flat sequence. Bring-up (head+workers as tasks of
+        # the same srun step, role decided inside ray_node.sh) runs
+        # concurrently with wait->workload->stop; `ray stop` (the sequence's
+        # last step) kills the local raylet/GCS each node's blocking
+        # `ray start --block` is waiting on, so bring-up returns on its own
+        # once that runs (see module docstring) -- no separate teardown step
+        # to list here.
+        assert len(steps) == 1
+        fork = steps[0]
+        bringup, sequence = fork.executors
+        wait, work, stop = sequence.executors
 
-        head_argv = head_start.argv()
-        assert head_argv[0] == "/bin/bash"
-        assert any(a.endswith("ray_start_head.sh") for a in head_argv)
-        assert "--head" in head_argv
-        assert "172.30.1.1" in " ".join(head_argv)
-        assert head_start.options.get("env", {}).get("MILABENCH_RAY_HEAD_PIDFILE")
+        bringup_argv = bringup.argv()
+        assert bringup_argv[:3] == ["milabench", "slurm", "srun"]
+        assert "-x" not in bringup_argv  # symmetric: no node excluded
+        assert any(a.endswith("/bin/rayrun") for a in bringup_argv)
+        assert "172.30.1.1" in bringup_argv  # head ip, for ray's own bind/connect
+        assert "tri0001" in bringup_argv  # head hostname, for role detection
 
-        assert head_start.pack.config["tag"] == _ray_step_tags(pack.config)
-
-        worker_argv = worker_start.argv()
-        assert worker_argv[:4] == ["milabench", "slurm", "srun", "-x"]
-        assert "tri0001" in worker_argv
-        assert any("172.30.1.1:6379" in a for a in worker_argv)
+        assert bringup.pack.config["tag"] == _ray_step_tags(pack.config)
 
         wait_argv = wait.argv()
-        assert wait_argv[0].endswith("/bin/python")
-        assert "ray_wait.py" in wait_argv[-1] or any(
-            a.endswith("ray_wait.py") for a in wait_argv
-        )
+        assert wait_argv[0].endswith("/bin/raywait")
         assert "--address" in wait_argv
         assert "172.30.1.1:6379" in wait_argv
         assert "--expected" in wait_argv
@@ -135,13 +131,10 @@ class TestRayClusterPlan:
 
         assert work is workload
 
-        worker_stop_argv = worker_stop.argv()
-        assert worker_stop_argv[:4] == ["milabench", "slurm", "srun", "-x"]
-        assert worker_stop_argv[-2:] == ["/tmp/venv/bin/ray", "stop"]
-
-        assert head_stop.argv()[0] == "/bin/bash"
-        assert "ray stop" in " ".join(head_stop.argv())
-        assert "ray-head" in " ".join(head_stop.argv())  # pidfile name
+        stop_argv = stop.argv()
+        assert stop_argv[:3] == ["milabench", "slurm", "srun"]
+        assert "-x" not in stop_argv
+        assert stop_argv[-2:] == ["/tmp/venv/bin/ray", "stop"]
 
     def test_njobs_does_not_duplicate_ray_tags(self):
         pack = _stub_pack(num_machines=2)
@@ -154,24 +147,31 @@ class TestRayClusterPlan:
         ]
 
         ray_plan = plan.executors[0]
-        head_start = ray_plan.executors[0]
-        assert head_start.pack.config["tag"] == [
+        fork = ray_plan.executors[0]
+        bringup = fork.executors[0]
+        assert bringup.pack.config["tag"] == [
             "vllm-moe-glm52-744b-bf16-nodes",
             "0",
             "ray",
             "nolog",
         ]
-        assert head_start.pack.tag == "vllm-moe-glm52-744b-bf16-nodes.0.ray.nolog"
+        assert bringup.pack.tag == "vllm-moe-glm52-744b-bf16-nodes.0.ray.nolog"
 
-    def test_single_node_skips_workers(self):
+    def test_single_node_uses_same_symmetric_bringup(self):
+        # No more "skip srun for a single node" special case: `milabench
+        # slurm srun` on a 1-node allocation just runs 1 task, so the same
+        # symmetric bring-up (head decided by IP match inside ray_node.sh)
+        # is used regardless of node count.
         pack = _stub_pack(num_machines=1, nodes=NODES[:1])
         workload = PackCommand(pack, "main.py")
         plan = RayCluster(workload)
         steps = plan.executors
-        # head start, wait, workload, head stop — no srun worker steps
-        assert len(steps) == 4
-        argv_lists = _flat_argv(plan)
-        assert not any(a[:3] == ["milabench", "slurm", "srun"] for a in argv_lists)
+        assert len(steps) == 1
+        fork = steps[0]
+        bringup, sequence = fork.executors
+        assert bringup.argv()[:3] == ["milabench", "slurm", "srun"]
+        _, work, _ = sequence.executors
+        assert work is workload
 
 
 class TestVLLMRunPlan:
