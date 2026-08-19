@@ -101,13 +101,13 @@ class TestRayClusterPlan:
         steps = plan.executors
 
         # ListCommand(bringup, SequenceCommand(wait, workload, stop)): a
-        # fork-join, not a flat sequence. Bring-up (head+workers as tasks of
-        # the same srun step, role decided inside ray_node.sh) runs
-        # concurrently with wait->workload->stop; `ray stop` (the sequence's
-        # last step) kills the local raylet/GCS each node's blocking
-        # `ray start --block` is waiting on, so bring-up returns on its own
-        # once that runs (see module docstring) -- no separate teardown step
-        # to list here.
+        # fork-join, not a flat sequence -- this ``.executors`` property is
+        # purely descriptive/introspective (argv shape, tags). The actual
+        # concurrency + teardown at run time goes through
+        # RayCluster.execute()'s own custom override, not this ListCommand:
+        # `ray stop` does not make bringup's `ray start --block` return on
+        # its own (see module docstring), so execute() explicitly stops it
+        # once wait->workload->stop is done.
         assert len(steps) == 1
         fork = steps[0]
         bringup, sequence = fork.executors
@@ -135,6 +135,51 @@ class TestRayClusterPlan:
         assert stop_argv[:3] == ["milabench", "slurm", "srun"]
         assert "-x" not in stop_argv
         assert stop_argv[-2:] == ["/tmp/venv/bin/ray", "stop"]
+
+    def test_ray_config_section_overrides_and_extra_args(self):
+        """A benchmark's own `ray:` config section (port/init_timeout/
+        start_args/stop_args/env) lets different benchmarks tune their Ray
+        cluster independently, instead of one process-wide env var applying
+        to every benchmark in the run."""
+        pack = _stub_pack(num_machines=2)
+        pack.config["ray"] = {
+            "port": 7000,
+            "init_timeout": 42,
+            "start_args": {"--num-cpus": 64},
+            "stop_args": {"--grace-period": 30},
+            "env": {"RAY_health_check_period_ms": 5000},
+        }
+        workload = PackCommand(pack, "main.py")
+        plan = RayCluster(workload)
+        bringup, sequence = plan.executors[0].executors
+        _, _, stop = sequence.executors
+
+        assert plan.resolve_port() == 7000
+        assert plan.resolve_init_timeout() == 42
+
+        bringup_argv = bringup.argv()
+        assert "7000" in bringup_argv
+        assert "42" in bringup_argv
+        # rayrun's own extra_ray_args positional (argparse.REMAINDER) needs a
+        # literal `--` first -- see benchmate/ray_node.py.
+        assert bringup_argv[-3:] == ["--", "--num-cpus", "64"]
+        assert bringup.options.get("env") == {"RAY_health_check_period_ms": "5000"}
+
+        stop_argv = stop.argv()
+        assert stop_argv[-2:] == ["--grace-period", "30"]
+        assert stop.options.get("env") == {"RAY_health_check_period_ms": "5000"}
+
+    def test_ray_config_section_absent_keeps_defaults(self):
+        """No `ray:` section -> unchanged argv (no stray trailing `--`
+        breaking rayrun for benchmarks that don't need this feature)."""
+        pack = _stub_pack(num_machines=2)
+        workload = PackCommand(pack, "main.py")
+        plan = RayCluster(workload)
+        bringup, sequence = plan.executors[0].executors
+        _, _, stop = sequence.executors
+
+        assert bringup.argv()[-1] == "--"
+        assert stop.argv()[-2:] == ["/tmp/venv/bin/ray", "stop"]
 
     def test_njobs_does_not_duplicate_ray_tags(self):
         pack = _stub_pack(num_machines=2)

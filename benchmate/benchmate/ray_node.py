@@ -59,12 +59,18 @@ def wait_ray_ready(ray_bin: str, address: str, timeout_s: int) -> bool:
     return False
 
 
-def run_head(ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int) -> int:
+def run_head(
+    ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
+    extra_args: list[str] = (),
+) -> int:
     print(f"[rayrun] this node ({head_ip}) is head, starting ray --block", flush=True)
     if os.path.exists(marker):
         os.remove(marker)
 
-    cmd = [ray_bin, "start", "--head", f"--node-ip-address={head_ip}", f"--port={port}", "--block"]
+    cmd = [
+        ray_bin, "start", "--head", f"--node-ip-address={head_ip}", f"--port={port}",
+        *extra_args, "--block",
+    ]
     print("[rayrun] +", " ".join(cmd), flush=True)
     proc = subprocess.Popen(cmd)
 
@@ -84,7 +90,10 @@ def run_head(ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int)
     return proc.wait()
 
 
-def run_worker(ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int) -> int:
+def run_worker(
+    ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
+    extra_args: list[str] = (),
+) -> int:
     print(f"[rayrun] waiting for head marker at {marker}", flush=True)
     waited = 0
     while not os.path.exists(marker):
@@ -95,7 +104,7 @@ def run_worker(ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: in
         waited += 1
 
     print(f"[rayrun] head marker seen after {waited}s, joining {head_ip}:{port} --block", flush=True)
-    cmd = [ray_bin, "start", f"--address={head_ip}:{port}", "--block"]
+    cmd = [ray_bin, "start", f"--address={head_ip}:{port}", *extra_args, "--block"]
     print("[rayrun] +", " ".join(cmd), flush=True)
     # Nothing runs after this, so replace this process with ray's instead of
     # leaving a python wrapper sitting on top of it -- same effect as
@@ -116,11 +125,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--timeout", type=int, default=600, help="Seconds to wait for readiness (default: 600)"
     )
+    parser.add_argument(
+        "extra_ray_args",
+        nargs=argparse.REMAINDER,
+        help="Extra argv appended to `ray start` on both head and workers "
+        "(e.g. a benchmark's `ray.start_args` config) -- put last, after "
+        "a literal `--` (argparse.REMAINDER does not strip it itself, so "
+        "without one an extra arg that looks like a flag, e.g. "
+        "`--num-cpus`, is rejected as unrecognized before it ever reaches "
+        "this positional)",
+    )
     args = parser.parse_args(argv)
+    if args.extra_ray_args[:1] == ["--"]:
+        args.extra_ray_args = args.extra_ray_args[1:]
 
     if is_head(args.head_hostname):
-        return run_head(args.ray_bin, args.head_ip, args.port, args.ready_marker, args.timeout)
-    return run_worker(args.ray_bin, args.head_ip, args.port, args.ready_marker, args.timeout)
+        return run_head(
+            args.ray_bin, args.head_ip, args.port, args.ready_marker, args.timeout,
+            extra_args=args.extra_ray_args,
+        )
+    return run_worker(
+        args.ray_bin, args.head_ip, args.port, args.ready_marker, args.timeout,
+        extra_args=args.extra_ray_args,
+    )
 
 
 if __name__ == "__main__":

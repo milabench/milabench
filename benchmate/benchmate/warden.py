@@ -181,39 +181,6 @@ def pipe_warden(enabled: bool = True):
         syslog("closed {}/{} fd after bench", closed, len(new_fds))
 
 
-def preserve_pidfile_paths() -> list[str]:
-    """Pidfiles listing process IDs that must survive ``children_warden``.
-
-    Used to carve out a detached local Ray head process from milabench's own
-    PID tree that RayCluster used to spawn directly (reparented to
-    milabench's subreaper once its launching wrapper exited). RayCluster no
-    longer runs any Ray process locally -- head and workers alike are
-    dispatched to their own nodes via a single symmetric `milabench slurm
-    srun`, and torn down by killing that srun client, not by milabench
-    tracking a Ray pidfile. Nothing populates a ray-specific pidfile here
-    anymore; only the generic explicit override remains.
-    """
-    paths: list[str] = []
-    explicit = os.environ.get("MILABENCH_PRESERVE_PIDFILE")
-    if explicit:
-        paths.append(explicit)
-    return paths
-
-
-def preserved_child_pids() -> set[int]:
-    pids: set[int] = set()
-    for path in preserve_pidfile_paths():
-        try:
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.isdigit():
-                        pids.add(int(line))
-        except FileNotFoundError:
-            pass
-    return pids
-
-
 @contextmanager
 def children_warden(enabled: bool = True):
     if not enabled:
@@ -246,16 +213,7 @@ def children_warden(enabled: bool = True):
 
         return children
 
-    preserved = preserved_child_pids()
-    if preserved:
-        syslog(
-            "warden: preserving child pids from pidfile(s): {}",
-            sorted(preserved),
-        )
-
     children = wait_for_children(1)
-    children = [c for c in children if c not in preserved]
-
     if children:
         syslog(f"{len(children)} still alive after end of benchmark")
 
@@ -263,7 +221,6 @@ def children_warden(enabled: bool = True):
         os.kill(child, signal.SIGTERM)
 
     children = wait_for_children()
-    children = [c for c in children if c not in preserved]
     if children:
         syslog(f"{len(children)} still alive after sigterm")
 
@@ -271,7 +228,6 @@ def children_warden(enabled: bool = True):
         os.kill(child, signal.SIGKILL)
 
     children = wait_for_children()
-    children = [c for c in children if c not in preserved]
     if children:
         syslog(f"{len(children)} still alive after sigkill")
 

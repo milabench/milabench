@@ -1,6 +1,6 @@
 # Local smoke config for torchsrun (override num_machines to match your system).
 include:
-  - ../../config/_defaults.yaml
+  - ../../../config/_defaults.yaml
 
 torchsrun:
   inherits: _defaults

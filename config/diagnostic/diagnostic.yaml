@@ -5,7 +5,7 @@ include:
 # Main keeps metrics locally; workers are nolog via TorchrunSrun.
 _torchsrun:
   inherits: _defaults
-  definition: ../../benchmarks/torchsrun
+  definition: ../../benchmarks/diagnostic/torchsrun
   install_group: torch
   weight: 0.0
   # Smoke all-reduce; fail fast if rendezvous hangs (default is 600s).
@@ -46,7 +46,7 @@ torchsrun:
 # -----------------------------------------------------------------------------
 _ray_smoke:
   inherits: _defaults
-  definition: ../../benchmarks/ray_smoke
+  definition: ../../benchmarks/diagnostic/ray_smoke
   install_group: torch
   weight: 0.0
   max_duration: 300
@@ -135,6 +135,15 @@ _vllm_nodes:
   env:
     # GiB reserved for KV cache on the CPU backend
     VLLM_CPU_KVCACHE_SPACE: "4"
+  # Loosen Ray's node liveness check so a startup CPU/network blip isn't
+  # mistaken for a dead node -- previously exported job-wide in
+  # trilium_vllm_run.sbatch, now scoped to just this benchmark.
+  ray:
+    env:
+      RAY_health_check_initial_delay_ms: "30000"
+      RAY_health_check_period_ms: "5000"
+      RAY_health_check_timeout_ms: "30000"
+      RAY_health_check_failure_threshold: "10"
   client:
     argv:
       --dataset-name: random

@@ -39,6 +39,14 @@ def _exec_native_srun() -> None:
     When ``-x``/``--exclude`` removes nodes from a Slurm allocation, also shrink
     ``--nodes``/``--ntasks`` so srun does not still request the full job size
     (``Only allocated N-1 nodes asked for N``).
+
+    Always passes ``--overlap``: some callers (e.g. ``RayCluster.stop_executor``
+    in commands/ray.py) dispatch a second srun step across the same nodes
+    while an earlier step is still running (Ray's bring-up step blocks on
+    ``ray start --block`` for the cluster's whole lifetime). Without
+    ``--overlap``, Slurm refuses to schedule the second step on resources
+    already claimed by the first ("step creation temporarily disabled,
+    retrying (Requested nodes are busy)") and it can retry indefinitely.
     """
     srun = shutil.which("srun")
     if srun is None:
@@ -51,8 +59,8 @@ def _exec_native_srun() -> None:
 
     args = list(sys.argv[idx + 1 :])
     args = _shrink_srun_allocation_for_exclude(args)
-    print(f"[srun] {srun} {' '.join(args)}", file=sys.stderr, flush=True)
-    os.execvp(srun, [srun, *args])
+    print(f"[srun] {srun} --overlap {' '.join(args)}", file=sys.stderr, flush=True)
+    os.execvp(srun, [srun, "--overlap", *args])
 
 
 def _has_srun_nodes_override(args: list[str]) -> bool:

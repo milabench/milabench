@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Prove the Ray cluster spreads work across every node, then measure real
 inter-node bandwidth over Ray's own object transfer (not torch/NCCL/gloo --
-see benchmarks/torchsrun for that path) so milabench's full metric pipeline
+see benchmarks/diagnostic/torchsrun for that path) so milabench's full metric pipeline
 (benchmate.monitor.setupvoir -> [data] rate lines -> Score/Breakdown) gets
 exercised with real numbers instead of a bare pass/fail.
 
