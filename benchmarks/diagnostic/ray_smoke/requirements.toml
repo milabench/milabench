@@ -1,4 +1,5 @@
 [common]
 dependencies = [
     "ray",
+    "voir",
 ]

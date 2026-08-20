@@ -201,7 +201,19 @@ async def install_requires(pack: Package, *extras):
     group = pack.config.get("install_group", {})
 
     if group not in installed_requires:
-        await pack.pip_install("setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", *extras, use_uv_override=False)
+        # These are the build backends "no-build-isolation" installs below
+        # rely on already being present (see install_benchmate above) --
+        # installing them WITHOUT isolation is circular: pip can't satisfy
+        # e.g. maturin's own build-system.requires from a venv that doesn't
+        # have maturin yet ("Cannot import 'maturin'": BackendUnavailable).
+        #
+        # Plain pip (forced below on some platforms) can also fail to find
+        # a prebuilt wheel for one of these -- e.g. Trillium's pip falls
+        # back to compiling `uv` from source, which fails outright (rustc
+        # ICE during codegen). Default to uv (the same resolver used
+        # everywhere else in milabench) instead of forcing plain pip; it
+        # resolves the same wheel in ~100ms there.
+        await pack.pip_install("setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", *extras, build_isolation=True)
         installed_requires[group] = 1
 
 
