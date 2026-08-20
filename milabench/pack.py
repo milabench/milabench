@@ -196,16 +196,19 @@ async def install_benchmate(pack: Package):
         installed_benchmate[group] = 1
 
 
-async def install_requires(pack: Package, *extras):
+async def install_requires(pack: Package, *extras, platform_config=None):
     global installed_requires
     group = pack.config.get("install_group", {})
 
     if group not in installed_requires:
-        # These are the build backends "no-build-isolation" installs below
-        # rely on already being present (see install_benchmate above) --
-        # installing them WITHOUT isolation is circular: pip can't satisfy
-        # e.g. maturin's own build-system.requires from a venv that doesn't
-        # have maturin yet ("Cannot import 'maturin'": BackendUnavailable).
+        # Build backends any "no-build-isolation" installs below rely on
+        # already being present (see install_benchmate above) -- installing
+        # them WITHOUT isolation is circular: pip can't satisfy e.g.
+        # maturin's own build-system.requires from a venv that doesn't have
+        # maturin yet ("Cannot import 'maturin'": BackendUnavailable).
+        # Configured via platforms.toml's [build] requires (see
+        # PlatformConfig.build_requires) -- empty/absent if there's no
+        # PlatformConfig in scope (e.g. the legacy, non-TOML install path).
         #
         # Plain pip (forced below on some platforms) can also fail to find
         # a prebuilt wheel for one of these -- e.g. Trillium's pip falls
@@ -213,7 +216,10 @@ async def install_requires(pack: Package, *extras):
         # ICE during codegen). Default to uv (the same resolver used
         # everywhere else in milabench) instead of forcing plain pip; it
         # resolves the same wheel in ~100ms there.
-        await pack.pip_install("setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", *extras, build_isolation=True)
+        build_requires = getattr(platform_config, "build_requires", None) or []
+        packages = [*build_requires, *extras]
+        if packages:
+            await pack.pip_install(*packages, build_isolation=True)
         installed_requires[group] = 1
 
 
@@ -638,7 +644,7 @@ class Package(BasePackage):
         """Attempt TOML-based install. Returns True if handled, False to fall back."""
         from .dependencies import has_toml_requirements, install_args, load_platform_config, apply_overrides
 
-        if not option("use_toml_deps", int, 0):
+        if not option("use_toml_deps", int, 1):
             return False
 
         benchmark_path = self.dirs.code
@@ -682,7 +688,7 @@ class Package(BasePackage):
         )
 
         try:
-            await install_requires(self)
+            await install_requires(self, platform_config=platform_config)
             await self.pip_install(*args.as_pip_args())
 
             # Apply overrides (replaces bb_after_install.sh)

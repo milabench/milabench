@@ -334,7 +334,7 @@ class MultiPackage:
         """Attempt TOML-based pinning. Returns True if handled, False to fall back."""
         from .system import option
 
-        if not option("use_toml_deps", int, 0):
+        if not option("use_toml_deps", int, 1):
             return False
 
         from .dependencies import load_platform_config, pin_all
