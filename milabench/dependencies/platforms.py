@@ -85,6 +85,12 @@ class PlatformConfig:
     discovery: DiscoveryConfig | None = None
     backends: dict[str, BackendConfig] = field(default_factory=dict)
     compat: dict[str, CompatEntry] = field(default_factory=dict)
+    # Build backends pre-seeded into every install_group venv before
+    # installing actual requirements (see install_requires() in pack.py).
+    # None (as opposed to []) means "[build] wasn't in platforms.toml" --
+    # callers fall back to their own hardcoded default in that case, so an
+    # explicit `requires = []` can still mean "seed nothing".
+    build_requires: list[str] | None = None
     # backend → {(torch, backend_version): VllmMapping}
     vllm_maps: dict[str, dict[tuple[str, str], VllmMapping]] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -391,6 +397,11 @@ def load_platform_config(
 
     # Parse [vars]
     config.vars = {k: str(v) for k, v in raw.get("vars", {}).items()}
+
+    # Parse [build] (build backends pre-seeded before installing requirements)
+    build_raw = raw.get("build", {})
+    if "requires" in build_raw:
+        config.build_requires = [str(x) for x in build_raw["requires"]]
 
     # Parse [pin.discovery] (preferred) or [pin.matrix] (legacy)
     pin_raw = raw.get("pin", {})

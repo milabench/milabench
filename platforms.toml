@@ -10,6 +10,22 @@ torch = "2.10.0"
 # ("torch,backend_version") and compat conditions can address it.
 cpu = "0"
 
+# ─── Build Backends ───────────────────────────────────────────────────────────
+# Pre-seeded (via `pip install`, with normal build isolation) into every
+# install_group venv before installing that group's actual requirements --
+# see install_requires() in milabench/pack.py. Needed because milabench
+# installs those requirements with --no-build-isolation by default, so any
+# requirement whose own pyproject.toml declares e.g. maturin/poetry/hatchling
+# as its build backend needs that backend already present in the venv; pip
+# can't resolve it in an isolated build env of its own at that point
+# ("Cannot import 'maturin'": BackendUnavailable).
+#
+# Only used by the TOML-based install path (MILABENCH_USE_TOML_DEPS=1); the
+# legacy requirements-file path falls back to pack.py's own hardcoded default
+# instead of loading platforms.toml at all.
+[build]
+requires = ["setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling"]
+
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
 # (backend, torch) combinations actually have published wheels.
