@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import os
+import sys
 
 import milabench.alt_async
 import milabench.commands.executors
@@ -30,10 +31,18 @@ def run_cli(*args, expected_code=0, msg=None):
     from milabench.cli import main
 
     print(" ".join(args))
-    try:
-        return main(args)
-    except SystemExit as exc:
-        assert exc.code == expected_code, msg
+    # main() returns its status code directly -- it does not raise
+    # SystemExit (only the `milabench` console entrypoint calls sys.exit()
+    # on that return value), so the exit code must be checked directly.
+    code = main(args)
+    # main() triggers benchmate.progress.timed_flush(), which wraps
+    # sys.stdout/stderr in a TimedFlushBuffer (30s / 8MB flush threshold --
+    # fine for a real long-running job, but it means printed output stays
+    # buffered and invisible to capsys unless flushed here).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    assert code == expected_code, msg
+    return code
 
 
 def benchlist(enabled=True):
@@ -123,7 +132,7 @@ def test_milabench(monkeypatch, bench, module_tmp_dir, standard_config):
 
         with filecount_inc(module_tmp_dir, bench):
             with assume_gpu(8):
-                run_cli("run", *args, "--no-report", "--select", bench, "--run-name", str(bench))
+                run_cli("run", *args, "--select", bench, "--run-name", str(bench))
 
 
     import shutil
@@ -243,6 +252,8 @@ def test_milabench_bad_run(monkeypatch, tmp_path, config, capsys, file_regressio
 
 @pytest.mark.slow
 def test_milabench_bad_run_before_install(monkeypatch, tmp_path, config, capsys, file_regression):
+    from milabench.testing import assume_gpu
+
     #
     # Do a bad run
     #
@@ -251,7 +262,7 @@ def test_milabench_bad_run_before_install(monkeypatch, tmp_path, config, capsys,
         "--base", str(tmp_path),
         "--config", str(config("benchio_bad"))
     ]
-    
+
     #
     # NOTE: the exception happened IN milabench but in the asyncio part
     # which runs the benchmark
@@ -260,7 +271,10 @@ def test_milabench_bad_run_before_install(monkeypatch, tmp_path, config, capsys,
     # so all the benchmarks might try to run as well
 
     # check that the return code is an error
-    run_cli("run", *args, "--run-name", "run", "--no-report", expected_code=2)
+    # "mock" is not a real voir GPU backend -- assume_gpu() registers one for
+    # the duration of the run, same as test_milabench_bad_run's sibling call.
+    with assume_gpu(8):
+        run_cli("run", *args, "--run-name", "run", expected_code=2)
 
     # Check that the error was extracted
     all = capsys.readouterr()

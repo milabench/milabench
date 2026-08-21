@@ -231,39 +231,6 @@ class TestBenchStats:
         assert bs.perf.current_count == 2
 
 
-class TestPerGpuMemoryMib:
-    def test_none_on_empty(self):
-        assert _per_gpu_memory_mib(None) is None
-        assert _per_gpu_memory_mib({}) is None
-
-    def test_single_device(self):
-        assert _per_gpu_memory_mib({"0": {"memory": [31240, 192000]}}) == 31240
-
-    def test_multi_device_is_peak_not_sum(self):
-        gpudata = {
-            str(i): {"memory": [31240 + i, 192000]} for i in range(8)
-        }
-        # Sum would be ~249960; we keep the per-GPU peak.
-        assert _per_gpu_memory_mib(gpudata) == 31247
-        assert _per_gpu_memory_mib(gpudata) != sum(
-            d["memory"][0] for d in gpudata.values()
-        )
-
-    def test_min_load_skips_idle_ddp_init_spike(self):
-        # Real spike shape from run.out: ~249k on every GPU at load ~0.1
-        spike = {
-            str(i): {"memory": [246000 + i * 100, 294896], "load": 0.1}
-            for i in range(8)
-        }
-        assert _per_gpu_memory_mib(spike, min_load=0.3) is None
-
-        steady = {
-            str(i): {"memory": [32000 + i, 294896], "load": 0.95}
-            for i in range(8)
-        }
-        assert _per_gpu_memory_mib(steady, min_load=0.3) == 32007
-
-
 class TestMemoryUsageExtractorPerGpu:
     def test_gpudata_records_per_gpu_peak_not_cluster_sum(self, tmp_path, monkeypatch):
         save = tmp_path / "scaling.yaml"

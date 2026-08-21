@@ -417,8 +417,15 @@ def make_report(
     sources=None,
     errdata=None,
     weights=None,
-    stream=sys.stdout,
+    stream=None,
 ):
+    # `stream` defaults to the live sys.stdout, resolved at call time --
+    # a `stream=sys.stdout` default would bind to whatever object sys.stdout
+    # was when this module was imported, so callers that swap sys.stdout
+    # later (e.g. pytest's capsys) would never see this output.
+    if stream is None:
+        stream = sys.stdout
+
     # We want the score to be consistent with the loaded config
     # that means select/exclude and unsupported bench weight still counts
     if weights is None:

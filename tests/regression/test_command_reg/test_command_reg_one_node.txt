@@ -9,102 +9,26 @@ source $VIRTUAL_ENV/bin/activate
 echo "---"
 echo "Milabench"
 echo "========="
-export MILABENCH_DIR_BASE=$BASE
 export MILABENCH_DIR_VENV=$BASE/venv/torch
 export MILABENCH_DIR_DATA=$BASE/data
 export MILABENCH_DIR_RUNS=$BASE/runs
-export MILABENCH_DIR_EXTRA=$BASE/extra/llm
+export MILABENCH_DIR_EXTRA=$BASE/extra/torchvision
 export MILABENCH_DIR_CACHE=$BASE/cache
 export OMP_NUM_THREADS=0
-export MILABENCH_CONFIG='{"system": {"arch": "cuda", "sshkey": null, "nodes": [{"ip": "127.0.0.1", "main": true, "name": "0", "sshport": 22, "user": "username", "hostname": "127.0.0.1", "local": true}], "self": {"ip": "127.0.0.1", "main": true, "name": "0", "sshport": 22, "user": "username", "hostname": "127.0.0.1", "local": true}}, "dirs": {"base": "$BASE", "venv": "$BASE/venv/torch", "data": "$BASE/data", "runs": "$BASE/runs", "extra": "$BASE/extra/llm", "cache": "$BASE/cache"}, "group": "llm", "install_group": "torch", "install_variant": "cuda", "run_name": "dev", "enabled": true, "capabilities": {"nodes": 1}, "max_duration": 3600, "voir": {"options": {"stop": 30, "interval": "1s"}}, "validation": {"usage": {"gpu_load_threshold": 0.5, "gpu_mem_threshold": 0.5}}, "config_base": "$SRC/milabench/config", "config_file": "$SRC/milabench/config/standard.yaml", "definition": "$SRC/milabench/benchmarks/llama", "url": "https://huggingface.co/meta-llama/Llama-2-7b/tree/main", "tags": ["gated", "inference", "llm", "monogpu", "nlp", "nobatch"], "plan": {"method": "per_gpu"}, "weight": 1.0, "name": "llama", "tag": ["llama"]}'
-
-echo "---"
-echo "llama"
-echo "====="
-time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/llama/main.py --cache $BASE/cache &
-  wait
-)
-
-echo "---"
-echo "fp16"
-echo "===="
-time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
-  wait
-)
-
-echo "---"
-echo "bf16"
-echo "===="
-time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
-  wait
-)
-
-echo "---"
-echo "tf32"
-echo "===="
-time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
-  wait
-)
-
-echo "---"
-echo "fp32"
-echo "===="
-time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
-  wait
-)
+export MILABENCH_CONFIG='{"run_name": "dev", "system": {"arch": "cuda", "sshkey": null, "nodes": [{"ip": "127.0.0.1", "main": true, "name": "0", "sshport": 22, "user": "username", "hostname": "127.0.0.1", "local": true}], "gpu": {"capacity": "0 MiB", "count": 8}, "run_name": "dev", "base": "$BASE", "dirs": {"venv": "$BASE/venv", "data": "$BASE/data", "runs": "$BASE/runs", "extra": "$BASE/extra", "cache": "$BASE/cache"}, "env": {}, "self": {"ip": "127.0.0.1", "main": true, "name": "0", "sshport": 22, "user": "username", "hostname": "127.0.0.1", "local": true}}, "group": "torchvision", "install_group": "torch", "install_variant": "cuda", "enabled": true, "capabilities": {"nodes": 1}, "dirs": {"venv": "$BASE/venv/torch", "data": "$BASE/data", "runs": "$BASE/runs", "extra": "$BASE/extra/torchvision", "cache": "$BASE/cache"}, "max_duration": 600, "voir": {"options": {"stop": 60, "interval": "1s", "gpu_poll": 0.1}}, "validation": {"usage": {"gpu_load_threshold": 0.5, "gpu_mem_threshold": 0.5}}, "config_base": "$SRC/config", "config_file": "$SRC/config/all.yaml", "definition": "$SRC/benchmarks/torchvision", "plan": {"method": "per_gpu"}, "argv": {"--precision": "tf32-fp16", "--lr": 0.01, "--no-stdout": true, "--epochs": 50, "--num-workers": "auto({n_worker}, 8)", "--loader": "pytorch", "--data": "{milabench_data}/FakeImageNet", "--model": "resnet50", "--batch-size": "auto_batch(256)", "--optim": "channel_last"}, "tags": ["classification", "convnet", "monogpu", "resnet", "vision"], "weight": 1.0, "name": "resnet50", "tag": ["resnet50"]}'
 
 echo "---"
 echo "resnet50"
 echo "========"
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
   wait
 )
 
@@ -112,14 +36,14 @@ echo "---"
 echo "resnet50-noio"
 echo "============="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader synthetic_fixed --data $BASE/data/FakeImageNet --model resnet50 --batch-size 256 --optim channel_last &
   wait
 )
 
@@ -127,7 +51,7 @@ echo "---"
 echo "resnet152-ddp-gpus"
 echo "=================="
 time (
-  $SRC/milabench/milabench/scripts/activator $BASE/venv/torch $BASE/cache $SRC/milabench/benchmarks/torchvision_ddp/main.py --epochs 10 --num-workers 8 --loader torch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  $SRC/milabench/scripts/activator $BASE/venv/torch $BASE/cache $SRC/benchmarks/torchvision_ddp/main.py --epochs 10 --num-workers 8 --loader torch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
   wait
 )
 
@@ -135,14 +59,14 @@ echo "---"
 echo "convnext_large-fp32"
 echo "==================="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision fp32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
   wait
 )
 
@@ -150,14 +74,14 @@ echo "---"
 echo "convnext_large-fp16"
 echo "==================="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
   wait
 )
 
@@ -165,14 +89,14 @@ echo "---"
 echo "convnext_large-tf32"
 echo "==================="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision tf32 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
   wait
 )
 
@@ -180,14 +104,14 @@ echo "---"
 echo "convnext_large-tf32-fp16"
 echo "========================"
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model convnext_large --batch-size 128 &
   wait
 )
 
@@ -195,14 +119,14 @@ echo "---"
 echo "regnet_y_128gf"
 echo "=============="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchvision/main.py --precision tf32-fp16 --lr 0.01 --no-stdout --epochs 50 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model regnet_y_128gf --batch-size 64 &
   wait
 )
 
@@ -315,14 +239,14 @@ echo "---"
 echo "focalnet"
 echo "========"
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D0 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D1 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D2 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D3 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D4 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D5 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D6 --checkpoint-hist 1 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/extra/timm/dev/focalnet.D7 --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/timm/pytorch-image-models/train.py --amp --amp-dtype bfloat16 --device cuda --val-split --data-dir $BASE/data --dataset FakeImageNet --workers 8 --batch-size 128 --model focalnet_base_lrf --output $BASE/data --checkpoint-hist 1 &
   wait
 )
 
@@ -330,7 +254,7 @@ echo "---"
 echo "brax"
 echo "===="
 time (
-  python $SRC/milabench/benchmarks/brax/main.py --episode-length 20 --batch-size 1024 --num-minibatches 32 --num-envs 8192 &
+  python $SRC/benchmarks/brax/main.py --episode-length 20 --batch-size 1024 --num-minibatches 32 &
   wait
 )
 
@@ -338,14 +262,14 @@ echo "---"
 echo "diffusion-single"
 echo "================"
 time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
   wait
 )
 
@@ -353,7 +277,7 @@ echo "---"
 echo "diffusion-gpus"
 echo "=============="
 time (
-  $SRC/milabench/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  $SRC/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
   wait
 )
 
@@ -361,7 +285,7 @@ echo "---"
 echo "diffusion-nodes"
 echo "==============="
 time (
-  $SRC/milabench/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/milabench/benchmarks/diffusion/main.py --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
+  $SRC/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/benchmarks/diffusion/main.py --model Milabench/stable-diffusion-2 --num_epochs 5 --batch_size 32 --num_workers 8 --cache $BASE/cache &
   wait
 )
 
@@ -369,14 +293,14 @@ echo "---"
 echo "lightning"
 echo "========="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
   wait
 )
 
@@ -384,7 +308,7 @@ echo "---"
 echo "lightning-gpus"
 echo "=============="
 time (
-  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 --no-python -- python $SRC/milabench/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
+  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu --no-python -- python $SRC/benchmarks/lightning/main.py --epochs 10 --num-workers 8 --loader pytorch --data $BASE/data/FakeImageNet --model resnet152 --batch-size 256 &
   wait
 )
 
@@ -392,14 +316,14 @@ echo "---"
 echo "dinov2-giant-single"
 echo "==================="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-single/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
   wait
 )
 
@@ -407,7 +331,7 @@ echo "---"
 echo "dinov2-giant-gpus"
 echo "================="
 time (
-  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 --no-python -- python $SRC/milabench/benchmarks/dinov2/main.py --output-dir $BASE/extra/dinov2-giant-gpus/output --no-resume --config-file $SRC/milabench/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
+  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu --no-python -- python $SRC/benchmarks/dinov2/main.py --config-file $SRC/benchmarks/dinov2/src/dinov2/configs/train/vitg14.yaml train.dataset_path=ImageNet:split=TRAIN:root=$BASE/data/FakeImageNet:extra=$BASE/data/FakeImageNet train.batch_size_per_gpu=32 train.saveckp_freq=100 train.num_workers=10 &
   wait
 )
 
@@ -415,14 +339,14 @@ echo "---"
 echo "llm-lora-single"
 echo "==============="
 time (
-  CUDA_VISIBLE_DEVICES=0 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=1 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=2 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=3 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=4 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=5 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=6 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
-  CUDA_VISIBLE_DEVICES=7 bench/lora_finetune_single_device.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
+  CUDA_VISIBLE_DEVICES=0 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=1 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=2 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=3 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=4 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=5 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=6 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
+  CUDA_VISIBLE_DEVICES=7 env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run -- bench/lora_finetune_single_device.py epochs=1 output_dir=$BASE/extra/llm-lora-single/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model safetensors=true checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-single/llama3_8B metric_logger.log_dir=$BASE/extra/llm-lora-single/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
   wait
 )
 
@@ -430,7 +354,7 @@ echo "---"
 echo "llm-lora-ddp-gpus"
 echo "================="
 time (
-  $BASE/venv/torch/bin/tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 -- bench/lora_finetune_distributed.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-ddp-gpus/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_8B/ checkpointer.output_dir=$BASE/extra/llm-lora-ddp-gpus/llama3_8B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-ddp-gpus/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
+  env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu -- bench/lora_finetune_distributed.py epochs=1 output_dir=$BASE/extra/llm-lora-ddp-gpus/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_8B/ checkpointer.output_dir=$BASE/extra/llm-lora-ddp-gpus/llama3_8B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-ddp-gpus/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
   wait
 )
 
@@ -438,7 +362,7 @@ echo "---"
 echo "llm-lora-ddp-nodes"
 echo "=================="
 time (
-  $BASE/venv/torch/bin/tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 -- bench/lora_finetune_distributed.py --config $SRC/milabench/benchmarks/llm/configs/llama3_8B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-ddp-nodes/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-ddp-nodes/llama3_8B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-ddp-nodes/metrics repo_id="meta-llama/Meta-Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda &
+  env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu -- bench/lora_finetune_distributed.py epochs=1 output_dir=$BASE/extra/llm-lora-ddp-nodes/output tokenizer.path=$BASE/data/llama3_8B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_8B checkpointer.output_dir=$BASE/extra/llm-lora-ddp-nodes/llama3_8B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-ddp-nodes/metrics repo_id="meta-llama/Llama-3.1-8B" batch_size=8 gradient_accumulation_steps=8 device=cuda --config $SRC/benchmarks/llm/configs/llama3_8B_lora.yaml &
   wait
 )
 
@@ -446,7 +370,7 @@ echo "---"
 echo "llm-lora-mp-gpus"
 echo "================"
 time (
-  $BASE/venv/torch/bin/tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 -- bench/lora_finetune_distributed.py --config $SRC/milabench/benchmarks/llm/configs/llama3_70B_lora.yaml epochs=1 output_dir=$BASE/extra/llm-lora-mp-gpus/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-lora-mp-gpus/llama3_70B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-mp-gpus/metrics repo_id="meta-llama/Meta-Llama-3.1-70B" batch_size=8 gradient_accumulation_steps=1 device=cuda &
+  env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu -- bench/lora_finetune_distributed.py epochs=1 output_dir=$BASE/extra/llm-lora-mp-gpus/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-lora-mp-gpus/llama3_70B/ safetensors=true metric_logger.log_dir=$BASE/extra/llm-lora-mp-gpus/metrics repo_id="meta-llama/Llama-3.1-70B" batch_size=8 gradient_accumulation_steps=1 device=cuda --config $SRC/benchmarks/llm/configs/llama3_70B_lora.yaml &
   wait
 )
 
@@ -454,7 +378,7 @@ echo "---"
 echo "llm-full-mp-gpus"
 echo "================"
 time (
-  $BASE/venv/torch/bin/tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 -- bench/full_finetune_distributed.py --config $SRC/milabench/benchmarks/llm/configs/llama3_70B_full.yaml epochs=1 output_dir=$BASE/extra/llm-full-mp-gpus/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-full-mp-gpus/llama3_70B metric_logger.log_dir=$BASE/extra/llm-full-mp-gpus/metrics repo_id="meta-llama/Meta-Llama-3.1-70B" safetensors=true batch_size=2 gradient_accumulation_steps=1 device=cuda &
+  env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu -- bench/full_finetune_distributed.py epochs=1 output_dir=$BASE/extra/llm-full-mp-gpus/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-full-mp-gpus/llama3_70B metric_logger.log_dir=$BASE/extra/llm-full-mp-gpus/metrics repo_id="meta-llama/Llama-3.1-70B" safetensors=true batch_size=2 gradient_accumulation_steps=1 device=cuda --config $SRC/benchmarks/llm/configs/llama3_70B_full.yaml &
   wait
 )
 
@@ -462,7 +386,7 @@ echo "---"
 echo "llm-full-mp-nodes"
 echo "================="
 time (
-  $BASE/venv/torch/bin/tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 -- bench/full_finetune_distributed.py --config $SRC/milabench/benchmarks/llm/configs/llama3_70B_full.yaml epochs=1 output_dir=$BASE/extra/llm-full-mp-nodes/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-full-mp-nodes/llama3_70B/ metric_logger.log_dir=$BASE/extra/llm-full-mp-nodes/metrics repo_id="meta-llama/Meta-Llama-3.1-70B" safetensors=true batch_size=2 gradient_accumulation_steps=1 device=cuda &
+  env -C $SRC/benchmarks/llm - XDG_CACHE_HOME=$BASE/cache HF_HOME=$BASE/cache TORCH_HOME=$BASE/cache $BASE/venv/torch/bin/python -m torchtune._cli.tune run --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu -- bench/full_finetune_distributed.py epochs=1 output_dir=$BASE/extra/llm-full-mp-nodes/output tokenizer.path=$BASE/data/llama3_70B/original/tokenizer.model checkpointer.checkpoint_dir=$BASE/data/llama3_70B checkpointer.output_dir=$BASE/extra/llm-full-mp-nodes/llama3_70B/ metric_logger.log_dir=$BASE/extra/llm-full-mp-nodes/metrics repo_id="meta-llama/Llama-3.1-70B" safetensors=true batch_size=2 gradient_accumulation_steps=1 device=cuda --config $SRC/benchmarks/llm/configs/llama3_70B_full.yaml &
   wait
 )
 
@@ -470,14 +394,14 @@ echo "---"
 echo "dqn"
 echo "==="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 65536 --env_name CartPole-v1 --training_interval 10 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/purejaxrl/main.py dqn --num_envs 128 --buffer_size 131072 --buffer_batch_size 4096 --env_name SpaceInvaders-MinAtar --training_interval 10 --total_timesteps 2000000 &
   wait
 )
 
@@ -485,14 +409,14 @@ echo "---"
 echo "ppo"
 echo "==="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 10 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/purejaxrl/main.py ppo --num_envs 128 --num_steps 16 --num_minibatches 32 --update_epochs 4 --env_name hopper --total_timesteps 2000000 &
   wait
 )
 
@@ -500,14 +424,14 @@ echo "---"
 echo "pna"
 echo "==="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/geo_gnn/main.py --model PNA --num-samples 100000 --batch-size 4096 --num-workers 0 --root $BASE/data &
   wait
 )
 
@@ -515,14 +439,14 @@ echo "---"
 echo "dimenet"
 echo "======="
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/geo_gnn/main.py --model DimeNet --num-samples 100000 --use3d --batch-size 16 --num-workers 0 --root $BASE/data &
   wait
 )
 
@@ -530,29 +454,14 @@ echo "---"
 echo "recursiongfn"
 echo "============"
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 &
-  wait
-)
-
-echo "---"
-echo "torchatari"
-echo "=========="
-time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/recursiongfn/main.py --batch_size 128 --num_workers 8 --num_steps 100 --layer_width 128 --num_layers 4 --data $BASE/data &
   wait
 )
 
@@ -560,14 +469,14 @@ echo "---"
 echo "llava-single"
 echo "============"
 time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/llava/main.py --batch_size 1 --num_workers 4 --gradient_accumulation_steps 1 &
   wait
 )
 
@@ -575,14 +484,14 @@ echo "---"
 echo "rlhf-single"
 echo "==========="
 time (
-  CUDA_VISIBLE_DEVICES=0 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=1 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=2 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=3 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=4 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=5 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=6 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
-  CUDA_VISIBLE_DEVICES=7 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-single/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
   wait
 )
 
@@ -590,7 +499,7 @@ echo "---"
 echo "rlhf-gpus"
 echo "========="
 time (
-  $SRC/milabench/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/milabench/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-gpus/output --model_name_or_path EleutherAI/pythia-1b-deduped --per_device_train_batch_size 64 --logging_strategy no --log_level critical --bf16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
+  $SRC/milabench/scripts/activator $BASE/venv/torch $BASE/cache accelerate launch --mixed_precision=bf16 --dynamo_backend=no --machine_rank=0 --num_machines=1 --multi_gpu --gradient_accumulation_steps=1 --num_cpu_threads_per_process=4 --main_process_ip=127.0.0.1 --main_process_port=29400 --num_processes=8 $SRC/benchmarks/rlhf/main.py --output_dir $BASE/extra/rlhf-gpus/output --model_name_or_path EleutherAI/pythia-1b-deduped --sft_model_path EleutherAI/pythia-1b-deduped --reward_model_path EleutherAI/pythia-1b-deduped --missing_eos_penalty 1.0 --per_device_train_batch_size 64 --logging_strategy no --log_level critical --dtype bfloat16 --dataset-name trl-internal-testing/descriptiveness-sentiment-trl-style --dataset_train_split descriptiveness &
   wait
 )
 
@@ -598,14 +507,14 @@ echo "---"
 echo "vjepa-single"
 echo "============"
 time (
-  CUDA_VISIBLE_DEVICES=0 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=1 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=2 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=3 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=4 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=5 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=6 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
-  CUDA_VISIBLE_DEVICES=7 python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-single &
   wait
 )
 
@@ -613,7 +522,173 @@ echo "---"
 echo "vjepa-gpus"
 echo "=========="
 time (
-  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=8 --no-python -- python $SRC/milabench/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-gpus &
+  $BASE/venv/torch/bin/benchrun --nnodes=1 --rdzv-backend=static --rdzv-endpoint=127.0.0.1:29400 --master-addr=127.0.0.1 --master-port=29400 --local-ranks-filter=0 --nproc-per-node=gpu --no-python -- python $SRC/benchmarks/vjepa/main.py --batch_size 24 --num_workers 12 --dataset $BASE/data/FakeVideo/video_metainfo.csv --output $BASE/extra/vjepa-gpus &
+  wait
+)
+
+echo "---"
+echo "torchatari"
+echo "=========="
+time (
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/torchatari/main.py --num-minibatches 16 --update-epochs 4 --num-steps 128 --num-envs 128 --total-timesteps 1000000 --env-id Breakout-v5 &
+  wait
+)
+
+echo "---"
+echo "vllm-dense-physics-gpus"
+echo "======================="
+time (
+  python $SRC/benchmarks/vllm/main.py mistralai/Mistral-Small-3.1-24B-Instruct-2503 --served-model-name model --dtype bfloat16 --tensor-parallel-size 8 --tokenizer-mode mistral --config_format mistral --load_format mistral --tool-call-parser mistral --enable-auto-tool-choice --limit-mm-per-prompt {"image":10} -- --model mistralai/Mistral-Small-3.1-24B-Instruct-2503 --served-model-name model --request-rate inf --dataset-name hf --label milabench --backend openai --num-prompts 500 --endpoint /v1/completions --ready-check-timeout-sec 1200 --dataset-path hendrydong/gpqa_diamond --hf-name hendrydong/gpqa_diamond --max-concurrency 64 &
+  wait
+)
+
+echo "---"
+echo "vllm-moe-code-gpus"
+echo "=================="
+time (
+  python $SRC/benchmarks/vllm/main.py meta-llama/Llama-4-Scout-17B-16E --served-model-name model --dtype bfloat16 --tensor-parallel-size 8 --limit-mm-per-prompt {"image":10} -- --model meta-llama/Llama-4-Scout-17B-16E --served-model-name model --request-rate inf --dataset-name hf --label milabench --backend openai --num-prompts 500 --endpoint /v1/completions --ready-check-timeout-sec 1200 --dataset-path vdaita/edit_10k_char --hf-name vdaita/edit_10k_char --max-concurrency 64 &
+  wait
+)
+
+echo "---"
+echo "whisper-transcribe-single"
+echo "========================="
+time (
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/inference/main.py --mode whisper --model openai/whisper-large-v3 --dataset openslr/librispeech_asr --subset clean --split train.100 --batch_size 64 &
+  wait
+)
+
+echo "---"
+echo "txt-to-image-single"
+echo "==================="
+time (
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/inference/main.py --mode flux --model black-forest-labs/FLUX.1-dev --dataset jackyhate/text-to-image-2M --batch_size 16 &
+  wait
+)
+
+echo "---"
+echo "llm-chat-completion"
+echo "==================="
+time (
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/inference/main.py --mode chat --model meta-llama/Llama-3.1-8B-Instruct --dataset hendrydong/gpqa_diamond --split test --batch_size 32 &
+  wait
+)
+
+echo "---"
+echo "llama"
+echo "====="
+time (
+  CUDA_VISIBLE_DEVICES=0 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=1 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=2 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=3 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=4 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=5 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=6 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  CUDA_VISIBLE_DEVICES=7 python $SRC/benchmarks/llama/main.py --pretrained --cache $BASE/cache &
+  wait
+)
+
+echo "---"
+echo "fp8"
+echo "==="
+time (
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp8 &
+  wait
+)
+
+echo "---"
+echo "fp16"
+echo "===="
+time (
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/flops/main.py --number 30 --repeat 90 --m 8192 --n 8192 --dtype fp16 &
+  wait
+)
+
+echo "---"
+echo "bf16"
+echo "===="
+time (
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype bf16 &
+  wait
+)
+
+echo "---"
+echo "tf32"
+echo "===="
+time (
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 --tf32 &
+  wait
+)
+
+echo "---"
+echo "fp32"
+echo "===="
+time (
+  CUDA_VISIBLE_DEVICES=0 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=1 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=2 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=3 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=4 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=5 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=6 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
+  CUDA_VISIBLE_DEVICES=7 $SRC/benchmarks/flops/main.py --number 10 --repeat 90 --m 8192 --n 8192 --dtype fp32 &
   wait
 )
 

@@ -1,5 +1,5 @@
 import os
-from milabench.cli.dry import cli_dry, Arguments
+from milabench.cli.tools.dry import cli_dry, Arguments
 
 from pytest import fixture
 

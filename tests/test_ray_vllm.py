@@ -61,7 +61,12 @@ def _stub_pack(*, num_machines=2, devices=(0, 1), nodes=None):
             "definition": str(
                 Path(__file__).resolve().parents[1] / "benchmarks" / "vllm"
             ),
-            "tag": [],
+            # Real configs always start with tag == [name] (see
+            # milabench/config/__init__.py's bench_config["tag"] = [name]) --
+            # match that here rather than the unrealistic empty list, since
+            # some assertions (e.g. test_njobs_does_not_duplicate_ray_tags)
+            # depend on the name actually being there.
+            "tag": ["vllm-moe-glm52-744b-bf16-nodes"],
             "dirs": {
                 "venv": "/tmp/venv",
                 "code": "/tmp",

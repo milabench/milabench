@@ -1,50 +1,51 @@
-[35m[1mbenchio.1(B[m[35m(B[m [1m[33m[stderr](B[m [33m  File "$SRC/milabench/tests/yoshua-benchio/main.py", line 46, in <module>(B[m
-[35m[1mbenchio.1(B[m[35m(B[m [1m[33m[stderr](B[m [33m    main()(B[m
-[35m[1mbenchio.1(B[m[35m(B[m [1m[33m[stderr](B[m [33m  File "$SRC/milabench/tests/yoshua-benchio/main.py", line 39, in main(B[m
-[35m[1mbenchio.1(B[m[35m(B[m [1m[33m[stderr](B[m [33m    raise RuntimeError()(B[m
-[35m[1mbenchio.1(B[m[35m(B[m [1m[33m[stderr](B[m [33mRuntimeError(B[m
-[35m[1mbenchio.1(B[m[35m(B[m [1m[31m[end (1)](B[m [1m[31m$TMP/venv/benchio/bin/voir $SRC/milabench/tests/yoshua-benchio/main.py --bad(B[m [38;2;190;190;190m[at 1990-01-01 00:00:00.000000](B[m
-benchio.0
-=========
-  * no training rate retrieved
-  * Error codes = 1, 1
-  * 1 exceptions found
-    * 1 x RuntimeError
-        | Traceback (most recent call last):
-        |   File "$TMP/venv/benchio/bin/voir", line 10, in <module>
-        |     sys.exit(main())
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/cli.py", line 128, in main
-        |     ov(sys.argv[1:] if argv is None else argv)
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/phase.py", line 331, in __call__
-        |     self._run(*args, **kwargs)
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/overseer.py", line 242, in _run
-        |     set_value(func())
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/scriptutils.py", line 37, in <lambda>
-        |     return lambda: exec(mainsection, glb, glb)
-        |   File "$SRC/milabench/tests/yoshua-benchio/main.py", line 46, in <module>
-        |     main()
-        |   File "$SRC/milabench/tests/yoshua-benchio/main.py", line 39, in main
-        |     raise RuntimeError()
-        | RuntimeError
-benchio.1
-=========
-  * no training rate retrieved
-  * Error codes = 1, 1
-  * 1 exceptions found
-    * 1 x RuntimeError
-        | Traceback (most recent call last):
-        |   File "$TMP/venv/benchio/bin/voir", line 10, in <module>
-        |     sys.exit(main())
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/cli.py", line 128, in main
-        |     ov(sys.argv[1:] if argv is None else argv)
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/phase.py", line 331, in __call__
-        |     self._run(*args, **kwargs)
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/overseer.py", line 242, in _run
-        |     set_value(func())
-        |   File "$TMP/venv/benchio/lib/python3.10/site-packages/voir/scriptutils.py", line 37, in <lambda>
-        |     return lambda: exec(mainsection, glb, glb)
-        |   File "$SRC/milabench/tests/yoshua-benchio/main.py", line 46, in <module>
-        |     main()
-        |   File "$SRC/milabench/tests/yoshua-benchio/main.py", line 39, in main
-        |     raise RuntimeError()
-        | RuntimeError
+benchio.1 [stderr]   File "$SRC/tests/yoshua-benchio/main.py", line 44, in main
+benchio.1 [stderr]     raise RuntimeError()
+benchio.1 [stderr] RuntimeError
+benchio.0 [stderr]     main()
+benchio.0 [stderr]   File "$SRC/tests/yoshua-benchio/main.py", line 44, in main
+benchio.0 [stderr]     raise RuntimeError()
+benchio.0 [stderr] RuntimeError
+benchio.1 [end (1)] $TMP/venv/benchio/bin/voir $SRC/tests/yoshua-benchio/main.py --bad [at 1990-01-01 00:00:00.000000]
+benchio.0 [end (1)] $TMP/venv/benchio/bin/voir $SRC/tests/yoshua-benchio/main.py --bad [at 1990-01-01 00:00:00.000000]
+Metric Collection
+=================
+  benchio
+  -------
+    * 2 x no training rate retrieved (0, 1)
+    
+  
+Errors
+======
+  benchio
+  -------
+    RuntimeError
+    ^^^^^^^^^^^^
+      * 1 x benchio.1, 1 x benchio.0
+            | Traceback (most recent call last):
+            |   File "$TMP/venv/benchio/bin/voir", line 10, in <module>
+            |     sys.exit(main())
+            |              ^^^^^^
+            |   File "$TMP/venv/benchio/lib/python3.11/site-packages/voir/cli.py", line 128, in main
+            |     ov(sys.argv[1:] if argv is None else argv)
+            |   File "$TMP/venv/benchio/lib/python3.11/site-packages/voir/phase.py", line 331, in __call__
+            |     self._run(*args, **kwargs)
+            |   File "$TMP/venv/benchio/lib/python3.11/site-packages/voir/overseer.py", line 242, in _run
+            |     set_value(func())
+            |               ^^^^^^
+            |   File "$TMP/venv/benchio/lib/python3.11/site-packages/voir/scriptutils.py", line 37, in <lambda>
+            |     return lambda: exec(mainsection, glb, glb)
+            |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            |   File "$SRC/tests/yoshua-benchio/main.py", line 51, in <module>
+            |     main()
+            |   File "$SRC/tests/yoshua-benchio/main.py", line 44, in main
+            |     raise RuntimeError()
+            | RuntimeError
+      
+    
+  
+
+
+[DONE] Reports directory: $TMP/runs/run
+Source: $TMP/runs/run
+=================
+Benchmark results

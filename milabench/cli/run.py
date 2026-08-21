@@ -127,28 +127,34 @@ def _run(mp, args, name):
     )
 
     if args.report:
-        runs = {pack.logdir for pack in mp.packs.values()}
-        reports = None
-        if runs:
-            reports = _read_reports(*runs)
-            assert len(reports) != 0, "No reports found"
+        # A report-generation failure (e.g. every benchmark crashed before
+        # producing any data, so there is nothing to summarize) must not
+        # erase the `success`/failure count already computed above -- so it
+        # is caught here rather than left to propagate out of this function.
+        try:
+            runs = {pack.logdir for pack in mp.packs.values()}
+            if runs:
+                reports = _read_reports(*runs)
+                assert len(reports) != 0, "No reports found"
 
-            summary = make_summary(reports)
-            assert len(summary) != 0, "No summaries"
+                summary = make_summary(reports)
+                assert len(summary) != 0, "No summaries"
 
-            weights = get_config_global()
+                weights = get_config_global()
 
-            make_report(
-                summary,
-                compare=None,
-                html=None,
-                compare_gpus=False,
-                price=None,
-                title=None,
-                sources=runs,
-                errdata=reports and _error_report(reports),
-                weights=weights,
-            )
+                make_report(
+                    summary,
+                    compare=None,
+                    html=None,
+                    compare_gpus=False,
+                    price=None,
+                    title=None,
+                    sources=runs,
+                    errdata=reports and _error_report(reports),
+                    weights=weights,
+                )
+        except AssertionError as err:
+            print(err)
 
     return success
 
