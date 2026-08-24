@@ -334,6 +334,114 @@ def test_execute_command():
     assert messages[-1].data["return_code"] == 0
 
 
+def test_count_command_errors_scalars():
+    from milabench.commands import count_command_errors
+
+    assert count_command_errors(None) == 0
+    assert count_command_errors(0) == 0
+    assert count_command_errors(1) == 1
+    assert count_command_errors(3) == 3
+    # bool is a subclass of int; make sure it stays sane
+    assert count_command_errors(True) == 1
+    assert count_command_errors(False) == 0
+
+
+def test_count_command_errors_exceptions():
+    from milabench.commands import count_command_errors
+
+    assert count_command_errors(RuntimeError("boom")) == 1
+    assert count_command_errors(ValueError()) == 1
+
+
+def test_count_command_errors_list_of_none():
+    """A leaf command run without timeout returns ``asyncio.gather`` results,
+    which are ``None`` per successful process -> zero errors, not a TypeError."""
+    from milabench.commands import count_command_errors
+
+    # This is exactly the shape that used to trigger:
+    #   TypeError: int() argument ... not 'list'
+    assert count_command_errors([None, None, None]) == 0
+    assert count_command_errors([]) == 0
+
+
+def test_count_command_errors_nested():
+    from milabench.commands import count_command_errors
+
+    assert count_command_errors([None, RuntimeError(), 2]) == 3
+    assert count_command_errors([[None], [RuntimeError()], [1, 1]]) == 3
+
+
+def test_count_command_errors_futures():
+    from milabench.commands import count_command_errors
+
+    async def make_futures():
+        loop = asyncio.get_running_loop()
+
+        ok = loop.create_future()
+        ok.set_result(None)
+
+        failed = loop.create_future()
+        failed.set_exception(RuntimeError("boom"))
+
+        cancelled = loop.create_future()
+        cancelled.cancel()
+        # give the loop a chance to process the cancellation
+        await asyncio.sleep(0)
+
+        return ok, failed, cancelled
+
+    ok, failed, cancelled = asyncio.run(make_futures())
+
+    assert count_command_errors(ok) == 0
+    assert count_command_errors(failed) == 1
+    assert count_command_errors(cancelled) == 1
+    # A list of completed tasks is what execute_command returns on timeout
+    assert count_command_errors([ok, failed, cancelled]) == 2
+
+
+def test_list_command_execute_aggregates_child_lists(monkeypatch):
+    """Regression test: ``NJobs``/``PerGPU`` (ListCommand) parallel execute
+    used to do ``int(result)`` where each child returned a *list*, raising
+    ``TypeError: int() argument ... not 'list'`` for every benchmark."""
+    from milabench.commands import NJobs
+
+    async def fake_child_execute(self, *args, **kwargs):
+        # Mimic a leaf command run without timeout: gather() of Nones
+        return [None, None]
+
+    monkeypatch.setattr(
+        "milabench.commands.Command.execute", fake_child_execute, raising=True
+    )
+
+    executor = PackCommand(benchio(), "--start", "2", "--end", "20")
+    njobs = NJobs(executor, 3)
+
+    # Pass a warden sentinel so get_or_create_warden reuses it instead of
+    # spinning up a real process_cleaner (GPU warden) during the test.
+    error_count = asyncio.run(njobs.execute(warden=object()))
+    # Must not raise TypeError and must report zero errors for successful runs
+    assert error_count == 0
+
+
+def test_list_command_execute_counts_child_errors(monkeypatch):
+    from milabench.commands import NJobs
+
+    async def fake_child_execute(self, *args, **kwargs):
+        # One failed process (exception) among the gathered results
+        return [None, RuntimeError("child failed")]
+
+    monkeypatch.setattr(
+        "milabench.commands.Command.execute", fake_child_execute, raising=True
+    )
+
+    executor = PackCommand(benchio(), "--start", "2", "--end", "20")
+    njobs = NJobs(executor, 2)
+
+    error_count = asyncio.run(njobs.execute(warden=object()))
+    # 2 jobs, each reporting 1 error in its result list
+    assert error_count == 2
+
+
 def test_get_or_create_warden_reuses_existing_warden():
     """A child execution must not open its own process_cleaner: it kills
     every process using the GPU on enter/exit, so opening it more than once

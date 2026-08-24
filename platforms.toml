@@ -152,6 +152,20 @@ pydantic = ">=2,<3"
 "rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
 "torch>=2.10,torch<2.11" = "<0.12"
 
+# torchaudio ships C++ extensions compiled against a specific torch minor and
+# its version tracks torch's minor 1:1 (torch 2.10 -> torchaudio 2.10, etc).
+# Unlike torchvision, torchaudio's pytorch.org wheels declare only a loose
+# `torch` runtime dependency, so with just torch capped to its minor the
+# resolver happily pairs the NEWEST torchaudio (e.g. 2.11) with an older torch
+# (e.g. 2.10). At runtime that mismatched extension fails to load with
+# `undefined symbol: torch_dtype_float4_e2m1fn_x2` (a torch 2.11 symbol absent
+# in 2.10). Pin torchaudio to torch's minor so pin/install always agree.
+[compat.torchaudio]
+"torch>=2.13,torch<2.14" = ">=2.13,<2.14"
+"torch>=2.12,torch<2.13" = ">=2.12,<2.13"
+"torch>=2.11,torch<2.12" = ">=2.11,<2.12"
+"torch>=2.10,torch<2.11" = ">=2.10,<2.11"
+
 [compat.mslk]
 "torch>=2.12,torch<2.13" = ">=1.2,<1.3"
 "torch>=2.11,torch<2.12" = ">=1.1,<1.2"

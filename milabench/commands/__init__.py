@@ -27,6 +27,45 @@ def clone_with(cfg, new_cfg):
     return merge(deepcopy(cfg), new_cfg)
 
 
+def count_command_errors(result):
+    """Count how many errors are represented by a child command's result.
+
+    A child ``Command.execute()`` does not return a uniform type: leaf
+    commands go through ``execute_command`` which returns a *list* (of
+    ``asyncio.Task`` when ``timeout=True`` or of gathered results otherwise),
+    while aggregate commands (``ListCommand``/``SequenceCommand``) return an
+    ``int`` error count. ``asyncio.gather(..., return_exceptions=True)`` can
+    also hand us a raised ``BaseException`` directly.
+
+    This normalizes all of those into an error count so callers can simply do
+    ``error_count += count_command_errors(result)`` without blowing up with a
+    ``TypeError`` (e.g. ``int([...])``).
+    """
+    if result is None:
+        return 0
+
+    if isinstance(result, BaseException):
+        return 1
+
+    if isinstance(result, asyncio.Future):
+        if result.cancelled():
+            return 1
+        if result.exception() is not None:
+            return 1
+        return count_command_errors(result.result())
+
+    if isinstance(result, bool):
+        return int(result)
+
+    if isinstance(result, (int, float)):
+        return int(result)
+
+    if isinstance(result, (list, tuple, set)):
+        return sum(count_command_errors(item) for item in result)
+
+    return 0
+
+
 class Command:
     """Base class for an execution plan
 
@@ -241,10 +280,7 @@ class ListCommand(Command):
             results = await asyncio.gather(*tasks, return_exceptions=True)
         error_count = 0
         for result in results:
-            if isinstance(result, BaseException):
-                error_count += 1
-            elif result:
-                error_count += int(result)
+            error_count += count_command_errors(result)
         return error_count
 
     def copy(self, pack):

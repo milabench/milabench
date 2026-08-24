@@ -982,6 +982,57 @@ class TestResolveCompatConstraints:
         assert "flashinfer-python>=0.6" in cuda_lines
 
 
+class TestTorchaudioCompatRepo:
+    """The shipped platforms.toml must cap torchaudio to torch's minor.
+
+    torchaudio ships C++ extensions built against a specific torch minor and its
+    version tracks torch 1:1 (torch 2.10 -> torchaudio 2.10). Its pytorch.org
+    wheels only declare a loose ``torch`` runtime dep, so without this compat
+    rule ``uv pip compile`` would pair the newest torchaudio with an older,
+    capped torch and produce an ABI-mismatched lockfile
+    (``undefined symbol: torch_dtype_float4_e2m1fn_x2`` at runtime). These tests
+    guard that ``milabench pin`` emits the aligned constraint to begin with.
+    """
+
+    def _repo_config(self):
+        from pathlib import Path
+
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        return load_platform_config(path=repo_toml)
+
+    @pytest.mark.parametrize(
+        "torch,expected",
+        [
+            ("2.10.0", "torchaudio>=2.10,<2.11"),
+            ("2.11.0", "torchaudio>=2.11,<2.12"),
+            ("2.12.1", "torchaudio>=2.12,<2.13"),
+            ("2.13.0", "torchaudio>=2.13,<2.14"),
+        ],
+    )
+    def test_cuda_pins_torchaudio_to_torch_minor(self, torch, expected):
+        config = self._repo_config()
+        lines = _build_constraints_content(
+            config, "cuda", {"torch": torch, "cuda": "130"}
+        )
+        assert expected in lines
+        # Exactly one torchaudio constraint is emitted (first match wins).
+        assert sum(1 for l in lines if l.lower().startswith("torchaudio")) == 1
+
+    @pytest.mark.parametrize(
+        "torch,expected",
+        [
+            ("2.11.0", "torchaudio>=2.11,<2.12"),
+            ("2.12.1", "torchaudio>=2.12,<2.13"),
+        ],
+    )
+    def test_rocm_pins_torchaudio_to_torch_minor(self, torch, expected):
+        config = self._repo_config()
+        lines = _build_constraints_content(
+            config, "rocm", {"torch": torch, "rocm": "7.2"}
+        )
+        assert expected in lines
+
+
 class TestVllmExactMapping:
     """Exact (torch, backend_version) → vLLM version + source."""
 
