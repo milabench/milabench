@@ -331,6 +331,54 @@ def _torch_minor_pin(torch_version: str) -> str:
     return f"torch>={major}.{minor},<{major}.{minor + 1}"
 
 
+# Guards `_ensure_build_backends` so we only seed the ambient env once per
+# process, no matter how many combinations pin_all iterates over.
+_BUILD_BACKENDS_SEEDED = False
+
+
+def _ensure_build_backends(platform_config: PlatformConfig) -> None:
+    """Install ``[build] requires`` into the ambient environment before compiling.
+
+    ``pin_combination`` runs ``uv pip compile --no-build-isolation`` so that
+    torch-ecosystem source dists (e.g. the ``torchtitan`` git dep) build against
+    the torch already present instead of re-downloading it into an isolated
+    build env. The trade-off is that their build backends (setuptools, wheel,
+    hatchling, …) must already be importable in *this* environment, otherwise
+    ``prepare_metadata_for_build_wheel`` fails with e.g.
+    ``ModuleNotFoundError: No module named 'setuptools'``.
+
+    Install-time solves this via ``install_requires`` in ``pack.py``; pinning
+    needs the same pre-seed. Configured through platforms.toml's ``[build]
+    requires`` (``PlatformConfig.build_requires``). No-op when unset/empty or
+    once already seeded for this process.
+    """
+    global _BUILD_BACKENDS_SEEDED
+    if _BUILD_BACKENDS_SEEDED:
+        return
+
+    build_requires = getattr(platform_config, "build_requires", None) or []
+    if not build_requires:
+        _BUILD_BACKENDS_SEEDED = True
+        return
+
+    print(
+        f"Seeding build backends (--no-build-isolation): {', '.join(build_requires)}",
+        flush=True,
+    )
+    result = subprocess.run(
+        ["uv", "pip", "install", *build_requires],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Failed to install [build] requires before pinning "
+            f"({', '.join(build_requires)}):\n{result.stderr}"
+        )
+
+    _BUILD_BACKENDS_SEEDED = True
+
+
 async def pin_combination(
     platform_config: PlatformConfig,
     backend: str,
@@ -368,6 +416,10 @@ async def pin_combination(
         output_file.unlink()
 
     pin_dir.mkdir(parents=True, exist_ok=True)
+
+    # `uv pip compile --no-build-isolation` (below) builds source dists using
+    # this environment's build backends, so make sure they're present first.
+    _ensure_build_backends(platform_config)
 
     # Collect all deps from TOML-enabled benchmarks
     all_deps = _collect_all_toml_deps(

@@ -4,11 +4,11 @@
 
 fbgemm-gpu==1.8.0+rocm7.1.52802
     # via torchrec
-jax-rocm7-pjrt==0.11.0
+jax-rocm7-pjrt==0.11.1
     # via jax-rocm7-plugin
-jax-rocm7-plugin==0.11.0
+jax-rocm7-plugin==0.11.1
     # via -r requirements.in
-protobuf==7.35.1
+protobuf==7.36.0
     # via
     #   -r requirements.in
     #   google-api-core
@@ -66,12 +66,14 @@ torchao==0.18.0+rocm7.1
     #   -c constraints.in
     #   -r requirements.in
 torchaudio==2.11.0+rocm7.1
-    # via -r requirements.in
+    # via
+    #   -c constraints.in
+    #   -r requirements.in
 torchcodec==0.15.0+cpu
     # via
     #   -c constraints.in
     #   -r requirements.in
-torchrec==1.7.0+cpu
+torchrec==1.8.0+cpu
     # via -r requirements.in
 torchvision==0.27.1+rocm7.1
     # via

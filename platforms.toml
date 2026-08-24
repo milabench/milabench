@@ -152,18 +152,20 @@ pydantic = ">=2,<3"
 "rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
 "torch>=2.10,torch<2.11" = "<0.12"
 
-# torchaudio ships C++ extensions compiled against a specific torch minor and
-# its version tracks torch's minor 1:1 (torch 2.10 -> torchaudio 2.10, etc).
-# Unlike torchvision, torchaudio's pytorch.org wheels declare only a loose
-# `torch` runtime dependency, so with just torch capped to its minor the
-# resolver happily pairs the NEWEST torchaudio (e.g. 2.11) with an older torch
-# (e.g. 2.10). At runtime that mismatched extension fails to load with
+# Pre-2.11: torchaudio's C++ extensions were locked 1:1 to a torch minor, and
+# its pytorch.org wheels declare only a loose `torch` runtime dep, so with torch
+# merely capped to its minor the resolver pairs the NEWEST torchaudio (2.11)
+# with torch 2.10 -> at runtime the extension fails to load with
 # `undefined symbol: torch_dtype_float4_e2m1fn_x2` (a torch 2.11 symbol absent
-# in 2.10). Pin torchaudio to torch's minor so pin/install always agree.
+# in 2.10). So torch 2.10 must stay on torchaudio 2.10.
+# 2.11+: torchaudio 2.11 is built against PyTorch's stable ABI, so a single
+# torchaudio 2.11.0 wheel supports torch 2.11 "and all later versions" (2.12,
+# 2.13, …) -- there is no 2.12/2.13 torchaudio and none is needed. Allow >=2.11
+# rather than demanding a matching minor that doesn't exist. Mirrors the torchao
+# 0.16 -> 0.17 stabilization above. Source (compatibility matrix):
+#   https://docs.pytorch.org/audio/stable/installation.html#compatibility-matrix
 [compat.torchaudio]
-"torch>=2.13,torch<2.14" = ">=2.13,<2.14"
-"torch>=2.12,torch<2.13" = ">=2.12,<2.13"
-"torch>=2.11,torch<2.12" = ">=2.11,<2.12"
+"torch>=2.11" = ">=2.11"
 "torch>=2.10,torch<2.11" = ">=2.10,<2.11"
 
 [compat.mslk]

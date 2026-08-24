@@ -983,15 +983,17 @@ class TestResolveCompatConstraints:
 
 
 class TestTorchaudioCompatRepo:
-    """The shipped platforms.toml must cap torchaudio to torch's minor.
+    """The shipped platforms.toml must constrain torchaudio compatibly with torch.
 
-    torchaudio ships C++ extensions built against a specific torch minor and its
-    version tracks torch 1:1 (torch 2.10 -> torchaudio 2.10). Its pytorch.org
-    wheels only declare a loose ``torch`` runtime dep, so without this compat
-    rule ``uv pip compile`` would pair the newest torchaudio with an older,
-    capped torch and produce an ABI-mismatched lockfile
-    (``undefined symbol: torch_dtype_float4_e2m1fn_x2`` at runtime). These tests
-    guard that ``milabench pin`` emits the aligned constraint to begin with.
+    torchaudio was ABI-locked 1:1 to a torch minor only through 2.10, so torch
+    2.10 must stay on torchaudio 2.10 (torchaudio 2.11 uses torch 2.11 symbols
+    like ``torch_dtype_float4_e2m1fn_x2`` and fails to load -> undefined symbol).
+    From 2.11 on torchaudio's ABI is stable across future torch releases (2.11
+    works with torch 2.11, 2.12, 2.13, …) and 2.11.0 is currently its latest
+    release, so torch >= 2.11 should allow ``>=2.11`` rather than demand a
+    matching minor that doesn't exist. These tests guard that ``milabench pin``
+    emits a *satisfiable* constraint (the earlier ``>=2.12,<2.13`` rule made
+    torch 2.12/2.13 unresolvable: no such torchaudio is published).
     """
 
     def _repo_config(self):
@@ -1000,37 +1002,32 @@ class TestTorchaudioCompatRepo:
         repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
         return load_platform_config(path=repo_toml)
 
-    @pytest.mark.parametrize(
-        "torch,expected",
-        [
-            ("2.10.0", "torchaudio>=2.10,<2.11"),
-            ("2.11.0", "torchaudio>=2.11,<2.12"),
-            ("2.12.1", "torchaudio>=2.12,<2.13"),
-            ("2.13.0", "torchaudio>=2.13,<2.14"),
-        ],
-    )
-    def test_cuda_pins_torchaudio_to_torch_minor(self, torch, expected):
+    def test_torch_210_capped_below_211(self):
+        """torch 2.10 must not pull torchaudio 2.11 (ABI mismatch)."""
+        config = self._repo_config()
+        lines = _build_constraints_content(
+            config, "cuda", {"torch": "2.10.0", "cuda": "130"}
+        )
+        assert "torchaudio>=2.10,<2.11" in lines
+        assert sum(1 for l in lines if l.lower().startswith("torchaudio")) == 1
+
+    @pytest.mark.parametrize("torch", ["2.11.0", "2.12.1", "2.13.0"])
+    def test_torch_211plus_allows_211_forward(self, torch):
+        """torch >= 2.11 accepts torchaudio 2.11 (ABI-stable, satisfiable)."""
         config = self._repo_config()
         lines = _build_constraints_content(
             config, "cuda", {"torch": torch, "cuda": "130"}
         )
-        assert expected in lines
-        # Exactly one torchaudio constraint is emitted (first match wins).
+        assert "torchaudio>=2.11" in lines
         assert sum(1 for l in lines if l.lower().startswith("torchaudio")) == 1
 
-    @pytest.mark.parametrize(
-        "torch,expected",
-        [
-            ("2.11.0", "torchaudio>=2.11,<2.12"),
-            ("2.12.1", "torchaudio>=2.12,<2.13"),
-        ],
-    )
-    def test_rocm_pins_torchaudio_to_torch_minor(self, torch, expected):
+    @pytest.mark.parametrize("torch", ["2.11.0", "2.12.1"])
+    def test_rocm_torch_211plus_allows_211_forward(self, torch):
         config = self._repo_config()
         lines = _build_constraints_content(
             config, "rocm", {"torch": torch, "rocm": "7.2"}
         )
-        assert expected in lines
+        assert "torchaudio>=2.11" in lines
 
 
 class TestVllmExactMapping:

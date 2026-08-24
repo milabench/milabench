@@ -4,7 +4,7 @@
 
 fbgemm-gpu==1.8.0+cpu
     # via torchrec
-protobuf==7.35.1
+protobuf==7.36.0
     # via
     #   -r requirements.in
     #   google-api-core
@@ -17,7 +17,7 @@ protobuf==7.35.1
     #   tensorboard
     #   tensorboardx
     #   wandb
-setuptools==83.0.0
+setuptools==84.0.0
     # via
     #   setuptools-scm
     #   tensorboard
@@ -41,6 +41,7 @@ torch==2.10.0+cpu
     #   stable-baselines3
     #   tensordict
     #   timm
+    #   torchaudio
     #   torchdata
     #   torchmetrics
     #   torchprofile
@@ -59,9 +60,11 @@ torchao==0.16.0+cpu
     # via
     #   -c constraints.in
     #   -r requirements.in
-torchaudio==2.11.0+cpu
-    # via -r requirements.in
-torchrec==1.7.0+cpu
+torchaudio==2.10.0+cpu
+    # via
+    #   -c constraints.in
+    #   -r requirements.in
+torchrec==1.8.0+cpu
     # via -r requirements.in
 torchvision==0.25.0+cpu
     # via

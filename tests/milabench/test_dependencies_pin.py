@@ -837,3 +837,87 @@ class TestResolveCompatConstraints:
         assert _resolve_compat_constraints(
             config, {"torch": "2.10.0", "cuda": "129"}
         ) == []
+
+
+# ---------------------------------------------------------------------------
+# _ensure_build_backends
+# ---------------------------------------------------------------------------
+class TestEnsureBuildBackends:
+    """`uv pip compile --no-build-isolation` needs the [build] backends present.
+
+    Guards the fix for `ModuleNotFoundError: No module named 'setuptools'` when
+    building source dists (e.g. the torchtitan git dep) during pinning.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_seed_flag(self):
+        import milabench.dependencies.pin as pin
+
+        pin._BUILD_BACKENDS_SEEDED = False
+        yield
+        pin._BUILD_BACKENDS_SEEDED = False
+
+    def _fake_run(self, calls, returncode=0, stderr=""):
+        import subprocess as _sp
+
+        def run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            return _sp.CompletedProcess(cmd, returncode, stdout="", stderr=stderr)
+
+        return run
+
+    def test_installs_build_requires(self, monkeypatch):
+        import milabench.dependencies.pin as pin
+
+        calls = []
+        monkeypatch.setattr(pin.subprocess, "run", self._fake_run(calls))
+        config = PlatformConfig(build_requires=["setuptools", "wheel", "hatchling"])
+
+        pin._ensure_build_backends(config)
+
+        assert calls == [["uv", "pip", "install", "setuptools", "wheel", "hatchling"]]
+
+    def test_seeds_only_once_per_process(self, monkeypatch):
+        import milabench.dependencies.pin as pin
+
+        calls = []
+        monkeypatch.setattr(pin.subprocess, "run", self._fake_run(calls))
+        config = PlatformConfig(build_requires=["setuptools"])
+
+        pin._ensure_build_backends(config)
+        pin._ensure_build_backends(config)
+
+        assert len(calls) == 1
+
+    def test_noop_when_no_build_requires(self, monkeypatch):
+        import milabench.dependencies.pin as pin
+
+        calls = []
+        monkeypatch.setattr(pin.subprocess, "run", self._fake_run(calls))
+
+        pin._ensure_build_backends(PlatformConfig(build_requires=None))
+        pin._ensure_build_backends(PlatformConfig(build_requires=[]))
+
+        assert calls == []
+
+    def test_raises_on_install_failure(self, monkeypatch):
+        import milabench.dependencies.pin as pin
+
+        calls = []
+        monkeypatch.setattr(
+            pin.subprocess,
+            "run",
+            self._fake_run(calls, returncode=1, stderr="boom"),
+        )
+        config = PlatformConfig(build_requires=["setuptools"])
+
+        with pytest.raises(RuntimeError, match="Failed to install .build. requires"):
+            pin._ensure_build_backends(config)
+
+    def test_repo_toml_declares_setuptools(self):
+        """The shipped platforms.toml must seed setuptools for torchtitan builds."""
+        from milabench.dependencies.platforms import load_platform_config
+
+        repo_toml = Path(__file__).resolve().parents[2] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+        assert "setuptools" in (config.build_requires or [])
