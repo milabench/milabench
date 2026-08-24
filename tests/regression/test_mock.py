@@ -27,6 +27,16 @@ OVERSIZED_INSTALL_BENCHMARKS = {
     "recursiongfn"
 }
 
+# benchmarks that require `len(nodes) >= 2` -- this test suite's system only
+# ever has a single (mock) node, so `run` always skips them ("Skip <bench>
+# because the following capability is not satisfied: len(nodes) >= 2") and
+# never produces a run folder.
+MULTINODE_BENCHMARKS = {
+    "diffusion-nodes",
+    "llm-lora-ddp-nodes",
+    "llm-full-mp-nodes",
+}
+
 def run_cli(*args, expected_code=0, msg=None):
     from milabench.cli import main
 
@@ -126,6 +136,9 @@ def test_milabench(monkeypatch, bench, module_tmp_dir, standard_config):
     #
     # use Mock GPU-SMI
     #
+    if bench in MULTINODE_BENCHMARKS:
+        return
+
     with monkeypatch.context() as ctx:
         ctx.setattr(milabench.alt_async, "voir_run", mock_voir_run)
         ctx.setenv("MILABENCH_GPU_ARCH", "mock")
