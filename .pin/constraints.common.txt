@@ -83,11 +83,11 @@ blobfile==3.1.0
     #   torchtune
 blosc2==4.11.0
     # via tables
-boto3==1.43.78
+boto3==1.43.79
     # via
     #   cached-path
     #   litellm
-botocore==1.43.78
+botocore==1.43.79
     # via
     #   boto3
     #   s3transfer
@@ -590,74 +590,6 @@ numexpr==2.14.2
     # via
     #   blosc2
     #   tables
-numpy==2.5.2
-    # via
-    #   -r requirements.in
-    #   accelerate
-    #   ai2-olmo-core
-    #   ale-py
-    #   blosc2
-    #   brax
-    #   chex
-    #   contourpy
-    #   datasets
-    #   decord2
-    #   deepspeed
-    #   diffusers
-    #   distrax
-    #   dm-env
-    #   dm-tree
-    #   envpool
-    #   evaluate
-    #   evosax
-    #   fairscale
-    #   fbgemm-gpu
-    #   finufft
-    #   flashbax
-    #   flax
-    #   fvcore
-    #   gym
-    #   gymnasium
-    #   h5py
-    #   imageio
-    #   jax
-    #   jaxlib
-    #   jaxopt
-    #   matplotlib
-    #   minatar
-    #   ml-dtypes
-    #   mujoco
-    #   numexpr
-    #   onnx
-    #   opencv-python
-    #   optax
-    #   orbax-checkpoint
-    #   pandas
-    #   peft
-    #   pyro-ppl
-    #   pyvista
-    #   qmat
-    #   rdkit
-    #   rlax
-    #   scikit-learn
-    #   scipy
-    #   seaborn
-    #   stable-baselines3
-    #   tables
-    #   tensorboard
-    #   tensorboardx
-    #   tensordict
-    #   tensorstore
-    #   tfp-nightly
-    #   torch-geometric
-    #   torchmetrics
-    #   torchtune
-    #   torchvision
-    #   transformers
-    #   treescope
-    #   trimesh
-    #   webdataset
-    #   xformers
 omegaconf==2.3.1
     # via
     #   -r requirements.in

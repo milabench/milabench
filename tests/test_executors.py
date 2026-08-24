@@ -499,3 +499,53 @@ def test_sequence_command_shares_one_warden_across_children(monkeypatch):
         pass
 
     assert len(calls) == 1
+
+
+def test_working_dir_injects_per_gpu_env_after_copy():
+    """``env -`` wipes the process env, including CUDA_VISIBLE_DEVICES.
+
+    PerGPU sets that var on a cloned pack *after* WorkingDir is constructed
+    (llm-lora-single). Argv must be rebuilt from the current pack so each
+    worker keeps its own GPU.
+    """
+    from milabench.commands import WorkingDir, clone_with
+
+    pack = benchio()
+    wrapped = WorkingDir(PackCommand(pack, "--start", "2"))
+    run = clone_with(pack.config, {"env": {"CUDA_VISIBLE_DEVICES": "3"}})
+    copied = wrapped.copy(pack.copy(run))
+
+    argv = copied.argv()
+    dash = argv.index("-")
+    after_dash = argv[dash + 1 :]
+    assert "CUDA_VISIBLE_DEVICES=3" in after_dash
+    # Construction-time pack had no CUDA_VISIBLE_DEVICES.
+    assert "CUDA_VISIBLE_DEVICES=3" not in wrapped.argv()
+
+
+def test_working_dir_env_dedupes_and_warns_on_override():
+    from milabench.commands import WorkingDir, clone_with
+
+    pack = benchio()
+    run = clone_with(
+        pack.config,
+        {
+            "system": {"env": {"HF_HOME": "/from-system", "CUDA_VISIBLE_DEVICES": "0"}},
+            "env": {"CUDA_VISIBLE_DEVICES": "3"},
+        },
+    )
+    wrapped = WorkingDir(PackCommand(pack.copy(run), "--start", "2"))
+
+    with pytest.warns(UserWarning) as rec:
+        argv = wrapped.argv()
+
+    messages = [str(w.message) for w in rec]
+    assert any("pack.env overrides CUDA_VISIBLE_DEVICES" in m for m in messages)
+    assert any("system.env overrides HF_HOME" in m for m in messages)
+
+    after_dash = argv[argv.index("-") + 1 :]
+    keys = [a.split("=", 1)[0] for a in after_dash if "=" in a]
+    assert keys.count("CUDA_VISIBLE_DEVICES") == 1
+    assert keys.count("HF_HOME") == 1
+    assert "CUDA_VISIBLE_DEVICES=3" in after_dash
+    assert "HF_HOME=/from-system" in after_dash

@@ -3,8 +3,9 @@
 # clone_subtree in the benchfile.py, in which case this file can simply
 # be deleted.
 
-import datetime
+import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -109,6 +110,26 @@ class SEHTaskMonkeyPatch(SEHTask):
         return {"seh": model}
 
 
+def _instance_log_dir() -> str:
+    """Private sqlite/log dir for this process.
+
+    gflownet always writes ``{log_dir}/generated_mols_{worker}.db`` and
+    ``CREATE TABLE results``. Parallel ``per_gpu`` jobs must not share that
+    path; we do not patch the third-party logger.
+    """
+    extra = os.getenv("MILABENCH_DIR_EXTRA") or tempfile.gettempdir()
+    tag = "run"
+    raw = os.environ.get("MILABENCH_CONFIG")
+    if raw:
+        try:
+            tag = ".".join(json.loads(raw).get("tag") or ["run"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    root = os.path.join(extra, "recursiongfn")
+    os.makedirs(root, exist_ok=True)
+    return tempfile.mkdtemp(prefix=f"{tag}.", dir=root)
+
+
 def main(
     data:str, batch_size: int, num_workers: int, num_steps: int, layer_width: int, num_layers: int
 ):
@@ -117,7 +138,7 @@ def main(
 
     config = init_empty(Config())
     config.print_every = 1
-    config.log_dir = f"./logs/debug_run_seh_frag_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    config.log_dir = _instance_log_dir()
     config.device = accelerator.fetch_device(0)  # This is your CUDA device.
     config.overwrite_existing_exp = True
 

@@ -388,44 +388,101 @@ class WrapperCommand(SingleCmdCommand):
         return [*self.wrapper_argv]
 
 
+def _env_assignment(token: str):
+    """Return ``(key, value)`` if *token* is a POSIX env assignment, else ``None``."""
+    if "=" not in token:
+        return None
+    key, value = token.split("=", 1)
+    if key and key.isidentifier():
+        return key, value
+    return None
+
+
+def _merge_env(dst: dict, updates, *, source: str) -> None:
+    """Fold *updates* into *dst*; later sources win, duplicates collapse.
+
+    Insertion order is preserved (first seen). A warning is emitted only when
+    the new value actually differs.
+    """
+    if not updates:
+        return
+    items = updates.items() if hasattr(updates, "items") else updates
+    for key, value in items:
+        key = str(key)
+        value = str(value)
+        if key in dst and dst[key] != value:
+            warnings.warn(
+                f"WorkingDir: {source} overrides {key}={dst[key]!r} with {value!r}",
+                UserWarning,
+                stacklevel=3,
+            )
+        dst[key] = value
+
+
 class WorkingDir(WrapperCommand):
     """Wrap a command to change the working directory or force environment variables.
     
     This wrapper is usefull for commands that executes remotely or inside a container where
     the environment or the working directory might be changed by the SSH command or the container.
+
+    ``env -`` starts from a clean environment, so GPU placement vars such as
+    ``CUDA_VISIBLE_DEVICES`` (set by ``PerGPU`` on the pack *after* this
+    wrapper is constructed) must be read from the current pack at argv time,
+    not baked in ``__init__``.
     """
     #  Maybe we should wrap ALL the commands with it so it can be invariant for how it is executed 
     #  and we don't have to worry about it
 
     def __init__(self, cmd: Command, **kwargs):
+        super().__init__(cmd, **kwargs)
+
+    def _argv(self, **kwargs) -> List:
+        del kwargs
+        pack = self.pack
+        env = {}
+        extras = []
+
+        _merge_env(
+            env,
+            {
+                "XDG_CACHE_HOME": str(pack.dirs.cache),
+                "HF_HOME": str(pack.dirs.cache),
+                "TORCH_HOME": str(pack.dirs.cache),
+            },
+            source="cache dirs",
+        )
         gloo_ifname = option("network.gloo_ifname", str, None)
         nccl_ifname = option("network.nccl_ifname", str, None)
-
-        args = [
-            "env",
-            "-C", str(cmd.pack.working_directory),
-            "-",
-            # We can also force environment variables
-            f"XDG_CACHE_HOME={str(cmd.pack.dirs.cache)}",
-            f"HF_HOME={str(cmd.pack.dirs.cache)}",
-            f"TORCH_HOME={str(cmd.pack.dirs.cache)}",
-            #  "TORCH_DISTRIBUTED_DEBUG=DETAIL"
-        ]
         if gloo_ifname:
-            args.append(f"GLOO_SOCKET_IFNAME={gloo_ifname}")
+            _merge_env(env, {"GLOO_SOCKET_IFNAME": gloo_ifname}, source="network.gloo_ifname")
         if nccl_ifname:
-            args.append(f"NCCL_SOCKET_IFNAME={nccl_ifname}")
+            _merge_env(env, {"NCCL_SOCKET_IFNAME": nccl_ifname}, source="network.nccl_ifname")
 
         # `env -` clears the process environment, so re-inject system.env
         # (resolved at system-config load; also applied via pack.make_env).
-        for k, v in (cmd.pack.config.get("system") or {}).get("env", {}).items():
-            args.append(f"{k}={v}")
+        _merge_env(env, (pack.config.get("system") or {}).get("env"), source="system.env")
 
-        # Bench-specific env (e.g. torchtitan GLM-5 NCCL watchdog overrides).
-        for k, v in (cmd.pack.config.get("env") or {}).items():
-            args.append(f"{k}={v}")
+        # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
+        _merge_env(env, pack.config.get("env"), source="pack.env")
 
-        super().__init__(cmd, *args)
+        # Allow callers (e.g. TorchtitanSrun.main_executor) to append extra
+        # NAME=VALUE tokens after construction.
+        for token in self.wrapper_argv:
+            token = str(token)
+            assignment = _env_assignment(token)
+            if assignment is None:
+                extras.append(token)
+            else:
+                _merge_env(env, [assignment], source="wrapper_argv")
+
+        return [
+            "env",
+            "-C",
+            str(pack.working_directory),
+            "-",
+            *(f"{k}={v}" for k, v in env.items()),
+            *extras,
+        ]
 
 
 def is_inside_docker():
