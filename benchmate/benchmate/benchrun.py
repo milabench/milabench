@@ -73,6 +73,26 @@ def _rdzv_backend(argv) -> str:
     return "static"
 
 
+def _max_nnodes(argv) -> int:
+    """Return the maximum node count from ``--nnodes`` (torchrun default: 1).
+
+    torchrun accepts either ``N`` or a ``MIN:MAX`` range; we use MAX so a
+    single-node job (``1`` or ``1:1``) is detected regardless of form.
+    """
+    value = None
+    for i, arg in enumerate(argv):
+        if arg == "--nnodes" and i + 1 < len(argv):
+            value = argv[i + 1]
+        elif arg.startswith("--nnodes="):
+            value = arg.split("=", 1)[1]
+    if value is None:
+        return 1
+    try:
+        return int(str(value).split(":")[-1])
+    except ValueError:
+        return 1
+
+
 def _slurm_node_rank() -> int:
     """Rank for static rdzv when milabench launches workers via ``srun -x main``.
 
@@ -91,6 +111,11 @@ def maybe_inject_node_rank(argv):
 
     Inserts ``--node-rank`` among torchrun options (before ``--``), never as a
     script argument after the separator.
+
+    For a single-node job (``--nnodes`` max of 1) the rank is always 0: the job
+    runs inside a Slurm allocation where ``SLURM_NODEID`` may be 0, but there is
+    no rank-0 worker to wait for, so deriving a nonzero rank would hang static
+    rendezvous.
     """
     argv = list(argv)
     torch_args, rest = _split_at_script_sep(argv)
@@ -98,7 +123,11 @@ def maybe_inject_node_rank(argv):
         return argv
     if _argv_has_option(torch_args, "--node-rank", "--node_rank"):
         return argv
-    torch_args.append(f"--node-rank={_slurm_node_rank()}")
+    if _max_nnodes(torch_args or argv) <= 1:
+        node_rank = 0
+    else:
+        node_rank = _slurm_node_rank()
+    torch_args.append(f"--node-rank={node_rank}")
     return torch_args + rest
 
 

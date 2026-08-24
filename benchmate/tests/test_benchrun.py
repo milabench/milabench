@@ -16,6 +16,7 @@ for _name in (
     sys.modules.setdefault(_name, MagicMock())
 
 from benchmate.benchrun import (  # noqa: E402
+    _max_nnodes,
     _rdzv_backend,
     _slurm_node_rank,
     maybe_inject_node_rank,
@@ -83,7 +84,39 @@ class TestSlurmNodeRank:
         assert _slurm_node_rank() == 2
 
 
+class TestMaxNnodes:
+    def test_defaults_to_one(self):
+        assert _max_nnodes(["--rdzv-backend=static"]) == 1
+
+    def test_equals_form(self):
+        assert _max_nnodes(["--nnodes=4"]) == 4
+
+    def test_separate_arg(self):
+        assert _max_nnodes(["--nnodes", "4"]) == 4
+
+    def test_range_uses_max(self):
+        assert _max_nnodes(["--nnodes=1:4"]) == 4
+
+
 class TestMaybeInjectNodeRank:
+    def test_single_node_under_slurm_stays_zero(self, monkeypatch):
+        """A single-node job inside a Slurm allocation must not derive rank 1.
+
+        Regression: benchrun injected ``--node-rank=1`` for ``--nnodes=1`` when
+        ``SLURM_NODEID=0``, hanging static rendezvous (e.g. lightning-gpus).
+        """
+        monkeypatch.setenv("SLURM_NODEID", "0")
+        argv = [
+            "--nnodes=1",
+            "--rdzv-backend=static",
+            "--rdzv-endpoint=127.0.0.1:29400",
+            "--nproc-per-node=gpu",
+            "--",
+            "main.py",
+        ]
+        out = maybe_inject_node_rank(argv)
+        assert out[out.index("--") - 1] == "--node-rank=0"
+
     def test_injects_zero_without_slurm(self, monkeypatch):
         monkeypatch.delenv("SLURM_NODEID", raising=False)
         out = maybe_inject_node_rank(STATIC_ARGV)
