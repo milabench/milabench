@@ -106,7 +106,9 @@ nvidia-cutlass-dsl-libs-core==4.6.2
 nvidia-cutlass-dsl-libs-cu12==4.6.2
     # via nvidia-cutlass-dsl
 nvidia-ml-py==13.610.43
-    # via flashinfer-python
+    # via
+    #   -r requirements.in
+    #   flashinfer-python
 nvidia-nccl-cu12==2.27.5
     # via
     #   jax-cuda12-plugin
@@ -200,7 +202,7 @@ torchaudio==2.10.0+cu126
     # via
     #   -c constraints.in
     #   -r requirements.in
-torchcodec==0.11.1+cu126
+torchcodec==0.10.0+cu126
     # via
     #   -c constraints.in
     #   -r requirements.in

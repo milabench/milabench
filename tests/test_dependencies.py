@@ -95,6 +95,9 @@ def platforms_toml(tmp_path):
         install = "pip install 'vllm @ git+https://github.com/vllm-project/vllm.git@{vllm}'"
         env = { VLLM_TARGET_DEVICE = "cuda" }
 
+        [cuda]
+        requires = ["nvidia-ml-py"]
+
         [rocm.indexes]
         index-url = "https://pypi.org/simple"
         extra-index-url = [
@@ -201,6 +204,8 @@ class TestPlatformConfig:
         cuda = config.backends["cuda"]
         assert cuda.indexes.extra_index_url == ["https://download.pytorch.org/whl/cu{cuda}"]
         assert cuda.constraints["torchao"] == "<0.17.0"
+        assert cuda.requires == ["nvidia-ml-py"]
+        assert config.backends["rocm"].requires == []
 
     def test_overrides_parsed(self, platforms_toml):
         config = load_platform_config(path=platforms_toml)
@@ -311,6 +316,7 @@ class TestRequirements:
         deps = resolve_benchmark(benchmark_dir, "cuda", config)
         assert "voir>=0.2.19,<0.3" in deps
         assert "flashinfer-python" in deps
+        assert "nvidia-ml-py" in deps
 
     def test_resolve_benchmark_disabled_raises(self, benchmark_dir, platforms_toml):
         config = load_platform_config(path=platforms_toml)
@@ -469,6 +475,7 @@ class TestPin:
         assert "voir>=0.2.19,<0.3" in deps
         assert "flashinfer-python" in deps
         assert "torch" in deps
+        assert "nvidia-ml-py" in deps
 
     def test_collect_all_toml_deps_rocm_no_flashinfer(self, benchmark_dir, platforms_toml):
         config = load_platform_config(path=platforms_toml)
@@ -779,8 +786,8 @@ def compat_toml(tmp_path):
 
         [compat.torchcodec]
         "rocm>=0,torch>=2.11" = "==0.15.0+cpu"
-        "rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
-        "torch>=2.10,torch<2.11" = "<0.12"
+        "rocm>=0,torch>=2.10,torch<2.11" = "==0.10.0+cpu"
+        "torch>=2.10,torch<2.11" = ">=0.10,<0.11"
 
         [compat.flashinfer-python]
         "cuda>=13" = ">=0.6"
@@ -878,9 +885,16 @@ class TestResolveCompatConstraints:
             config, {"torch": "2.10.0", "cuda": "130"}, backend="cuda"
         )
         assert "torchao>=0.16,<0.17" in lines
-        assert "torchcodec<0.12" in lines
+        assert "torchcodec>=0.10,<0.11" in lines
         assert "flashinfer-python>=0.6" in lines
         assert "mslk>=1.0,<1.1" in lines
+
+    def test_torch_2100_rocm72(self, compat_toml):
+        config = load_platform_config(path=compat_toml)
+        lines = _resolve_compat_constraints(
+            config, {"torch": "2.10.0", "rocm": "7.2"}, backend="rocm"
+        )
+        assert "torchcodec==0.10.0+cpu" in lines
 
     def test_torch_2110_cuda126(self, compat_toml):
         config = load_platform_config(path=compat_toml)

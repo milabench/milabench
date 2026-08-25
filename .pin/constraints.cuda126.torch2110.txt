@@ -108,7 +108,9 @@ nvidia-cutlass-dsl-libs-core==4.6.2
 nvidia-cutlass-dsl-libs-cu12==4.6.2
     # via nvidia-cutlass-dsl
 nvidia-ml-py==13.610.43
-    # via flashinfer-python
+    # via
+    #   -r requirements.in
+    #   flashinfer-python
 nvidia-nccl-cu12==2.28.9
     # via
     #   jax-cuda12-plugin

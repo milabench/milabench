@@ -101,7 +101,7 @@ def _collect_all_toml_deps(
                 seen.add(resolved)
                 all_deps.append(resolved)
 
-    return all_deps
+    return platform_config.merge_vendor_requires(all_deps, backend, overrides)
 
 
 # Wheel indexes that only exist for some torch×backend combos:

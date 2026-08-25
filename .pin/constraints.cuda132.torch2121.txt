@@ -102,7 +102,9 @@ nvidia-cutlass-dsl==4.5.3
 nvidia-cutlass-dsl-libs-base==4.5.3
     # via nvidia-cutlass-dsl
 nvidia-ml-py==13.610.43
-    # via flashinfer-python
+    # via
+    #   -r requirements.in
+    #   flashinfer-python
 nvidia-nccl-cu13==2.29.7
     # via
     #   jax-cuda13-plugin

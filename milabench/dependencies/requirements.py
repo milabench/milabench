@@ -161,4 +161,4 @@ def resolve_benchmark(
     if deps_need_vllm(resolved) and backend in platform_config.vllm_maps:
         platform_config.resolve_vllm(backend, overrides, required=True)
 
-    return resolved
+    return platform_config.merge_vendor_requires(resolved, backend, overrides)

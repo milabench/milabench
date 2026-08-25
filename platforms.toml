@@ -40,6 +40,12 @@ platforms = ["manylinux_2_28_x86_64", "manylinux_2_28_aarch64"]  # pin for both 
 # python = "cp312"                         # auto-detected if omitted
 
 # ─── CUDA Backend ─────────────────────────────────────────────────────────────
+# [cuda] requires: vendor Python packages installed into every CUDA venv
+# (hardware-stack bindings, not OS/apt packages). nvidia-ml-py provides
+# pynvml for voir's GPU monitor.
+
+[cuda]
+requires = ["nvidia-ml-py"]
 
 [cuda.indexes]
 index-url = "https://pypi.org/simple"
@@ -64,6 +70,9 @@ gymnax = ">=0.0.8"
 pydantic = ">=2,<3"
 
 # ─── ROCm Backend ─────────────────────────────────────────────────────────────
+
+[rocm]
+requires = []
 
 [rocm.indexes]
 index-url = "https://pypi.org/simple"
@@ -146,11 +155,13 @@ pydantic = ">=2,<3"
 "torch>=2.10,torch<2.11" = ">=0.16,<0.17"
 
 [compat.torchcodec]
-# No ROCm torchcodec wheel; PyPI's untagged Linux wheel is CUDA (libnvrtc).
+# https://github.com/meta-pytorch/torchcodec#compatibility-with-torch-versions
+# 0.10 → torch 2.10; 0.11 → torch 2.11; 0.12+ → torch >= 2.11
+# No ROCm CUDA wheel; PyPI's untagged Linux wheel is CUDA (libnvrtc).
 # Force the CPU/FFmpeg build from download.pytorch.org/whl/cpu.
 "rocm>=0,torch>=2.11" = "==0.15.0+cpu"
-"rocm>=0,torch>=2.10,torch<2.11" = "==0.11.1+cpu"
-"torch>=2.10,torch<2.11" = "<0.12"
+"rocm>=0,torch>=2.10,torch<2.11" = "==0.10.0+cpu"
+"torch>=2.10,torch<2.11" = ">=0.10,<0.11"
 
 # Pre-2.11: torchaudio's C++ extensions were locked 1:1 to a torch minor, and
 # its pytorch.org wheels declare only a loose `torch` runtime dep, so with torch

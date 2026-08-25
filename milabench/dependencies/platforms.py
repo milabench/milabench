@@ -226,6 +226,30 @@ class PlatformConfig:
             return BackendConfig(name=name)
         return self.backends[name]
 
+    def vendor_requires(self, backend: str, overrides: dict[str, str] | None = None) -> list[str]:
+        """Interpolate ``[backend] requires`` (vendor/hardware pip packages)."""
+        variables = self.resolve_vars(overrides)
+        resolved: list[str] = []
+        for dep in self.get_backend(backend).requires:
+            resolved.append(str(dep).format(**variables))
+        return resolved
+
+    def merge_vendor_requires(
+        self,
+        deps: list[str],
+        backend: str,
+        overrides: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Append vendor requires that are not already in ``deps``."""
+        merged = list(deps)
+        names = {_dep_name(dep) for dep in merged}
+        for dep in self.vendor_requires(backend, overrides):
+            name = _dep_name(dep)
+            if name and name not in names:
+                merged.append(dep)
+                names.add(name)
+        return merged
+
 
 def deps_need_vllm(deps: list[str]) -> bool:
     """True if any dependency line requests the ``vllm`` package."""
@@ -236,6 +260,10 @@ def deps_need_vllm(deps: list[str]) -> bool:
     return False
 
 
+def _dep_name(spec: str) -> str:
+    return re.split(r"[<>=!~;\[\s]", spec.strip(), maxsplit=1)[0].strip().lower()
+
+
 @dataclass
 class BackendConfig:
     """Configuration for a single backend (cuda, rocm, etc.)."""
@@ -244,6 +272,8 @@ class BackendConfig:
     indexes: IndexConfig = field(default_factory=lambda: IndexConfig())
     constraints: dict[str, str] = field(default_factory=dict)
     overrides: dict[str, OverrideConfig] = field(default_factory=dict)
+    # Vendor / hardware pip packages from ``[backend] requires`` (e.g. nvidia-ml-py).
+    requires: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -462,6 +492,12 @@ def load_platform_config(
                 extra_index_url=idx.get("extra-index-url", []),
                 find_links=idx.get("find-links", []),
             )
+
+        # Vendor / hardware pip packages (e.g. nvidia-ml-py on CUDA)
+        raw_requires = section.get("requires", [])
+        if isinstance(raw_requires, str):
+            raw_requires = [raw_requires]
+        backend.requires = [str(x) for x in raw_requires]
 
         # Constraints
         backend.constraints = section.get("constraints", {})

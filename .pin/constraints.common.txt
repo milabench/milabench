@@ -306,7 +306,7 @@ glfw==2.10.2
     # via
     #   envpool
     #   mujoco
-google-api-core==2.35.0
+google-api-core==2.34.0
     # via
     #   google-cloud-core
     #   google-cloud-storage
@@ -761,7 +761,7 @@ pluggy==1.6.0
     # via pytest
 pooch==1.9.0
     # via pyvista
-portalocker==4.2.0
+portalocker==4.3.0
     # via iopath
 prometheus-client==0.26.0
     # via orbax-checkpoint
@@ -1059,7 +1059,7 @@ termcolor==3.3.0
     # via
     #   fire
     #   fvcore
-tfp-nightly==0.26.0.dev20260824
+tfp-nightly==0.26.0.dev20260825
     # via
     #   -r requirements.in
     #   distrax
@@ -1151,7 +1151,7 @@ typeguard==4.6.0
     # via tyro
 typer==0.27.1
     # via transformers
-types-protobuf==7.35.1.20260824
+types-protobuf==7.35.1.20260825
     # via envpool
 typing-extensions==4.16.0
     # via
