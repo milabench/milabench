@@ -63,6 +63,9 @@ class VllmMapping:
     version: str
     find_links: str | None = None
     extra_index_url: str | None = None
+    # Extra constraints the rest of the tree must honor so the mapped wheel
+    # can install without compiling vLLM into the shared lockfile.
+    constraints: list[str] = field(default_factory=list)
 
     def as_constraint(self) -> str:
         return f"vllm=={self.version}"
@@ -74,6 +77,15 @@ class VllmMapping:
         if self.find_links:
             args.extend(["--find-links", self.find_links])
         return args
+
+    def extra_constraint_names(self) -> list[str]:
+        """Package names from :attr:`constraints` (e.g. nvidia-cudnn-frontend)."""
+        names: list[str] = []
+        for line in self.constraints:
+            name = re.split(r"[<>=!~;\[]", line.strip(), maxsplit=1)[0].strip().lower()
+            if name:
+                names.append(name)
+        return names
 
 
 @dataclass
@@ -362,10 +374,14 @@ def _parse_vllm_maps(raw: dict[str, Any]) -> dict[str, dict[tuple[str, str], Vll
                     f"[vllm.{backend}] entry {key!r} requires 'find-links' "
                     f"or 'extra-index-url'"
                 )
+            raw_constraints = value.get("constraints") or []
+            if isinstance(raw_constraints, str):
+                raw_constraints = [raw_constraints]
             backend_maps[(torch_ver, backend_ver)] = VllmMapping(
                 version=str(version),
                 find_links=str(find_links) if find_links else None,
                 extra_index_url=str(extra) if extra else None,
+                constraints=[str(c) for c in raw_constraints],
             )
         if backend_maps:
             result[str(backend)] = backend_maps

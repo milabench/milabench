@@ -1045,6 +1045,8 @@ class TestVllmExactMapping:
         m130 = config.lookup_vllm("cuda", "130", "2.10.0")
         assert m130.version == "0.19.1+cu130"
         assert m130.find_links.endswith("/v0.19.1")
+        assert m130.constraints == ["nvidia-cudnn-frontend>=1.13,<1.19"]
+        assert m130.extra_constraint_names() == ["nvidia-cudnn-frontend"]
 
         m129 = config.lookup_vllm("cuda", "129", "2.10.0")
         assert m129.version == "0.19.1"
@@ -1217,6 +1219,58 @@ class TestVllmExactMapping:
                 "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.17.1"
                 not in pip_args
             )
+        finally:
+            result.cleanup()
+
+    def test_install_drops_pin_conflicts_for_mapped_vllm(self, tmp_path):
+        content = dedent("""\
+            [vars]
+            cuda = "130"
+            torch = "2.10.0"
+
+            [cuda.indexes]
+            index-url = "https://pypi.org/simple"
+
+            [vllm.cuda]
+            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://example.com/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
+        """)
+        path = tmp_path / "platforms.toml"
+        path.write_text(content)
+
+        bench = tmp_path / "benchmarks" / "vllm"
+        bench.mkdir(parents=True)
+        (bench / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["vllm"]
+        """))
+
+        pin_dir = tmp_path / ".pin"
+        pin_dir.mkdir()
+        (pin_dir / "constraints.cuda130.torch2100.txt").write_text(
+            "torch==2.10.0+cu130\n"
+            "nvidia-cudnn-frontend==1.27.0\n"
+            "    # via flashinfer-python\n"
+            "numpy==2.3.0\n"
+        )
+
+        config = load_platform_config(path=path)
+        result = install_args(
+            benchmark_path=bench,
+            platform_config=config,
+            backend="cuda",
+            pin_dir=pin_dir,
+            overrides={"cuda": "130", "torch": "2.10.0"},
+        )
+        try:
+            platform = result.platform_constraint_file.read_text()
+            assert "vllm==0.19.1+cu130" in platform
+            assert "nvidia-cudnn-frontend>=1.13,<1.19" in platform
+            pin_text = result.constraint_file.read_text()
+            assert "nvidia-cudnn-frontend==1.27.0" not in pin_text
+            assert "torch==2.10.0+cu130" in pin_text
+            assert "numpy==2.3.0" in pin_text
         finally:
             result.cleanup()
 

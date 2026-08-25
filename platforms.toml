@@ -181,20 +181,21 @@ pydantic = ">=2,<3"
 # ─── vLLM ─────────────────────────────────────────────────────────────────────
 # Exact map: (torch, backend_version) → installable version + wheel source.
 # Auto-pin does not compile vLLM into the shared lockfile (its extras mix
-# CUDA stacks). Install uses this table only: `vllm==<version>` plus the
-# find-links / extra-index-url below.
+# CUDA stacks). Install uses this table: `vllm==<version>` plus the
+# find-links / extra-index-url. `constraints` are ranges the rest of the
+# tree must honor so that wheel can install against the shared pin.
 # Do not --set vllm=...; unsupported pairs fail with the supported list.
 
 [vllm.cuda]
-"2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
-"2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
+"2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
 "2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 
 [vllm.cpu]
 # backend_version is the "cpu" placeholder from [vars] (always "0").
 # Each entry verified against the wheel's own METADATA (Requires-Dist: torch==...).
-"2.10.0,0" = { version = "0.19.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.10.0,0" = { version = "0.19.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
 "2.11.0,0" = { version = "0.26.0+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.13.0,0" = { version = "0.27.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.27.1" }
 

@@ -601,8 +601,12 @@ async def pin_combination(
     # Build index URL arguments (vLLM find-links are install-only)
     index_args = _build_index_args(platform_config, backend, overrides)
 
-    # Build platform constraint lines (vLLM version is install-only)
+    # Build platform constraint lines (vLLM version is install-only, but the
+    # mapped wheel's extra constraints still apply so the lockfile stays
+    # installable — e.g. nvidia-cudnn-frontend<1.19 for vllm 0.19.1).
     constraint_lines = _build_constraints_content(platform_config, backend, overrides)
+    if vllm_mapping is not None:
+        constraint_lines.extend(vllm_mapping.constraints)
 
     # Exact local-version pin (torch==2.10.0+cu130). A minor range also matches
     # untagged PyPI torch, which PEP 440 ranks above +cu130 and which pulls

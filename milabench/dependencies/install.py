@@ -121,6 +121,7 @@ def install_args(
     )
     if vllm_mapping is not None:
         platform_lines.append(vllm_mapping.as_constraint())
+        platform_lines.extend(vllm_mapping.constraints)
     if platform_lines:
         temp_cons = tempfile.NamedTemporaryFile(
             mode="w",
@@ -156,6 +157,31 @@ def install_args(
                 if not constraint_file.exists():
                     constraint_file = None
 
+        # The lockfile may pin a version the mapped vLLM wheel rejects
+        # (nvidia-cudnn-frontend==1.27 vs vllm 0.19.1's <1.19). Drop those
+        # exact pins so the mapping's ranges in the platform constraint file win.
+        if (
+            constraint_file is not None
+            and vllm_mapping is not None
+            and vllm_mapping.extra_constraint_names()
+        ):
+            filtered = tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".txt",
+                prefix="milabench-vllm-pin-",
+                dir=str(constraint_file.parent),
+                delete=False,
+            )
+            filtered.close()
+            filtered_path = Path(filtered.name)
+            _drop_packages_from_constraint_file(
+                constraint_file,
+                filtered_path,
+                vllm_mapping.extra_constraint_names(),
+            )
+            constraint_file = filtered_path
+            temp_files.append(filtered_path)
+
     # Build index args (+ vLLM source when mapped)
     index_args = get_index_args(platform_config, backend, all_overrides)
     if vllm_mapping is not None:
@@ -168,6 +194,29 @@ def install_args(
         index_args=index_args,
         _temp_files=temp_files,
     )
+
+
+def _drop_packages_from_constraint_file(
+    src: Path,
+    dest: Path,
+    drop: list[str],
+) -> None:
+    """Copy a uv pin file, omitting ``pkg==`` blocks whose names are in drop.
+
+    Written next to ``src`` so relative ``-c constraints.common.txt`` includes
+    still resolve.
+    """
+    drop_names = {name.lower() for name in drop}
+    skipping = False
+    kept: list[str] = []
+    for line in src.read_text().splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("#", "-", "--")) and "==" in stripped:
+            name = stripped.split("==", 1)[0].strip().lower()
+            skipping = name in drop_names
+        if not skipping:
+            kept.append(line)
+    dest.write_text("\n".join(kept) + "\n")
 
 
 def _merge_backend_override(
