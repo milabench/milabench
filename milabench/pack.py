@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 import traceback
 from argparse import Namespace as NS
 import functools
@@ -38,6 +40,39 @@ def should_use_uv(override):
         return override
 
     return option("use_uv", int, 1)
+
+
+def uv_cmd():
+    """Return the argv prefix used to invoke ``uv``.
+
+    ``pip_install`` / ``pip compile`` look up ``uv`` on ``PATH``, but the
+    official installer drops the binary in ``$HOME/.local/bin`` (not on
+    ``PATH`` in Docker), and milabench already vendors ``uv`` as its own
+    dependency. Prefer, in order:
+
+    1. ``$UV`` (slurm scripts set this)
+    2. The ``uv`` next to ``sys.executable`` (milabench's venv)
+    3. ``$HOME/.local/bin/uv`` (astral installer default)
+    4. ``uv`` on ``PATH``
+    5. ``python -m uv`` as a last resort
+    """
+    explicit = os.environ.get("UV")
+    if explicit:
+        return [explicit]
+
+    candidates = [
+        os.path.join(os.path.dirname(sys.executable), "uv"),
+        os.path.join(os.path.expanduser("~"), ".local", "bin", "uv"),
+    ]
+    which = shutil.which("uv")
+    if which:
+        candidates.append(which)
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return [candidate]
+
+    return [sys.executable, "-m", "uv"]
 
 def no_build_isolation(build_isolation):
     if option("no_build_isolation", bool, not build_isolation):
@@ -405,7 +440,7 @@ class BasePackage:
 
         with exclude_system_packages(self, enabled=should_use_uv(use_uv_override)) as exclude_args:
             if should_use_uv(use_uv_override):
-                pip_install_cmd = ["uv", "pip", "install"] + exclude_args + no_build_isolation(build_isolation) + pip_more_args() + [ "--index-strategy", "unsafe-best-match", *args]
+                pip_install_cmd = uv_cmd() + ["pip", "install"] + exclude_args + no_build_isolation(build_isolation) + pip_more_args() + [ "--index-strategy", "unsafe-best-match", *args]
             else:
                 pip_install_cmd = ["pip", "install"] + no_build_isolation(build_isolation) + pip_more_args() + [*args]
 
@@ -783,7 +818,7 @@ class Package(BasePackage):
 
         return await cmd.CmdCommand(
             self,
-            "uv",
+            *uv_cmd(),
             "pip",
             "compile",
             "--emit-index-url",

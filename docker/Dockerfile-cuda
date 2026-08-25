@@ -57,7 +57,7 @@ RUN apt-get update -y &&\
 
 # ENV CUDA_HOME=/milabench/results/venv/torch/lib/python3.12/site-packages/nvidia/cu13
 ENV CUDA_HOME=/usr/local/cuda/
-ENV PATH="$CUDA_HOME/bin:/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.local/bin:$CUDA_HOME/bin:/root/.cargo/bin:${PATH}"
 ENV XDG_CACHE_HOME=/milabench/results/cache
 ENV HF_HOME=/milabench/results/cache
 ENV TORCH_HOME=/milabench/results/cache
@@ -95,6 +95,7 @@ ENV TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0;12.0;12.1"
 
 # But we can also publish wheels to github and use those instead
 RUN ln -s /milabench/.env/bin/milabench /usr/local/bin/milabench                                                                                             &&\
+    ln -sf /milabench/.env/bin/uv /usr/local/bin/uv                                                                                                          &&\
     $MILAENCH_ENV/bin/milabench install --config $MILABENCH_CONFIG --base $MILABENCH_BASE ${MILABENCH_SELECT:+--select $MILABENCH_SELECT} ${MILABENCH_VARIANT:+--variant $MILABENCH_VARIANT} $MILABENCH_ARGS   &&\
     $MILAENCH_ENV/bin/milabench tools patch --venv $MILABENCH_BASE/venv/torch                                                                                    &&\
     python -m pip cache purge

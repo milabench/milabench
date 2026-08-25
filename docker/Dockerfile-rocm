@@ -48,14 +48,14 @@ RUN apt-get update            &&\
 
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
 ENV ROCM_HOME="/opt/rocm"
 
 # Install Milabench
 # -----------------
 ENV MILAENCH_ENV=/milabench/.env
 
-RUN RUN curl -LsSf https://astral.sh/uv/install.sh | sh                 &&\
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh                     &&\
     virtualenv $MILAENCH_ENV                                            &&\
     $MILAENCH_ENV/bin/python -m pip install -U pip                      &&\
     $MILAENCH_ENV/bin/python -m pip install -U setuptools               &&\
