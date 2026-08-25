@@ -91,7 +91,7 @@ jobs:
   # ------------------------------------------------------------------
   bench:
     needs: groups
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, gpu]
     name: bench/${{ matrix.group.name }}
 
     strategy:
