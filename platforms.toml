@@ -20,11 +20,15 @@ cpu = "0"
 # can't resolve it in an isolated build env of its own at that point
 # ("Cannot import 'maturin'": BackendUnavailable).
 #
+# click: AutoROM.accept-rom-license 0.6.1 needs it to *build* the sdist but
+# does not list it in build-system.requires. uv then fails unless click is
+# already in the venv and we install with --no-build-isolation.
+#
 # Only used by the TOML-based install path (MILABENCH_USE_TOML_DEPS=1); the
 # legacy requirements-file path falls back to pack.py's own hardcoded default
 # instead of loading platforms.toml at all.
 [build]
-requires = ["setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling"]
+requires = ["setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", "click"]
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -156,11 +160,20 @@ pydantic = ">=2,<3"
 
 [compat.torchcodec]
 # https://github.com/meta-pytorch/torchcodec#compatibility-with-torch-versions
-# 0.10 → torch 2.10; 0.11 → torch 2.11; 0.12+ → torch >= 2.11
-# No ROCm CUDA wheel; PyPI's untagged Linux wheel is CUDA (libnvrtc).
-# Force the CPU/FFmpeg build from download.pytorch.org/whl/cpu.
+#
+# | torchcodec | torch   |
+# | 0.16–0.12  | >= 2.11 |
+# | 0.11       | 2.11    |
+# | 0.10       | 2.10    |
+#
+# Through 0.11 the C++ extension matched the torch minor exactly (same failure
+# mode as torchaudio on torch 2.10). Cap torch 2.10 at the 0.10 band.
+# 0.12+ supports torch >= 2.11; allow latest on CUDA/CPU.
+# No ROCm wheel: PyPI's untagged Linux wheel is CUDA (libnvrtc). Force the
+# CPU/FFmpeg build from download.pytorch.org/whl/cpu (see [rocm.indexes]).
 "rocm>=0,torch>=2.11" = "==0.15.0+cpu"
 "rocm>=0,torch>=2.10,torch<2.11" = "==0.10.0+cpu"
+"torch>=2.11" = ">=0.12"
 "torch>=2.10,torch<2.11" = ">=0.10,<0.11"
 
 # Pre-2.11: torchaudio's C++ extensions were locked 1:1 to a torch minor, and
@@ -189,24 +202,37 @@ pydantic = ">=2,<3"
 [compat.torch-geometric]
 "rocm>=0" = ">=2.6,<2.7"
 
+# vLLM 0.19.x wheels declare setuptools>=77.0.3,<81 (setup.py / Triton on
+# 3.12+; setuptools 81 dropped --dry-run). Torch only needs setuptools
+# present. Cap the shared pin so vLLM can install into the torch venv.
+[compat.setuptools]
+"torch>=2.10" = ">=77.0.3,<81"
+
+# vLLM 0.19.x (torch 2.10 CUDA/CPU) and 0.20–0.23 (torch 2.10 ROCm) wrap
+# mistral-common as MistralCommonImageProcessor without fetch_images.
+# transformers>=5.10 calls that method unconditionally in
+# ProcessorMixin.prepare_inputs_layout (huggingface/transformers#45493),
+# so Mistral vision (vllm-dense-physics) crashes at API-server startup.
+# Floor 5.9 keeps torchtitan (transformers>=5.9,<6). Torch 2.11+ maps to
+# vLLM 0.26 which implements fetch_images (vllm#45180).
+[compat.transformers]
+"torch>=2.10,torch<2.11" = ">=5.9,<5.10"
+
 # ─── vLLM ─────────────────────────────────────────────────────────────────────
 # Exact map: (torch, backend_version) → installable version + wheel source.
-# Auto-pin does not compile vLLM into the shared lockfile (its extras mix
-# CUDA stacks). Install uses this table: `vllm==<version>` plus the
-# find-links / extra-index-url. `constraints` are ranges the rest of the
-# tree must honor so that wheel can install against the shared pin.
-# Do not --set vllm=...; unsupported pairs fail with the supported list.
+# vLLM is compiled into the shared torch lockfile (same install_group).
+# Do not --set vllm=...; unsupported pairs omit the vllm requirement.
 
 [vllm.cuda]
-"2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
-"2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
+"2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
+"2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
 "2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 
 [vllm.cpu]
 # backend_version is the "cpu" placeholder from [vars] (always "0").
 # Each entry verified against the wheel's own METADATA (Requires-Dist: torch==...).
-"2.10.0,0" = { version = "0.19.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
+"2.10.0,0" = { version = "0.19.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
 "2.11.0,0" = { version = "0.26.0+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.13.0,0" = { version = "0.27.1+cpu", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.27.1" }
 

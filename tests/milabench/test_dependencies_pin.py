@@ -67,6 +67,12 @@ class TestConstraintFilename:
             == "constraints.cuda130.torch2120.txt"
         )
 
+    def test_vllm_group(self):
+        assert (
+            constraint_filename("cuda", "130", "2.10.0", group="vllm")
+            == "constraints.vllm.cuda130.torch2100.txt"
+        )
+
     def test_empty_arch_explicit(self):
         assert (
             constraint_filename("cuda", "126", "2.10.0", "")
@@ -91,6 +97,12 @@ class TestGetConstraintFile:
     def test_with_arch(self, tmp_path):
         result = get_constraint_file(tmp_path, "rocm", "7.2", "2.11.0", "x86_64")
         assert result == tmp_path / "constraints.rocm72.torch2110.x86_64.txt"
+
+    def test_vllm_group(self, tmp_path):
+        result = get_constraint_file(
+            tmp_path, "cuda", "130", "2.10.0", group="vllm"
+        )
+        assert result == tmp_path / "constraints.vllm.cuda130.torch2100.txt"
 
     def test_is_path_object(self, tmp_path):
         result = get_constraint_file(tmp_path, "cpu", "", "2.10.0")
@@ -530,6 +542,28 @@ class TestExtractCommonConstraints:
         f1_text = f1.read_text()
         assert "-c constraints.common.txt" in f1_text
         assert "# H1" in f1_text
+
+    def test_skips_vllm_group_lockfiles(self, tmp_path):
+        f1 = tmp_path / "constraints.cuda130.torch2100.txt"
+        f2 = tmp_path / "constraints.rocm72.torch2100.txt"
+        vllm = tmp_path / "constraints.vllm.cuda130.torch2100.txt"
+        common_pkgs = [("numpy==1.26.4", [])]
+        self._write_constraint(f1, ["# cuda"], common_pkgs + [("cupy==13.0", [])])
+        self._write_constraint(f2, ["# rocm"], common_pkgs + [("rccl==1.0", [])])
+        self._write_constraint(
+            vllm,
+            ["# vllm"],
+            common_pkgs + [("vllm==0.19.1+cu130", []), ("flashinfer-cubin==0.6.6", [])],
+        )
+
+        _extract_common_constraints([f1, f2, vllm], tmp_path)
+
+        common_text = (tmp_path / "constraints.common.txt").read_text()
+        assert "numpy==1.26.4" in common_text
+        assert "vllm==" not in common_text
+        assert "flashinfer-cubin" not in common_text
+        assert "vllm==0.19.1+cu130" in vllm.read_text()
+        assert "-c constraints.common.txt" not in vllm.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -1091,3 +1125,5 @@ class TestEnsureBuildBackends:
         repo_toml = Path(__file__).resolve().parents[2] / "platforms.toml"
         config = load_platform_config(path=repo_toml)
         assert "setuptools" in (config.build_requires or [])
+        # AutoROM.accept-rom-license sdist imports click at build time
+        assert "click" in (config.build_requires or [])

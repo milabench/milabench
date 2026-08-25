@@ -464,9 +464,17 @@ class TestPin:
         assert constraint_filename("cuda", "130", "2.12.0") == \
             "constraints.cuda130.torch2120.txt"
 
+    def test_constraint_filename_vllm_group(self):
+        assert constraint_filename("cuda", "130", "2.10.0", group="vllm") == \
+            "constraints.vllm.cuda130.torch2100.txt"
+
     def test_get_constraint_file(self, tmp_path):
         path = get_constraint_file(tmp_path, "cuda", "130", "2.12.0", "x86_64")
         assert path == tmp_path / "constraints.cuda130.torch2120.x86_64.txt"
+        vllm_path = get_constraint_file(
+            tmp_path, "cuda", "130", "2.10.0", group="vllm"
+        )
+        assert vllm_path == tmp_path / "constraints.vllm.cuda130.torch2100.txt"
 
     def test_collect_all_toml_deps(self, benchmark_dir, platforms_toml):
         config = load_platform_config(path=platforms_toml)
@@ -787,6 +795,7 @@ def compat_toml(tmp_path):
         [compat.torchcodec]
         "rocm>=0,torch>=2.11" = "==0.15.0+cpu"
         "rocm>=0,torch>=2.10,torch<2.11" = "==0.10.0+cpu"
+        "torch>=2.11" = ">=0.12"
         "torch>=2.10,torch<2.11" = ">=0.10,<0.11"
 
         [compat.flashinfer-python]
@@ -902,10 +911,9 @@ class TestResolveCompatConstraints:
             config, {"torch": "2.11.0", "cuda": "126"}, backend="cuda"
         )
         assert "torchao>=0.17,<0.18" in lines
+        assert "torchcodec>=0.12" in lines
         assert "flashinfer-python>=0.5,<0.6" in lines
         assert "mslk>=1.1,<1.2" in lines
-        # torchcodec rule only applies to torch<2.11
-        assert not any("torchcodec" in l for l in lines)
 
     def test_torch_2120_cuda130(self, compat_toml):
         config = load_platform_config(path=compat_toml)
@@ -913,6 +921,7 @@ class TestResolveCompatConstraints:
             config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
         )
         assert "torchao<0.19" in lines
+        assert "torchcodec>=0.12" in lines
         assert "flashinfer-python>=0.6" in lines
         assert "mslk>=1.2,<1.3" in lines
 
@@ -927,12 +936,13 @@ class TestResolveCompatConstraints:
         # cuda-only flashinfer must not apply while pinning ROCm
         assert not any("flashinfer" in l for l in lines)
 
-    def test_torch_2120_cuda_no_torchcodec_cpu(self, compat_toml):
+    def test_torch_2120_cuda_no_rocm_torchcodec_cpu(self, compat_toml):
         config = load_platform_config(path=compat_toml)
         lines = _resolve_compat_constraints(
             config, {"torch": "2.12.0", "cuda": "130"}, backend="cuda"
         )
-        assert not any("torchcodec" in l for l in lines)
+        assert "torchcodec>=0.12" in lines
+        assert "torchcodec==0.15.0+cpu" not in lines
 
     def test_first_match_wins(self, compat_toml):
         config = load_platform_config(path=compat_toml)
@@ -1059,8 +1069,8 @@ class TestVllmExactMapping:
         m130 = config.lookup_vllm("cuda", "130", "2.10.0")
         assert m130.version == "0.19.1+cu130"
         assert m130.find_links.endswith("/v0.19.1")
-        assert m130.constraints == ["nvidia-cudnn-frontend>=1.13,<1.19"]
-        assert m130.extra_constraint_names() == ["nvidia-cudnn-frontend"]
+        assert m130.constraints == []
+        assert m130.extra_constraint_names() == []
 
         m129 = config.lookup_vllm("cuda", "129", "2.10.0")
         assert m129.version == "0.19.1"
@@ -1068,7 +1078,114 @@ class TestVllmExactMapping:
 
         m211 = config.lookup_vllm("cuda", "130", "2.11.0")
         assert m211.version == "0.26.0"
+        assert m211.constraints == []
         assert config.lookup_vllm("cuda", "129", "2.11.0").version == "0.26.0+cu129"
+
+        lines = _build_constraints_content(
+            config, "cuda", {"torch": "2.10.0", "cuda": "130"}
+        )
+        assert "setuptools>=77.0.3,<81" in lines
+
+    def test_collect_includes_vllm_in_shared_pin(self, tmp_path, platforms_toml):
+        benches = tmp_path / "benchmarks"
+        (benches / "hf").mkdir(parents=True)
+        (benches / "hf" / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["voir"]
+        """))
+        (benches / "vllm").mkdir()
+        (benches / "vllm" / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["vllm", "flashinfer-cubin"]
+        """))
+        config = load_platform_config(path=platforms_toml)
+        all_deps = _collect_all_toml_deps(benches, "cuda", config)
+        assert "vllm" in all_deps
+        assert "flashinfer-cubin" in all_deps
+        assert "voir" in all_deps
+
+    def test_install_vllm_bench_uses_shared_lockfile(self, tmp_path):
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+
+        bench = tmp_path / "benchmarks" / "vllm"
+        bench.mkdir(parents=True)
+        (bench / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["vllm", "flashinfer-cubin"]
+        """))
+
+        pin_dir = tmp_path / ".pin"
+        pin_dir.mkdir()
+        (pin_dir / "constraints.cuda130.torch2100.txt").write_text(
+            "setuptools==80.10.2\n"
+            "torch==2.10.0+cu130\n"
+            "vllm==0.19.1+cu130\n"
+        )
+        (pin_dir / "constraints.vllm.cuda130.torch2100.txt").write_text(
+            "vllm==0.19.1+cu130\n"
+        )
+
+        result = install_args(
+            benchmark_path=bench,
+            platform_config=config,
+            backend="cuda",
+            pin_dir=pin_dir,
+            overrides={"cuda": "130", "torch": "2.10.0"},
+            install_group="torch",
+        )
+        try:
+            platform = result.platform_constraint_file.read_text()
+            assert "vllm==0.19.1+cu130" in platform
+            assert result.constraint_file is not None
+            assert result.constraint_file.name == "constraints.cuda130.torch2100.txt"
+            assert "vllm==0.19.1+cu130" in result.constraint_file.read_text()
+        finally:
+            result.cleanup()
+
+    def test_install_torch_group_uses_shared_lockfile(self, tmp_path):
+        repo_toml = Path(__file__).resolve().parents[1] / "platforms.toml"
+        config = load_platform_config(path=repo_toml)
+
+        bench = tmp_path / "benchmarks" / "hf"
+        bench.mkdir(parents=True)
+        (bench / "requirements.toml").write_text(dedent("""\
+            [common]
+            dependencies = ["torch"]
+            [cuda]
+            dependencies = ["voir"]
+        """))
+
+        pin_dir = tmp_path / ".pin"
+        pin_dir.mkdir()
+        (pin_dir / "constraints.cuda130.torch2100.txt").write_text(
+            "setuptools==84.0.0\n"
+            "torch==2.10.0+cu130\n"
+        )
+        (pin_dir / "constraints.vllm.cuda130.torch2100.txt").write_text(
+            "vllm==0.19.1+cu130\n"
+        )
+
+        result = install_args(
+            benchmark_path=bench,
+            platform_config=config,
+            backend="cuda",
+            pin_dir=pin_dir,
+            overrides={"cuda": "130", "torch": "2.10.0"},
+            install_group="torch",
+        )
+        try:
+            assert result.constraint_file is not None
+            assert result.constraint_file.name == "constraints.cuda130.torch2100.txt"
+            assert "setuptools==84.0.0" in result.constraint_file.read_text()
+        finally:
+            result.cleanup()
 
     def test_repo_rocm_milabench_wheel(self):
         from pathlib import Path
@@ -1236,7 +1353,7 @@ class TestVllmExactMapping:
         finally:
             result.cleanup()
 
-    def test_install_drops_pin_conflicts_for_mapped_vllm(self, tmp_path):
+    def test_install_does_not_strip_torch_pin_without_vllm_group(self, tmp_path):
         content = dedent("""\
             [vars]
             cuda = "130"
@@ -1246,7 +1363,7 @@ class TestVllmExactMapping:
             index-url = "https://pypi.org/simple"
 
             [vllm.cuda]
-            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://example.com/v0.19.1", constraints = ["nvidia-cudnn-frontend>=1.13,<1.19"] }
+            "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://example.com/v0.19.1" }
         """)
         path = tmp_path / "platforms.toml"
         path.write_text(content)
@@ -1280,9 +1397,11 @@ class TestVllmExactMapping:
         try:
             platform = result.platform_constraint_file.read_text()
             assert "vllm==0.19.1+cu130" in platform
-            assert "nvidia-cudnn-frontend>=1.13,<1.19" in platform
+            assert "nvidia-cudnn-frontend" not in platform
+            assert result.constraint_file is not None
+            assert result.constraint_file.name == "constraints.cuda130.torch2100.txt"
             pin_text = result.constraint_file.read_text()
-            assert "nvidia-cudnn-frontend==1.27.0" not in pin_text
+            assert "nvidia-cudnn-frontend==1.27.0" in pin_text
             assert "torch==2.10.0+cu130" in pin_text
             assert "numpy==2.3.0" in pin_text
         finally:

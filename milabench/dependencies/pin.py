@@ -14,7 +14,6 @@ from .platforms import (
     PlatformConfig,
     VllmMapping,
     _normalize_overrides,
-    deps_need_vllm,
 )
 from .requirements import (
     has_toml_requirements,
@@ -23,10 +22,17 @@ from .requirements import (
 )
 
 
-def constraint_filename(backend: str, backend_version: str, torch_version: str, arch: str = "") -> str:
+def constraint_filename(
+    backend: str,
+    backend_version: str,
+    torch_version: str,
+    arch: str = "",
+    group: str = "",
+) -> str:
     """Generate the constraint filename for a (backend, torch, arch) combination.
 
     Convention: constraints.{backend}{version}.torch{torch_nodots}.{arch}.txt
+    Optional ``group`` infix: constraints.{group}.{backend}{version}.torch….txt
     If arch is empty, omit it (backward compat / single-arch setups).
 
     Examples:
@@ -34,10 +40,12 @@ def constraint_filename(backend: str, backend_version: str, torch_version: str, 
         constraint_filename("rocm", "7.1", "2.10.0", "aarch64") → "constraints.rocm71.torch2100.aarch64.txt"
         constraint_filename("cpu", "", "2.12.0", "x86_64") → "constraints.cpu.torch2120.x86_64.txt"
         constraint_filename("cuda", "130", "2.12.0") → "constraints.cuda130.torch2120.txt"
+        constraint_filename("cuda", "130", "2.10.0", group="vllm") → "constraints.vllm.cuda130.torch2100.txt"
     """
     torch_nodots = torch_version.replace(".", "")
     backend_ver_nodots = backend_version.replace(".", "")
-    base = f"constraints.{backend}{backend_ver_nodots}.torch{torch_nodots}"
+    prefix = f"constraints.{group}." if group else "constraints."
+    base = f"{prefix}{backend}{backend_ver_nodots}.torch{torch_nodots}"
     if arch:
         return f"{base}.{arch}.txt"
     return f"{base}.txt"
@@ -49,6 +57,7 @@ def get_constraint_file(
     backend_version: str,
     torch_version: str,
     arch: str = "",
+    group: str = "",
 ) -> Path:
     """Get the path to the constraint file for a given combination.
 
@@ -58,11 +67,14 @@ def get_constraint_file(
         backend_version: Backend version (130, 7.1, etc.).
         torch_version: Torch version (2.12.0, etc.).
         arch: CPU architecture (x86_64, aarch64). If empty, omitted from filename.
+        group: Optional install-group infix (e.g. ``vllm``).
 
     Returns:
         Path to the constraint file.
     """
-    return pin_dir / constraint_filename(backend, backend_version, torch_version, arch)
+    return pin_dir / constraint_filename(
+        backend, backend_version, torch_version, arch, group=group
+    )
 
 
 def _collect_all_toml_deps(
@@ -70,13 +82,23 @@ def _collect_all_toml_deps(
     backend: str,
     platform_config: PlatformConfig,
     overrides: dict[str, str] | None = None,
+    include: set[str] | None = None,
+    exclude: set[str] | None = None,
 ) -> list[str]:
-    """Collect all resolved dependencies from all TOML-enabled benchmarks for a backend."""
+    """Collect all resolved dependencies from TOML-enabled benchmarks for a backend.
+
+    ``include`` / ``exclude`` filter on the benchmark directory name
+    (e.g. exclude ``{"vllm"}`` from the shared torch pin).
+    """
     all_deps = []
     seen = set()
 
     for bench_dir in sorted(benchmarks_dir.iterdir()):
         if not bench_dir.is_dir():
+            continue
+        if include is not None and bench_dir.name not in include:
+            continue
+        if exclude is not None and bench_dir.name in exclude:
             continue
         if bench_dir.name.startswith(("_", ".")):
             continue
@@ -517,111 +539,25 @@ def _ensure_build_backends(platform_config: PlatformConfig) -> None:
     _BUILD_BACKENDS_SEEDED = True
 
 
-async def pin_combination(
-    platform_config: PlatformConfig,
+def _compile_lockfile(
+    *,
+    output_file: Path,
+    all_deps: list[str],
+    constraint_lines: list[str],
+    index_args: list[str],
+    extra_compile_args: list[str] | None,
+    cwd: Path,
     backend: str,
     backend_version: str,
     torch_version: str,
-    benchmarks_dir: Path,
-    pin_dir: Path,
-    from_scratch: bool = False,
-    extra_compile_args: list[str] | None = None,
-    arch: str = "",
-) -> Path:
-    """Pin one (backend, torch, arch) combination.
-
-    Collects all TOML-declared deps for the given backend, runs uv pip compile,
-    and writes the shared constraint file.
-
-    Args:
-        platform_config: Loaded platform configuration.
-        backend: Backend name (cuda, rocm, cpu).
-        backend_version: Backend version (130, 7.1, "").
-        torch_version: Torch version (2.12.0).
-        benchmarks_dir: Path to benchmarks/ directory.
-        pin_dir: Path to .pin/ directory.
-        from_scratch: If True, delete existing constraint file first.
-        extra_compile_args: Additional args for uv pip compile.
-        arch: CPU architecture (x86_64, aarch64). If empty, omitted from filename.
-
-    Returns:
-        Path to the generated constraint file.
-    """
-    overrides = {backend: backend_version, "torch": torch_version}
-    output_file = get_constraint_file(pin_dir, backend, backend_version, torch_version, arch)
-
-    if from_scratch and output_file.exists():
-        output_file.unlink()
-
-    pin_dir.mkdir(parents=True, exist_ok=True)
-
-    # `uv pip compile --no-build-isolation` (below) builds source dists using
-    # this environment's build backends, so make sure they're present first.
-    _ensure_build_backends(platform_config)
-
-    # Collect all deps from TOML-enabled benchmarks
-    all_deps = _collect_all_toml_deps(
-        benchmarks_dir, backend, platform_config, overrides
-    )
-
-    if not all_deps:
-        raise RuntimeError(
-            f"No TOML dependencies found for backend={backend}, "
-            f"version={backend_version}, torch={torch_version}"
-        )
-
-    # Never compile vLLM into the shared lockfile. Its extras pull jax/nvidia
-    # stacks that mix CUDA generations into every benchmark pin. Install uses
-    # the exact wheel from platforms.toml [vllm.*] instead.
-    vllm_mapping = None
-    if deps_need_vllm(all_deps):
-        vllm_mapping = platform_config.resolve_vllm(
-            backend, overrides, required=False
-        )
-        all_deps = [dep for dep in all_deps if not _is_vllm_requirement(dep)]
-        if vllm_mapping is None:
-            print(
-                f"Skipping vLLM for {backend}={backend_version} torch={torch_version} "
-                f"(no exact mapping in platforms.toml)",
-                flush=True,
-            )
-        else:
-            print(
-                f"vLLM omitted from shared pin; install uses "
-                f"{vllm_mapping.as_constraint()}",
-                flush=True,
-            )
-        if not all_deps:
-            raise RuntimeError(
-                f"No TOML dependencies left for backend={backend}, "
-                f"version={backend_version}, torch={torch_version} "
-                f"after omitting vLLM from the shared pin"
-            )
-
-    # Build index URL arguments (vLLM find-links are install-only)
-    index_args = _build_index_args(platform_config, backend, overrides)
-
-    # Build platform constraint lines (vLLM version is install-only, but the
-    # mapped wheel's extra constraints still apply so the lockfile stays
-    # installable — e.g. nvidia-cudnn-frontend<1.19 for vllm 0.19.1).
-    constraint_lines = _build_constraints_content(platform_config, backend, overrides)
-    if vllm_mapping is not None:
-        constraint_lines.extend(vllm_mapping.constraints)
-
-    # Exact local-version pin (torch==2.10.0+cu130). A minor range also matches
-    # untagged PyPI torch, which PEP 440 ranks above +cu130 and which pulls
-    # nvidia-*-cu12 into a CUDA 13 constraint file.
-    torch_pin = _torch_pin(torch_version, backend, backend_version)
-    constraint_lines = [
-        line for line in constraint_lines if not _is_torch_requirement(line)
-    ]
-    constraint_lines.insert(0, torch_pin)
-
-    # Write temporary input files
+    arch: str,
+    label: str,
+) -> None:
+    """Run ``uv pip compile`` and post-process one lockfile."""
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".txt", prefix="toml-deps-", delete=False
     ) as deps_file:
-        deps_file.write(f"# Auto-generated from requirements.toml files\n")
+        deps_file.write("# Auto-generated from requirements.toml files\n")
         deps_file.write(f"# Backend: {backend}={backend_version}, torch={torch_version}\n")
         for dep in all_deps:
             deps_file.write(f"{dep}\n")
@@ -644,41 +580,128 @@ async def pin_combination(
             "-o", str(output_file),
             *index_args,
         ]
-
         if constraints_path:
             cmd.extend(["-c", str(constraints_path)])
-
         if extra_compile_args:
             cmd.extend(extra_compile_args)
-
         cmd.append(str(deps_path))
 
-        # Add header comment to output
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=str(benchmarks_dir.parent),
+            cwd=str(cwd),
         )
-
         if result.returncode != 0:
             raise RuntimeError(
-                f"uv pip compile failed for {backend}={backend_version} torch={torch_version}:\n"
-                f"{result.stderr}"
+                f"uv pip compile failed for {label}:\n{result.stderr}"
             )
 
-        # Post-process: strip index URLs from output (we inject at install time)
-        _strip_index_urls_from_constraint_file(output_file, backend, backend_version, torch_version, arch)
+        _strip_index_urls_from_constraint_file(
+            output_file, backend, backend_version, torch_version, arch
+        )
         _validate_pinned_constraint_file(
             output_file, backend, backend_version, torch_version
         )
-        if vllm_mapping is not None:
-            _append_vllm_wheel_note(output_file, vllm_mapping)
-
     finally:
         deps_path.unlink(missing_ok=True)
         if constraints_path:
             constraints_path.unlink(missing_ok=True)
+
+
+def _platform_constraint_lines(
+    platform_config: PlatformConfig,
+    backend: str,
+    backend_version: str,
+    torch_version: str,
+    overrides: dict[str, str],
+) -> list[str]:
+    """Compat + backend.constraints, with an exact local torch pin first."""
+    constraint_lines = _build_constraints_content(platform_config, backend, overrides)
+    torch_pin = _torch_pin(torch_version, backend, backend_version)
+    constraint_lines = [
+        line for line in constraint_lines if not _is_torch_requirement(line)
+    ]
+    constraint_lines.insert(0, torch_pin)
+    return constraint_lines
+
+
+async def pin_combination(
+    platform_config: PlatformConfig,
+    backend: str,
+    backend_version: str,
+    torch_version: str,
+    benchmarks_dir: Path,
+    pin_dir: Path,
+    from_scratch: bool = False,
+    extra_compile_args: list[str] | None = None,
+    arch: str = "",
+) -> Path:
+    """Pin one (backend, torch, arch) combination.
+
+    Writes one lockfile for every TOML bench, including ``benchmarks/vllm``.
+    ``[vllm.*]`` supplies the exact ``vllm==`` pin and wheel index; if that
+    pair has no mapping, the bare ``vllm`` requirement is omitted.
+
+    Returns:
+        Path to the shared torch constraint file.
+    """
+    overrides = {backend: backend_version, "torch": torch_version}
+    output_file = get_constraint_file(pin_dir, backend, backend_version, torch_version, arch)
+    label = f"{backend}={backend_version} torch={torch_version}"
+
+    if from_scratch and output_file.exists():
+        output_file.unlink()
+
+    pin_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_build_backends(platform_config)
+
+    all_deps = _collect_all_toml_deps(
+        benchmarks_dir,
+        backend,
+        platform_config,
+        overrides,
+    )
+
+    vllm_mapping = platform_config.resolve_vllm(
+        backend, overrides, required=False
+    )
+    if vllm_mapping is None:
+        dropped = [dep for dep in all_deps if _is_vllm_requirement(dep)]
+        if dropped:
+            print(
+                f"Skipping vLLM for {label} (no exact mapping in platforms.toml)",
+                flush=True,
+            )
+        all_deps = [dep for dep in all_deps if not _is_vllm_requirement(dep)]
+
+    if not all_deps:
+        raise RuntimeError(
+            f"No TOML dependencies found for backend={backend}, "
+            f"version={backend_version}, torch={torch_version}"
+        )
+
+    index_args = _build_index_args(platform_config, backend, overrides)
+    constraint_lines = _platform_constraint_lines(
+        platform_config, backend, backend_version, torch_version, overrides
+    )
+    if vllm_mapping is not None:
+        _append_vllm_index_args(index_args, vllm_mapping)
+        constraint_lines.append(vllm_mapping.as_constraint())
+
+    _compile_lockfile(
+        output_file=output_file,
+        all_deps=all_deps,
+        constraint_lines=constraint_lines,
+        index_args=index_args,
+        extra_compile_args=extra_compile_args,
+        cwd=benchmarks_dir.parent,
+        backend=backend,
+        backend_version=backend_version,
+        torch_version=torch_version,
+        arch=arch,
+        label=label,
+    )
 
     return output_file
 
@@ -978,7 +1001,18 @@ def _extract_common_constraints(constraint_files: list[Path], pin_dir: Path) -> 
     Each individual file is then rewritten to contain only its unique packages
     plus a `-c constraints.common.txt` reference. Comments (# via annotations)
     are kept together with their package.
+
+    vLLM group lockfiles (``constraints.vllm.*``) are ignored so their
+    FlashInfer / vLLM pins do not leak into the shared torch common file.
     """
+    constraint_files = [
+        path
+        for path in constraint_files
+        if not path.name.startswith("constraints.vllm.")
+    ]
+    if len(constraint_files) < 2:
+        return
+
     common_file = pin_dir / "constraints.common.txt"
 
     # Parse all files into blocks

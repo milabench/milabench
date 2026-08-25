@@ -69,6 +69,7 @@ def install_args(
     pin_dir: Path,
     overrides: dict[str, str] | None = None,
     unpinned: bool = False,
+    install_group: str | None = None,
 ) -> InstallArgs:
     """Generate the complete install arguments for a benchmark.
 
@@ -82,6 +83,7 @@ def install_args(
         overrides: CLI variable overrides (e.g. {"cuda": "130", "torch": "2.12.0"}).
         unpinned: If True, skip pin lockfile (NGC/dev mode). Platform policy
             constraints from platforms.toml are still applied.
+        install_group: Unused for lockfile selection; kept for pack.py callers.
 
     Returns:
         InstallArgs with paths and arguments ready for pip install.
@@ -114,14 +116,13 @@ def install_args(
     temp_req_path = Path(temp_req.name)
     temp_files = [temp_req_path]
 
-    # Platform policy constraints (compat matrix, backend.constraints, vLLM map)
+    # Platform policy constraints (compat matrix, backend.constraints, vLLM version)
     platform_constraint_file = None
     platform_lines = _build_constraints_content(
         platform_config, backend, all_overrides
     )
     if vllm_mapping is not None:
         platform_lines.append(vllm_mapping.as_constraint())
-        platform_lines.extend(vllm_mapping.constraints)
     if platform_lines:
         temp_cons = tempfile.NamedTemporaryFile(
             mode="w",
@@ -145,42 +146,22 @@ def install_args(
         arch = plat.machine()  # x86_64, aarch64, etc.
 
         if backend_version and torch_version:
-            # Try arch-less constraint file first (current default)
             constraint_file = get_constraint_file(
-                pin_dir, backend, backend_version, torch_version
+                pin_dir,
+                backend,
+                backend_version,
+                torch_version,
             )
             if not constraint_file.exists():
-                # Fall back to arch-specific file (legacy)
                 constraint_file = get_constraint_file(
-                    pin_dir, backend, backend_version, torch_version, arch
+                    pin_dir,
+                    backend,
+                    backend_version,
+                    torch_version,
+                    arch,
                 )
                 if not constraint_file.exists():
                     constraint_file = None
-
-        # The lockfile may pin a version the mapped vLLM wheel rejects
-        # (nvidia-cudnn-frontend==1.27 vs vllm 0.19.1's <1.19). Drop those
-        # exact pins so the mapping's ranges in the platform constraint file win.
-        if (
-            constraint_file is not None
-            and vllm_mapping is not None
-            and vllm_mapping.extra_constraint_names()
-        ):
-            filtered = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".txt",
-                prefix="milabench-vllm-pin-",
-                dir=str(constraint_file.parent),
-                delete=False,
-            )
-            filtered.close()
-            filtered_path = Path(filtered.name)
-            _drop_packages_from_constraint_file(
-                constraint_file,
-                filtered_path,
-                vllm_mapping.extra_constraint_names(),
-            )
-            constraint_file = filtered_path
-            temp_files.append(filtered_path)
 
     # Build index args (+ vLLM source when mapped)
     index_args = get_index_args(platform_config, backend, all_overrides)
@@ -194,29 +175,6 @@ def install_args(
         index_args=index_args,
         _temp_files=temp_files,
     )
-
-
-def _drop_packages_from_constraint_file(
-    src: Path,
-    dest: Path,
-    drop: list[str],
-) -> None:
-    """Copy a uv pin file, omitting ``pkg==`` blocks whose names are in drop.
-
-    Written next to ``src`` so relative ``-c constraints.common.txt`` includes
-    still resolve.
-    """
-    drop_names = {name.lower() for name in drop}
-    skipping = False
-    kept: list[str] = []
-    for line in src.read_text().splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith(("#", "-", "--")) and "==" in stripped:
-            name = stripped.split("==", 1)[0].strip().lower()
-            skipping = name in drop_names
-        if not skipping:
-            kept.append(line)
-    dest.write_text("\n".join(kept) + "\n")
 
 
 def _merge_backend_override(

@@ -63,8 +63,7 @@ class VllmMapping:
     version: str
     find_links: str | None = None
     extra_index_url: str | None = None
-    # Extra constraints the rest of the tree must honor so the mapped wheel
-    # can install without compiling vLLM into the shared lockfile.
+    # Unused at pin/install; kept so older platforms.toml entries still parse.
     constraints: list[str] = field(default_factory=list)
 
     def as_constraint(self) -> str:

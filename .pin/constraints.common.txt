@@ -83,11 +83,11 @@ blobfile==3.1.0
     #   torchtune
 blosc2==4.11.0
     # via tables
-boto3==1.43.79
+boto3==1.43.80
     # via
     #   cached-path
     #   litellm
-botocore==1.43.79
+botocore==1.43.80
     # via
     #   boto3
     #   s3transfer
@@ -121,7 +121,7 @@ chex==0.1.92
     #   distrax
     #   flashbax
     #   rlax
-click==8.4.2
+click==8.5.0
     # via
     #   autorom
     #   autorom-accept-rom-license
@@ -148,7 +148,7 @@ contourpy==1.3.3
     # via matplotlib
 coverage==7.15.4
     # via -r requirements.in
-cryptography==50.0.0
+cryptography==50.0.1
     # via google-auth
 cvxopt==1.3.3
     # via -r requirements.in
@@ -296,7 +296,7 @@ gast==0.7.0
     # via tfp-nightly
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.59
+gitpython==3.1.60
     # via -r requirements.in
 giving==0.4.3
     # via
@@ -323,9 +323,9 @@ google-crc32c==1.8.0
     # via
     #   google-cloud-storage
     #   google-resumable-media
-google-resumable-media==2.10.1
+google-resumable-media==2.10.2
     # via google-cloud-storage
-googleapis-common-protos==1.75.1
+googleapis-common-protos==1.75.2
     # via google-api-core
 gpytorch==1.15.2
     # via
@@ -590,74 +590,6 @@ numexpr==2.14.2
     # via
     #   blosc2
     #   tables
-numpy==2.5.2
-    # via
-    #   -r requirements.in
-    #   accelerate
-    #   ai2-olmo-core
-    #   ale-py
-    #   blosc2
-    #   brax
-    #   chex
-    #   contourpy
-    #   datasets
-    #   decord2
-    #   deepspeed
-    #   diffusers
-    #   distrax
-    #   dm-env
-    #   dm-tree
-    #   envpool
-    #   evaluate
-    #   evosax
-    #   fairscale
-    #   fbgemm-gpu
-    #   finufft
-    #   flashbax
-    #   flax
-    #   fvcore
-    #   gym
-    #   gymnasium
-    #   h5py
-    #   imageio
-    #   jax
-    #   jaxlib
-    #   jaxopt
-    #   matplotlib
-    #   minatar
-    #   ml-dtypes
-    #   mujoco
-    #   numexpr
-    #   onnx
-    #   opencv-python
-    #   optax
-    #   orbax-checkpoint
-    #   pandas
-    #   peft
-    #   pyro-ppl
-    #   pyvista
-    #   qmat
-    #   rdkit
-    #   rlax
-    #   scikit-learn
-    #   scipy
-    #   seaborn
-    #   stable-baselines3
-    #   tables
-    #   tensorboard
-    #   tensorboardx
-    #   tensordict
-    #   tensorstore
-    #   tfp-nightly
-    #   torch-geometric
-    #   torchmetrics
-    #   torchtune
-    #   torchvision
-    #   transformers
-    #   treescope
-    #   trimesh
-    #   webdataset
-    #   xformers
 omegaconf==2.3.1
     # via
     #   -r requirements.in
@@ -769,7 +701,7 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
-proto-plus==1.28.3
+proto-plus==1.28.4
     # via google-api-core
 psutil==7.2.2
     # via
@@ -1007,6 +939,12 @@ sentencepiece==0.2.2
     #   torchtune
 sentry-sdk==2.68.1
     # via wandb
+setuptools==80.10.2
+    # via
+    #   -c constraints.in
+    #   setuptools-scm
+    #   tensorboard
+    #   torch
 setuptools-scm==10.2.1
     # via navix
 shellingham==1.5.4
@@ -1059,7 +997,7 @@ termcolor==3.3.0
     # via
     #   fire
     #   fvcore
-tfp-nightly==0.26.0.dev20260825
+tfp-nightly==0.26.0.dev20260826
     # via
     #   -r requirements.in
     #   distrax
@@ -1074,13 +1012,6 @@ tiktoken==0.14.0
     #   torchtune
 timm==1.0.28
     # via -r requirements.in
-tokenizers==0.22.2
-    # via
-    #   -r requirements.in
-    #   litellm
-    #   torchtitan
-    #   torchtune
-    #   transformers
 tomlkit==0.15.1
     # via pylint
 toolz==1.1.0
@@ -1134,11 +1065,6 @@ tqdm==4.70.0
     #   torchrec
     #   torchtune
     #   transformers
-transformers==5.15.1
-    # via
-    #   -r requirements.in
-    #   peft
-    #   trl
 treescope==0.1.10
     # via flax
 trimesh==5.0.0
@@ -1151,7 +1077,7 @@ typeguard==4.6.0
     # via tyro
 typer==0.27.1
     # via transformers
-types-protobuf==7.35.1.20260825
+types-protobuf==7.35.1.20260826
     # via envpool
 typing-extensions==4.16.0
     # via

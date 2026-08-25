@@ -720,6 +720,7 @@ class Package(BasePackage):
             pin_dir=pin_dir,
             overrides=version_overrides,
             unpinned=unpinned,
+            install_group=self.config.get("install_group"),
         )
 
         try:

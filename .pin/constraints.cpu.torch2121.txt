@@ -4,6 +4,74 @@
 
 fbgemm-gpu==1.8.0+cpu
     # via torchrec
+numpy==2.5.2
+    # via
+    #   -r requirements.in
+    #   accelerate
+    #   ai2-olmo-core
+    #   ale-py
+    #   blosc2
+    #   brax
+    #   chex
+    #   contourpy
+    #   datasets
+    #   decord2
+    #   deepspeed
+    #   diffusers
+    #   distrax
+    #   dm-env
+    #   dm-tree
+    #   envpool
+    #   evaluate
+    #   evosax
+    #   fairscale
+    #   fbgemm-gpu
+    #   finufft
+    #   flashbax
+    #   flax
+    #   fvcore
+    #   gym
+    #   gymnasium
+    #   h5py
+    #   imageio
+    #   jax
+    #   jaxlib
+    #   jaxopt
+    #   matplotlib
+    #   minatar
+    #   ml-dtypes
+    #   mujoco
+    #   numexpr
+    #   onnx
+    #   opencv-python
+    #   optax
+    #   orbax-checkpoint
+    #   pandas
+    #   peft
+    #   pyro-ppl
+    #   pyvista
+    #   qmat
+    #   rdkit
+    #   rlax
+    #   scikit-learn
+    #   scipy
+    #   seaborn
+    #   stable-baselines3
+    #   tables
+    #   tensorboard
+    #   tensorboardx
+    #   tensordict
+    #   tensorstore
+    #   tfp-nightly
+    #   torch-geometric
+    #   torchmetrics
+    #   torchtune
+    #   torchvision
+    #   transformers
+    #   treescope
+    #   trimesh
+    #   webdataset
+    #   xformers
 protobuf==7.36.0
     # via
     #   -r requirements.in
@@ -17,11 +85,13 @@ protobuf==7.36.0
     #   tensorboard
     #   tensorboardx
     #   wandb
-setuptools==81.0.0
+tokenizers==0.23.1
     # via
-    #   setuptools-scm
-    #   tensorboard
-    #   torch
+    #   -r requirements.in
+    #   litellm
+    #   torchtitan
+    #   torchtune
+    #   transformers
 torch==2.12.1+cpu
     # via
     #   -c constraints.in
@@ -69,3 +139,8 @@ torchvision==0.27.1+cpu
     # via
     #   -r requirements.in
     #   timm
+transformers==5.16.1
+    # via
+    #   -r requirements.in
+    #   peft
+    #   trl

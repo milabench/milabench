@@ -30,7 +30,7 @@ fbgemm-gpu==1.8.0
     # via torchrec
 flash-attn==2.8.3.post1
     # via -r requirements.in
-flash-attn-4==4.0.0b27
+flash-attn-4==4.0.0b28
     # via -r requirements.in
 flashinfer-cubin==0.6.13
     # via -r requirements.in
@@ -42,6 +42,80 @@ jax-cuda12-plugin==0.11.1
     # via jax
 nccl4py==0.4.1
     # via flashinfer-python
+numpy==2.5.2
+    # via
+    #   -r requirements.in
+    #   accelerate
+    #   ai2-olmo-core
+    #   ale-py
+    #   blosc2
+    #   brax
+    #   chex
+    #   contourpy
+    #   cuda-core
+    #   datasets
+    #   decord2
+    #   deepspeed
+    #   diffusers
+    #   distrax
+    #   dm-env
+    #   dm-tree
+    #   envpool
+    #   evaluate
+    #   evosax
+    #   fairscale
+    #   fbgemm-gpu
+    #   finufft
+    #   flashbax
+    #   flashinfer-python
+    #   flax
+    #   fvcore
+    #   gym
+    #   gymnasium
+    #   h5py
+    #   imageio
+    #   jax
+    #   jaxlib
+    #   jaxopt
+    #   matplotlib
+    #   minatar
+    #   ml-dtypes
+    #   mujoco
+    #   nccl4py
+    #   numexpr
+    #   nvidia-cutlass-dsl-libs-base
+    #   nvidia-cutlass-dsl-libs-core
+    #   nvidia-cutlass-dsl-libs-cu12
+    #   onnx
+    #   opencv-python
+    #   optax
+    #   orbax-checkpoint
+    #   pandas
+    #   peft
+    #   pyro-ppl
+    #   pyvista
+    #   qmat
+    #   rdkit
+    #   rlax
+    #   scikit-learn
+    #   scipy
+    #   seaborn
+    #   stable-baselines3
+    #   tables
+    #   tensorboard
+    #   tensorboardx
+    #   tensordict
+    #   tensorstore
+    #   tfp-nightly
+    #   torch-geometric
+    #   torchmetrics
+    #   torchtune
+    #   torchvision
+    #   transformers
+    #   treescope
+    #   trimesh
+    #   webdataset
+    #   xformers
 nvidia-cublas-cu12==12.8.4.1
     # via
     #   jax-cuda12-plugin
@@ -92,18 +166,18 @@ nvidia-cusparse-cu12==12.5.8.93
     #   torch
 nvidia-cusparselt-cu12==0.7.1
     # via torch
-nvidia-cutlass-dsl==4.6.2
+nvidia-cutlass-dsl==4.6.3
     # via
     #   flash-attn-4
     #   flashinfer-python
     #   quack-kernels
-nvidia-cutlass-dsl-libs-base==4.6.2
+nvidia-cutlass-dsl-libs-base==4.6.3
     # via
     #   nvidia-cutlass-dsl
     #   nvidia-cutlass-dsl-libs-cu12
-nvidia-cutlass-dsl-libs-core==4.6.2
+nvidia-cutlass-dsl-libs-core==4.6.3
     # via nvidia-cutlass-dsl-libs-base
-nvidia-cutlass-dsl-libs-cu12==4.6.2
+nvidia-cutlass-dsl-libs-cu12==4.6.3
     # via nvidia-cutlass-dsl
 nvidia-ml-py==13.610.43
     # via
@@ -126,7 +200,7 @@ nvidia-nvshmem-cu12==3.4.5
     #   torch
 nvidia-nvtx-cu12==12.8.90
     # via torch
-protobuf==6.33.6
+protobuf==7.36.0
     # via
     #   -r requirements.in
     #   google-api-core
@@ -144,13 +218,15 @@ protobuf==6.33.6
     #   wandb
 pyg-lib==0.8.0+pt210cu128
     # via -r requirements.in
-quack-kernels==0.6.4
+quack-kernels==0.6.3
     # via flash-attn-4
-setuptools==84.0.0
+tokenizers==0.22.2
     # via
-    #   setuptools-scm
-    #   tensorboard
-    #   torch
+    #   -r requirements.in
+    #   litellm
+    #   torchtitan
+    #   torchtune
+    #   transformers
 torch==2.10.0+cu128
     # via
     #   -c constraints.in
@@ -212,5 +288,11 @@ torchvision==0.25.0+cu128
     # via
     #   -r requirements.in
     #   timm
+transformers==5.9.0
+    # via
+    #   -c constraints.in
+    #   -r requirements.in
+    #   peft
+    #   trl
 triton==3.6.0
     # via torch

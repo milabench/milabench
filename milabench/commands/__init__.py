@@ -19,8 +19,20 @@ from .executors import execute_command, get_or_create_warden
 from ..system import option, DockerConfig
 
 def max_node_count(config):
-    all_nodes = config["system"]["nodes"]
-    return config.get("max_nodes", len(all_nodes))
+    """How many system nodes this pack should occupy.
+
+    Uses ``num_machines`` (default 1). ``max_nodes`` overrides it.
+    Capped by the number of nodes in the system config.
+    """
+    all_nodes = (config.get("system") or {}).get("nodes") or []
+    requested = config.get("max_nodes")
+    if requested is None:
+        requested = config.get("num_machines", 1)
+    try:
+        requested = int(requested)
+    except (TypeError, ValueError):
+        requested = 1
+    return max(1, min(requested, len(all_nodes) or 1))
     
 
 def clone_with(cfg, new_cfg):
