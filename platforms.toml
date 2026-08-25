@@ -180,8 +180,10 @@ pydantic = ">=2,<3"
 
 # ─── vLLM ─────────────────────────────────────────────────────────────────────
 # Exact map: (torch, backend_version) → installable version + wheel source.
+# Auto-pin does not compile vLLM into the shared lockfile (its extras mix
+# CUDA stacks). Install uses this table only: `vllm==<version>` plus the
+# find-links / extra-index-url below.
 # Do not --set vllm=...; unsupported pairs fail with the supported list.
-# Each entry uses the verified compatible source (upstream or milabench).
 
 [vllm.cuda]
 "2.10.0,129" = { version = "0.19.1", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }

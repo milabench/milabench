@@ -539,6 +539,9 @@ class TestPin:
         assert len(combos) == 2
         assert combos[0] == ("cuda", "130", "2.12.0", "x86_64")
 
+        filtered = _get_combinations(config, overrides={"cuda": "130"})
+        assert filtered == [("cuda", "130", "2.12.0", "x86_64")]
+
     def test_get_combinations_legacy_matrix(self, tmp_path):
         content = dedent("""\
             [vars]

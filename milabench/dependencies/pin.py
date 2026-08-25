@@ -10,7 +10,12 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .platforms import PlatformConfig, VllmMapping, deps_need_vllm
+from .platforms import (
+    PlatformConfig,
+    VllmMapping,
+    _normalize_overrides,
+    deps_need_vllm,
+)
 from .requirements import (
     has_toml_requirements,
     load_benchmark_requirements,
@@ -318,17 +323,150 @@ def _append_vllm_index_args(args: list[str], mapping: VllmMapping) -> list[str]:
     return args
 
 
+def _vllm_wheel_note_lines(mapping: VllmMapping) -> list[str]:
+    """Comment block recording the install-time vLLM wheel (not a lock pin)."""
+    lines = [
+        "# vllm is not solved in this lockfile; install uses the mapped wheel:",
+        f"#   {mapping.as_constraint()}",
+    ]
+    if mapping.find_links:
+        lines.append(f"#   --find-links {mapping.find_links}")
+    if mapping.extra_index_url:
+        lines.append(f"#   --extra-index-url {mapping.extra_index_url}")
+    return lines
+
+
+def _append_vllm_wheel_note(path: Path, mapping: VllmMapping) -> None:
+    """Insert the vLLM wheel note after the pin-file header comments."""
+    note = "".join(f"{line}\n" for line in _vllm_wheel_note_lines(mapping))
+    lines = path.read_text().splitlines(keepends=True)
+    insert_at = 0
+    for i, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            insert_at = i
+            break
+        insert_at = i + 1
+    path.write_text("".join(lines[:insert_at]) + note + "".join(lines[insert_at:]))
+
+
 def _torch_minor_pin(torch_version: str) -> str:
     """Return a minor-version torch constraint for the pin matrix entry.
 
     For ``2.12.1`` → ``torch>=2.12,<2.13`` so newer patches in that minor
     can resolve, while still blocking the next minor (e.g. 2.13).
+
+    Used only when the backend has no local version tag (hpu/xpu). CUDA,
+    ROCm, and CPU pins must use ``_torch_pin`` so uv cannot pick an
+    untagged PyPI wheel (PEP 440: ``2.10.0`` > ``2.10.0+cu130``).
     """
     parts = torch_version.split(".")
     if len(parts) < 2:
         raise ValueError(f"Expected torch major.minor[.patch], got {torch_version!r}")
     major, minor = int(parts[0]), int(parts[1])
     return f"torch>={major}.{minor},<{major}.{minor + 1}"
+
+
+def _torch_local_label(backend: str, backend_version: str) -> str | None:
+    """Local version tag for a PyTorch wheel on this backend.
+
+    Matches the tags on download.pytorch.org: ``cu130``, ``rocm7.1``, ``cpu``.
+    """
+    if backend == "cuda" and backend_version:
+        return f"cu{backend_version}"
+    if backend == "rocm" and backend_version:
+        return f"rocm{backend_version}"
+    if backend == "cpu":
+        return "cpu"
+    return None
+
+
+def _torch_pin(torch_version: str, backend: str, backend_version: str) -> str:
+    """Constraint that keeps uv on the backend's torch wheel.
+
+    A minor range like ``torch>=2.10,<2.11`` also matches the untagged
+    PyPI build. That wheel depends on ``nvidia-*-cu12`` and, with
+    ``--index-strategy unsafe-best-match``, wins over ``2.10.0+cu130``.
+    """
+    local = _torch_local_label(backend, backend_version)
+    if local:
+        return f"torch=={torch_version}+{local}"
+    return _torch_minor_pin(torch_version)
+
+
+# Torch's default (untagged) wheel pulls these. They must not appear in a
+# CUDA 13.x pin next to ``nvidia-cuda-runtime==13.*`` / ``nvidia-*-cu13``.
+# ``nvidia-cutlass-dsl-libs-cu12`` is a different naming scheme and is OK.
+_CUDA13_FORBIDDEN_CU12 = frozenset(
+    {
+        "nvidia-cublas-cu12",
+        "nvidia-cuda-cupti-cu12",
+        "nvidia-cuda-nvrtc-cu12",
+        "nvidia-cuda-runtime-cu12",
+        "nvidia-cudnn-cu12",
+        "nvidia-cufft-cu12",
+        "nvidia-cufile-cu12",
+        "nvidia-curand-cu12",
+        "nvidia-cusolver-cu12",
+        "nvidia-cusparse-cu12",
+        "nvidia-cusparselt-cu12",
+        "nvidia-nccl-cu12",
+        "nvidia-nvjitlink-cu12",
+        "nvidia-nvshmem-cu12",
+        "nvidia-nvtx-cu12",
+    }
+)
+
+
+def _iter_pinned_packages(text: str):
+    """Yield ``(name, version)`` for each ``pkg==ver`` pin line."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "-")):
+            continue
+        if "==" not in stripped:
+            continue
+        name, version = stripped.split("==", 1)
+        yield name.strip().lower(), version.strip()
+
+
+def _validate_pinned_constraint_file(
+    path: Path,
+    backend: str,
+    backend_version: str,
+    torch_version: str,
+) -> None:
+    """Reject a pin that resolved the wrong torch wheel or mixed CUDA stacks."""
+    from packaging.version import Version
+
+    pins = dict(_iter_pinned_packages(path.read_text()))
+    torch_ver = pins.get("torch")
+    if not torch_ver:
+        raise RuntimeError(f"Pin file {path} has no torch== pin")
+
+    local = _torch_local_label(backend, backend_version)
+    if local:
+        expected = f"{torch_version}+{local}"
+        if torch_ver != expected:
+            raise RuntimeError(
+                f"Pin file {path} resolved torch=={torch_ver}, "
+                f"expected torch=={expected}. Untagged PyPI torch wheels "
+                f"pull the default CUDA 12 NVIDIA stack and mix with "
+                f"+{local} torchvision/vllm."
+            )
+
+    if backend == "cuda" and backend_version:
+        try:
+            cuda_ver = Version(_normalize_backend_version(backend_version))
+        except Exception:
+            cuda_ver = None
+        if cuda_ver is not None and cuda_ver >= Version("13"):
+            mixed = sorted(name for name in pins if name in _CUDA13_FORBIDDEN_CU12)
+            if mixed:
+                raise RuntimeError(
+                    f"Pin file {path} mixes CUDA 12 NVIDIA packages {mixed} "
+                    f"into a cuda={backend_version} pin. Usually caused by "
+                    f"resolving untagged torch=={torch_version} from PyPI."
+                )
 
 
 # Guards `_ensure_build_backends` so we only seed the ambient env once per
@@ -432,42 +570,44 @@ async def pin_combination(
             f"version={backend_version}, torch={torch_version}"
         )
 
-    # Exact vLLM map: include version+source when this combo is supported;
-    # otherwise omit vllm from the shared pin so other packages still pin.
+    # Never compile vLLM into the shared lockfile. Its extras pull jax/nvidia
+    # stacks that mix CUDA generations into every benchmark pin. Install uses
+    # the exact wheel from platforms.toml [vllm.*] instead.
     vllm_mapping = None
     if deps_need_vllm(all_deps):
         vllm_mapping = platform_config.resolve_vllm(
             backend, overrides, required=False
         )
+        all_deps = [dep for dep in all_deps if not _is_vllm_requirement(dep)]
         if vllm_mapping is None:
             print(
                 f"Skipping vLLM for {backend}={backend_version} torch={torch_version} "
                 f"(no exact mapping in platforms.toml)",
                 flush=True,
             )
-            all_deps = [dep for dep in all_deps if not _is_vllm_requirement(dep)]
-            if not all_deps:
-                raise RuntimeError(
-                    f"No TOML dependencies left for backend={backend}, "
-                    f"version={backend_version}, torch={torch_version} "
-                    f"after skipping unmapped vLLM"
-                )
+        else:
+            print(
+                f"vLLM omitted from shared pin; install uses "
+                f"{vllm_mapping.as_constraint()}",
+                flush=True,
+            )
+        if not all_deps:
+            raise RuntimeError(
+                f"No TOML dependencies left for backend={backend}, "
+                f"version={backend_version}, torch={torch_version} "
+                f"after omitting vLLM from the shared pin"
+            )
 
-    # Build index URL arguments
+    # Build index URL arguments (vLLM find-links are install-only)
     index_args = _build_index_args(platform_config, backend, overrides)
-    if vllm_mapping is not None:
-        _append_vllm_index_args(index_args, vllm_mapping)
 
-    # Build platform constraint lines
+    # Build platform constraint lines (vLLM version is install-only)
     constraint_lines = _build_constraints_content(platform_config, backend, overrides)
-    if vllm_mapping is not None:
-        constraint_lines.append(vllm_mapping.as_constraint())
 
-    # Cap torch to the matrix minor. Without an upper bound, uv resolves unpinned
-    # "torch" to the newest wheel on the backend index (e.g. 2.13) while still
-    # writing constraints.rocm72.torch2121.txt — then --set torch=2.12.1 installs 2.13.
-    # Allow any patch within the minor (2.12.0, 2.12.1, …) via >=X.Y,<X.(Y+1).
-    torch_pin = _torch_minor_pin(torch_version)
+    # Exact local-version pin (torch==2.10.0+cu130). A minor range also matches
+    # untagged PyPI torch, which PEP 440 ranks above +cu130 and which pulls
+    # nvidia-*-cu12 into a CUDA 13 constraint file.
+    torch_pin = _torch_pin(torch_version, backend, backend_version)
     constraint_lines = [
         line for line in constraint_lines if not _is_torch_requirement(line)
     ]
@@ -525,6 +665,11 @@ async def pin_combination(
 
         # Post-process: strip index URLs from output (we inject at install time)
         _strip_index_urls_from_constraint_file(output_file, backend, backend_version, torch_version, arch)
+        _validate_pinned_constraint_file(
+            output_file, backend, backend_version, torch_version
+        )
+        if vllm_mapping is not None:
+            _append_vllm_wheel_note(output_file, vllm_mapping)
 
     finally:
         deps_path.unlink(missing_ok=True)
@@ -580,11 +725,68 @@ def _strip_index_urls_from_constraint_file(
     path.write_text("\n".join(filtered) + "\n")
 
 
-def _get_combinations(platform_config: PlatformConfig) -> list[tuple[str, str, str, str]]:
+def _filter_combinations(
+    combinations: list[tuple[str, str, str, str]],
+    overrides: dict[str, str] | None,
+) -> list[tuple[str, str, str, str]]:
+    """Keep only combos matching CLI ``--set`` keys (cuda, torch, backend, …).
+
+    ``--set`` is otherwise ignored by discovery, which is why
+    ``--set cuda=130 --set torch=2.10.0`` used to pin the full matrix.
+    Only keys the user passed are filters; platforms.toml ``[vars]`` defaults
+    do not restrict the matrix.
+    """
+    if not overrides:
+        return combinations
+
+    normalized = _normalize_overrides(overrides)
+    torch_filter = normalized.get("torch") if "torch" in overrides else None
+
+    accel_filters: dict[str, str] = {}
+    if "backend" in overrides:
+        for key in _COMPAT_ACCEL_KEYS:
+            if key in normalized:
+                accel_filters[key] = normalized[key]
+    for key in _COMPAT_ACCEL_KEYS:
+        if key in overrides:
+            accel_filters[key] = normalized[key]
+
+    if torch_filter is None and not accel_filters:
+        return combinations
+
+    def keep(combo: tuple[str, str, str, str]) -> bool:
+        backend, backend_version, torch_version, _arch = combo
+        if torch_filter is not None and torch_version != torch_filter:
+            return False
+        if accel_filters:
+            if backend not in accel_filters:
+                return False
+            wanted = accel_filters[backend]
+            if wanted and backend_version != wanted:
+                return False
+        return True
+
+    filtered = [combo for combo in combinations if keep(combo)]
+    if not filtered:
+        wanted = " ".join(f"{k}={v}" for k, v in overrides.items())
+        raise RuntimeError(
+            f"No pin combinations match --set {wanted}. "
+            "Check that this (backend, torch) pair exists on the torch wheel index."
+        )
+    return filtered
+
+
+def _get_combinations(
+    platform_config: PlatformConfig,
+    overrides: dict[str, str] | None = None,
+) -> list[tuple[str, str, str, str]]:
     """Get pin combinations from discovery (preferred) or static matrix (legacy).
 
     Discovery fetches the PyTorch wheel index at runtime to find available
     (backend, backend_version, torch_version, arch) tuples.
+
+    When ``overrides`` contains ``--set`` keys (``cuda``, ``torch``,
+    ``backend``, …), only matching combinations are returned.
 
     Returns:
         List of (backend_name, backend_version, torch_version, arch) tuples.
@@ -602,13 +804,16 @@ def _get_combinations(platform_config: PlatformConfig) -> list[tuple[str, str, s
             platforms=platform_config.discovery.platforms,
             latest_patch_only=platform_config.discovery.latest_patch_only,
         )
-        combos = discover_combinations(dc)
+        combos = _filter_combinations(discover_combinations(dc), overrides)
         print_discovered_combinations(combos)
         return combos
 
     if platform_config.pin_matrix is not None:
         # Legacy matrix doesn't have arch — use empty string
-        return [(b, v, t, "") for b, v, t in platform_config.pin_matrix.combinations()]
+        combos = [
+            (b, v, t, "") for b, v, t in platform_config.pin_matrix.combinations()
+        ]
+        return _filter_combinations(combos, overrides)
 
     raise RuntimeError(
         "No [pin.discovery] or [pin.matrix] section in platforms.toml. "
@@ -623,6 +828,7 @@ async def pin_all(
     from_scratch: bool = False,
     extra_compile_args: list[str] | None = None,
     dry_run: bool = False,
+    overrides: dict[str, str] | None = None,
 ) -> list[Path]:
     """Pin all discovered or matrix-defined combinations.
 
@@ -636,11 +842,13 @@ async def pin_all(
         from_scratch: If True, delete existing constraint files first.
         extra_compile_args: Additional args for uv pip compile.
         dry_run: If True, print discovered combinations without pinning.
+        overrides: CLI ``--set`` filters (e.g. ``{"cuda": "130", "torch": "2.10.0"}``).
+            Restricts which combinations are pinned; omitted keys stay unconstrained.
 
     Returns:
         List of generated constraint file paths (empty if dry_run).
     """
-    combinations = _get_combinations(platform_config)
+    combinations = _get_combinations(platform_config, overrides=overrides)
 
     if not combinations:
         raise RuntimeError("No valid combinations found to pin.")

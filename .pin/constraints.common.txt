@@ -306,16 +306,16 @@ glfw==2.10.2
     # via
     #   envpool
     #   mujoco
-google-api-core==2.34.0
+google-api-core==2.35.0
     # via
     #   google-cloud-core
     #   google-cloud-storage
-google-auth==2.56.3
+google-auth==2.57.0
     # via
     #   google-api-core
     #   google-cloud-core
     #   google-cloud-storage
-google-cloud-core==2.6.1
+google-cloud-core==2.7.0
     # via google-cloud-storage
 google-cloud-storage==3.13.1
     # via cached-path
@@ -590,6 +590,74 @@ numexpr==2.14.2
     # via
     #   blosc2
     #   tables
+numpy==2.5.2
+    # via
+    #   -r requirements.in
+    #   accelerate
+    #   ai2-olmo-core
+    #   ale-py
+    #   blosc2
+    #   brax
+    #   chex
+    #   contourpy
+    #   datasets
+    #   decord2
+    #   deepspeed
+    #   diffusers
+    #   distrax
+    #   dm-env
+    #   dm-tree
+    #   envpool
+    #   evaluate
+    #   evosax
+    #   fairscale
+    #   fbgemm-gpu
+    #   finufft
+    #   flashbax
+    #   flax
+    #   fvcore
+    #   gym
+    #   gymnasium
+    #   h5py
+    #   imageio
+    #   jax
+    #   jaxlib
+    #   jaxopt
+    #   matplotlib
+    #   minatar
+    #   ml-dtypes
+    #   mujoco
+    #   numexpr
+    #   onnx
+    #   opencv-python
+    #   optax
+    #   orbax-checkpoint
+    #   pandas
+    #   peft
+    #   pyro-ppl
+    #   pyvista
+    #   qmat
+    #   rdkit
+    #   rlax
+    #   scikit-learn
+    #   scipy
+    #   seaborn
+    #   stable-baselines3
+    #   tables
+    #   tensorboard
+    #   tensorboardx
+    #   tensordict
+    #   tensorstore
+    #   tfp-nightly
+    #   torch-geometric
+    #   torchmetrics
+    #   torchtune
+    #   torchvision
+    #   transformers
+    #   treescope
+    #   trimesh
+    #   webdataset
+    #   xformers
 omegaconf==2.3.1
     # via
     #   -r requirements.in

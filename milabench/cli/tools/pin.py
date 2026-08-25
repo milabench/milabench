@@ -25,7 +25,7 @@ class Pin(Command):
         constraints  : list[str]       = argument(default=[], nargs="*")   # Constraints files
         variant      : Optional[str]   = None                              # Install variant
         from_scratch : bool            = False                             # Do not use previous pins if they exist
-        set          : list[str]       = argument(default=[], nargs="*")   # Version overrides: cuda=130 torch=2.12.0
+        set          : list[str]       = argument(default=[], nargs="*")   # Restrict pin matrix: cuda=130 torch=2.10.0
     # fmt: on
 
     @staticmethod
@@ -61,6 +61,7 @@ class Pin(Command):
                 pip_compile_args=args.pip_compile,
                 constraints=args.constraints,
                 from_scratch=args.from_scratch,
+                version_overrides=version_overrides,
             ),
             loggers=[
                 TerminalFormatter(),

@@ -239,10 +239,14 @@ class MultiPackage:
                     await pack.message_error(exc)
 
     async def do_pin(
-        self, pip_compile_args, constraints: list = tuple(), from_scratch=False, requirements: list = tuple()
+        self, pip_compile_args, constraints: list = tuple(), from_scratch=False, requirements: list = tuple(), version_overrides=None
     ):
         # TOML-based pin path (opt-in)
-        if await self._try_toml_pin(from_scratch=from_scratch, extra_compile_args=pip_compile_args):
+        if await self._try_toml_pin(
+            from_scratch=from_scratch,
+            extra_compile_args=pip_compile_args,
+            version_overrides=version_overrides,
+        ):
             return
 
         groups = defaultdict(dict)
@@ -330,7 +334,7 @@ class MultiPackage:
                         requirements=all_requirements
                     )
 
-    async def _try_toml_pin(self, from_scratch=False, extra_compile_args=None) -> bool:
+    async def _try_toml_pin(self, from_scratch=False, extra_compile_args=None, version_overrides=None) -> bool:
         """Attempt TOML-based pinning. Returns True if handled, False to fall back."""
         from .system import option
 
@@ -356,6 +360,7 @@ class MultiPackage:
             pin_dir=pin_dir,
             from_scratch=from_scratch,
             extra_compile_args=extra_compile_args,
+            overrides=version_overrides,
         )
         return True
 
