@@ -37,7 +37,7 @@ class Install(Command):
         force         : bool            = False    # Force install (remove venvs)
         update        : bool            = False    # Update packages
         shorttrace    : bool            = False    # On error show short stacktrace
-        variant       : Optional[str]   = None     # Install variant (unpinned, cuda, hpu, xpu, rocm)
+        variant       : Optional[str]   = None     # Install variant: cuda|rocm|xpu|hpu|unpinned. 'unpinned' skips the pin lockfile but still applies platform constraints from platforms.toml
         github_issues : bool            = False    # Generate GitHub issue links for failures
         set           : list[str]       = argument(default=[], nargs="*")  # Version overrides: cuda=130 torch=2.12.0
     # fmt: on
