@@ -43,6 +43,13 @@ latest_patch_only = true                    # keep only latest patch per minor (
 platforms = ["manylinux_2_28_x86_64", "manylinux_2_28_aarch64"]  # pin for both arches
 # python = "cp312"                         # auto-detected if omitted
 
+# XPU uses Intel's own index (pytorch-extension.intel.com); wheel filenames
+# don't follow the pytorch.org cu/rocm convention so combinations are listed
+# manually.  Backend version is "" (Intel's torch wheels carry no local tag).
+xpu_combinations = [
+    { torch = "2.7.0" },   # intel-extension-for-pytorch 2.7.10+xpu
+]
+
 # ─── CUDA Backend ─────────────────────────────────────────────────────────────
 # [cuda] requires: vendor Python packages installed into every CUDA venv
 # (hardware-stack bindings, not OS/apt packages). nvidia-ml-py provides
@@ -128,18 +135,25 @@ gymnax = ">=0.0.8"
 pydantic = ">=2,<3"
 
 # ─── XPU Backend ──────────────────────────────────────────────────────────────
+# Requires intel-extension-for-pytorch (IPEX) for device support and
+# oneccl_bind_pt for distributed training via Intel's oneCCL.
+
+[xpu]
+requires = ["intel-extension-for-pytorch", "oneccl_bind_pt"]
 
 [xpu.indexes]
-index-url = "https://pypi.org/simple"
+# Intel's XPU wheel index carries torch, torchvision, torchaudio, IPEX, and
+# oneCCL in a single place. The pytorch.org CPU index is a fallback for pure-
+# Python packages that are not in Intel's index (e.g. torchcodec +cpu build).
+index-url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
 extra-index-url = [
+    "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cpu",
-    "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/",
 ]
 
 [xpu.constraints]
 voir = ">=0.2.23"
 torchcompat = ">=1.0.0"
-gymnax = ">=0.0.8"
 pydantic = ">=2,<3"
 
 # ─── Compatibility Matrix ─────────────────────────────────────────────────────
