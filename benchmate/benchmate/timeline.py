@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import statistics
 from dataclasses import dataclass, field, asdict
@@ -22,6 +23,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.pool import NullPool
 
 if False:
     @dataclass
@@ -124,9 +126,48 @@ class ResultStore:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{db_path}"
-        self.engine = create_engine(url)
+        # NullPool: a QueuePool's fixed capacity (default 5 + 10 overflow)
+        # can be exhausted by a burst of concurrent requests against a
+        # single shared, cached ResultStore (the dev dashboard server keeps
+        # one per db path) and then hangs for pool_timeout before raising.
+        # SQLite connections are cheap to open/close and don't benefit much
+        # from pooling anyway, so just skip pooling instead of tuning its
+        # size — the standard recommendation for SQLite + threaded servers.
+        self.engine = create_engine(url, poolclass=NullPool)
         _Base.metadata.create_all(self.engine)
+        self._migrate_schema()
         self.Session = sessionmaker(bind=self.engine)
+
+    def _migrate_schema(self):
+        """create_all() only creates missing tables, it never adds columns
+        to a table that already exists — so a db written before a column
+        was added to _Request (e.g. request_id) breaks every ORM query,
+        since the ORM always selects every mapped column. Add whatever is
+        missing (nullable, no data touched) so older dbs keep working.
+        """
+        from sqlalchemy import inspect, text
+
+        inspector = inspect(self.engine)
+        if _Request.__tablename__ not in inspector.get_table_names():
+            return
+
+        existing = {col["name"] for col in inspector.get_columns(_Request.__tablename__)}
+        missing = [c for c in _Request.__table__.columns if c.name not in existing]
+        if not missing:
+            # No write-transaction needed — this is the common case on every
+            # request after the first migration ever runs. Opening one
+            # unconditionally here was acquiring SQLite's single writer lock
+            # on every request; with several endpoints (buckets/report/
+            # gantt/requests) firing concurrently on page load, that raced
+            # and intermittently failed with "database is locked".
+            return
+
+        with self.engine.begin() as conn:
+            for column in missing:
+                col_type = column.type.compile(self.engine.dialect)
+                conn.execute(text(
+                    f'ALTER TABLE {_Request.__tablename__} ADD COLUMN "{column.name}" {col_type}'
+                ))
 
     def save(
         self,
@@ -446,6 +487,12 @@ class Bucket:
     end: float
     jobs: list[PartialJob] = None
     tokens: int = 0
+    input_tokens: float = 0
+    output_arrivals: int = 0
+    # False for the "fake" context buckets a trim window adds outside
+    # itself (see TimelineProcessor.method_2) — visualization-only, never
+    # part of the official N in-window samples.
+    in_window: bool = True
 
     def overlap(self, job):
         return max(0, min(job.end, self.end) - max(job.start, self.start))
@@ -552,7 +599,7 @@ class TimelineProcessor:
         self.samples = [self.start + step * (i + 1) for i in range(num)]
         return num
 
-    def __call__(self, outputs: list[RequestFuncOutput], number=None, persist=True):
+    def __call__(self, outputs: list[RequestFuncOutput], number=None, persist=True, window=None):
         if number is not None:
             self.config.num_buckets = number
 
@@ -564,15 +611,15 @@ class TimelineProcessor:
 
         if persist:
             self.save_normalized_data(jobs)
-    
-        return self.method_2(jobs)
+
+        return self.method_2(jobs, window=window)
 
     def save_normalized_data(self, jobs, db_path=None, description=""):
         outputs = [j.data for j in jobs]
         store = ResultStore(db_path)
         store.save(outputs, description=description, config=self.config)
 
-    def method_2(self, jobs: list[Job]):
+    def method_2(self, jobs: list[Job], window: tuple[float, float] | None = None):
         cfg = self.config
         start = jobs[0].start
         for job in jobs:
@@ -582,11 +629,55 @@ class TimelineProcessor:
             self.start = min(job.start, self.start)
             self.end = max(job.end, self.end)
 
+        # Full extent of the (normalized) job list — always needed as the
+        # outer bound for the "fake" context buckets below, regardless of
+        # whether a window narrows where the N *official* buckets go.
+        run_start, run_end = self.start, self.end
+
+        # A degenerate/empty window (e.g. a "trim everything" sentinel where
+        # a concurrency threshold cuts the whole run) has no steady-state
+        # region left to place N clean buckets in. Fall back to spreading
+        # cfg.num_buckets across the whole run so there's still something to
+        # look at, with none of them counted as official.
+        if window is not None and window[1] <= window[0]:
+            window = None
+            no_official_buckets = True
+        else:
+            no_official_buckets = False
+
+        if window is not None:
+            # The N buckets milabench actually samples from live INSIDE the
+            # trim window, not wherever they happen to fall in a full-run
+            # grid — the window drives their placement and width directly,
+            # so all N are genuinely clean steady-state samples instead of
+            # some being discarded after the fact.
+            self.start, self.end = window
+
         number = self._make_buckets()
 
-        buckets = []
-        for i in range(number):
-            buckets.append(Bucket(i * self.step, (i + 1) * self.step, []))
+        buckets = [
+            Bucket(self.start + i * self.step, self.start + (i + 1) * self.step, [])
+            for i in range(number)
+        ]
+        if no_official_buckets:
+            for b in buckets:
+                b.in_window = False
+
+        if window is not None:
+            # "Fake" buckets: exactly one lump on each side covering
+            # whatever's left of the run outside the trim window — pure
+            # visualization context (so ramp-up/down isn't just cut off the
+            # edge of the chart), never included in this method's
+            # aggregate/report inputs. Not tiled at the official buckets'
+            # width: that region can be an arbitrary, unrelated size, so one
+            # bucket per side is however wide it needs to be.
+            pre = [Bucket(run_start, self.start, [])] if self.start > run_start else []
+            post = [Bucket(self.end, run_end, [])] if self.end < run_end else []
+
+            for b in pre + post:
+                b.in_window = False
+
+            buckets = pre + buckets + post
 
         for job in jobs:
             for bucket in buckets:
@@ -609,19 +700,57 @@ class TimelineProcessor:
             if job.accounted < 0.9999999:
                 print("WARNING: Unaccounted job", job.accounted, job.start, job.end)
 
+        # Input/output split: prompt tokens are only actually being processed
+        # during prefill (start -> start+ttft), not smeared across decode too
+        # — prompt_len/ttft is the local prefill rate. Output tokens have a
+        # known exact arrival time per token (ttft, then +itl per token), so
+        # count real arrivals per bucket instead of approximating.
+        for job in jobs:
+            ttft = job.data.get("ttft", 0) or 0
+            prefill_end = job.start + ttft
+            prefill_window = max(prefill_end - job.start, 0.001)
+
+            for bucket in buckets:
+                if job.start <= bucket.end and job.end >= bucket.start:
+                    overlap = max(0, min(prefill_end, bucket.end) - max(job.start, bucket.start))
+                    bucket.input_tokens += job.data.get("prompt_len", 0) * (overlap / prefill_window)
+
+            output_tokens = job.data.get("output_tokens", 0) or 0
+            if output_tokens > 0:
+                def arrival_bucket(t):
+                    # Buckets aren't necessarily uniform width (the "fake"
+                    # context lumps outside a trim window can be much wider
+                    # than the official buckets), so this can't be a direct
+                    # index computation off a fixed step — scan for the
+                    # bucket that actually contains t.
+                    for b in buckets:
+                        if b.start <= t <= b.end:
+                            return b
+                    return buckets[-1] if t > buckets[-1].end else buckets[0]
+
+                t = prefill_end
+                arrival_bucket(t).output_arrivals += 1
+                for gap in (job.data.get("itl") or []):
+                    t += gap
+                    arrival_bucket(t).output_arrivals += 1
+
         self.output = []
         self.avg = 0
         for bucket in buckets:
             rate = bucket.tokens / (bucket.end - bucket.start)
             self.avg += rate
             entry = {
-                "time": bucket.end + self.start,
+                "time": bucket.end,
+                "start": bucket.start,
                 "rate": rate,
+                "input_rate": bucket.input_tokens / (bucket.end - bucket.start),
+                "output_rate": bucket.output_arrivals / (bucket.end - bucket.start),
                 "active_jobs": bucket.active_jobs(),
                 "start_job": bucket.start_job_count(),
                 "finished_job": bucket.finished_job_count(),
                 "ran_through": bucket.ran_through_job_count(),
                 "active_jobs_pct": bucket.active_jobs_pct(),
+                "in_window": bucket.in_window,
             }
             if cfg.track_latency:
                 entry.update(bucket.latency_summary(cfg.latency_percentiles))
@@ -715,6 +844,366 @@ class TimelineProcessor:
                 print("MISSING")
 
         return jobs
+
+
+# ---------------------------------------------------------------------------
+#  Report helpers — vLLM-style whole-run aggregate vs bucket-rollup aggregate
+# ---------------------------------------------------------------------------
+
+def _dist_stats(values: list[float], percentiles=(0.5, 0.9, 0.95, 0.99)) -> dict | None:
+    """Mean/std/median/percentiles over a raw distribution (no unit scaling).
+    std is the population standard deviation (ddof=0), matching vLLM's own
+    np.std(...) usage in calculate_metrics.
+    """
+    if not values:
+        return None
+    sv = sorted(values)
+    n = len(sv)
+    mean = sum(sv) / n
+    variance = sum((x - mean) ** 2 for x in sv) / n
+    return {
+        "mean": mean,
+        "std": variance ** 0.5,
+        "median": _percentile_sorted(sv, 0.5),
+        "percentiles": [(p, _percentile_sorted(sv, p)) for p in percentiles],
+    }
+
+
+def _milabench_style_stats(values: list[float], percentiles=(0.5, 0.9, 0.95, 0.99)) -> dict | None:
+    """Distribution over the raw per-bucket `rate` sample stream that
+    benchmarks/vllm/main.py pushes to milabench (`for sampled_obs in
+    timeline(...): push_metric(**sampled_obs)`).
+
+    This is NOT milabench's summary.py::_metrics() aggregation (sort, drop
+    min/max as outliers, then summarize) — that pipeline only ever runs on
+    metrics tagged `task="train"` (see aggregate()'s `k == "rate"` rename),
+    and these bucket-rate pushes carry no task tag, so they never actually
+    reach it. As things stand, milabench collects this stream but doesn't
+    aggregate it at all, so this reports the plain, untrimmed distribution
+    instead of pretending an aggregation step happens that doesn't.
+    """
+    xs = sorted(v for v in values if v is not None)
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    variance = sum((x - mean) ** 2 for x in xs) / n
+    return {
+        "mean": mean,
+        "std": variance ** 0.5,
+        "median": _percentile_sorted(xs, 0.5),
+        "percentiles": [(p, _percentile_sorted(xs, p)) for p in percentiles],
+        "min": xs[0],
+        "max": xs[-1],
+        "n": n,
+    }
+
+
+def _prefill_rates(rows: list[dict]) -> list[float]:
+    """Per-request prefill throughput: prompt_len / ttft (the prefill phase's
+    own duration), not a wall-clock system throughput.
+    """
+    rates = []
+    for r in rows:
+        ttft = r.get("ttft") or 0
+        if ttft > 0:
+            rates.append((r.get("prompt_len") or 0) / ttft)
+    return rates
+
+
+def vllm_style_report(
+    outputs: list[dict],
+    percentiles: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99),
+) -> dict:
+    """Whole-run aggregate mirroring vllm/benchmarks/serve.py's
+    calculate_metrics: every metric collapsed into one number for the
+    entire run. Kept alongside bucket_aggregate_report() so the two
+    computation styles are directly comparable on the same data.
+    """
+    rows = [convert(o) for o in outputs]
+    successful = [r for r in rows if r.get("success")]
+    failed = len(rows) - len(successful)
+    if not successful:
+        return {"completed": 0, "failed": failed}
+
+    min_start = min(r["start_time"] for r in successful)
+    max_end = max(r["start_time"] + (r.get("latency") or 0) for r in successful)
+    dur_s = max(max_end - min_start, 1e-9)
+
+    total_input = sum(r.get("prompt_len") or 0 for r in successful)
+    total_output = sum(r.get("output_tokens") or 0 for r in successful)
+
+    ttfts = [r.get("ttft") or 0 for r in successful]
+    tpots = []
+    for r in successful:
+        out_len = r.get("output_tokens") or 0
+        if out_len > 1:
+            tpots.append(((r.get("latency") or 0) - (r.get("ttft") or 0)) / (out_len - 1))
+    itls = []
+    for r in successful:
+        itls.extend(r.get("itl") or [])
+    e2els = [r.get("latency") or 0 for r in successful]
+
+    # Per-second histogram, same idea as serve.py: only used to derive two
+    # peak scalars, then discarded.
+    n_sec = int(math.ceil(max_end - min_start)) + 1
+    tokens_per_second = [0] * n_sec
+    concurrent_per_second = [0] * n_sec
+    for r in successful:
+        start = r["start_time"]
+        cur = start + (r.get("ttft") or 0)
+        token_times = [cur]
+        for gap in (r.get("itl") or []):
+            cur += gap
+            token_times.append(cur)
+        for t in token_times:
+            idx = int(t - min_start)
+            if 0 <= idx < n_sec:
+                tokens_per_second[idx] += 1
+        start_sec = max(0, int(start - min_start))
+        end_sec = min(n_sec - 1, int(start + (r.get("latency") or 0) - min_start))
+        for s in range(start_sec, end_sec + 1):
+            concurrent_per_second[s] += 1
+
+    return {
+        "completed": len(successful),
+        "failed": failed,
+        "dur_s": dur_s,
+        "total_input": total_input,
+        "total_output": total_output,
+        "request_throughput": len(successful) / dur_s,
+        "output_throughput": total_output / dur_s,
+        "total_token_throughput": (total_input + total_output) / dur_s,
+        "max_output_tokens_per_s": max(tokens_per_second) if tokens_per_second else 0,
+        "max_concurrent_requests": max(concurrent_per_second) if concurrent_per_second else 0,
+        "prefill": _dist_stats(_prefill_rates(successful), percentiles),
+        "ttft": _dist_stats(ttfts, percentiles),
+        "tpot": _dist_stats(tpots, percentiles),
+        "itl": _dist_stats(itls, percentiles),
+        "e2el": _dist_stats(e2els, percentiles),
+    }
+
+
+def apply_ramp_trim(buckets: list[dict], threshold: float | None) -> dict:
+    """Drop leading/trailing buckets whose active_jobs <= threshold — the
+    ramp-up/ramp-down periods before/after steady state. Only trims
+    contiguous runs at the two ends; a mid-run dip is real behavior, not a
+    ramp artifact, so it is left alone. Returns the kept buckets plus the
+    (start, end) time window they cover, so the same window can also
+    restrict which raw requests feed a whole-run report.
+    """
+    if threshold is None or not buckets:
+        return {"buckets": buckets, "window": None, "trimmed_start": 0, "trimmed_end": 0}
+
+    start_idx = 0
+    while start_idx < len(buckets) and buckets[start_idx]["active_jobs"] <= threshold:
+        start_idx += 1
+    end_idx = len(buckets) - 1
+    while end_idx >= start_idx and buckets[end_idx]["active_jobs"] <= threshold:
+        end_idx -= 1
+
+    if start_idx > end_idx:
+        return {"buckets": [], "window": None, "trimmed_start": len(buckets), "trimmed_end": 0}
+
+    # Bucket dicts only carry `time` (the bucket's end); the step is uniform
+    # so the start of the kept window is recovered from it.
+    step = buckets[1]["time"] - buckets[0]["time"] if len(buckets) > 1 else buckets[0]["time"]
+    kept = buckets[start_idx:end_idx + 1]
+    return {
+        "buckets": kept,
+        "window": (start_idx * step, kept[-1]["time"]),
+        "trimmed_start": start_idx,
+        "trimmed_end": len(buckets) - 1 - end_idx,
+    }
+
+
+def compute_launch_trim_window(
+    outputs: list[dict],
+    conc: float | None,
+) -> tuple[float, float] | None:
+    """Alternative ramp-trim strategy based on request launch/completion
+    order instead of per-bucket concurrency:
+      - window start = the EARLIEST completion among the first `conc`
+        requests by start time (the initial wave, ~one per worker) — once
+        any one of them finishes, the run is past its very first round.
+      - window end = the LATEST start time across all requests — the moment
+        the very last request is dispatched. In a closed-loop harness that
+        always keeps `conc` requests in flight, a new request only launches
+        when an earlier one finishes AND there's still backlog, so the last
+        such dispatch is necessarily the last-launched request's own start:
+        after that instant nothing replaces a finisher, so it's pure
+        drain-down, not steady state. (Using the start of the (N-conc)th
+        request by start order instead — "the last wave begins" rather than
+        "the last wave finishes being dispatched" — cuts one or more waves
+        too early.)
+    Successful requests only. Returns None if there's no usable window
+    (conc <= 0, no successful requests, or conc >= N).
+
+    The window is expressed relative to the min start-time over ALL
+    outputs (success + failed) — the same baseline the buckets' own time
+    coordinates and the caller's request-filtering use. Baselining on
+    successful-only here instead would silently shift the window whenever
+    a failed request started earlier than the first successful one,
+    desyncing it from the bucket/report filtering that reads it back.
+    """
+    successful = [r for r in outputs if r.get("success")]
+    n = len(successful)
+    if conc is None or conc <= 0 or n == 0:
+        return None
+    conc = int(conc)
+    if conc >= n:
+        return None
+
+    min_start = min(r["start_time"] for r in outputs)
+    spans = [
+        (
+            r["start_time"] - min_start,
+            r["start_time"] - min_start + (r.get("latency") or 0),
+        )
+        for r in successful
+    ]
+
+    by_start = sorted(spans, key=lambda s: s[0])
+    window_start = min(s[1] for s in by_start[:conc])
+    window_end = by_start[-1][0]
+
+    if window_start >= window_end:
+        return None
+    return (window_start, window_end)
+
+
+def select_buckets_in_window(
+    buckets: list[dict],
+    window: tuple[float, float] | None,
+) -> dict:
+    """Keep only buckets whose center falls inside `window`. Works for any
+    window, not just a bucket-aligned one — apply_ramp_trim's own window is
+    always bucket-aligned (its edges come from bucket boundaries), but
+    compute_launch_trim_window's generally isn't, since it's derived from
+    exact request completion timestamps.
+    """
+    if window is None or not buckets:
+        return {"buckets": buckets, "trimmed_start": 0, "trimmed_end": 0}
+
+    window_start, window_end = window
+    step = buckets[1]["time"] - buckets[0]["time"] if len(buckets) > 1 else buckets[0]["time"]
+
+    kept_indices = [
+        i for i, b in enumerate(buckets)
+        if window_start <= (b["time"] - step / 2) <= window_end
+    ]
+    if not kept_indices:
+        return {"buckets": [], "trimmed_start": len(buckets), "trimmed_end": 0}
+
+    first, last = kept_indices[0], kept_indices[-1]
+    return {
+        "buckets": buckets[first:last + 1],
+        "trimmed_start": first,
+        "trimmed_end": len(buckets) - 1 - last,
+    }
+
+
+def bucket_aggregate_report(
+    outputs: list[dict],
+    num_buckets: int,
+    input_weight: float,
+    output_weight: float,
+    percentiles: tuple[float, ...] = (0.5, 0.9, 0.95, 0.99),
+    buckets: list[dict] | None = None,
+) -> dict:
+    """Rolls the SAME per-bucket algorithm (TimelineProcessor.method_2) back
+    up into a single aggregate, restricted to successful requests — the
+    exact basis vLLM's calculate_metrics uses — so the two whole-run numbers
+    in vllm_style_report() and this one are a fair, line-by-line comparison
+    instead of being computed two structurally different ways.
+
+    `buckets`, when given, is used as-is instead of being recomputed here.
+    Pass the caller's already-selected (e.g. ramp-trimmed) bucket list rather
+    than leaving this function to build its own fresh N-bucket grid sized to
+    `outputs`' own start/end span: that span is just the trimmed REQUEST
+    set's extent, and a single request with an outsized latency (a long-tail
+    straggler that legitimately started inside the kept window but finishes
+    well after everyone else) stretches that from-scratch grid into a long
+    fake near-empty tail of trailing buckets — one that never existed in
+    whatever bucket grid the caller actually displays elsewhere. Reusing the
+    caller's buckets keeps peak_bucket_*/milabench_rate consistent with
+    whatever chart or window the caller is already showing.
+    """
+    rows = [convert(o) for o in outputs]
+    successful = [r for r in rows if r.get("success")]
+    failed = len(rows) - len(successful)
+    if not successful:
+        return {"completed": 0, "failed": failed}
+
+    if buckets is None:
+        config = TimelineConfig(
+            num_buckets=num_buckets,
+            input_token_weight=input_weight,
+            output_token_weight=output_weight,
+        )
+        proc = TimelineProcessor(config)
+        buckets = proc(successful, number=num_buckets, persist=False)
+
+    total_input = sum(r.get("prompt_len") or 0 for r in successful)
+    total_output = sum(r.get("output_tokens") or 0 for r in successful)
+    # bucket width from consecutive bucket times, not buckets[0]["time"]: when
+    # `buckets` is a caller-supplied slice (e.g. a ramp-trimmed window that
+    # dropped leading buckets), buckets[0] is no longer the first bucket of
+    # the run, so its absolute "time" isn't the bucket width. dur_s is the
+    # KEPT WINDOW's own span (step * count), not buckets[-1]["time"], which
+    # would be measured from the untrimmed run's t=0 and silently include
+    # whatever got trimmed off the start.
+    if len(buckets) > 1:
+        step = buckets[1]["time"] - buckets[0]["time"]
+    elif buckets:
+        step = buckets[0]["time"]
+    else:
+        step = 1e-9
+    dur_s = step * len(buckets) if buckets else 1e-9
+
+    ttfts = [r.get("ttft") or 0 for r in successful]
+    tpots = []
+    for r in successful:
+        out_len = r.get("output_tokens") or 0
+        if out_len > 1:
+            tpots.append(((r.get("latency") or 0) - (r.get("ttft") or 0)) / (out_len - 1))
+    itls = []
+    for r in successful:
+        itls.extend(r.get("itl") or [])
+    e2els = [r.get("latency") or 0 for r in successful]
+
+    return {
+        "completed": len(successful),
+        "failed": failed,
+        "dur_s": dur_s,
+        "total_input": total_input,
+        "total_output": total_output,
+        "request_throughput": len(successful) / dur_s,
+        "output_throughput": total_output / dur_s,
+        "total_token_throughput": (total_input + total_output) / dur_s,
+        "peak_bucket_input_rate": max((b["input_rate"] for b in buckets), default=0),
+        "peak_bucket_output_rate": max((b["output_rate"] for b in buckets), default=0),
+        "peak_bucket_active_jobs": max((b["active_jobs"] for b in buckets), default=0),
+        "num_buckets": num_buckets,
+        "bucket_duration": step,
+        # Each bucket's `rate` is exactly the per-bucket sample
+        # benchmarks/vllm/main.py pushes to milabench's metric stream in
+        # production (`for sampled_obs in timeline(...): push_metric(**
+        # sampled_obs)`). This is the plain distribution of that raw
+        # stream, not an aggregation milabench itself performs.
+        "milabench_rate": _milabench_style_stats([b["rate"] for b in buckets], percentiles),
+        "prefill": _dist_stats(_prefill_rates(successful), percentiles),
+        "ttft": _dist_stats(ttfts, percentiles),
+        # TPOT/E2EL aren't localized per-bucket (the bucket method doesn't
+        # produce a per-bucket breakdown for them), but their distribution
+        # over THIS function's request set — the ramp-trimmed subset when
+        # trim is on — is exactly what shows the trim's impact against
+        # vLLM's report, which always uses every request.
+        "tpot": _dist_stats(tpots, percentiles),
+        "itl": _dist_stats(itls, percentiles),
+        "e2el": _dist_stats(e2els, percentiles),
+        "buckets": buckets,
+    }
 
 
 def timeline(

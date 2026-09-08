@@ -1,25 +1,18 @@
 #!/usr/bin/env python
+"""Download LLaVA weights and dataset into the HF cache (no model load)."""
 
-import torch
-from datasets import load_dataset
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+from benchmate.hugginface import download_hf_dataset, download_hf_model
+
+MODEL_ID = "llava-hf/llava-1.5-7b-hf"
+REVISION = "e2214c2851fadaf9241c9f9ac91dcdee51981021"
+DATASET = "HuggingFaceM4/the_cauldron"
+DATASET_NAME = "aokvqa"
 
 
 def main():
-    # Load LLaVA model and processor with device_map="auto"
-    _ = LlavaForConditionalGeneration.from_pretrained(
-        "llava-hf/llava-1.5-7b-hf",
-        torch_dtype=torch.float32,  # Change to float32
-        device_map="auto",
-        revision="e2214c2851fadaf9241c9f9ac91dcdee51981021"
-    )
-    _ = AutoProcessor.from_pretrained(
-        "llava-hf/llava-1.5-7b-hf",
-        revision="e2214c2851fadaf9241c9f9ac91dcdee51981021"
-    )
-
-    # Load dataset and create DataLoader
-    _ = load_dataset("HuggingFaceM4/the_cauldron", "aokvqa")["train"]
+    # Processor/tokenizer/config files live in the same repo as the weights.
+    download_hf_model(MODEL_ID, revision=REVISION)
+    download_hf_dataset(DATASET, split="train", name=DATASET_NAME)
 
 
 if __name__ == "__main__":

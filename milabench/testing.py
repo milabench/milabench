@@ -62,12 +62,16 @@ def assume_gpu(ngpu=1, capacity=80000):
             def close(self):
                 pass
 
+        from milabench.system import get_gpu_info
+
         old = voirgpu.DEVICESMI
         voirgpu.DEVICESMI = MockDeviceSMI(ngpu, capacity)
+        get_gpu_info.cache_clear()
         try:
             yield
         finally:
             voirgpu.DEVICESMI = old
+            get_gpu_info.cache_clear()
     except ImportError:
         yield
 

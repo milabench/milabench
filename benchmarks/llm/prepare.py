@@ -87,11 +87,18 @@ def load_dataset(recipe, cfg):
     sys.path.append(os.path.join(os.path.dirname(__file__), "bench"))
 
     with long_action("Still working", 30):
+        print(f"[load_dataset] instantiating tokenizer: {cfg.tokenizer.get('_component_')}", flush=True)
+        t0 = time.time()
         tokenizer = config.instantiate(cfg.tokenizer)
+        print(f"[load_dataset] tokenizer ready ({time.time() - t0:.1f}s)", flush=True)
 
         datasets = cfg.dataset if isinstance(cfg.dataset, ListConfig) else [cfg.dataset]
         for single_cfg_dataset in datasets:
+            source = single_cfg_dataset.get("source", single_cfg_dataset.get("_component_"))
+            print(f"[load_dataset] instantiating dataset: {source} (may hit the HF Hub over the network)", flush=True)
+            t0 = time.time()
             config.instantiate(single_cfg_dataset, tokenizer)
+            print(f"[load_dataset] dataset {source} ready ({time.time() - t0:.1f}s)", flush=True)
 
 
 def generate_weights(args, config):
@@ -162,6 +169,12 @@ def main():
     else:
         # Ignore hugging face weights
         ignore_patterns = ["*.safetensors"]
+
+    try:
+        import hf_transfer  # noqa: F401
+        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    except ImportError:
+        pass
 
     print(f"Downloading to {output_dir}")
 

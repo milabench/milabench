@@ -6,7 +6,6 @@ from contextlib import contextmanager
 import traceback
 
 from filelock import FileLock, Timeout
-from voir.instruments.gpu import get_gpu_info
 
 from .capability import is_system_capable
 from .commands import NJobs, PerGPU
@@ -14,6 +13,7 @@ from .config import set_run_count
 from .fs import XPath
 from .config import get_base_folder
 from .pack import Package
+from .system import get_gpu_info
 from .remote import (
     is_main_local,
     is_multinode,

@@ -71,9 +71,9 @@ class Update(Command):
                 io_chunk=getattr(args, "io_chunk", None),
             )
             print(
-                f"[{stats.name}] {stats.file_count} files "
-                f"(+{stats.added} -{stats.removed} ={stats.unchanged}) "
-                f"{'updated' if stats.changed else 'unchanged'} {args.shared}"
+                f"[{stats.name}] {stats.summary()} "
+                f"{'updated' if stats.changed else 'unchanged'} {args.shared}, "
+                f"{stats.io.summary()}"
             )
             if args.clean:
                 # Skip mirroring: hardlinks would keep the bytes on disk.

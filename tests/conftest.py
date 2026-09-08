@@ -3,6 +3,7 @@ import stat
 from pathlib import Path
 
 
+from milabench.system import get_gpu_info
 from milabench.testing import official_config
 import pytest
 import voir.instruments.gpu as voirgpu
@@ -132,11 +133,13 @@ def set_env():
     if backend == "mock":
         oldsmi = voirgpu.DEVICESMI
         voirgpu.DEVICESMI = MockDeviceSMI()
+        get_gpu_info.cache_clear()
 
     yield
 
     if backend == "mock":
         voirgpu.DEVICESMI = oldsmi
+        get_gpu_info.cache_clear()
 
     # --
     # --

@@ -9,8 +9,6 @@ from typing import Dict, Generator, List, Tuple
 from contextlib import contextmanager
 import warnings
 
-from voir.instruments.gpu import get_gpu_info
-
 from .. import pack
 from ..fs import XPath
 from ..merge import merge

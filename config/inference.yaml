@@ -46,7 +46,7 @@ vllm-dense-physics-gpus:
       --dataset-name: hf
       --dataset-path: hendrydong/gpqa_diamond
       --hf-name: hendrydong/gpqa_diamond
-      --num-prompts: 500
+      --num-prompts: 5000
       --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
       --max-concurrency: 64
       --ready-check-timeout-sec: 1200
@@ -79,7 +79,7 @@ vllm-moe-code-gpus:
       --dataset-name: hf
       --dataset-path: vdaita/edit_10k_char
       --hf-name: vdaita/edit_10k_char
-      --num-prompts: 500
+      --num-prompts: 640
       --model: meta-llama/Llama-4-Scout-17B-16E
       --max-concurrency: 64
       --ready-check-timeout-sec: 1200

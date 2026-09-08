@@ -1,6 +1,12 @@
 
 
-def download_hf_model(model_id, token=None, cache_dir=None, ignore_patterns=None):
+def download_hf_model(
+    model_id,
+    token=None,
+    cache_dir=None,
+    ignore_patterns=None,
+    revision=None,
+):
     from huggingface_hub import snapshot_download
 
     # No default ignore_patterns: at server start, vllm's own get_model_path()
@@ -22,6 +28,9 @@ def download_hf_model(model_id, token=None, cache_dir=None, ignore_patterns=None
 
     if token:
         snapshot_kwargs["token"] = token
+
+    if revision:
+        snapshot_kwargs["revision"] = revision
 
     print(f"Downloading {model_id}...")
 

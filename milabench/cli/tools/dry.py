@@ -22,6 +22,7 @@ from ...common import CommonArguments, get_multipack
 from ...multi import make_execution_plan
 from ...network import enable_offline
 from ...sizer import resolve_argv
+from ...system import get_gpu_info
 
 
 class MockDeviceSMI:
@@ -75,8 +76,10 @@ def assume_gpu(ngpu=1, capacity=80000, enabled=False):
     if enabled:
         old = voirgpu.DEVICESMI
         voirgpu.DEVICESMI = MockDeviceSMI(ngpu, capacity)
+        get_gpu_info.cache_clear()
         yield
         voirgpu.DEVICESMI = old
+        get_gpu_info.cache_clear()
     else:
         yield
 

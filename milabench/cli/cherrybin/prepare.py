@@ -13,11 +13,25 @@ from milabench.common import CommonArguments, get_multipack
 
 from .util import (
     blob_cache_dir,
+    is_full_archive_checkout,
     materialize_checkout,
+    materialize_checkout_all,
     prepare_locally,
     require_cherrybin,
     uses_generated_dataset,
 )
+
+
+def _print_checkout_result(result, standard_data, standard_cache) -> None:
+    print(
+        f"[{result.benchmark}] {result.file_count} files "
+        f"({result.pulled_from_archive} from archive, "
+        f"{result.already_cached} cached, "
+        f"{result.chunks_read} chunks, "
+        f"{result.archive_bytes_read / 1e6:.1f} MB read) "
+        f"-> {standard_data} / {standard_cache}, "
+        f"{result.io.summary()}"
+    )
 
 
 class Prepare(Command):
@@ -38,6 +52,7 @@ class Prepare(Command):
         shared : str             = argument("--shared", default="")  # Path to the cherrybin archive .db
         cache  : str             = ""                    # Blob cache directory
         io_chunk : int           = 4 * 1024 * 1024       # Stream I/O chunk size in bytes
+        no_stream: bool          = False                 # Use per-file naive checkout
     # fmt: on
 
     @staticmethod
@@ -52,17 +67,53 @@ class Prepare(Command):
 
         mp = get_multipack(args, run_name="cherrybin.prepare.{time}")
         blob_cache = args.cache or blob_cache_dir(args.base)
+        stream = not args.no_stream
+        io_chunk = getattr(args, "io_chunk", None)
 
+        archive_packs = {
+            name: pack
+            for name, pack in mp.packs.items()
+            if not uses_generated_dataset(pack)
+        }
         errors = 0
-        for pack in mp.packs.values():
-            name = pack.config["name"]
+
+        for name, pack in mp.packs.items():
             if uses_generated_dataset(pack):
                 print(f"[{name}] generated dataset, running prepare")
                 ret = prepare_locally(pack, shortrace=False)
                 if ret:
                     errors += 1
-                continue
 
+        if archive_packs and is_full_archive_checkout(
+            args.shared, sorted(archive_packs)
+        ):
+            mode = "naive" if args.no_stream else "stream"
+            print(
+                f"[cherrybin] full archive checkout "
+                f"({len(archive_packs)} benchmarks, {mode})"
+            )
+            try:
+                with tempfile.TemporaryDirectory() as staging:
+                    results = materialize_checkout_all(
+                        args.shared,
+                        archive_packs,
+                        blob_cache,
+                        staging,
+                        io_chunk=io_chunk,
+                        stream=stream,
+                    )
+            except (FileNotFoundError, KeyError) as exc:
+                print(f"error: {exc}")
+                return 1
+
+            for name, pack in archive_packs.items():
+                result = results[name]
+                _print_checkout_result(
+                    result, pack.dirs.data, pack.dirs.cache
+                )
+            return 1 if errors else 0
+
+        for name, pack in archive_packs.items():
             standard_data = pack.dirs.data
             standard_cache = pack.dirs.cache
             isolated_data = standard_data / name
@@ -78,17 +129,14 @@ class Prepare(Command):
                         isolated_cache,
                         blob_cache,
                         staging,
-                        io_chunk=getattr(args, "io_chunk", None),
+                        io_chunk=io_chunk,
+                        stream=stream,
                     )
             except (FileNotFoundError, KeyError) as exc:
                 print(f"error: {exc}")
                 errors += 1
                 continue
-            print(
-                f"[{result.benchmark}] {result.file_count} files "
-                f"({result.pulled_from_archive} from archive, "
-                f"{result.already_cached} cached) -> {standard_data} / {standard_cache}"
-            )
+            _print_checkout_result(result, standard_data, standard_cache)
 
         return 1 if errors else 0
 

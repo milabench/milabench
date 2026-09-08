@@ -31,7 +31,11 @@ class Spinner(Thread):
 
         while self.running:
             time.sleep(self.interval)
-            print(f"\r{self.msg} {time.time() - start:10.2f} {next(s)}", end="")
+            # A trailing "\r" with no newline never becomes a complete
+            # line for readline()-based log capture (e.g. voir's process
+            # multiplexer), so it can sit unflushed and look like the
+            # process produced nothing for the whole interval.
+            print(f"{self.msg} {time.time() - start:10.2f} {next(s)}", flush=True)
 
 
 @contextmanager

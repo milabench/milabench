@@ -1,8 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-import voir.instruments.gpu
-
 from .validation import ValidationLayer
 
 
@@ -24,7 +22,9 @@ class Layer(ValidationLayer):
     """
 
     def __init__(self, **kwargs) -> None:
-        gpus = voir.instruments.gpu.get_gpu_info()["gpus"]
+        from ..system import get_gpu_info
+
+        gpus = get_gpu_info()["gpus"]
         self.gpus = len(gpus)
         self.configs = defaultdict(Planning)
 
