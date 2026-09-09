@@ -14,6 +14,7 @@ if _CHERRYBIN_ROOT.is_dir():
 from milabench.cli.cherrybin.util import (
     hardlink_tree,
     isolate_pack_dirs,
+    is_full_archive_checkout,
     materialize_checkout,
     mirror_isolated_to_standard,
     pack_roots,
@@ -176,7 +177,9 @@ def test_prepare_execute_checkouts_shared_db(tmp_path, monkeypatch):
         lambda *a, **k: SimpleNamespace(packs={"vllm": dest_pack}),
     )
 
-    args = SimpleNamespace(shared=str(db), cache="", base=str(tmp_path / "node"))
+    args = SimpleNamespace(
+        shared=str(db), cache="", base=str(tmp_path / "node"), no_stream=False
+    )
     assert Prepare.execute(args) == 0
     assert (out_data / "hub" / "llama.bin").read_text() == "llama"
     assert (out_data / "vllm" / "hub" / "llama.bin").exists()
@@ -352,6 +355,7 @@ def test_prepare_runs_generate_for_generated_dataset(tmp_path, monkeypatch):
         shared=str(tmp_path / "archive.db"),
         cache="",
         base=str(tmp_path),
+        no_stream=False,
     )
     (tmp_path / "archive.db").write_bytes(b"x")
     assert Prepare.execute(args) == 0
@@ -362,5 +366,195 @@ def test_prepare_runs_generate_for_generated_dataset(tmp_path, monkeypatch):
 def test_prepare_execute_missing_archive(tmp_path):
     from milabench.cli.cherrybin.prepare import Prepare
 
-    args = SimpleNamespace(shared=str(tmp_path / "nope.db"), cache="", base=str(tmp_path))
+    args = SimpleNamespace(shared=str(tmp_path / "nope.db"), cache="", base=str(tmp_path), no_stream=False)
     assert Prepare.execute(args) == 1
+
+
+def test_is_full_archive_checkout(tmp_path):
+    data = tmp_path / "data"
+    cache = tmp_path / "cache"
+    db = tmp_path / "archive.db"
+    vllm = DummyPack("vllm", data, cache)
+    dino = DummyPack("dinov2", data, cache)
+    isolate_pack_dirs(vllm)
+    isolate_pack_dirs(dino)
+    _write(vllm.dirs.data / "a.bin", "a")
+    _write(dino.dirs.data / "b.bin", "b")
+    update_files(
+        str(db),
+        [
+            ("vllm", pack_roots(vllm)),
+            ("dinov2", pack_roots(dino)),
+        ],
+    )
+
+    assert is_full_archive_checkout(str(db), ["vllm", "dinov2"])
+    assert not is_full_archive_checkout(str(db), ["vllm"])
+    assert not is_full_archive_checkout(str(db), [])
+
+
+def test_prepare_full_archive_uses_checkout_all(tmp_path, monkeypatch):
+    from milabench.cli.cherrybin.prepare import Prepare
+
+    src_data = tmp_path / "src" / "data"
+    src_cache = tmp_path / "src" / "cache"
+    vllm = DummyPack("vllm", src_data, src_cache)
+    dino = DummyPack("dinov2", src_data, src_cache)
+    isolate_pack_dirs(vllm)
+    isolate_pack_dirs(dino)
+    _write(vllm.dirs.data / "v.bin", "v")
+    _write(dino.dirs.data / "d.bin", "d")
+    db = tmp_path / "archive.db"
+    update_files(
+        str(db),
+        [
+            ("vllm", pack_roots(vllm)),
+            ("dinov2", pack_roots(dino)),
+        ],
+    )
+
+    out_data = tmp_path / "node" / "data"
+    out_cache = tmp_path / "node" / "cache"
+    dest_vllm = DummyPack("vllm", out_data, out_cache)
+    dest_dino = DummyPack("dinov2", out_data, out_cache)
+    calls = []
+
+    def spy_checkout_all(*args, **kwargs):
+        calls.append("all")
+        from milabench.cli.cherrybin.util import materialize_checkout_all as real
+
+        return real(*args, **kwargs)
+
+    def spy_checkout(*args, **kwargs):
+        calls.append("one")
+        from milabench.cli.cherrybin.util import materialize_checkout as real
+
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.get_multipack",
+        lambda *a, **k: SimpleNamespace(
+            packs={"vllm": dest_vllm, "dinov2": dest_dino},
+        ),
+    )
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.materialize_checkout_all",
+        spy_checkout_all,
+    )
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.materialize_checkout",
+        spy_checkout,
+    )
+
+    args = SimpleNamespace(
+        shared=str(db), cache="", base=str(tmp_path / "node"), no_stream=False
+    )
+    assert Prepare.execute(args) == 0
+    assert calls == ["all"]
+    assert (out_data / "v.bin").read_text() == "v"
+    assert (out_data / "d.bin").read_text() == "d"
+
+
+def test_prepare_runs_generated_and_checkout_concurrently(tmp_path, monkeypatch):
+    """A failing generated-dataset prepare must still fail the command.
+
+    Regression test for a race: the archive checkout and the generated
+    -dataset prepare loop run on separate threads so they overlap instead
+    of stacking, but the final exit code must wait for the background
+    thread to finish before deciding success/failure -- checking it too
+    early could report success while the generated dataset was still
+    failing.
+    """
+    from milabench.cli.cherrybin.prepare import Prepare
+
+    src_data = tmp_path / "src" / "data"
+    src_cache = tmp_path / "src" / "cache"
+    vllm = DummyPack("vllm", src_data, src_cache)
+    isolate_pack_dirs(vllm)
+    _write(vllm.dirs.data / "v.bin", "v")
+    db = tmp_path / "archive.db"
+    update_files(str(db), [("vllm", pack_roots(vllm))])
+
+    out_data = tmp_path / "node" / "data"
+    out_cache = tmp_path / "node" / "cache"
+    dest_vllm = DummyPack("vllm", out_data, out_cache)
+    generated = DummyPack("resnet50", out_data, out_cache, generated=True)
+    prepared = []
+
+    def fake_run(coro, **kwargs):
+        prepared.append(generated.config["name"])
+        coro.close()
+        return 1  # simulate the generated-dataset prepare failing
+
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.get_multipack",
+        lambda *a, **k: SimpleNamespace(
+            packs={"vllm": dest_vllm, "resnet50": generated},
+        ),
+    )
+    monkeypatch.setattr("milabench.cli.cherrybin.util.run_with_loggers", fake_run)
+
+    args = SimpleNamespace(
+        shared=str(db), cache="", base=str(tmp_path / "node"), no_stream=False
+    )
+    assert Prepare.execute(args) == 1
+    assert prepared == ["resnet50"]
+    assert (out_data / "v.bin").read_text() == "v"
+
+
+def test_prepare_subset_uses_per_bench_checkout(tmp_path, monkeypatch):
+    from milabench.cli.cherrybin.prepare import Prepare
+
+    src_data = tmp_path / "src" / "data"
+    src_cache = tmp_path / "src" / "cache"
+    vllm = DummyPack("vllm", src_data, src_cache)
+    dino = DummyPack("dinov2", src_data, src_cache)
+    isolate_pack_dirs(vllm)
+    isolate_pack_dirs(dino)
+    _write(vllm.dirs.data / "v.bin", "v")
+    _write(dino.dirs.data / "d.bin", "d")
+    db = tmp_path / "archive.db"
+    update_files(
+        str(db),
+        [
+            ("vllm", pack_roots(vllm)),
+            ("dinov2", pack_roots(dino)),
+        ],
+    )
+
+    out_data = tmp_path / "node" / "data"
+    out_cache = tmp_path / "node" / "cache"
+    dest_vllm = DummyPack("vllm", out_data, out_cache)
+    calls = []
+
+    def spy_checkout_all(*args, **kwargs):
+        calls.append("all")
+        from milabench.cli.cherrybin.util import materialize_checkout_all as real
+
+        return real(*args, **kwargs)
+
+    def spy_checkout(*args, **kwargs):
+        calls.append("one")
+        from milabench.cli.cherrybin.util import materialize_checkout as real
+
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.get_multipack",
+        lambda *a, **k: SimpleNamespace(packs={"vllm": dest_vllm}),
+    )
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.materialize_checkout_all",
+        spy_checkout_all,
+    )
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.materialize_checkout",
+        spy_checkout,
+    )
+
+    args = SimpleNamespace(
+        shared=str(db), cache="", base=str(tmp_path / "node"), no_stream=False
+    )
+    assert Prepare.execute(args) == 0
+    assert calls == ["one"]
+    assert (out_data / "v.bin").read_text() == "v"

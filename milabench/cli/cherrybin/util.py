@@ -6,6 +6,8 @@ import os
 import shutil
 from typing import TYPE_CHECKING
 
+from cantilever.core.timer import timeit
+
 from milabench.common import run_with_loggers
 from milabench.fs import XPath
 from milabench.log import DataReporter, TerminalFormatter, TextReporter
@@ -127,19 +129,90 @@ def materialize_checkout(
     dest_staging: str,
     *,
     io_chunk: int | None = None,
+    stream: bool = True,
 ):
     """Checkout one bench into staging, then hardlink to standard and isolated trees."""
     core = require_cherrybin()
-    result = core.checkout(db_path, name, dest_staging, blob_cache, io_chunk=io_chunk)
+    with timeit("cherrybin.checkout_stream"):
+        result = core.checkout(
+            db_path,
+            name,
+            dest_staging,
+            blob_cache,
+            io_chunk=io_chunk,
+            stream=stream,
+        )
     data_src = os.path.join(dest_staging, "data")
     cache_src = os.path.join(dest_staging, "cache")
-    if os.path.isdir(data_src):
-        hardlink_tree(data_src, standard_data)
-        hardlink_tree(data_src, isolated_data)
-    if os.path.isdir(cache_src):
-        hardlink_tree(cache_src, standard_cache)
-        hardlink_tree(cache_src, isolated_cache)
+    with timeit("cherrybin.hardlink_standard"):
+        if os.path.isdir(data_src):
+            hardlink_tree(data_src, standard_data)
+        if os.path.isdir(cache_src):
+            hardlink_tree(cache_src, standard_cache)
+    with timeit("cherrybin.hardlink_isolated"):
+        if os.path.isdir(data_src):
+            hardlink_tree(data_src, isolated_data)
+        if os.path.isdir(cache_src):
+            hardlink_tree(cache_src, isolated_cache)
     return result
+
+
+def is_full_archive_checkout(
+    db_path: str,
+    pack_names: list[str],
+) -> bool:
+    """True when every benchmark in the archive is being prepared."""
+    core = require_cherrybin()
+    con = core.open_readonly(db_path)
+    try:
+        archive = {s.name for s in core.list_benchmarks(con)}
+    finally:
+        con.close()
+    requested = set(pack_names)
+    return bool(archive) and archive <= requested
+
+
+def materialize_checkout_all(
+    db_path: str,
+    packs: dict[str, BasePackage],
+    blob_cache: str,
+    dest_staging: str,
+    *,
+    io_chunk: int | None = None,
+    stream: bool = True,
+):
+    """Checkout every archive benchmark in one blob pass, then hardlink per pack."""
+    core = require_cherrybin()
+    benchmarks = sorted(packs)
+    with timeit("cherrybin.checkout_stream"):
+        results = core.checkout_benchmarks(
+            db_path,
+            benchmarks,
+            dest_staging,
+            blob_cache,
+            io_chunk=io_chunk,
+            stream=stream,
+        )
+    by_name = {r.benchmark: r for r in results}
+    for name, pack in packs.items():
+        bench_staging = os.path.join(dest_staging, name)
+        data_src = os.path.join(bench_staging, "data")
+        cache_src = os.path.join(bench_staging, "cache")
+        standard_data = pack.dirs.data
+        standard_cache = pack.dirs.cache
+        isolated_data = standard_data / name
+        isolated_cache = standard_cache / name
+        with timeit("cherrybin.hardlink_standard"):
+            if os.path.isdir(data_src):
+                hardlink_tree(data_src, standard_data)
+            if os.path.isdir(cache_src):
+                hardlink_tree(cache_src, standard_cache)
+        with timeit("cherrybin.hardlink_isolated"):
+            if os.path.isdir(data_src):
+                hardlink_tree(data_src, isolated_data)
+            if os.path.isdir(cache_src):
+                hardlink_tree(cache_src, isolated_cache)
+    return by_name
 
 
 def mirror_isolated_to_standard(
