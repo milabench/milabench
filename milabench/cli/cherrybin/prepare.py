@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import tempfile
 import threading
@@ -118,9 +119,18 @@ class Prepare(Command):
 
         generate_thread = None
         if generated_packs:
+            # A plain threading.Thread starts with a fresh, empty
+            # contextvars.Context -- it does NOT inherit system_global/
+            # multirun_global (milabench/system.py) from the calling thread.
+            # do_prepare() -> phase_lock() -> get_base_folder() reads
+            # system_global.get(), which would come back None in the new
+            # thread and crash with "'NoneType' object is not subscriptable".
+            # Running the target through a copy of the current context keeps
+            # those contextvars visible.
+            ctx = contextvars.copy_context()
             generate_thread = threading.Thread(
-                target=_prepare_generated,
-                args=(generated_packs, generate_failed),
+                target=ctx.run,
+                args=(_prepare_generated, generated_packs, generate_failed),
                 daemon=True,
             )
             generate_thread.start()

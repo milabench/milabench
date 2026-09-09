@@ -502,6 +502,50 @@ def test_prepare_runs_generated_and_checkout_concurrently(tmp_path, monkeypatch)
     assert (out_data / "v.bin").read_text() == "v"
 
 
+def test_prepare_generated_thread_inherits_contextvars(tmp_path, monkeypatch):
+    """The generated-dataset background thread must see the caller's contextvars.
+
+    Regression test: system_global/multirun_global (milabench/system.py) are
+    contextvars.ContextVar. A plain threading.Thread does not inherit the
+    calling thread's context, so do_prepare() -> phase_lock() ->
+    get_base_folder() would read system_global.get() as None inside the
+    thread and crash with "'NoneType' object is not subscriptable" -- every
+    generated-dataset prepare failing near-instantly, which looked like a
+    silent, instant success in the logs.
+    """
+    from milabench.cli.cherrybin.prepare import Prepare
+    from milabench.system import system_global
+
+    data = tmp_path / "data"
+    cache = tmp_path / "cache"
+    pack = DummyPack("resnet50", data, cache, generated=True)
+    seen = []
+
+    def fake_run(coro, **kwargs):
+        seen.append(system_global.get())
+        coro.close()
+        return 0
+
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.get_multipack",
+        lambda *a, **k: SimpleNamespace(packs={"resnet50": pack}),
+    )
+    monkeypatch.setattr("milabench.cli.cherrybin.util.run_with_loggers", fake_run)
+
+    args = SimpleNamespace(
+        shared=str(tmp_path / "archive.db"), cache="", base=str(tmp_path), no_stream=False
+    )
+    (tmp_path / "archive.db").write_bytes(b"x")
+
+    token = system_global.set({"marker": "propagated"})
+    try:
+        assert Prepare.execute(args) == 0
+    finally:
+        system_global.reset(token)
+
+    assert seen == [{"marker": "propagated"}]
+
+
 def test_prepare_subset_uses_per_bench_checkout(tmp_path, monkeypatch):
     from milabench.cli.cherrybin.prepare import Prepare
 
