@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import contextvars
 import os
+import subprocess
+import sys
 import tempfile
-import threading
 from dataclasses import dataclass
 
 from argklass.arguments import argument, group
@@ -19,7 +19,6 @@ from .util import (
     is_full_archive_checkout,
     materialize_checkout,
     materialize_checkout_all,
-    prepare_locally,
     require_cherrybin,
     uses_generated_dataset,
 )
@@ -36,24 +35,41 @@ def _show_timings() -> None:
         print(f"[cherrybin] could not print timing breakdown: {exc}")
 
 
-def _prepare_generated(generated_packs: dict, failed: list) -> None:
-    """Run the (sequential) local prepare for generated-dataset benches.
+def _generate_argv(args, names: list) -> list:
+    """Build the `milabench prepare --select ...` argv for the generated benches.
 
-    Meant to run on a background thread alongside the archive checkout.
-    Left sequential on purpose: benchmate.warden's children_warden tracks
-    subprocesses by os.getpid(), which is shared by every thread in this
-    process -- two of these running concurrently in separate threads could
-    see each other's still-running subprocess as an "unexpected leftover
-    child" and kill it. The checkout below never touches warden/signal
-    machinery at all, so pairing one sequential prepare thread with the
-    checkout on the main thread is safe; running multiple prepares
-    concurrently would not be.
+    Run out-of-process rather than on a background thread: benchmate.warden's
+    pipe_warden() snapshots this *whole process's* /proc/<pid>/fd/ before and
+    after running a bench's prepare script, then closes anything "new" as an
+    assumed leaked pipe -- os.getpid() is shared by every thread, so it can't
+    tell a real leak from a file some other thread (e.g. cherrybin's own
+    reader thread, mid-checkout) opened for something unrelated. It has
+    closed cherrybin's archive file out from under it this way. A real
+    subprocess gets its own, isolated fd table, so pipe_warden there can
+    never reach cherrybin's fds.
+
+    `milabench prepare` already runs multiple --select'ed benches one after
+    another in a single process (see MultiPackage.do_phase), so one
+    subprocess for every generated bench together keeps them sequential
+    relative to each other while running as a whole in parallel with the
+    archive checkout.
     """
-    with timeit("cherrybin.generate_local"):
-        for name, pack in generated_packs.items():
-            print(f"[{name}] generated dataset, running prepare")
-            if prepare_locally(pack, shortrace=False):
-                failed.append(name)
+    argv = [sys.executable, "-m", "milabench", "prepare", "--select", ",".join(names)]
+    if config := getattr(args, "config", None):
+        argv += ["--config", config]
+    if system := getattr(args, "system", None):
+        argv += ["--system", system]
+    if base := getattr(args, "base", None):
+        argv += ["--base", base]
+    if exclude := getattr(args, "exclude", None):
+        argv += ["--exclude", exclude]
+    for override in getattr(args, "override", None) or []:
+        argv += ["--override", override]
+    if capabilities := getattr(args, "capabilities", None):
+        argv += ["--capabilities", capabilities]
+    if getattr(args, "resume", False):
+        argv += ["--resume"]
+    return argv
 
 
 def _print_checkout_result(result, standard_data, standard_cache) -> None:
@@ -115,25 +131,15 @@ class Prepare(Command):
             if uses_generated_dataset(pack)
         }
         errors = 0
-        generate_failed: list = []
 
-        generate_thread = None
+        generate_proc = None
+        generate_timer = None
         if generated_packs:
-            # A plain threading.Thread starts with a fresh, empty
-            # contextvars.Context -- it does NOT inherit system_global/
-            # multirun_global (milabench/system.py) from the calling thread.
-            # do_prepare() -> phase_lock() -> get_base_folder() reads
-            # system_global.get(), which would come back None in the new
-            # thread and crash with "'NoneType' object is not subscriptable".
-            # Running the target through a copy of the current context keeps
-            # those contextvars visible.
-            ctx = contextvars.copy_context()
-            generate_thread = threading.Thread(
-                target=ctx.run,
-                args=(_prepare_generated, generated_packs, generate_failed),
-                daemon=True,
-            )
-            generate_thread.start()
+            argv = _generate_argv(args, sorted(generated_packs))
+            print(f"[cherrybin] preparing generated datasets in a subprocess: {' '.join(argv)}")
+            generate_timer = timeit("cherrybin.generate_local")
+            generate_timer.__enter__()
+            generate_proc = subprocess.Popen(argv)
 
         try:
             if archive_packs and is_full_archive_checkout(
@@ -189,16 +195,19 @@ class Prepare(Command):
                         continue
                     _print_checkout_result(result, standard_data, standard_cache)
         finally:
-            # generate_failed is only trustworthy once the background thread
-            # has actually finished -- must join before it factors into the
-            # exit code below.
-            if generate_thread is not None:
-                generate_thread.join()
-            for name in generate_failed:
-                print(f"[{name}] generated dataset prepare failed")
+            # generate_rc is only trustworthy once the subprocess has
+            # actually exited -- must wait before it factors into the exit
+            # code below.
+            generate_rc = 0
+            if generate_proc is not None:
+                generate_rc = generate_proc.wait()
+                if generate_rc:
+                    print(f"[cherrybin] generated dataset prepare failed (exit {generate_rc})")
+            if generate_timer is not None:
+                generate_timer.__exit__(None, None, None)
             _show_timings()
 
-        return 1 if (errors or generate_failed) else 0
+        return 1 if (errors or generate_rc) else 0
 
 
 COMMANDS = Prepare

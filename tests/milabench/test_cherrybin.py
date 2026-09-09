@@ -330,37 +330,53 @@ def test_update_skips_generated_dataset(tmp_path, monkeypatch):
     assert not db.exists()
 
 
-def test_prepare_runs_generate_for_generated_dataset(tmp_path, monkeypatch):
+def test_prepare_spawns_subprocess_for_generated_dataset(tmp_path, monkeypatch):
+    """Generated-dataset benches must run as a real subprocess, not in-process.
+
+    Regression test: running them on a background thread (an earlier design)
+    let benchmate.warden's pipe_warden() -- which snapshots this whole
+    process's /proc/<pid>/fd/ before/after a bench's prepare script and
+    closes anything "new" -- close file descriptors opened by *other*
+    threads, including cherrybin's own archive file mid-checkout. A separate
+    OS process has its own fd table, so pipe_warden there can never reach
+    cherrybin's fds.
+    """
     from milabench.cli.cherrybin.prepare import Prepare
 
-    data = tmp_path / "data"
-    cache = tmp_path / "cache"
-    pack = DummyPack("resnet50", data, cache, generated=True)
-    prepared = []
+    pack = DummyPack("resnet50", tmp_path / "data", tmp_path / "cache", generated=True)
+    popens = []
+
+    class FakePopen:
+        def __init__(self, argv):
+            self.argv = argv
+            popens.append(argv)
+
+        def wait(self):
+            return 0
 
     monkeypatch.setattr(
         "milabench.cli.cherrybin.prepare.get_multipack",
         lambda *a, **k: SimpleNamespace(packs={"resnet50": pack}),
     )
-
-    def fake_run(coro, **kwargs):
-        prepared.append(pack.config["name"])
-        coro.close()
-        _write(data / "FakeImageNet" / "done", "ok")
-        return 0
-
-    monkeypatch.setattr("milabench.cli.cherrybin.util.run_with_loggers", fake_run)
+    monkeypatch.setattr("milabench.cli.cherrybin.prepare.subprocess.Popen", FakePopen)
 
     args = SimpleNamespace(
         shared=str(tmp_path / "archive.db"),
         cache="",
         base=str(tmp_path),
         no_stream=False,
+        config="cfg.yaml",
+        system="sys.yaml",
     )
     (tmp_path / "archive.db").write_bytes(b"x")
+
     assert Prepare.execute(args) == 0
-    assert prepared == ["resnet50"]
-    assert (data / "FakeImageNet" / "done").read_text() == "ok"
+    assert len(popens) == 1
+    argv = popens[0]
+    assert argv[1:4] == ["-m", "milabench", "prepare"]
+    assert argv[argv.index("--select") + 1] == "resnet50"
+    assert argv[argv.index("--config") + 1] == "cfg.yaml"
+    assert argv[argv.index("--system") + 1] == "sys.yaml"
 
 
 def test_prepare_execute_missing_archive(tmp_path):
@@ -455,16 +471,12 @@ def test_prepare_full_archive_uses_checkout_all(tmp_path, monkeypatch):
     assert (out_data / "d.bin").read_text() == "d"
 
 
-def test_prepare_runs_generated_and_checkout_concurrently(tmp_path, monkeypatch):
-    """A failing generated-dataset prepare must still fail the command.
-
-    Regression test for a race: the archive checkout and the generated
-    -dataset prepare loop run on separate threads so they overlap instead
-    of stacking, but the final exit code must wait for the background
-    thread to finish before deciding success/failure -- checking it too
-    early could report success while the generated dataset was still
-    failing.
+def test_prepare_subprocess_overlaps_checkout_and_propagates_failure(tmp_path, monkeypatch):
+    """The generated-dataset subprocess must be spawned before the checkout
+    runs (so they actually overlap) and only awaited afterwards -- and a
+    failing subprocess must still fail the overall command.
     """
+    from milabench.cli.cherrybin import prepare as prepare_mod
     from milabench.cli.cherrybin.prepare import Prepare
 
     src_data = tmp_path / "src" / "data"
@@ -479,12 +491,23 @@ def test_prepare_runs_generated_and_checkout_concurrently(tmp_path, monkeypatch)
     out_cache = tmp_path / "node" / "cache"
     dest_vllm = DummyPack("vllm", out_data, out_cache)
     generated = DummyPack("resnet50", out_data, out_cache, generated=True)
-    prepared = []
 
-    def fake_run(coro, **kwargs):
-        prepared.append(generated.config["name"])
-        coro.close()
-        return 1  # simulate the generated-dataset prepare failing
+    events = []
+
+    class FakePopen:
+        def __init__(self, argv):
+            self.argv = argv
+            events.append("spawn")
+
+        def wait(self):
+            events.append("wait")
+            return 1  # simulate the generated-dataset prepare failing
+
+    real_checkout_all = prepare_mod.materialize_checkout_all
+
+    def spy_checkout_all(*a, **k):
+        events.append("checkout")
+        return real_checkout_all(*a, **k)
 
     monkeypatch.setattr(
         "milabench.cli.cherrybin.prepare.get_multipack",
@@ -492,58 +515,17 @@ def test_prepare_runs_generated_and_checkout_concurrently(tmp_path, monkeypatch)
             packs={"vllm": dest_vllm, "resnet50": generated},
         ),
     )
-    monkeypatch.setattr("milabench.cli.cherrybin.util.run_with_loggers", fake_run)
+    monkeypatch.setattr("milabench.cli.cherrybin.prepare.subprocess.Popen", FakePopen)
+    monkeypatch.setattr(
+        "milabench.cli.cherrybin.prepare.materialize_checkout_all", spy_checkout_all
+    )
 
     args = SimpleNamespace(
         shared=str(db), cache="", base=str(tmp_path / "node"), no_stream=False
     )
     assert Prepare.execute(args) == 1
-    assert prepared == ["resnet50"]
+    assert events == ["spawn", "checkout", "wait"]
     assert (out_data / "v.bin").read_text() == "v"
-
-
-def test_prepare_generated_thread_inherits_contextvars(tmp_path, monkeypatch):
-    """The generated-dataset background thread must see the caller's contextvars.
-
-    Regression test: system_global/multirun_global (milabench/system.py) are
-    contextvars.ContextVar. A plain threading.Thread does not inherit the
-    calling thread's context, so do_prepare() -> phase_lock() ->
-    get_base_folder() would read system_global.get() as None inside the
-    thread and crash with "'NoneType' object is not subscriptable" -- every
-    generated-dataset prepare failing near-instantly, which looked like a
-    silent, instant success in the logs.
-    """
-    from milabench.cli.cherrybin.prepare import Prepare
-    from milabench.system import system_global
-
-    data = tmp_path / "data"
-    cache = tmp_path / "cache"
-    pack = DummyPack("resnet50", data, cache, generated=True)
-    seen = []
-
-    def fake_run(coro, **kwargs):
-        seen.append(system_global.get())
-        coro.close()
-        return 0
-
-    monkeypatch.setattr(
-        "milabench.cli.cherrybin.prepare.get_multipack",
-        lambda *a, **k: SimpleNamespace(packs={"resnet50": pack}),
-    )
-    monkeypatch.setattr("milabench.cli.cherrybin.util.run_with_loggers", fake_run)
-
-    args = SimpleNamespace(
-        shared=str(tmp_path / "archive.db"), cache="", base=str(tmp_path), no_stream=False
-    )
-    (tmp_path / "archive.db").write_bytes(b"x")
-
-    token = system_global.set({"marker": "propagated"})
-    try:
-        assert Prepare.execute(args) == 0
-    finally:
-        system_global.reset(token)
-
-    assert seen == [{"marker": "propagated"}]
 
 
 def test_prepare_subset_uses_per_bench_checkout(tmp_path, monkeypatch):
