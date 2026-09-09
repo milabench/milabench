@@ -39,7 +39,7 @@ class Update(Command):
         common    : CommonArguments = group(CommonArguments)
         shared    : str             = argument("--shared", default="")  # Path to the cherrybin archive .db
         clean     : bool            = False                 # Delete isolated downloads after they are in the db
-        io_chunk  : int             = 4 * 1024 * 1024       # Stream I/O chunk size in bytes
+        io_chunk  : int             = 16 * 1024 * 1024      # Stream I/O chunk size in bytes
         shortrace : bool            = False                 # On error show short stacktrace
     # fmt: on
 

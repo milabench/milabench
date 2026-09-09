@@ -84,7 +84,7 @@ class Prepare(Command):
         common : CommonArguments = group(CommonArguments)
         shared : str             = argument("--shared", default="")  # Path to the cherrybin archive .db
         cache  : str             = ""                    # Blob cache directory
-        io_chunk : int           = 4 * 1024 * 1024       # Stream I/O chunk size in bytes
+        io_chunk : int           = 16 * 1024 * 1024      # Stream I/O chunk size in bytes
         no_stream: bool          = False                 # Use per-file naive checkout
     # fmt: on
 
