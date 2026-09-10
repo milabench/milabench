@@ -16,6 +16,14 @@ from .pin import (
 from .requirements import resolve_benchmark
 
 
+class MissingPinError(RuntimeError):
+    """Raised when no pin lockfile exists for the requested backend+torch combo.
+
+    Use ``milabench pin`` to generate one, or pass ``--variant unpinned``
+    to install without a lockfile (platform constraints still apply).
+    """
+
+
 @dataclass
 class InstallArgs:
     """Complete set of arguments needed to install a benchmark's deps."""
@@ -145,23 +153,33 @@ def install_args(
         torch_version = variables.get("torch", "")
         arch = plat.machine()  # x86_64, aarch64, etc.
 
-        if backend_version and torch_version:
-            constraint_file = get_constraint_file(
-                pin_dir,
-                backend,
-                backend_version,
-                torch_version,
+        # "0" is a vLLM-key placeholder in [vars] (e.g. cpu="0"); pin
+        # filenames omit it — constraints.cpu.torch2100.txt, not cpu0.
+        pin_backend_version = "" if backend_version == "0" else backend_version
+
+        if not torch_version:
+            raise RuntimeError(
+                f"Cannot determine torch version for {backend} install. "
+                f"Set it with --set torch=<version>."
             )
-            if not constraint_file.exists():
-                constraint_file = get_constraint_file(
-                    pin_dir,
-                    backend,
-                    backend_version,
-                    torch_version,
-                    arch,
-                )
-                if not constraint_file.exists():
-                    constraint_file = None
+
+        constraint_file = get_constraint_file(
+            pin_dir, backend, pin_backend_version, torch_version
+        )
+        if not constraint_file.exists():
+            constraint_file = get_constraint_file(
+                pin_dir, backend, pin_backend_version, torch_version, arch
+            )
+        if not constraint_file.exists():
+            backend_label = (
+                f"{backend}={backend_version}" if backend_version else backend
+            )
+            raise MissingPinError(
+                f"No pin file found for {backend_label} torch={torch_version}.\n"
+                f"  Generate one : milabench pin --set {backend}\n"
+                f"  Install unpinned (platform constraints still apply):\n"
+                f"    milabench install --variant unpinned"
+            )
 
     # Build index args (+ vLLM source when mapped)
     index_args = get_index_args(platform_config, backend, all_overrides)

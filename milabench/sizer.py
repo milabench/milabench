@@ -8,11 +8,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import yaml
-from voir.instruments.gpu import get_gpu_info
 from cantilever.core.statstream import StatStream
 
 from .syslog import syslog
-from .system import CPUOptions, SizerOptions, system_global, option
+from .system import CPUOptions, SizerOptions, system_global, option, get_gpu_info
 from .validation.validation import ValidationLayer
 
 ROOT = os.path.dirname(__file__)
@@ -867,6 +866,11 @@ def broadcast(delegates, *args, **kwargs):
             print(f"Error during broadcasting {fun} {err}")
 
 
+
+def resolved_gpus():
+    return get_gpu_info()["gpus"]
+
+
 def new_argument_resolver(pack):
     system_config = system_global.get()
     if system_config is None:
@@ -876,7 +880,7 @@ def new_argument_resolver(pack):
 
     arch = context.get("arch", "cpu")
     device_count_used = 1
-    device_count_system = len(get_gpu_info()["gpus"])
+    device_count_system = len(resolved_gpus())
 
     if hasattr(pack, "config"):
         device_count_used = len(pack.config.get("devices", [0]))

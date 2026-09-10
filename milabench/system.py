@@ -1,12 +1,13 @@
 import contextvars
 from copy import deepcopy
+from functools import lru_cache
 import os
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import yaml
-from voir.instruments.gpu import get_gpu_info
+from voir.instruments.gpu import get_gpu_info as _get_gpu_info
 
 from .fs import XPath
 from .merge import merge
@@ -14,6 +15,19 @@ from .network import resolve_addresses
 
 system_global = contextvars.ContextVar("system", default=None)
 multirun_global = contextvars.ContextVar("multirun", default=None)
+
+
+@lru_cache(maxsize=1)
+def get_gpu_info():
+    """Single, cached entry point for GPU discovery.
+
+    NVML queries are expensive and every caller used to trigger its own
+    fresh sweep of every GPU on the machine; this is the one place in
+    milabench that talks to ``voir.instruments.gpu`` directly, so the result
+    can be shared instead of re-queried per call. Call ``cache_clear()`` if
+    the underlying GPU backend is swapped (e.g. in tests).
+    """
+    return _get_gpu_info()
 
 def get_gpu_capacity(strict=False):
     try:

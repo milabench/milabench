@@ -318,3 +318,16 @@ single-H100:
   - --gpus-per-task=0
   - --ntasks-per-node=1
   - --export=ALL
+1x1xCPU:
+  cluster: mila
+  args:
+  - --job-name=1x1xCPU
+  - --partition=unkillable-cpu
+  - --nodes=1
+  - --ntasks=1
+  - --cpus-per-task=2
+  - --mem=16G
+  - --time=1:00:00
+  - --gpus-per-task=0
+  - --ntasks-per-node=1
+  - --export=ALL

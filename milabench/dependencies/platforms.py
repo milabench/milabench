@@ -319,6 +319,10 @@ class DiscoveryConfig:
     python: str | None = None
     platforms: list[str] | None = None  # e.g. ["manylinux_2_28_x86_64", "manylinux_2_28_aarch64"]
     latest_patch_only: bool = True
+    # Static XPU combinations — Intel's index doesn't follow the pytorch.org
+    # wheel-filename convention so XPU can't be auto-discovered.
+    # Each entry is {"torch": "2.7.0"}.  Backend version is always "".
+    xpu_combinations: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -466,6 +470,7 @@ def load_platform_config(
             python=discovery_raw.get("python"),
             platforms=platforms_val,
             latest_patch_only=discovery_raw.get("latest_patch_only", True),
+            xpu_combinations=discovery_raw.get("xpu_combinations", []),
         )
     elif matrix_raw:
         config.pin_matrix = PinMatrix(

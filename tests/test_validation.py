@@ -1,5 +1,4 @@
-import voir.instruments.gpu
-
+import milabench.system as system
 from milabench.testing import replay_scenario, replay_validation_scenario
 from milabench.utils import validation_layers
 
@@ -60,7 +59,7 @@ def mock_gpu_info():
 
 def test_planning_layer_per_gpu_good(replayfolder, monkeypatch):
     # 2 GPU detected; expected 2 jobs got 2 jobs
-    monkeypatch.setattr(voir.instruments.gpu, "get_gpu_info", mock_gpu_info)
+    monkeypatch.setattr(system, "get_gpu_info", mock_gpu_info)
 
     log = replay_scenario(replayfolder, "planning", "planning_per_gpu_good")
     assert log.result() == 0
@@ -68,7 +67,7 @@ def test_planning_layer_per_gpu_good(replayfolder, monkeypatch):
 
 def test_planning_layer_per_gpu_bad(replayfolder, monkeypatch):
     # 2 GPU detected; expected 2 jobs got 1 job
-    monkeypatch.setattr(voir.instruments.gpu, "get_gpu_info", mock_gpu_info)
+    monkeypatch.setattr(system, "get_gpu_info", mock_gpu_info)
 
     log = replay_scenario(replayfolder, "planning", "planning_per_gpu_bad")
     assert log.result() != 0

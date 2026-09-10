@@ -831,7 +831,17 @@ def _get_combinations(
             platforms=platform_config.discovery.platforms,
             latest_patch_only=platform_config.discovery.latest_patch_only,
         )
-        combos = _filter_combinations(discover_combinations(dc), overrides)
+        all_combos = discover_combinations(dc)
+
+        # Append static XPU combinations — Intel's index doesn't follow the
+        # pytorch.org wheel-filename convention so XPU can't be auto-discovered.
+        # Backend version is "" (no local version tag on Intel's torch wheels).
+        for xpu_entry in platform_config.discovery.xpu_combinations:
+            torch_ver = xpu_entry.get("torch", "")
+            if torch_ver:
+                all_combos.append(("xpu", "", torch_ver, ""))
+
+        combos = _filter_combinations(all_combos, overrides)
         print_discovered_combinations(combos)
         return combos
 

@@ -70,7 +70,7 @@ module load cuda/12.6.0
 # export MILABENCH_USE_TOML_DEPS=1
 # milabench tools pin --from-scratch
 
-milabench install --system $MILABENCH_WORDIR/system.yaml --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION $MILABENCH_ARGS
+milabench install --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION $MILABENCH_ARGS
 
 LOCAL_DB="$MILABENCH_WORDIR/archive.db"
 if [ -f "$CHERRYBIN_DB" ]; then
@@ -80,7 +80,7 @@ else
     echo "shared archive missing, building $LOCAL_DB"
 fi
 
-UPDATE_FLAGS=(--shared "$UPDATE_DB" --system "$MILABENCH_WORDIR/system.yaml")
+UPDATE_FLAGS=(--shared "$UPDATE_DB")
 if [ -n "$CHERRYBIN_CLEAN" ]; then
     UPDATE_FLAGS+=(--clean)
 fi
@@ -92,8 +92,14 @@ fi
 milabench cherrybin update "${UPDATE_FLAGS[@]}" $MILABENCH_ARGS "$@"
 
 if [ "$UPDATE_DB" != "$CHERRYBIN_DB" ] && [ -f "$UPDATE_DB" ]; then
-    echo "moving $UPDATE_DB -> $CHERRYBIN_DB"
+    echo "moving $UPDATE_DB(.blobs) -> $CHERRYBIN_DB(.blobs)"
     mkdir -p "$(dirname "$CHERRYBIN_DB")"
+    # cherrybin stores payload bytes in an append-only sibling "<db>.blobs"
+    # file, not inside the .db ledger itself -- move it first so the shared
+    # ledger is never left pointing at blob data that never made it over.
+    if [ -f "${UPDATE_DB}.blobs" ]; then
+        rsync --inplace "${UPDATE_DB}.blobs" "${CHERRYBIN_DB}.blobs"
+    fi
     rsync --inplace "$UPDATE_DB" "$CHERRYBIN_DB"
 fi
 
