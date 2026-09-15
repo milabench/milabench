@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from argklass.command import Command
 
-from ...system import _global_options, as_environment_variable, SystemConfig
+from ...system import get_tracked_options, as_environment_variable, SystemConfig
 
 
 class Env(Command):
@@ -20,7 +20,7 @@ class Env(Command):
     def execute(args):
         _ = SystemConfig()
 
-        for k, option in _global_options.items():
+        for k, option in get_tracked_options().items():
             env_name = as_environment_variable(k)
             value = option["value"]
             default = option["default"]

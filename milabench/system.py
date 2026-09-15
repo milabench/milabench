@@ -81,20 +81,41 @@ def print_once(*args, **kwargs):
 warn_no_config = print_once("No system config found, using defaults")
 
 
-_global_options = {}
+
+# ContextVar (not a plain dict) so that concurrently-running benchmark
+# packs — each executed as its own `asyncio.create_task` in
+# `ListCommand.execute` (commands/__init__.py) — each see only their own
+# resolved options. A plain shared dict let sibling tasks race to
+# overwrite each other's entries between argv resolution and the
+# `overrides_snapshot()` call in `execute_command` (commands/executors.py),
+# so a pack's recorded metadata could end up reflecting whichever sibling
+# pack last wrote to the dict rather than its own values. Same pattern
+# already used for `system_global` above: mutate a copy, then `.set()` it,
+# never mutate the existing dict in place (in-place mutation would still
+# be visible across tasks since they'd share the same dict object).
+_global_options_var: contextvars.ContextVar = contextvars.ContextVar(
+    "global_options", default=None
+)
+
 
 def _track_options(name, type, default, value):
     """This is just a helper so command line can display the options"""
-    global _global_options
-
     try:
-        _global_options[name] = {
+        current = _global_options_var.get()
+        updated = dict(current) if current else {}
+        updated[name] = {
             "type": type,
             "default": default,
-            "value": value
-        } 
-    except:
+            "value": value,
+        }
+        _global_options_var.set(updated)
+    except Exception:
         pass
+
+
+def get_tracked_options() -> dict:
+    """Return the sizer/system options resolved so far in the current context."""
+    return _global_options_var.get() or {}
 
 
 def as_environment_variable(name):
@@ -558,7 +579,7 @@ def build_system_config(config_file, defaults=None, gpu=True):
     return config
 
 def overrides_snapshot():
-    return {name: value["value"] for name, value in _global_options.items()}
+    return {name: value["value"] for name, value in get_tracked_options().items()}
 
 
 def show_overrides(to_json=False):
@@ -566,7 +587,7 @@ def show_overrides(to_json=False):
     import copy
     config = {}
 
-    for name, value in _global_options.items():
+    for name, value in get_tracked_options().items():
         frags = name.split('.')
 
         dct = config

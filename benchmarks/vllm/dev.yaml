@@ -259,6 +259,25 @@ vllm-moe-glm52-744b-fp8-nodes:
       --tool-call-parser: glm47
       --reasoning-parser: glm45
 
+vllm-moe-qwen38-2.4t-a95b-fp8-nodes:
+  inherits: _vllm_nodes
+  tags:
+    - moe
+    - fp8
+    - multinode
+  url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3.8-2.4T-A95B-FP8
+  server:
+    argv:
+      Qwen/Qwen3.8-2.4T-A95B-FP8: true
+      --max-model-len: 262144
+      --kv-cache-dtype: fp8
+      --enable-auto-tool-choice: true
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+
 # -----------------------------------------------------------------------------
 # Single-node Ray bring-up with a modern LLM (Llama-3.1-8B-Instruct)
 # -----------------------------------------------------------------------------
@@ -469,3 +488,64 @@ serving-moe-glm52-mxfp4-gpus:
       client:
         argv:
           --model: amd/GLM-5.2-MXFP4
+
+# Qwen3.8 dense + MoE single-node serving
+serving-qwen38-27b-fp8-gpus:
+  inherits: _serving
+  enabled: true
+  num_machines: 1
+  max_duration: 3600
+  tags:
+    - multigpu
+    - dense
+    - fp8
+  plan:
+    method: njobs
+    n: 1
+  url: https://huggingface.co/Qwen/Qwen3.8-27B-FP8
+
+  client:
+    argv:
+      --model: Qwen/Qwen3.8-27B-FP8
+      --num-prompts: 640
+      --max-concurrency: 64
+
+  server:
+    argv:
+      Qwen/Qwen3.8-27B-FP8: true
+      --tensor-parallel-size: "{gpu_count}"
+      --max-model-len: 262144
+      --kv-cache-dtype: fp8
+      --enable-auto-tool-choice: true
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+
+serving-qwen38-flash-next-fp8-gpus:
+  inherits: _serving
+  enabled: true
+  num_machines: 1
+  max_duration: 3600
+  tags:
+    - multigpu
+    - moe
+    - fp8
+  plan:
+    method: njobs
+    n: 1
+  url: https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8
+
+  client:
+    argv:
+      --model: Qwen/Qwen3.8-Flash-Next-FP8
+      --num-prompts: 640
+      --max-concurrency: 64
+
+  server:
+    argv:
+      Qwen/Qwen3.8-Flash-Next-FP8: true
+      --tensor-parallel-size: "{gpu_count}"
+      --max-model-len: 262144
+      --kv-cache-dtype: fp8
+      --enable-auto-tool-choice: true
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3

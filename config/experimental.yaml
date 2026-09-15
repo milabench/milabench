@@ -70,6 +70,16 @@ serving-moe-glm52-mxfp4-gpus:
   weight: 1.0
   definition: ../benchmarks/vllm
 
+serving-qwen38-27b-fp8-gpus:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/vllm
+
+serving-qwen38-flash-next-fp8-gpus:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/vllm
+
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
   enabled: false
   weight: 0.0
@@ -79,6 +89,10 @@ vllm-moe-glm52-744b-bf16-nodes:
   weight: 0.0
 
 vllm-moe-glm52-744b-fp8-nodes:
+  enabled: false
+  weight: 0.0
+
+vllm-moe-qwen38-2.4t-a95b-fp8-nodes:
   enabled: false
   weight: 0.0
 
