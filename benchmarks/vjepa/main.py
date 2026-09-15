@@ -41,7 +41,7 @@ from app.vjepa.transforms import make_transforms
 # --
 log_timings = True
 log_freq = 10
-checkpoint_freq = 1
+checkpoint_freq = 0
 # --
 
 _GLOBAL_SEED = 0
@@ -628,7 +628,9 @@ def _main(args, resume_preempt=False):
         # -- Save Checkpoint
         logger.info('avg. loss %.3f' % loss_meter.avg)
         # -- Save Last
-        if epoch % checkpoint_freq == 0 or epoch == (num_epochs - 1):
+        if checkpoint_freq > 0 and (
+            epoch % checkpoint_freq == 0 or epoch == (num_epochs - 1)
+        ):
             save_checkpoint(epoch + 1, latest_path)
             if save_every_freq > 0 and epoch % save_every_freq == 0:
                 save_every_file = f'{tag}-e{epoch}.pth.tar'

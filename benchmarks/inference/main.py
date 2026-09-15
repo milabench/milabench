@@ -270,6 +270,7 @@ class FluxBenchmark(InferenceBenchmark):
             split="train", 
             streaming=False
         )
+        dataset = RepeatDataset(dataset)
         self.bs = args.batch_size
         self.dataset = observer.loader(self.dataloader(dataset, args), custom_step=self.custom_step)
         return self.dataset

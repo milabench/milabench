@@ -97,7 +97,7 @@ def main():
         precision="bf16-mixed",
         enable_checkpointing=False,
         enable_progress_bar=False,
-        max_steps=120
+        max_steps=get_observation_count(200),
     )
 
     with monitor(poll_interval=0.25):

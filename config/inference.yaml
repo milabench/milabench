@@ -36,6 +36,9 @@ vllm-dense-physics-gpus:
   tags:
     - multigpu
   max_duration: 3600
+  voir:
+    options:
+      stop: 120
 
   num_machines: 1
   plan:
@@ -47,7 +50,7 @@ vllm-dense-physics-gpus:
       --dataset-name: hf
       --dataset-path: hendrydong/gpqa_diamond
       --hf-name: hendrydong/gpqa_diamond
-      --num-prompts: 5000
+      --num-prompts: 25000
       --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
       --max-concurrency: 64
       --ready-check-timeout-sec: 1200
@@ -131,6 +134,10 @@ txt-to-image-single:
     - monogpu
   plan:
     method: per_gpu
+  voir:
+    options:
+      stop: 60
+      skip: 10
   
   url: https://huggingface.co/black-forest-labs/FLUX.1-dev
   argv:

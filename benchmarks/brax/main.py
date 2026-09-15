@@ -115,7 +115,7 @@ def run():
         f"num_minibatches={args.num_minibatches}, num_envs={args.num_envs}"
     )
 
-    warmup_steps = 8
+    warmup_steps = 20
     warmup_seen = {"count": 0}
 
     def progress_fn(step, metrics):

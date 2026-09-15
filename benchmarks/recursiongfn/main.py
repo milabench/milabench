@@ -143,7 +143,7 @@ def main(
     config.overwrite_existing_exp = True
 
     config.num_training_steps = num_steps  # Change this to train for longer.
-    config.checkpoint_every = 5  # 500
+    config.checkpoint_every = 0
     config.validate_every = 0
     config.num_final_gen_steps = 0
     config.opt.lr_decay = 20_000

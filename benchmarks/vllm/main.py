@@ -280,10 +280,11 @@ def prepare_voir():
 
     from benchmate.observer import BenchObserver
     from benchmate.monitor import bench_monitor
+    from benchmate.toggles import get_observation_count
 
     observer = BenchObserver(
         accelerator.Event, 
-        earlystop=65,
+        earlystop=get_observation_count(120),
         batch_size_fn=lambda x: len(x[0]),
         raise_stop_program=False,
         stdout=True,

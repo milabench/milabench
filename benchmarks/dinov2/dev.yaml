@@ -20,5 +20,5 @@ dinov2-giant-gpus:
     # THOSE NEED TO BE LAST
     train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet: true
     train.batch_size_per_gpu=32: true
-    train.saveckp_freq=100: true
+    train.saveckp_freq=999999: true
     train.num_workers=10: true

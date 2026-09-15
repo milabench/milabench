@@ -11,6 +11,7 @@ from torch_geometric.datasets import QM9
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_max_pool
 
+from benchmate.dataset import RepeatDataset
 from benchmate.observer import BenchObserver
 
 
@@ -72,12 +73,16 @@ def parser():
     return parser
 
 
-def train_degree(train_dataset):
+def train_degree(train_dataset, max_samples=2000):
     from torch_geometric.utils import degree
+
+    # Degree stats only need a subset; scanning the full set blocks GPU for minutes.
+    n = min(len(train_dataset), max_samples)
 
     # Compute the maximum in-degree in the training data.
     max_degree = -1
-    for data in train_dataset:
+    for i in range(n):
+        data = train_dataset[i]
         try:
             if data is None or data.edge_index is None:
                 continue
@@ -94,7 +99,8 @@ def train_degree(train_dataset):
 
     # Compute the in-degree histogram tensor
     deg = torch.zeros(max_degree + 1, dtype=torch.long)
-    for data in train_dataset:
+    for i in range(n):
+        data = train_dataset[i]
         try:
             if data is None or data.edge_index is None:
                 continue
@@ -124,10 +130,11 @@ def main():
 
     observer = BenchObserver(batch_size_fn=batch_size)
 
-    train_dataset = PCQM4Mv2Subset(args.num_samples, args.root)
-    degree = train_degree(train_dataset)
+    base_dataset = PCQM4Mv2Subset(args.num_samples, args.root)
+    train_dataset = RepeatDataset(base_dataset)
+    degree = train_degree(base_dataset)
 
-    sample = next(iter(train_dataset))
+    sample = next(iter(base_dataset))
 
     info = models[args.model](
         args,
@@ -136,14 +143,15 @@ def main():
     )
 
     TRAIN_mean, TRAIN_std = (
-        mean(train_dataset).item(),
-        std(train_dataset).item(),
+        mean(base_dataset).item(),
+        std(base_dataset).item(),
     )
 
-    DataLoaderClass = DataLoader
     dataloader_kwargs = {}
+    if args.num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
 
-    train_loader = DataLoaderClass(
+    train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,

@@ -112,7 +112,7 @@ _accelerate_opt:
 resnet50:
   voir:
     options:
-      stop: 60
+      stop: 80
     
   inherits: _torchvision
   tags:
@@ -161,7 +161,7 @@ resnet152-ddp-gpus:
   
   voir:
     options:
-      stop: 60
+      stop: 100
   
   argv:
     --model: resnet152
@@ -197,6 +197,9 @@ convnext_large-fp16:
 
 convnext_large-tf32:
   inherits: _convnext_large-base
+  voir:
+    options:
+      skip: 25
   argv:
     --precision: 'tf32'
 
@@ -233,7 +236,8 @@ _bert-base:
     --batch-size: "auto_batch(32)"
   voir:
     options:
-      stop: 30
+      stop: 60
+      skip: 20
 
 bert-fp32:
   inherits: _bert-base
@@ -247,6 +251,9 @@ bert-fp16:
 
 bert-tf32:
   inherits: _bert-base
+  voir:
+    options:
+      skip: 25
   argv:
     --precision: 'tf32'
 
@@ -311,6 +318,7 @@ brax:
   voir:
     options:
       skip: 30
+      stop: 80
   tags:
     - rl
     - jax
@@ -326,6 +334,8 @@ brax:
     --episode-length: 20
     --batch-size: "auto_batch(1024)"
     --num-minibatches: 32
+    --num-timesteps: 2000000
+    --num-evals: 200
 
 _diffusion:
   inherits: _defaults
@@ -377,6 +387,10 @@ _lightning:
   install_group: torch
   tags:
     - lightning
+  voir:
+    options:
+      stop: 100
+      skip: 10
   argv:
     --epochs: 10
     --num-workers: "auto({n_worker}, 8)"
@@ -434,7 +448,7 @@ dinov2-giant-single:
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
     - train.batch_size_per_gpu=auto_batch(32)
-    - train.saveckp_freq=100
+    - train.saveckp_freq=999999
     - train.num_workers=10
 
 dinov2-giant-gpus:
@@ -450,7 +464,7 @@ dinov2-giant-gpus:
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
     - train.batch_size_per_gpu=auto_batch(32)
-    - train.saveckp_freq=100
+    - train.saveckp_freq=999999
     - train.num_workers=10
 
 dinov2-giant-nodes:
@@ -467,7 +481,7 @@ dinov2-giant-nodes:
     # THOSE NEED TO BE LAST
     - train.dataset_path=ImageNet:split=TRAIN:root={milabench_data}/FakeImageNet:extra={milabench_data}/FakeImageNet
     - train.batch_size_per_gpu=auto_batch(12)
-    - train.saveckp_freq=100
+    - train.saveckp_freq=999999
     - train.num_workers=10
 
   num_machines: 2
@@ -488,6 +502,8 @@ _llm:
   inherits: _defaults
   definition: ../benchmarks/llm
   install_group: torch
+  argv:
+    save_every_n_steps=999999: true
 
 llm-lora-single:
   inherits: _llm
@@ -687,7 +703,8 @@ dqn:
     --buffer_batch_size: "auto_batch(4096)"
     --env_name: SpaceInvaders-MinAtar
     --training_interval: 10
-    --total_timesteps: 2000000
+    --learning_starts: 5000
+    --total_timesteps: 20000000
 
 ppo:
   inherits: _purejaxrl
@@ -724,12 +741,14 @@ dimenet:
   inherits: _geo_gnn
   voir:
     options:
-      stop: 60
+      stop: 120
+      skip: 15
   argv:
     --model: 'DimeNet'
     --num-samples: 100000
     --use3d: True
     --batch-size: "auto_batch(16)"
+    --epochs: 80
     --num-workers: "auto({n_worker}, 0)"
     --root: "{milabench_data}"
 
@@ -841,7 +860,7 @@ _vjepa:
     - video
   voir:
     options:
-      stop: 60
+      stop: 80
       skip: 10
   argv:
     --batch_size: "auto_batch(24)"

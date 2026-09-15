@@ -2,8 +2,6 @@ from dataclasses import dataclass
 
 from voir.phase import StopProgram
 from voir import configurable
-from benchmate.observer import BenchObserver
-from benchmate.monitor import voirfile_monitor
 from benchmate.benchrun import forward_voir_file
 
 @dataclass
@@ -24,6 +22,11 @@ class Config1:
 
     # Number of seconds between each gpu poll
     gpu_poll: float = 0.25
+
+
+def _disable_checkpoint_save(ov, recipe_name):
+    probe = ov.probe(f"//{recipe_name}/save_checkpoint", overridable=True)
+    probe["save_checkpoint"].override(lambda *args, **kwargs: None)
 
 
 def lora_single_device(ov, observer):
@@ -97,6 +100,16 @@ def instrument_main(ov, options: Config1):
     yield ov.phases.init
 
     yield ov.phases.load_script
+
+    for recipe in (
+        "LoRAFinetuneRecipeSingleDevice",
+        "LoRAFinetuneRecipeDistributed",
+        "FullFinetuneRecipeDistributed",
+    ):
+        try:
+            _disable_checkpoint_save(ov, recipe)
+        except Exception:
+            pass
 
     with forward_voir_file():
         try:

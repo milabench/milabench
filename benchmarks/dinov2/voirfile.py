@@ -94,9 +94,33 @@ def code_patch(ov):
     # FIX dinov2 code using ptera
     import os
 
+    from benchmate.dataset import RepeatDataset
     from torchvision.datasets import ImageFolder
     import torch
+    import dinov2.data.loaders as dinov2_loaders
     import dinov2.train.train
+    from dinov2.fsdp import FSDPCheckpointer
+    from fvcore.common.checkpoint import PeriodicCheckpointer
+
+    def _noop_checkpoint_step(self, *args, **kwargs):
+        pass
+
+    def _noop_checkpoint_save(self, *args, **kwargs):
+        pass
+
+    PeriodicCheckpointer.step = _noop_checkpoint_step
+    FSDPCheckpointer.save = _noop_checkpoint_save
+
+    _make_data_loader = dinov2_loaders.make_data_loader
+
+    def _infinite_loader(*, dataset, num_workers=0, **kwargs):
+        if not isinstance(dataset, RepeatDataset):
+            dataset = RepeatDataset(dataset)
+        if num_workers > 0:
+            kwargs.setdefault("persistent_workers", True)
+        return _make_data_loader(dataset=dataset, num_workers=num_workers, **kwargs)
+
+    dinov2_loaders.make_data_loader = _infinite_loader
 
     class SSLMetaArch2(dinov2.train.train.SSLMetaArch):
         def fsdp_synchronize_streams(self):
