@@ -174,7 +174,7 @@ def main():
 
     # Parent: NVML/system metrics for all GPUs. Disable torchmem here — this
     # process has no CUDA allocations (workers do after mp.spawn).
-    with multigpu_monitor(poll_interval=3, torchmem=False):
+    with multigpu_monitor(poll_interval=0.25, torchmem=False):
         mp.spawn(
             worker_main,
             args=(

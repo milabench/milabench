@@ -4,7 +4,7 @@ import os
 import time
 from contextlib import contextmanager
 
-from voir.instruments.utils import monitor as generic_monitor
+from voir.instruments.utils import Monitor, _Monitor, monitor as generic_monitor
 from voir.smuggle import SmuggleWriter
 from voir.tools import instrument_definition
 from voir.instruments.cpu import cpu_monitor, process_monitor
@@ -25,6 +25,9 @@ from .toggles import (
 )
 from .torchmem import torchmem_fetcher
 from .jaxmem import jaxmem_fetcher
+
+# NVML gpudata poll (load/memory/power). Other monitors use SYSTEM_POLL_INTERVAL.
+DEFAULT_SYSTEM_POLL_INTERVAL = 1
 
 
 def _torchmem_kwargs():
@@ -92,19 +95,27 @@ def auto_push():
 
 
 @instrument_definition
-def monitor_monogpu(ov, poll_interval=1, arch=None):
+def monitor_monogpu(ov, poll_interval=0.25, arch=None):
     return monitor(
         ov,
         poll_interval=get_poll_interval(poll_interval),
         gpudata=gpu_monitor_fun(),
         worker_init=lambda: select_backend(arch, force=True),
-        **_torchmem_kwargs(),
-        **_jaxmem_kwargs(),
     )
 
 
 @instrument_definition
-def monitor_process_monogpu(ov, poll_interval=1, arch=None):
+def monitor_allocmem(ov, poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL, arch=None):
+    mem = {**_torchmem_kwargs(), **_jaxmem_kwargs()}
+    return monitor(
+        ov,
+        poll_interval=get_poll_interval(poll_interval),
+        **mem,
+    )
+
+
+@instrument_definition
+def monitor_process_monogpu(ov, poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL, arch=None):
     return monitor(
         ov,
         poll_interval=get_poll_interval(poll_interval),
@@ -113,66 +124,121 @@ def monitor_process_monogpu(ov, poll_interval=1, arch=None):
 
 
 @instrument_definition
-def monitor_node(ov, poll_interval=1, arch=None):
+def monitor_node_gpu(ov, poll_interval=0.25, arch=None):
     return monitor(
         ov,
         poll_interval=get_poll_interval(poll_interval),
         gpudata=gpu_monitor_fun(),
+        worker_init=lambda: select_backend(arch, force=True),
+    )
+
+
+@instrument_definition
+def monitor_node_system(ov, poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL, arch=None):
+    return monitor(
+        ov,
+        poll_interval=get_poll_interval(poll_interval),
         iodata=io_monitor(),
         netdata=network_monitor(),
         cpudata=cpu_monitor(),
-        worker_init=lambda: select_backend(arch, force=True),
         **_torchmem_kwargs(),
         **_jaxmem_kwargs(),
     )
 
 
-def _smuggle_monitor(poll_interval=1, worker_init=None, **monitors):
-    # USE auto push
-    data_file = SmuggleWriter(sys.stdout)
-    def mblog(data):
-        nonlocal data_file
+# Backward-compatible alias (gpudata-only at ``poll_interval``).
+monitor_node = monitor_node_gpu
 
+
+def _split_smuggle_monitors(monitors):
+    worker_init = monitors.pop("worker_init", None)
+    gpu = {k: v for k, v in monitors.items() if k == "gpudata"}
+    system = {k: v for k, v in monitors.items() if k != "gpudata"}
+    return gpu, system, worker_init
+
+
+def _smuggle_get(monitors):
+    def get():
+        t = time.time()
+        return [
+            {"task": "main", "time": t, k: v()}
+            for k, v in monitors.items()
+        ]
+
+    return get
+
+
+def _smuggle_monitor(
+    gpu_poll_interval=0.25,
+    system_poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL,
+    worker_init=None,
+    **monitors,
+):
+    gpu_monitors, system_monitors, init = _split_smuggle_monitors(monitors)
+    if worker_init is None:
+        worker_init = init
+
+    data_file = SmuggleWriter(sys.stdout)
+
+    def mblog(data):
         if data_file is not None:
             try:
                 print(json.dumps(data), file=data_file)
             except ValueError:
                 pass
-                # print("Is bench ending?, ignoring ValueError")
-    
-    def get():
-        t = time.time()
-        entries = []
-        for k, v in monitors.items():
-            values = {
-                "task": "main",
-                "time": t,
-                k: v(),
-            }
-            entries.append(values)
-        return entries
 
-    def push(data):
-        for entry in data:
+    def push(entries):
+        for entry in entries:
             mblog(entry)
 
-    mon = generic_monitor(
-        get_poll_interval(poll_interval),
-        get,
-        push,
-        process=False,
-        worker_init=worker_init,
-    )
+    if worker_init is not None:
+        worker_init()
+
+    threads = []
+    if gpu_monitors:
+        gpu_get = _smuggle_get(gpu_monitors)
+        threads.append(
+            Monitor(
+                get_poll_interval(gpu_poll_interval),
+                lambda: push(gpu_get()),
+            )
+        )
+    if system_monitors:
+        sys_get = _smuggle_get(system_monitors)
+        threads.append(
+            Monitor(
+                get_poll_interval(system_poll_interval),
+                lambda: push(sys_get()),
+            )
+        )
+
+    if not threads:
+        mon = Monitor(1, lambda: None)
+    elif len(threads) == 1:
+        mon = threads[0]
+    else:
+        mon = _Monitor(*threads)
+
     mon.start()
-    
     return mblog, mon
 
 
 @contextmanager
-def smuggle_monitor(poll_interval=1, worker_init=None, enabled=True, **monitors):
+def smuggle_monitor(
+    poll_interval=0.25,
+    system_poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL,
+    worker_init=None,
+    enabled=True,
+    **monitors,
+):
     if enabled:
         # rank == 0
-        mblog, mon = _smuggle_monitor(get_poll_interval(poll_interval), worker_init, **monitors)
+        mblog, mon = _smuggle_monitor(
+            gpu_poll_interval=poll_interval,
+            system_poll_interval=system_poll_interval,
+            worker_init=worker_init,
+            **monitors,
+        )
 
         try:
             yield mblog
@@ -238,10 +304,10 @@ def monogpu_monitor(*args, torchmem=None, jaxmem=None, **kwargs):
 
 
 @contextmanager
-def torchmem_monitor(poll_interval=1, device=None, **kwargs):
+def torchmem_monitor(poll_interval=3, device=None, **kwargs):
     """Smuggle only PyTorch allocator stats (for DDP workers that own tensors)."""
     with smuggle_monitor(
-        poll_interval=poll_interval,
+        system_poll_interval=poll_interval,
         torchmem=torchmem_fetcher(device=device),
         **kwargs,
     ) as log:
@@ -273,10 +339,11 @@ def bench_monitor(*args, **kwargs):
 #
 # Legacy compatibility
 #
-def setupvoir(monogpu=True, enabled=True, interval=1):
+def setupvoir(monogpu=True, enabled=True, interval=0.25, system_interval=DEFAULT_SYSTEM_POLL_INTERVAL):
     return _smuggle_monitor(
-        poll_interval=get_poll_interval(interval), 
-        **_monitors(monogpu)
+        gpu_poll_interval=get_poll_interval(interval),
+        system_poll_interval=get_poll_interval(system_interval),
+        **_monitors(monogpu),
     )
 
 
@@ -312,15 +379,19 @@ def voirfile_monitor(ov, options):
             early_stop(n=get_observation_count(options.stop), key="rate", task="train", signal="stop")
         )
     
-    poll_interval = get_poll_interval(options.gpu_poll)
+    gpu_poll = get_poll_interval(options.gpu_poll)
+    system_poll = get_poll_interval(DEFAULT_SYSTEM_POLL_INTERVAL)
 
     # mono gpu if rank is not set
     if rank == -1:
-        instruments.append(monitor_monogpu(poll_interval=poll_interval))
-        instruments.append(monitor_process_monogpu(poll_interval=poll_interval))
+        instruments.append(monitor_monogpu(poll_interval=gpu_poll))
+        if _torchmem_kwargs() or _jaxmem_kwargs():
+            instruments.append(monitor_allocmem(poll_interval=system_poll))
+        instruments.append(monitor_process_monogpu(poll_interval=system_poll))
 
     # rank is set only monitor main rank
     if rank == 0:
-        instruments.append(monitor_node(poll_interval=poll_interval))
+        instruments.append(monitor_node_gpu(poll_interval=gpu_poll))
+        instruments.append(monitor_node_system(poll_interval=system_poll))
 
     ov.require(*instruments)

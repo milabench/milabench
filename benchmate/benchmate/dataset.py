@@ -38,6 +38,20 @@ class TransformedDataset:
         return self.transforms(self.dataset[item])
 
 
+class RepeatDataset:
+    """Repeat a dataset so short splits can reach voir earlystop."""
+
+    def __init__(self, dataset, repeats=100):
+        self.dataset = dataset
+        self.repeats = repeats
+
+    def __len__(self):
+        return len(self.dataset) * self.repeats
+
+    def __getitem__(self, idx):
+        return self.dataset[idx % len(self.dataset)]
+
+
 class ImageNetAsFrames:
     def __init__(self, folder) -> None:
         self.clip = defaultdict(list)

@@ -9,7 +9,9 @@ from torch.utils.data import DataLoader
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 
 import argklass
+from benchmate.dataset import RepeatDataset
 from benchmate.observer import BenchObserver
+from benchmate.toggles import get_observation_count
 import torchcompat.core as compat
 
 
@@ -72,20 +74,23 @@ def main():
     )
 
     # Load dataset and create DataLoader
-    dataset = load_dataset("HuggingFaceM4/the_cauldron", "aokvqa")["train"]
+    dataset = RepeatDataset(load_dataset("HuggingFaceM4/the_cauldron", "aokvqa")["train"])
     dataloader = DataLoader(
-        dataset, 
-        batch_size=args.batch_size, 
-        shuffle=True, 
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
         collate_fn=llava_collate,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        persistent_workers=args.num_workers > 0,
     )
 
     def batch_size_fn(batch):
         return len(batch["images"])
 
     observer = BenchObserver(
-        batch_size_fn=batch_size_fn, earlystop=70, raise_stop_program=True,
+        batch_size_fn=batch_size_fn,
+        earlystop=get_observation_count(70),
+        raise_stop_program=True,
         stdout=True,
     )
     optimizer = observer.optimizer(torch.optim.AdamW(model.parameters(), lr=5e-5))

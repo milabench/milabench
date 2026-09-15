@@ -8,6 +8,8 @@ import torch
 import torchcompat.core as accelerator
 from torch.utils.data import DataLoader
 
+from benchmate.dataset import RepeatDataset
+
 
 whisper_defaults_generation_args = {
     # "max_new_tokens": 448,
@@ -99,6 +101,26 @@ class InferenceBenchmark:
 
 class WhisperBenchmark(InferenceBenchmark):
 
+    def load_dataset(self, observer, args):
+        dataset = load_dataset(
+            args.dataset,
+            name=args.subset,
+            split=args.split,
+        )
+        dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+        return observer.loader(
+            self.dataloader(dataset, args), custom_step=self.custom_step
+        )
+
+    def dataloader(self, dataset, args):
+        return DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            num_workers=0,
+            pin_memory=True,
+            collate_fn=self.collate,
+        )
+
     def huggingface_pipeline(self, model, processor, device):
         pipe = pipeline(
             "automatic-speech-recognition",
@@ -181,11 +203,12 @@ class WhisperBenchmark(InferenceBenchmark):
 
     def transform(self, item):
         audio = item["audio"]
-        data = audio.get_all_samples()
-        array = data.data.mean(dim=0)
+        array = audio["array"]
+        if hasattr(array, "mean") and array.ndim > 1:
+            array = array.mean(axis=0)
         return {
-            "array": array,
-            "sampling_rate": data.sample_rate
+            "array": torch.as_tensor(array, dtype=torch.float32),
+            "sampling_rate": audio["sampling_rate"],
         }
 
 
@@ -325,11 +348,14 @@ class ChatBenchmark(InferenceBenchmark):
     def load_dataset(self, observer, args):
         dataset = load_dataset(
             args.dataset,
-            name=args.subset,  # Subset
-            split=args.split,  # Split
+            name=args.subset,
+            split=args.split,
         )
+        dataset = RepeatDataset(dataset)
 
-        self.dataset = observer.loader(self.dataloader(dataset, args), custom_step=self.tok_per_sec)
+        self.dataset = observer.loader(
+            self.dataloader(dataset, args), custom_step=self.tok_per_sec
+        )
         return self.dataset
 
     def load_model(self, args, device):

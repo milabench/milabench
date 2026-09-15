@@ -16,13 +16,13 @@ class Config:
     interval: str = "1s"
 
     # Number of rates to skip before logging
-    skip: int = 5
+    skip: int = 30
 
     # Number of rates to log before stopping
     stop: int = 60
 
     # Number of seconds between each gpu poll
-    gpu_poll: float = 1
+    gpu_poll: float = 0.25
 
 
 @configurable

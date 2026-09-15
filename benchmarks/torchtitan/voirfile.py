@@ -128,7 +128,7 @@ class Config:
     interval: str = "1s"
     skip: int = 5
     stop: int = 20
-    gpu_poll: float = 1
+    gpu_poll: float = 0.25
 
 
 @configurable

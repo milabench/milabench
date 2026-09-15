@@ -73,7 +73,7 @@ whisper:
   weight: 0.0
 
 focalnet:
-  enabled: true
+  enabled: false
   weight: 0.0
 
 brax:

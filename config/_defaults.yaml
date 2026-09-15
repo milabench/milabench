@@ -5,6 +5,7 @@ _defaults:
     options:
       stop: 60
       interval: "1s"
+      gpu_poll: 0.25
 
   validation:
     usage:

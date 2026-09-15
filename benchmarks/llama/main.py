@@ -15,6 +15,20 @@ import torchcompat.core as accelerator
 
 root = os.path.dirname(__file__)
 
+WIKITEXT_DATASET = "Milabench/wikitext"
+WIKITEXT_CONFIG = "wikitext-103-v1"
+WIKITEXT_REVISION = "a79fad1"
+
+
+def load_wikitext(args):
+    from datasets import load_dataset
+
+    return load_dataset(
+        args.dataset_name,
+        args.dataset_config_name,
+        revision=args.dataset_rev,
+    )
+
 
 def available_models():
     models = dict()
@@ -61,11 +75,12 @@ def huggingface_main(args, model, config):
     import transformers
     from transformers import LlamaForCausalLM, LlamaTokenizerFast
     from transformers.models.llama.configuration_llama import LlamaConfig
-    from datasets import load_dataset
-    
-    # Dataset here
     println("Dataset")
-    dataset = load_dataset("wikitext", "wikitext-103-v1")
+    dataset = load_wikitext(args)
+
+    if args.prepare:
+        println("Prepare complete")
+        return 0
 
     println("Tokenizer")
     # LLAMA tokenizer official tokenizer is hidden behind a login
@@ -76,13 +91,6 @@ def huggingface_main(args, model, config):
             truncation=True,
         )
     )
-
-    if args.pretrained and args.prepare:
-        model = LlamaForCausalLM.from_pretrained(config["_name_or_path"])
-
-    # Prepare is done
-    if args.prepare:
-        return 0
     
     # We do not download LLAMA because it takes too long
     # we just instantiate an untrained one
@@ -174,6 +182,9 @@ def main():
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--cache", required=True, type=str)
     parser.add_argument("--pretrained", action="store_true", default=False)
+    parser.add_argument("--dataset_name", default=WIKITEXT_DATASET)
+    parser.add_argument("--dataset_config_name", default=WIKITEXT_CONFIG)
+    parser.add_argument("--dataset_rev", default=WIKITEXT_REVISION)
 
     #
     args = parser.parse_args()

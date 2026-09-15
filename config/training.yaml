@@ -8,6 +8,9 @@ _torchvision:
   install_group: torch
   plan:
     method: per_gpu
+  voir:
+    options:
+      skip: 10
   argv:
     --precision: 'tf32-fp16'
     --lr: 0.01
@@ -110,7 +113,6 @@ resnet50:
   voir:
     options:
       stop: 60
-      gpu_poll: 0.1
     
   inherits: _torchvision
   tags:
@@ -160,8 +162,7 @@ resnet152-ddp-gpus:
   voir:
     options:
       stop: 60
-      gpu_poll: 0.1
-
+  
   argv:
     --model: resnet152
     --batch-size: "auto_batch(256)"
@@ -181,7 +182,8 @@ _convnext_large-base:
     --batch-size: "auto_batch(128)"
   voir:
     options:
-      stop: 30
+      stop: 60
+      skip: 10
 
 convnext_large-fp32:
   inherits: _convnext_large-base
@@ -306,6 +308,9 @@ brax:
   # batch-size sets PPO minibatch width; main.py derives num_envs from
   # batch_size * num_minibatches so scaling sweeps change parallel rollouts.
   inherits: _defaults
+  voir:
+    options:
+      skip: 30
   tags:
     - rl
     - jax
@@ -420,6 +425,9 @@ dinov2-giant-single:
     method: per_gpu
   tags:
     - monogpu
+  voir:
+    options:
+      skip: 15
   argv:
     - --config-file 
     - "{benchmark_folder}/src/dinov2/configs/train/vitg14.yaml"
@@ -666,6 +674,9 @@ _purejaxrl:
   definition: ../benchmarks/purejaxrl
   plan:
     method: per_gpu
+  voir:
+    options:
+      stop: 120
 
 dqn:
   inherits: _purejaxrl
@@ -711,6 +722,9 @@ pna:
 
 dimenet:
   inherits: _geo_gnn
+  voir:
+    options:
+      stop: 60
   argv:
     --model: 'DimeNet'
     --num-samples: 100000
@@ -746,6 +760,10 @@ _llava:
     method: per_gpu
   tags:
     - llm
+  voir:
+    options:
+      stop: 60
+      skip: 10
   argv:
     --batch_size: "auto_batch(1)"
     --num_workers: "auto({n_worker}, 4)"
@@ -821,6 +839,10 @@ _vjepa:
   definition: ../benchmarks/vjepa
   tags:
     - video
+  voir:
+    options:
+      stop: 60
+      skip: 10
   argv:
     --batch_size: "auto_batch(24)"
     --num_workers: "auto({n_worker}, 12)"

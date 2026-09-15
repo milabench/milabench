@@ -115,6 +115,15 @@ def run():
         f"num_minibatches={args.num_minibatches}, num_envs={args.num_envs}"
     )
 
+    warmup_steps = 8
+    warmup_seen = {"count": 0}
+
+    def progress_fn(step, metrics):
+        if warmup_seen["count"] < warmup_steps:
+            warmup_seen["count"] += 1
+            return
+        give(**metrics)
+
     train(
         environment=envs.get_environment(env_name=args.env),
         num_timesteps=args.num_timesteps,
@@ -123,7 +132,7 @@ def run():
         entropy_cost=args.entropy_cost,
         normalize_observations=True,
         action_repeat=1,
-        progress_fn=lambda n, metrics: give(**metrics),
+        progress_fn=progress_fn,
         num_evals=args.num_evals,
         reward_scaling=args.reward_scaling,
         episode_length=args.episode_length,

@@ -166,6 +166,41 @@ def image_transforms():
     return data_transforms
 
 
+class CyclingShuffleSampler(torch.utils.data.Sampler):
+    """Shuffle without replacement; start a fresh permutation when exhausted.
+
+    Unlike ``RandomSampler(replacement=True)``, each pass visits every index
+    exactly once before any repeat, which keeps disk reads as diverse as
+    possible. Unlike ``RandomSampler(replacement=False)``, iteration continues
+    across multiple passes until ``num_samples`` indices are yielded.
+    """
+
+    def __init__(self, data_source, num_samples=None, seed=0):
+        self.data_source = data_source
+        self.num_samples = num_samples if num_samples is not None else len(data_source)
+        self.seed = seed
+        self._epoch = 0
+
+    def __iter__(self):
+        n = len(self.data_source)
+        if n == 0:
+            return iter([])
+
+        yielded = 0
+        while yielded < self.num_samples:
+            generator = torch.Generator()
+            generator.manual_seed(self.seed + self._epoch)
+            self._epoch += 1
+            for idx in torch.randperm(n, generator=generator).tolist():
+                yield idx
+                yielded += 1
+                if yielded >= self.num_samples:
+                    return
+
+    def __len__(self):
+        return self.num_samples
+
+
 def pytorch(folder, batch_size, num_workers, distributed=False, epochs=60, rank=None, world_size=None):
     train = datasets.ImageFolder(folder, image_transforms())
 
@@ -174,12 +209,12 @@ def pytorch(folder, batch_size, num_workers, distributed=False, epochs=60, rank=
         kwargs["sampler"] = DistributedSampler(train, rank=rank, num_replicas=world_size)
         kwargs["shuffle"] = False
 
-    # The dataloader needs a warmup sometimes
-    # by avoiding to go through too many epochs
-    # we reduce the standard deviation
-    if False:
-        kwargs["sampler"] = torch.utils.data.RandomSampler(
-            train, replacement=True, num_samples=len(train) * epochs
+    # Cycle full shuffled passes (no replacement within a pass) so we touch
+    # the most unique samples before repeating — better for disk/IO realism
+    # than RandomSampler(replacement=True), while still covering many epochs.
+    if not distributed:
+        kwargs["sampler"] = CyclingShuffleSampler(
+            train, num_samples=len(train) * epochs
         )
         kwargs["shuffle"] = False
 

@@ -24,7 +24,7 @@ class Config:
     stop: int = 160
 
     # Number of seconds between each gpu poll
-    gpu_poll: float = 1
+    gpu_poll: float = 0.25
 
 
 @configurable

@@ -13,6 +13,7 @@ import lightning as L
 import torchvision.models as torchvision_models
 
 from benchmate.dataloader import imagenet_dataloader, dataloader_arguments
+from benchmate.toggles import get_observation_count
 
 
 def criterion():
@@ -43,8 +44,8 @@ def prepare_voir():
     import torchcompat.core as accelerator
     
     observer = BenchObserver(
-        accelerator.Event, 
-        earlystop=100,
+        accelerator.Event,
+        earlystop=get_observation_count(100),
         batch_size_fn=lambda x: len(x[0]),
         raise_stop_program=False,
         stdout=True,
@@ -96,11 +97,10 @@ def main():
         precision="bf16-mixed",
         enable_checkpointing=False,
         enable_progress_bar=False,
-        reload_dataloaders_every_n_epochs=1,
         max_steps=120
     )
 
-    with monitor(poll_interval=0.1):
+    with monitor(poll_interval=0.25):
         trainer.fit(model=model, train_dataloaders=loader)
     print("finished: ", rank)
 

@@ -304,8 +304,9 @@ def _main(args, resume_preempt=False):
         return udata[0][0].shape[0]
     
     from benchmate.observer import BenchObserver
+    from benchmate.toggles import get_observation_count
     observer = BenchObserver(
-        earlystop=65,
+        earlystop=get_observation_count(65),
         batch_size_fn=get_batch_size,
         raise_stop_program=True,
         stdout=True,
@@ -424,7 +425,6 @@ def _main(args, resume_preempt=False):
                 udata, masks_enc, masks_pred = next(loader)
                 next_count += 1
             except StopIteration:
-                logger.info('Exhausted data loaders after %d. Refreshing...', next_count)
                 next_count = 0
                 loader = iter(unsupervised_loader)
                 udata, masks_enc, masks_pred = next(loader)
@@ -665,6 +665,8 @@ def main():
     params["data"]["batch_size"] = args.batch_size
     params["data"]["num_frames"] = args.num_frames
     params["data"]["num_workers"] = args.num_workers
+    if args.num_workers > 0:
+        params["data"]["persistent_workers"] = True
 
     params["logging"]["folder"] = args.output
 
