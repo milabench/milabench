@@ -27,6 +27,7 @@ def load_wikitext(args):
         args.dataset_name,
         args.dataset_config_name,
         revision=args.dataset_rev,
+        data_dir=args.dataset_config_name,
     )
 
 
