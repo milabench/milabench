@@ -502,8 +502,6 @@ _llm:
   inherits: _defaults
   definition: ../benchmarks/llm
   install_group: torch
-  argv:
-    save_every_n_steps=999999: true
 
 llm-lora-single:
   inherits: _llm
