@@ -42,6 +42,7 @@ hrepr = ">=0.7.0"
 cantilever = ">=0.1.0"
 nvidia-ml-py = { version = "^12.555.43", optional = true }
 uv = "^0.10.4"
+matplotlib = "^3.8.0"
 
 [tool.poetry.extras]
 cuda = ["nvidia-ml-py"]

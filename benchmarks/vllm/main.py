@@ -11,6 +11,7 @@ from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, BenchmarkMet
 from transformers import PreTrainedTokenizerBase
 import vllm.benchmarks.datasets as datasets
 from benchmate.timeline import timeline, TimelineConfig, _default_db_path
+from benchmate.toggles import vllm_request_metrics_enabled
 from server_backends import (
     InferenceServerError,
     build_server_command,
@@ -79,12 +80,18 @@ def calculate_metrics(
     config = TimelineConfig()
     description = _run_description()
     db_path = _default_db_path()
+    push_request_metrics = vllm_request_metrics_enabled()
     print(f"[timeline] database path: {db_path}", flush=True)
+    print(
+        f"[timeline] push_request_metrics={push_request_metrics}",
+        flush=True,
+    )
 
     for sampled_obs in timeline(
         outputs,
         config=config,
         description=description,
+        persist=True,
     ):
         push_metric(**sampled_obs)
 
@@ -126,19 +133,25 @@ def calculate_metrics(
             ttfts.append(outputs[i].ttft)
             e2els.append(outputs[i].latency)
 
-            push_metric(ttfts=outputs[i].ttft, units="s")
-            push_metric(e2els=outputs[i].latency, units="s")
-            
-            if len(outputs[i].itl) > 0:
-                push_metric(itl=sum(outputs[i].itl)/len(outputs[i].itl), units="s")
+            if push_request_metrics:
+                push_metric(ttfts=outputs[i].ttft, units="s")
+                push_metric(e2els=outputs[i].latency, units="s")
 
-            # push_metric(tpot=outputs[i].tpot, unit="ms")
-            push_metric(input_tok=input_requests[i].prompt_len, units="count")
-            push_metric(output_tok=output_len, units="count")
+                if len(outputs[i].itl) > 0:
+                    push_metric(
+                        itl=sum(outputs[i].itl) / len(outputs[i].itl), units="s"
+                    )
 
-            tok_s = (input_requests[i].prompt_len + output_len) / outputs[i].latency
-            push_metric(request_rate=tok_s, units="tok/s")
-            
+                push_metric(
+                    input_tok=input_requests[i].prompt_len, units="count"
+                )
+                push_metric(output_tok=output_len, units="count")
+
+                tok_s = (input_requests[i].prompt_len + output_len) / outputs[
+                    i
+                ].latency
+                push_metric(request_rate=tok_s, units="tok/s")
+
             completed += 1
         else:
             actual_output_lens.append(0)
