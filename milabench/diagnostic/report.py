@@ -20,6 +20,7 @@ KIND_HINTS = {
     "TIMESTAMP_REGRESSION": "Non-monotonic timestamps — merged/interleaved writers",
     "FORMAT_ERROR": "Unparseable metric lines in .data file",
     "NO_METRICS": "Empty or missing metrics",
+    "SAMPLE_SHORTFALL": "Fewer rate samples than voir.options.stop asked for",
 }
 
 
@@ -57,7 +58,8 @@ def print_report(
         if not visible and not show_clean:
             continue
 
-        print(f"## {pack.name}  ({pack.duration:.0f}s, gpudata={pack.n_gpudata}, rates={pack.n_rates})")
+        rates_str = f"{pack.n_rates}/{pack.n_rates_wanted}" if pack.n_rates_wanted else str(pack.n_rates)
+        print(f"## {pack.name}  ({pack.duration:.0f}s, gpudata={pack.n_gpudata}, rates={rates_str})")
         if pack.peak_mem_mib:
             print(f"   peak memory: {pack.peak_mem_mib:.0f} MiB")
         if not visible:
@@ -98,9 +100,11 @@ def _to_json(report: RunReport, *, min_severity: str) -> dict:
         packs.append(
             {
                 "name": pack.name,
+                "group": pack.group,
                 "duration": pack.duration,
                 "n_gpudata": pack.n_gpudata,
                 "n_rates": pack.n_rates,
+                "n_rates_wanted": pack.n_rates_wanted,
                 "n_iter": pack.n_iter,
                 "n_format_errors": pack.n_format_errors,
                 "peak_mem_mib": pack.peak_mem_mib,

@@ -131,6 +131,14 @@ def main():
     observer = BenchObserver(batch_size_fn=batch_size)
 
     base_dataset = PCQM4Mv2Subset(args.num_samples, args.root)
+    if len(base_dataset) < args.num_samples * 0.5:
+        print(
+            f"WARNING: requested --num-samples={args.num_samples} but the prepared "
+            f"dataset at {args.root} only has {len(base_dataset)} usable entries — "
+            "training will run through far fewer real batches than expected "
+            "(RepeatDataset just cycles the same small set). Delete the 'processed' "
+            "folder there to force a rebuild at the requested size."
+        )
     train_dataset = RepeatDataset(base_dataset)
     degree = train_degree(base_dataset)
 

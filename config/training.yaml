@@ -158,10 +158,10 @@ resnet152-ddp-gpus:
     - convnet
     - resnet
     - multigpu
-  
+
   voir:
     options:
-      stop: 100
+      stop: 200
   
   argv:
     --model: resnet152
@@ -290,6 +290,9 @@ reformer:
 
 whisper:
   inherits: _hf
+  voir:
+    options:
+      stop: 120
   tags:
     - audio
     - huggingface
@@ -318,7 +321,7 @@ brax:
   voir:
     options:
       skip: 30
-      stop: 80
+      stop: 800
   tags:
     - rl
     - jax
@@ -739,7 +742,7 @@ dimenet:
   inherits: _geo_gnn
   voir:
     options:
-      stop: 120
+      stop: 1200
       skip: 15
   argv:
     --model: 'DimeNet'

@@ -171,8 +171,24 @@ pna:
     --num-samples: 1000
 
 dimenet:
+  voir:
+    options:
+      stop: 120
   argv:
     --num-samples: 1000
+
+# whisper/brax now set their own explicit voir.options.stop in training.yaml
+# (2x/10x for real runs) which would otherwise override this file's fast
+# _defaults.stop — pin CI back to its prior value so it stays quick.
+whisper:
+  voir:
+    options:
+      stop: 5
+
+brax:
+  voir:
+    options:
+      stop: 80
 
 # ---- recursiongfn ----
 

@@ -56,9 +56,11 @@ class Issue:
 @dataclass
 class PackReport:
     name: str
+    group: str | None = None
     duration: float = 0.0
     n_gpudata: int = 0
     n_rates: int = 0
+    n_rates_wanted: int | None = None
     n_iter: int = 0
     n_format_errors: int = 0
     peak_mem_mib: float = 0.0
@@ -79,12 +81,28 @@ class RunReport:
         return out
 
 
-def _parse_data_file(path: Path) -> tuple[list[GpuSample], list[tuple[float, float]], list[tuple[float, float]], int, float | None]:
-    """Return gpu samples, rates, iter events, format_error count, t0."""
+def _parse_data_file(
+    path: Path,
+) -> tuple[
+    list[GpuSample],
+    list[tuple[float, float]],
+    list[tuple[float, float]],
+    int,
+    float | None,
+    str | None,
+    int | None,
+]:
+    """Return gpu samples, rates, iter events, format_error count, t0, group
+    name, and the number of samples the run's own config asked for
+    (voir.options.stop, read from the run's ``config`` event — not
+    re-resolved from whatever config.yaml is on disk now, so this stays
+    correct for historical runs made under an older config)."""
     gpu_raw: list[tuple[float, float, float, float]] = []
     rates_raw: list[tuple[float, float]] = []
     iters_raw: list[tuple[float, float]] = []
     format_errors = 0
+    group: str | None = None
+    n_rates_wanted: int | None = None
 
     with open(path, encoding="utf-8", errors="replace") as fp:
         for line in fp:
@@ -99,6 +117,13 @@ def _parse_data_file(path: Path) -> tuple[list[GpuSample], list[tuple[float, flo
             event = ev.get("event")
             if event == "format_error":
                 format_errors += 1
+                continue
+            if event == "config":
+                cfg_data = ev.get("data") or {}
+                if group is None:
+                    group = cfg_data.get("group")
+                if n_rates_wanted is None:
+                    n_rates_wanted = ((cfg_data.get("voir") or {}).get("options") or {}).get("stop")
                 continue
             if event != "data":
                 continue
@@ -130,7 +155,7 @@ def _parse_data_file(path: Path) -> tuple[list[GpuSample], list[tuple[float, flo
     rates = _relative_pairs(rates_raw)
     iters = _relative_pairs(iters_raw)
     t0 = gpu_raw[0][0] if gpu_raw else (rates_raw[0][0] if rates_raw else None)
-    return gpu, rates, iters, format_errors, t0
+    return gpu, rates, iters, format_errors, t0, group, n_rates_wanted
 
 
 def _relative_timeline(raw: list[tuple[float, ...]]) -> list[GpuSample]:
@@ -489,17 +514,45 @@ def _dedupe_issues(issues: list[Issue]) -> list[Issue]:
     return out
 
 
+def _sample_shortfall_issue(n_rates: int, n_rates_wanted: int | None, duration: float) -> Issue | None:
+    """The run's own config asked for ``n_rates_wanted`` timed batches
+    (voir.options.stop) — flag it when far fewer than that actually got
+    recorded, e.g. a crash, an early exit, or a config change (like
+    bumping ``stop`` for longer measurement) that the run predates."""
+    if not n_rates_wanted or n_rates_wanted <= 0:
+        return None
+    if n_rates >= n_rates_wanted:
+        return None
+
+    ratio = n_rates / n_rates_wanted
+    severity = "error" if ratio < 0.5 else "warn"
+    return Issue(
+        "SAMPLE_SHORTFALL",
+        severity,
+        0.0,
+        duration,
+        f"got {n_rates}/{n_rates_wanted} rate samples ({ratio:.0%} of what voir.options.stop asked for)",
+    )
+
+
 def analyze_pack(path: Path) -> PackReport:
-    gpu, rates, iters, format_errors, _ = _parse_data_file(path)
+    gpu, rates, iters, format_errors, _, group, n_rates_wanted = _parse_data_file(path)
     name = path.stem
     duration = gpu[-1].t if gpu else (rates[-1][0] if rates else 0.0)
     issues = _detect_issues(gpu, rates, iters, format_errors)
+
+    shortfall = _sample_shortfall_issue(len(rates), n_rates_wanted, duration)
+    if shortfall is not None:
+        issues = _dedupe_issues([*issues, shortfall])
+
     peak = max((g.mem for g in gpu), default=0.0)
     return PackReport(
         name=name,
+        group=group,
         duration=duration,
         n_gpudata=len(gpu),
         n_rates=len(rates),
+        n_rates_wanted=n_rates_wanted,
         n_iter=len(iters),
         n_format_errors=format_errors,
         peak_mem_mib=peak,

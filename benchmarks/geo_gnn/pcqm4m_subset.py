@@ -61,6 +61,16 @@ class PCQM4Mv2Subset(PCQM4Mv2):
             return
 
         if not osp.exists(size_file):
+            # No size marker means either a pre-size-tracking DB, or a
+            # process() that got interrupted before writing it — in both
+            # cases we can't trust whatever's on disk to be complete, so
+            # rebuild rather than silently keep a possibly-tiny/stale DB
+            # forever (this previously meant *no* amount of bumping
+            # --num-samples could ever regenerate a stuck-small dataset).
+            print(
+                f"{size_file} missing; existing processed data may be stale/incomplete. Rebuilding..."
+            )
+            shutil.rmtree(processed_dir)
             return
 
         with open(size_file) as f:
