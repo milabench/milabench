@@ -1,0 +1,18 @@
+[common]
+dependencies = [
+    "huggingface-hub",
+]
+
+[cuda]
+enabled = false
+
+[rocm]
+enabled = false
+
+[hpu]
+enabled = false
+
+[xpu]
+# Client is `vllm bench serve`: homing.yaml points dirs.venv at the manually
+# provisioned /srv/ai-cold/scratch/vllm-xpu-venv. Do not pip-install there.
+enabled = false

@@ -33,4 +33,4 @@ dependencies = [
 [hpu]
 
 [xpu]
-enabled = false
+enabled = true
