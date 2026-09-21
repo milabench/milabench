@@ -39,15 +39,20 @@ def find_binary(root, backend, name):
     ):
         if os.path.exists(candidate):
             return candidate
-    raise SystemExit(f"could not find {name} for backend '{backend}' under {root}")
+    raise RuntimeError(f"could not find {name} for backend '{backend}' under {root}")
 
 
 def server_env(backend, device):
     env = os.environ.copy()
+    # Respect a per-job selector already injected by the runner (D0/D1 spread).
     if backend == "sycl":
-        env["ONEAPI_DEVICE_SELECTOR"] = f"level_zero:{device}"
+        env.setdefault("ONEAPI_DEVICE_SELECTOR", f"level_zero:{device}")
+        if os.environ.get("MILABENCH_GPU_ID"):
+            env["ONEAPI_DEVICE_SELECTOR"] = f"level_zero:{device}"
     else:
-        env["GGML_VK_VISIBLE_DEVICES"] = str(device)
+        env.setdefault("GGML_VK_VISIBLE_DEVICES", str(device))
+        if os.environ.get("MILABENCH_GPU_ID"):
+            env["GGML_VK_VISIBLE_DEVICES"] = str(device)
     return env
 
 
@@ -88,7 +93,7 @@ class LlamaServer:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.proc.poll() is not None:
-                raise SystemExit(f"llama-server exited early, see {self.log_path}")
+                raise RuntimeError(f"llama-server exited early, see {self.log_path}")
             try:
                 with urllib.request.urlopen(url, timeout=5) as resp:
                     if resp.status == 200:
@@ -96,7 +101,7 @@ class LlamaServer:
             except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
                 pass
             time.sleep(2)
-        raise SystemExit("llama-server did not become ready in time")
+        raise RuntimeError("llama-server did not become ready in time")
 
     def shutdown(self):
         self.proc.terminate()
@@ -129,7 +134,7 @@ def run_bench(args, port, client_argv, workdir):
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if not os.path.exists(out_file):
         sys.stderr.write(proc.stdout[-4000:] + "\n" + proc.stderr[-4000:] + "\n")
-        raise SystemExit(f"vllm bench serve failed (rc={proc.returncode}), no result file")
+        raise RuntimeError(f"vllm bench serve failed (rc={proc.returncode}), no result file")
     with open(out_file) as fh:
         return json.load(fh)
 
@@ -170,11 +175,11 @@ def run_micro_once(args, model_path, device):
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)
-        raise SystemExit(f"llama-bench failed with code {proc.returncode}")
+        raise RuntimeError(f"llama-bench failed with code {proc.returncode}")
     pp, tg = parse_bench_output(proc.stdout)
     if pp is None or tg is None:
         sys.stderr.write(proc.stdout + proc.stderr)
-        raise SystemExit("could not parse llama-bench output")
+        raise RuntimeError("could not parse llama-bench output")
     return pp, tg
 
 
@@ -186,7 +191,7 @@ def prepare_voir():
 
     observer = BenchObserver(
         accelerator.Event,
-        earlystop=get_observation_count(300),
+        earlystop=get_observation_count(30),
         batch_size_fn=lambda x: 1,
         raise_stop_program=False,
         stdout=True,
@@ -255,7 +260,7 @@ def main(argv=None):
             for i, _ in enumerate(dataset):
                 res = run_bench(args, port, client_argv, workdir)
                 if not res.get("completed"):
-                    raise SystemExit("bench run completed 0 requests")
+                    raise RuntimeError("bench run completed 0 requests")
                 observer.record_metric(
                     ttft_median_ms=res.get("median_ttft_ms"),
                     ttft_mean_ms=res.get("mean_ttft_ms"),
@@ -279,4 +284,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    main(sys.argv[1:])

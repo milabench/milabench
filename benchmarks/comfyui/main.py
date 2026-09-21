@@ -57,6 +57,9 @@ def link_model(dest_dir, cached_path, filename):
 def fetch_models(models):
     from huggingface_hub import hf_hub_download
 
+    if len(models) == 1 and "," in models[0]:
+        models = models[0].split(",")
+
     paths = []
     for spec in models:
         dest, repo, filename = spec.split(":", 2)
@@ -102,13 +105,13 @@ class ComfyServer:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.proc.poll() is not None:
-                raise SystemExit(f"comfyui server exited early, see {self.log.name}")
+                raise RuntimeError(f"comfyui server exited early, see {self.log.name}")
             try:
                 http_json(f"http://127.0.0.1:{self.port}/system_stats", timeout=5)
                 return
             except (urllib.error.URLError, ConnectionError, TimeoutError):
                 time.sleep(2)
-        raise SystemExit("comfyui server did not become ready in time")
+        raise RuntimeError("comfyui server did not become ready in time")
 
     def shutdown(self):
         self.proc.terminate()
@@ -139,9 +142,8 @@ def run_batch(server, workflow, sets, count, timeout=3600):
     submit->completion wall time)."""
     pending = dict(submit_prompt(server, workflow, sets) for _ in range(count))
     results = {}
-    start = time.perf_counter()
-    deadline = start + timeout
-    while pending and time.time() < deadline:
+    deadline = time.perf_counter() + timeout
+    while pending and time.perf_counter() < deadline:
         hist = http_json(f"http://127.0.0.1:{server.port}/history", timeout=30)
         for prompt_id in list(pending):
             if prompt_id not in hist:
@@ -149,17 +151,17 @@ def run_batch(server, workflow, sets, count, timeout=3600):
             entry = hist.pop(prompt_id)
             status = entry.get("status", {})
             if status.get("status_str") == "error":
-                raise SystemExit(f"workflow execution failed: {json.dumps(status)[:2000]}")
+                raise RuntimeError(f"workflow execution failed: {json.dumps(status)[:2000]}")
             elapsed = time.perf_counter() - pending[prompt_id]
             if "execution_start" in status and "execution_success" in status:
                 elapsed = (status["execution_success"] - status["execution_start"]) / 1000.0
             results[prompt_id] = elapsed
             del pending[prompt_id]
         if pending and server.proc.poll() is not None:
-            raise SystemExit("comfyui server died during generation")
+            raise RuntimeError("comfyui server died during generation")
         time.sleep(0.25)
     if pending:
-        raise SystemExit("workflow generation timed out")
+        raise RuntimeError("workflow generation timed out")
     return [results[p] for p in results]
 
 
@@ -171,7 +173,7 @@ def prepare_voir():
 
     observer = BenchObserver(
         accelerator.Event,
-        earlystop=get_observation_count(300),
+        earlystop=get_observation_count(30),
         batch_size_fn=lambda x: 1,
         raise_stop_program=False,
         stdout=True,
@@ -205,7 +207,8 @@ def main(argv=None):
     args, _ = parser.parse_known_args(argv)
 
     fetch_models(args.model)
-    sets = {f"__{kv.split('=', 1)[0]}__": kv.split("=", 1)[1] for kv in args.sets}
+    kvs = [kv for entry in args.sets for kv in entry.split(",") if kv]
+    sets = {f"__{kv.split('=', 1)[0]}__": kv.split("=", 1)[1] for kv in kvs}
 
     log_path = os.path.join(
         tempfile.gettempdir(), f"comfyui-server-{args.port or os.getpid()}.log"
@@ -252,4 +255,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    main(sys.argv[1:])
