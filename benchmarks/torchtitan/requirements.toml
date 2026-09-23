@@ -25,4 +25,4 @@ dependencies = []
 dependencies = []
 
 [xpu]
-enabled = false
+enabled = true

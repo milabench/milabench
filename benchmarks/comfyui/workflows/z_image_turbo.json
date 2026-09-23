@@ -1,0 +1,12 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "__UNET__", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "__TE__", "type": "lumina2", "device": "default"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "__VAE__"}},
+  "4": {"class_type": "LoraLoader", "inputs": {"model": ["1", 0], "clip": ["2", 0], "lora_name": "__LORA__", "strength_model": 0.5, "strength_clip": 1.0}},
+  "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": "a red fox in a snowy forest at golden hour, photorealistic"}},
+  "6": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+  "7": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["5", 0], "negative": ["8", 0], "latent_image": ["6", 0], "seed": "__SEED__", "steps": 8, "cfg": 1.0, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
+  "8": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["4", 1], "text": ""}},
+  "9": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+  "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "milabench"}}
+}

@@ -399,6 +399,10 @@ def _torch_local_label(backend: str, backend_version: str) -> str | None:
         return f"rocm{backend_version}"
     if backend == "cpu":
         return "cpu"
+    if backend == "xpu":
+        # pytorch.org/whl/xpu wheels carry the +xpu local tag; without an
+        # exact pin uv picks the untagged PyPI (CUDA-stack) wheel instead.
+        return "xpu"
     return None
 
 

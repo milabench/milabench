@@ -22,4 +22,4 @@ dependencies = [
 # so radius_graph uses torch-cluster instead.
 
 [xpu]
-enabled = false
+enabled = true

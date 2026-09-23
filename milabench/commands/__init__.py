@@ -757,8 +757,12 @@ class TorchrunAllGPU(WrapperCommand):
 
         if self.should_wrap():
             # spawn,fork,forkserver
+            # Use the resolved device count, not the literal "gpu": torchrun
+            # only resolves "gpu" via CUDA (torch.cuda), which raises
+            # "Cuda is not available" on XPU. `devices` already comes from
+            # the accelerator-agnostic smi/torchcompat layer.
             multi_gpu_args = (
-                f"--nproc-per-node=gpu",
+                f"--nproc-per-node={nproc}",
             )
 
             if self.pack.config["plan"]["method"] == "per_gpu":
@@ -1173,8 +1177,12 @@ class PerGPU(ListCommand):
 
         for gpu in self.devices:
             gid = gpu["device"]
+            # Keep only the trailing index so the device tag matches CUDA/ROCm
+            # (which report an int id -> D0/D1). XPU reports "level_zero:1" for
+            # ONEAPI_DEVICE_SELECTOR, so strip the backend prefix for the label.
+            dev_label = str(gid).split(":")[-1]
             gcfg = {
-                "tag": [*executor.pack.config["tag"], f"D{gid}"],
+                "tag": [*executor.pack.config["tag"], f"D{dev_label}"],
                 "device": gid,
                 "devices": [gid] if ngpus else [],
                 "env": {gpu["selection_variable"]: str(gid)},

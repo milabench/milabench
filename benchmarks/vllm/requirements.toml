@@ -45,4 +45,8 @@ dependencies = [
 enabled = false
 
 [xpu]
+# Provisioned manually in /srv/ai-cold/scratch/vllm-xpu-venv (vllm 0.29.0 +
+# torch 2.13+xpu + triton-xpu). Do NOT let milabench install here: common deps
+# (torch, ray, vllm from PyPI) would clobber the Intel stack. homing.yaml
+# points dirs.venv at the isolated venv.
 enabled = false

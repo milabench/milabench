@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from accelerate import Accelerator
+from accelerate.utils import DataLoaderConfiguration
 
 import math
 import random
@@ -152,6 +153,10 @@ def train(observer, args: Arguments):
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
+        # xccl/level-zero: the seedable-sampler RNG state broadcast in
+        # DataLoaderShard.__iter__ deadlocks on XPU; disabling it is a no-op
+        # for reproducibility here (benchmate only measures throughput).
+        dataloader_config=DataLoaderConfiguration(use_seedable_sampler=False),
     )
 
     loader = dataset(accelerator, args)

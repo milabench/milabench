@@ -43,11 +43,12 @@ latest_patch_only = true                    # keep only latest patch per minor (
 platforms = ["manylinux_2_28_x86_64", "manylinux_2_28_aarch64"]  # pin for both arches
 # python = "cp312"                         # auto-detected if omitted
 
-# XPU uses Intel's own index (pytorch-extension.intel.com); wheel filenames
-# don't follow the pytorch.org cu/rocm convention so combinations are listed
-# manually.  Backend version is "" (Intel's torch wheels carry no local tag).
+# XPU wheel filenames don't follow the cu/rocm convention so combinations are
+# listed manually. Intel's own index (pytorch-extension.intel.com) no longer
+# ships torch for cp312; the official +xpu wheels live on pytorch.org
+# (torch/torchvision/torchaudio, local tag +xpu). Backend version is "".
 xpu_combinations = [
-    { torch = "2.7.0" },   # intel-extension-for-pytorch 2.7.10+xpu
+    { torch = "2.10.0" },   # torch 2.10.0+xpu from download.pytorch.org/whl/xpu
 ]
 
 # ─── CUDA Backend ─────────────────────────────────────────────────────────────
@@ -135,20 +136,26 @@ gymnax = ">=0.0.8"
 pydantic = ">=2,<3"
 
 # ─── XPU Backend ──────────────────────────────────────────────────────────────
-# Requires intel-extension-for-pytorch (IPEX) for device support and
-# oneccl_bind_pt for distributed training via Intel's oneCCL.
+# XPU device support is built into torch >= 2.5 (torch-xpu-ops); Intel stopped
+# releasing IPEX/oneccl_bind_pt wheels after torch 2.8, so no vendor packages
+# are injected. The oneCCL runtime arrives as torch's own wheel dependency.
 
 [xpu]
-requires = ["intel-extension-for-pytorch", "oneccl_bind_pt"]
+requires = []
 
 [xpu.indexes]
-# Intel's XPU wheel index carries torch, torchvision, torchaudio, IPEX, and
-# oneCCL in a single place. The pytorch.org CPU index is a fallback for pure-
-# Python packages that are not in Intel's index (e.g. torchcodec +cpu build).
-index-url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+# Official +xpu wheels (torch, torchvision, torchaudio) on pytorch.org.
+# The pytorch.org CPU index is a fallback for pure-CPU builds (e.g. torchcodec).
+index-url = "https://download.pytorch.org/whl/xpu"
 extra-index-url = [
     "https://pypi.org/simple",
     "https://download.pytorch.org/whl/cpu",
+]
+# torch-scatter/-cluster/-sparse publish no PyPI wheels; use the CPU-built
+# +ptXXXXcpu wheels (CPU-only extensions, dispatch through torch) 
+find-links = [
+    "https://data.pyg.org/whl/torch-{torch}+cpu.html",
+    # "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-xpu{xpu}",,
 ]
 
 [xpu.constraints]

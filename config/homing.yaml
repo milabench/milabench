@@ -1,0 +1,462 @@
+# =============================================================================
+# Homing suite — prosumer single-GPU inference (<= 32 GB VRAM, e.g. Arc Pro B70)
+#
+# Three tiers:
+#   1. HF-transformers anchors (install_group: torch): chat / flux / whisper
+#   2. vLLM quantized serving: runs in the manually provisioned
+#      /srv/ai-cold/scratch/vllm-xpu-venv (vllm 0.29.0 + torch 2.13+xpu +
+#      triton-xpu). The vllm pack's [xpu] requirements are disabled in
+#      benchmarks/vllm/requirements.toml so milabench never pip-installs there.
+#   3. llama.cpp (SYCL/Vulkan GGUF) + ComfyUI — stubs, see bottom of file.
+#
+# All model weights verified <= ~26 GB via HF API so they fit a 32 GB card
+# with vllm --gpu-memory-utilization 0.90. Methodology = InferenceX-style:
+# random tokens, no prefix caching, request-rate inf, concurrency matrix.
+# =============================================================================
+
+include:
+  - _defaults.yaml
+
+# -----------------------------------------------------------------------------
+# Tier 1 — HuggingFace transformers anchors (main torch venv)
+# -----------------------------------------------------------------------------
+
+_inference:
+  inherits: _defaults
+  definition: ../benchmarks/inference
+  install_group: torch
+  enabled: true
+  tags:
+    - inference
+    - homing
+
+homing-asr-whisper:
+  inherits: _inference
+  tags:
+    - monogpu
+  plan:
+    method: per_gpu
+  url:
+    - https://huggingface.co/openai/whisper-large-v3
+    - https://huggingface.co/datasets/openslr/librispeech_asr
+  argv:
+    --mode: whisper
+    --model: openai/whisper-large-v3
+    --dataset: openslr/librispeech_asr
+    --subset: "clean"
+    --split: "train.100"
+    # bs 64 OOMs on the 32 GB card; autosizer (run_homing.sh) steps down from 8.
+    --batch_size: "auto_batch(8)"
+
+homing-flux-image:
+  inherits: _inference
+  tags:
+    - monogpu
+  # bf16 schnell (~33 GB weights) OOMs a 32 GB card at load time, bs=1 —
+  # autosizer cannot help (fails before the first step). The fp8 Flux path
+  # is homing-comfyui-flux-schnell (17 GB). Re-enable with an fp8 loader.
+  enabled: false
+  max_duration: 1800
+  voir:
+    options:
+      stop: 60
+      skip: 10
+  plan:
+    method: per_gpu
+  # schnell is the ungated FLUX (Apache-2); the dev variant is gated.
+  url: https://huggingface.co/black-forest-labs/FLUX.1-schnell
+  argv:
+    --mode: flux
+    --model: black-forest-labs/FLUX.1-schnell
+    --dataset: jackyhate/text-to-image-2M
+    --batch_size: 1
+
+homing-llm-chat:
+  inherits: _inference
+  tags:
+    - monogpu
+  max_duration: 3600
+  plan:
+    method: per_gpu
+  url: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+  argv:
+    --mode: chat
+    --model: meta-llama/Llama-3.1-8B-Instruct
+    --dataset: hendrydong/gpqa_diamond
+    --split: "test"
+    # bs=1 already reserves ~17.4 GB on the B70; autosizer steps down from 4.
+    --batch_size: "auto_batch(4)"
+
+# -----------------------------------------------------------------------------
+# Tier 2 — vLLM quantized serving (isolated venv)
+# -----------------------------------------------------------------------------
+
+_vllm_home:
+  inherits: _defaults
+  definition: ../benchmarks/vllm
+  group: vllm-homing
+  install_group: vllm-homing
+  enabled: false  # only leaf jobs enable
+  dirs:
+    venv: /srv/ai-cold/scratch/vllm-xpu-venv
+  max_duration: 1800
+  voir:
+    options:
+      stop: 40
+      gpu_poll: 0.5
+  validation:
+    usage:
+      gpu_load_threshold: 0.5
+      gpu_mem_threshold: 0.5
+  tags:
+    - inference
+    - vllm
+    - homing
+    - monogpu
+  num_machines: 1
+  plan:
+    method: njobs
+    n: 1
+
+  server:
+    argv:
+      --served-model-name: model
+      --dtype: bfloat16
+      --gpu-memory-utilization: 0.90
+      --no-enable-prefix-caching: true
+      --max-num-batched-tokens: 8192
+      --max-model-len: 8192
+
+  client:
+    argv:
+      --served-model-name: model
+      --request-rate: inf
+      --dataset-name: random
+      --random-range-ratio: 0.2
+      --ignore-eos: true
+      --label: homing
+      --backend: openai
+      --endpoint: /v1/completions
+      --ready-check-timeout-sec: 3600  # first run downloads tens of GB
+      --random-input-len: 1024
+      --random-output-len: 1024
+
+# --- FP8: Qwen3-8B (dense) — the bring-up pack, smallest download ---
+_h_vllm_qwen3_8b_fp8:
+  inherits: _vllm_home
+  tags:
+    - dense
+    - fp8
+  url: https://huggingface.co/Qwen/Qwen3-8B-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3-8B-FP8
+  server:
+    argv:
+      Qwen/Qwen3-8B-FP8: true
+
+homing-vllm-qwen3-8b-fp8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-vllm-qwen3-8b-fp8-conc{concurrency}'
+    inherits: _h_vllm_qwen3_8b_fp8
+    enabled: true
+    weight: 1
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# --- W8A8 INT8: Llama-3.1-8B dense fallback ---
+_h_vllm_llama8b_w8a8:
+  inherits: _vllm_home
+  tags:
+    - dense
+    - w8a8
+  url: https://huggingface.co/RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8
+  client:
+    argv:
+      --model: RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8
+  server:
+    argv:
+      RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8: true
+
+homing-vllm-llama8b-w8a8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-vllm-llama8b-w8a8-conc{concurrency}'
+    inherits: _h_vllm_llama8b_w8a8
+    enabled: true  # enable after qwen3 bring-up passes
+    weight: 1
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        # torch.compile/XPU flake on this checkpoint (dynamo TreeSpec assertion)
+        --enforce-eager: true
+
+# --- FP8: Gemma-4 26B-A4B MoE (frontier, 26.5 GB weights) ---
+_h_vllm_gemma4_fp8:
+  inherits: _vllm_home
+  tags:
+    - moe
+    - fp8
+  url: https://huggingface.co/RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+  client:
+    argv:
+      --model: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+  server:
+    argv:
+      RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic: true
+
+homing-vllm-gemma4-fp8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-vllm-gemma4-fp8-conc{concurrency}'
+    inherits: _h_vllm_gemma4_fp8
+    enabled: true  # enable after qwen3 bring-up passes
+    weight: 1
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    max_duration: 7200
+    server:
+      argv:
+        --gpu-memory-utilization: 0.95
+        --max-model-len: 4096
+        --max-num-batched-tokens: 2048
+        --enforce-eager: true
+
+# --- W8A8 INT8: Instella-MoE 16B-A3B (frontier, 15.9 GB weights) ---
+# Risk: needs vllm 0.29 to register InstellaMoEForCausalLM.
+_h_vllm_instella_w8a8:
+  inherits: _vllm_home
+  tags:
+    - moe
+    - w8a8
+  url: https://huggingface.co/amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor
+  client:
+    argv:
+      --model: amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor
+  server:
+    argv:
+      amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor: true
+
+homing-vllm-instella-w8a8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-vllm-instella-w8a8-conc{concurrency}'
+    inherits: _h_vllm_instella_w8a8
+    enabled: false  # vllm 0.29: InstellaMoEForCausalLM arch not registered  # enable after qwen3 bring-up + arch check
+    weight: 1
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# -----------------------------------------------------------------------------
+# Tier 3 — llama.cpp serving matrix (SYCL vs Vulkan backends)
+# llama-server (OpenAI API) driven by `vllm bench serve` — same client and
+# methodology as the Tier-2 vLLM packs, so numbers are directly comparable.
+# Client runs in the isolated vllm venv; binaries in /srv/ai-cold/scratch/
+# llama.cpp/{build-sycl,build-vulkan}. Keep enabled: false until bring-up.
+# -----------------------------------------------------------------------------
+
+_llamacpp:
+  inherits: _defaults
+  definition: ../benchmarks/llamacpp
+  group: llamacpp
+  install_group: torch
+  enabled: false
+  dirs:
+    venv: /srv/ai-cold/scratch/vllm-xpu-venv
+  max_duration: 3600
+  voir:
+    options:
+      stop: 3
+  tags:
+    - inference
+    - llamacpp
+    - homing
+    - monogpu
+  num_machines: 1
+  plan:
+    method: njobs
+    n: 1
+  # NOTE: matrix variables ({backend}/{concurrency}) only interpolate inside
+  # each job's own block, not here — see the individual jobs below.
+  server:
+    argv:
+      --max-steps: 4  # stop(3)+1: must exceed stop so voir closes cleanly
+                       # so end the loop explicitly (see driver main.py)
+    # --parallel/--ctx-size set per job: ctx-size is the TOTAL KV pool,
+    # divided across slots, so it must track {concurrency}.
+  client:
+    argv:
+      --random-input-len: 1024
+      --random-output-len: 1024
+      --random-range-ratio: 0.2
+      --ignore-eos: true
+
+homing-llamacpp-qwen3-8b-q8:
+  matrix:
+    backend: [sycl, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homing-llamacpp-qwen3-8b-q8-{backend}-conc{concurrency}'
+    inherits: _llamacpp
+    enabled: true  # bring-up model; frontier GGUFs stay off until this passes
+    weight: 1
+    server:
+      argv:
+        --repo: ggml-org/Qwen3-8B-GGUF
+        --file: Qwen3-8B-Q8_0.gguf
+        --model: Qwen/Qwen3-8B
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homing-llamacpp-gptoss-q4xl:
+  matrix:
+    backend: [sycl, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homing-llamacpp-gptoss-q4xl-{backend}-conc{concurrency}'
+    inherits: _llamacpp
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: unsloth/gpt-oss-20b-GGUF
+        --file: gpt-oss-20b-UD-Q4_K_XL.gguf
+        --model: openai/gpt-oss-20b
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homing-llamacpp-qwen3-30b-q4km:
+  matrix:
+    backend: [sycl, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homing-llamacpp-qwen3-30b-q4km-{backend}-conc{concurrency}'
+    inherits: _llamacpp
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF
+        --file: Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
+        --model: Qwen/Qwen3-30B-A3B-Instruct-2507
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homing-llamacpp-gemma4-q4:
+  matrix:
+    backend: [sycl, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homing-llamacpp-gemma4-q4-{backend}-conc{concurrency}'
+    inherits: _llamacpp
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: ggml-org/gemma-4-26B-A4B-it-GGUF
+        --file: gemma-4-26B-A4B-it-Q4_0.gguf
+        --model: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# -----------------------------------------------------------------------------
+# Tier 4 — ComfyUI (headless server, isolated venv /srv/ai-cold/scratch/
+# comfyui-xpu-venv, checkout /srv/ai-cold/scratch/comfyui).
+# Keep enabled: false until validated once the sizing run frees the GPUs.
+# -----------------------------------------------------------------------------
+
+_comfyui:
+  inherits: _defaults
+  definition: ../benchmarks/comfyui
+  group: comfyui
+  install_group: torch
+  enabled: false
+  max_duration: 3600
+  voir:
+    options:
+      stop: 30
+  tags:
+    - inference
+    - comfyui
+    - diffusion
+    - homing
+    - monogpu
+  num_machines: 1
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --warmup: 1
+    --max-steps: 31  # must exceed voir stop (30) so voir closes its final step
+
+homing-comfyui-flux-schnell:
+  name: homing-comfyui-flux-schnell
+  inherits: _comfyui
+  enabled: true  # bring-up; flux-dev/z-image off until this passes
+  weight: 1
+  argv:
+    --workflow: workflows/flux_schnell_fp8.json
+    --model: checkpoints:Comfy-Org/FLUX1-schnell:flux1-schnell-fp8.safetensors
+    --set: CKPT=flux1-schnell-fp8.safetensors
+
+homing-comfyui-flux-dev-fp8:
+  name: homing-comfyui-flux-dev-fp8
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/flux_dev_fp8.json
+    --model: checkpoints:Comfy-Org/flux1-dev:flux1-dev-fp8.safetensors
+    --set: CKPT=flux1-dev-fp8.safetensors
+
+homing-comfyui-z-image-turbo:
+  name: homing-comfyui-z-image-turbo
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/z_image_turbo.json
+    --model:
+      - diffusion_models:Comfy-Org/z_image_turbo:split_files/diffusion_models/z_image_turbo_bf16.safetensors
+      - text_encoders:Comfy-Org/z_image_turbo:split_files/text_encoders/qwen_3_4b.safetensors
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+      - loras:Comfy-Org/z_image_turbo:split_files/loras/z_image_turbo_distill_patch_lora_bf16.safetensors
+    --set:
+      - UNET=z_image_turbo_bf16.safetensors
+      - TE=qwen_3_4b.safetensors
+      - VAE=ae.safetensors
+      - LORA=z_image_turbo_distill_patch_lora_bf16.safetensors
