@@ -194,6 +194,10 @@ homing-vllm-llama8b-w8a8:
       argv:
         --max-concurrency: "{concurrency}"
         --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        # torch.compile/XPU flake on this checkpoint (dynamo TreeSpec assertion)
+        --enforce-eager: true
 
 # --- FP8: Gemma-4 26B-A4B MoE (frontier, 26.5 GB weights) ---
 _h_vllm_gemma4_fp8:
