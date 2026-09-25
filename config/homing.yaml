@@ -280,7 +280,8 @@ _llamacpp:
   max_duration: 3600
   voir:
     options:
-      stop: 3
+      stop: 40
+      gpu_poll: 0.5
   tags:
     - inference
     - llamacpp
@@ -293,9 +294,7 @@ _llamacpp:
   # NOTE: matrix variables ({backend}/{concurrency}) only interpolate inside
   # each job's own block, not here — see the individual jobs below.
   server:
-    argv:
-      --max-steps: 4  # stop(3)+1: must exceed stop so voir closes cleanly
-                       # so end the loop explicitly (see driver main.py)
+    argv: {}
     # --parallel/--ctx-size set per job: ctx-size is the TOTAL KV pool,
     # divided across slots, so it must track {concurrency}.
   client:
@@ -304,6 +303,7 @@ _llamacpp:
       --random-output-len: 1024
       --random-range-ratio: 0.2
       --ignore-eos: true
+      --label: homing
 
 homing-llamacpp-qwen3-8b-q8:
   matrix:

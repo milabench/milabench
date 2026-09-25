@@ -1,0 +1,138 @@
+# =============================================================================
+# 2-GPU vLLM experiment (TP=2 / DP=2) on the 2x Arc Pro B70 node.
+#
+# Adds tensor-parallel / data-parallel variants on top of the homing suite
+# (include) with identical client methodology, so results are directly
+# comparable to the single-GPU homing numbers. Plus a trimmed smoke of
+# vllm-dense-physics-gpus (Mistral-Small-24B bf16, ~48 GB across 2 cards).
+#
+# Run with:  SELECT='homing-tp2-*'  (run_tp2.sh does this by default)
+# =============================================================================
+
+include:
+  - homing.yaml
+
+# --- TP=2: Qwen3-8B-FP8 — baseline 2-GPU scaling probe (8B fits one card;
+# expect modest/compute-bound gain vs single-GPU 217.9 / 588.5 out-tok/s) ---
+homing-tp2-qwen3-8b-fp8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-tp2-qwen3-8b-fp8-conc{concurrency}'
+    inherits: _h_vllm_qwen3_8b_fp8
+    enabled: true
+    weight: 1
+    tags:
+      - tp2
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        --tensor-parallel-size: 2
+
+# --- TP=2: Llama-3.1-8B w8a8 (keep enforce-eager: dynamo TreeSpec flake) ---
+homing-tp2-llama8b-w8a8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-tp2-llama8b-w8a8-conc{concurrency}'
+    inherits: _h_vllm_llama8b_w8a8
+    enabled: true
+    weight: 1
+    tags:
+      - tp2
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        --tensor-parallel-size: 2
+        --enforce-eager: true
+
+# --- TP=2: Gemma-4-26B-FP8 — the main prize: weights split ~13 GB/GPU, so the
+# KV pool grows far beyond the 1.25 GiB that capped conc32 single-GPU.
+# Mirrors every single-GPU override (util 0.95, ctx 4096, batch 2048,
+# enforce-eager) + TP=2, to isolate the memory/KV effect of the split. ---
+homing-tp2-gemma4-fp8:
+  matrix:
+    concurrency: [1, 8, 32]
+  job:
+    name: 'homing-tp2-gemma4-fp8-conc{concurrency}'
+    inherits: _h_vllm_gemma4_fp8
+    enabled: true
+    weight: 1
+    tags:
+      - tp2
+    max_duration: 7200
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        --tensor-parallel-size: 2
+        --gpu-memory-utilization: 0.95
+        --max-model-len: 4096
+        --max-num-batched-tokens: 2048
+        --enforce-eager: true
+
+# --- DP=2: Qwen3-8B-FP8, two replicas (one per GPU) behind one server —
+# aggregate-throughput probe. Pure probe, may not be supported on XPU. ---
+homing-tp2-dp2-qwen3-8b-fp8:
+  matrix:
+    concurrency: [32]
+  job:
+    name: 'homing-tp2-dp2-qwen3-8b-fp8-conc{concurrency}'
+    inherits: _h_vllm_qwen3_8b_fp8
+    enabled: true
+    weight: 1
+    tags:
+      - tp2
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+    server:
+      argv:
+        --data-parallel-size: 2
+
+# --- Trimmed vllm-dense-physics-gpus smoke: Mistral-Small-3.1-24B bf16,
+# TP=2 (~24 GB/GPU weights), GPQA-diamond prompts. Full pack wants 25k
+# prompts / 1 h; this smoke runs 50 prompts. Same server argv as the
+# main-suite pack, homing client harness (isolated venv).
+# NOTE: gated-ish repo + mistral tokenizer mode + vision tower on XPU are
+# the three things this smoke is meant to de-risk. ---
+homing-tp2-mistral-dense-smoke:
+  matrix:
+    concurrency: [16, 64]
+  job:
+    name: 'homing-tp2-mistral-dense-conc{concurrency}'
+    inherits: _vllm_home
+    enabled: true
+    weight: 1
+    max_duration: 2400
+    tags:
+      - dense
+      - tp2
+    url: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503
+    client:
+      argv:
+        --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
+        --dataset-name: hf
+        --dataset-path: hendrydong/gpqa_diamond
+        --hf-name: hendrydong/gpqa_diamond
+        --max-concurrency: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 2)"
+    server:
+      argv:
+        mistralai/Mistral-Small-3.1-24B-Instruct-2503: true
+        --tensor-parallel-size: 2
+        --tokenizer-mode: mistral
+        --config_format: mistral
+        --load_format: mistral
+        --tool-call-parser: mistral
+        --enable-auto-tool-choice: true
+        --limit-mm-per-prompt: '{"image":10}'

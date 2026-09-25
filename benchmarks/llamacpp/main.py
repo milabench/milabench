@@ -2,9 +2,10 @@
 """llama.cpp serving benchmark.
 
 Default `host` mode: boots llama-server (OpenAI-compatible API) with the
-selected ggml backend (sycl | vulkan) and drives it with `vllm bench serve`
-(random ISL/OSL, saturating request rate, bounded concurrency) — the exact
-client used by the vLLM packs, so the numbers are directly comparable.
+selected ggml backend (sycl | vulkan) and drives it with the shared
+benchmate bench client (vllm.benchmarks.serve in-process, random ISL/OSL,
+saturating request rate, bounded concurrency) — the exact client used by the
+vLLM packs, so the numbers are directly comparable and report as tok/s.
 
 `micro` mode runs llama-bench (pure prompt/generate token throughput).
 
@@ -12,9 +13,7 @@ Anything after `--` in the pack argv is forwarded verbatim to
 `vllm bench serve`; unknown args before `--` are forwarded to llama-server.
 """
 import itertools
-import json
 import os
-import random
 import re
 import socket
 import subprocess
@@ -24,6 +23,8 @@ import time
 import urllib.error
 import urllib.request
 from argparse import ArgumentParser
+
+from benchmate.benchserve import InferenceServerError, run_benchmark_watched, set_metric_sink
 
 
 SETVARS = os.environ.get("ONEAPI_SETVARS", "/opt/intel/oneapi/setvars.sh")
@@ -103,6 +104,13 @@ class LlamaServer:
             time.sleep(2)
         raise RuntimeError("llama-server did not become ready in time")
 
+    def check(self):
+        rc = self.proc.poll()
+        if rc is not None:
+            raise InferenceServerError(
+                f"llama-server exited early (code {rc}), see {self.log_path}"
+            )
+
     def shutdown(self):
         self.proc.terminate()
         try:
@@ -110,33 +118,6 @@ class LlamaServer:
         except subprocess.TimeoutExpired:
             self.proc.kill()
         self.log.close()
-
-
-def run_bench(args, port, client_argv, workdir):
-    vllm = os.path.join(os.path.dirname(sys.executable), "vllm")
-    out_file = os.path.join(workdir, f"result-{random.randrange(1 << 48):012x}.json")
-    cmd = [
-        vllm, "bench", "serve",
-        "--base-url", f"http://127.0.0.1:{port}",
-        "--endpoint", "/v1/completions",
-        "--backend", "openai",
-        "--model", args.model,
-        "--served-model-name", "model",
-        "--dataset-name", "random",
-        "--request-rate", "inf",
-        "--ready-check-timeout-sec", "1200",
-        "--save-result",
-        "--result-dir", workdir,
-        "--result-filename", os.path.basename(out_file),
-        *client_argv,
-    ]
-    print("CLIENT:", " ".join(cmd), flush=True)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if not os.path.exists(out_file):
-        sys.stderr.write(proc.stdout[-4000:] + "\n" + proc.stderr[-4000:] + "\n")
-        raise RuntimeError(f"vllm bench serve failed (rc={proc.returncode}), no result file")
-    with open(out_file) as fh:
-        return json.load(fh)
 
 
 _ROW = re.compile(r"^\|")
@@ -191,11 +172,12 @@ def prepare_voir():
 
     observer = BenchObserver(
         accelerator.Event,
-        earlystop=get_observation_count(30),
+        earlystop=get_observation_count(120),
         batch_size_fn=lambda x: 1,
         raise_stop_program=False,
         stdout=True,
     )
+    set_metric_sink(observer.record_metric)
     return observer, bench_monitor
 
 
@@ -253,31 +235,21 @@ def main(argv=None):
 
     port = args.port or free_port()
     server = LlamaServer(args, model_path, port, server_extra)
-    workdir = tempfile.mkdtemp(prefix="llamacpp-bench-")
     try:
         server.wait_ready()
+        bench_argv = [
+            "--base-url", f"http://127.0.0.1:{port}",
+            "--endpoint", "/v1/completions",
+            "--backend", "openai",
+            "--model", args.model,
+            "--served-model-name", "model",
+            "--dataset-name", "random",
+            "--request-rate", "inf",
+            "--ready-check-timeout-sec", "1200",
+            *client_argv,
+        ]
         with monitor():
-            for i, _ in enumerate(dataset):
-                res = run_bench(args, port, client_argv, workdir)
-                if not res.get("completed"):
-                    raise RuntimeError("bench run completed 0 requests")
-                observer.record_metric(
-                    ttft_median_ms=res.get("median_ttft_ms"),
-                    ttft_mean_ms=res.get("mean_ttft_ms"),
-                    itl_median_ms=res.get("median_itl_ms"),
-                    output_tps=res.get("output_throughput"),
-                    total_tps=res.get("total_token_throughput"),
-                    duration_s=res.get("duration"),
-                    completed=res.get("completed"),
-                    concurrency=res.get("max_concurrency", 1),
-                    backend=args.backend,
-                    model=args.file,
-                    batch_size=res.get("completed", 1),
-                )
-                print(json.dumps({k: res[k] for k in sorted(res)
-                                  if isinstance(res[k], (int, float))}), flush=True)
-                if args.max_steps and i + 1 >= args.max_steps:
-                    break
+            run_benchmark_watched(server, bench_argv)
     finally:
         server.shutdown()
     return 0

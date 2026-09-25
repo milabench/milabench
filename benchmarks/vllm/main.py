@@ -1,420 +1,53 @@
-from argparse import ArgumentParser
-import json
-import os
-import subprocess
 import sys
-import threading
 
-import numpy as np
 import torchcompat.core as accelerator
-from vllm.benchmarks.serve import SampleRequest, RequestFuncOutput, BenchmarkMetrics, MILLISECONDS_TO_SECONDS_CONVERSION
-from transformers import PreTrainedTokenizerBase
-import vllm.benchmarks.datasets as datasets
-from benchmate.timeline import timeline, TimelineConfig, _default_db_path
+from benchmate.benchserve import (
+    InferenceServer,
+    run_benchmark_watched,
+    set_metric_sink,
+    split_args,
+)
 from server_backends import (
-    InferenceServerError,
     build_server_command,
     resolved_server_backend,
     resolved_server_command,
 )
 from atom_aiter_compat import ensure_atom_aiter_compat
 
-push_metric = None
-
-
-def _run_description() -> str:
-    raw = os.environ.get("MILABENCH_CONFIG")
-    if not raw:
-        return "vllm"
-    try:
-        cfg = json.loads(raw)
-    except json.JSONDecodeError:
-        return "vllm"
-    name = cfg.get("name") or ".".join(cfg.get("tag", []))
-    model = (cfg.get("client") or {}).get("argv", {}).get("--model")
-    if model:
-        return f"{name} ({model})"
-    return name or "vllm"
-
-
-def log_request(input_requests: list[SampleRequest], outputs: list[RequestFuncOutput]):
-    for inp, out in zip(input_requests, outputs):
-        push_metric(**{
-            "request_id": inp.request_id,
-            "start_time": out.start_time,
-            "prompt_len": out.prompt_len,
-            "output_len": out.output_tokens,
-            "success": out.success,
-            "latency": out.latency,
-            "ttft": out.ttft,
-            "itl": out.itl,
-            "tpot": out.tpot,
-        })
-
-
-def calculate_metrics(
-    input_requests: list[SampleRequest],
-    outputs: list[RequestFuncOutput],
-    dur_s: float,
-    tokenizer: PreTrainedTokenizerBase,
-    selected_percentiles: list[float],
-    goodput_config_dict: dict[str, float],
-) -> tuple[BenchmarkMetrics, list[int]]:
-    """Calculate the metrics for the benchmark.
-
-    Args:
-        input_requests: The input requests.
-        outputs: The outputs of the requests.
-        dur_s: The duration of the benchmark.
-        tokenizer: The tokenizer to use.
-        selected_percentiles: The percentiles to select.
-        goodput_config_dict: The goodput configuration.
-
-    Returns:
-        A tuple of the benchmark metrics and the actual output lengths.
-    """
-
-    # log_request(input_requests, outputs)
-
-    config = TimelineConfig()
-    description = _run_description()
-    db_path = _default_db_path()
-    print(f"[timeline] database path: {db_path}", flush=True)
-
-    for sampled_obs in timeline(
-        outputs,
-        config=config,
-        description=description,
-    ):
-        push_metric(**sampled_obs)
-
-    actual_output_lens: list[int] = []
-    total_input = 0
-    completed = 0
-    good_completed = 0
-    itls: list[float] = []
-    tpots: list[float] = []
-    all_tpots: list[float] = []
-    ttfts: list[float] = []
-    e2els: list[float] = []
-    
-    for i in range(len(outputs)):
-        if outputs[i].success:
-            output_len = outputs[i].output_tokens
-
-            if not output_len:
-                # We use the tokenizer to count the number of output tokens
-                # for some serving backends instead of looking at
-                # len(outputs[i].itl) since multiple output tokens may be
-                # bundled together
-                # Note : this may inflate the output token count slightly
-                output_len = len(
-                    tokenizer(
-                        outputs[i].generated_text, add_special_tokens=False
-                    ).input_ids
-                )
-            actual_output_lens.append(output_len)
-            total_input += input_requests[i].prompt_len
-            tpot = 0
-            if output_len > 1:
-                latency_minus_ttft = outputs[i].latency - outputs[i].ttft
-                tpot = latency_minus_ttft / (output_len - 1)
-                tpots.append(tpot)
-            # Note: if output_len <= 1, we regard tpot as 0 for goodput
-            all_tpots.append(tpot)
-            itls += outputs[i].itl
-            ttfts.append(outputs[i].ttft)
-            e2els.append(outputs[i].latency)
-
-            push_metric(ttfts=outputs[i].ttft, units="s")
-            push_metric(e2els=outputs[i].latency, units="s")
-            
-            if len(outputs[i].itl) > 0:
-                push_metric(itl=sum(outputs[i].itl)/len(outputs[i].itl), units="s")
-
-            # push_metric(tpot=outputs[i].tpot, unit="ms")
-            push_metric(input_tok=input_requests[i].prompt_len, units="count")
-            push_metric(output_tok=output_len, units="count")
-
-            tok_s = (input_requests[i].prompt_len + output_len) / outputs[i].latency
-            push_metric(request_rate=tok_s, units="tok/s")
-            
-            completed += 1
-        else:
-            actual_output_lens.append(0)
-
-
-class GPQADiamond(datasets.HuggingFaceDataset):
-    IS_MULTIMODAL = False
-    SUPPORTED_DATASET_PATHS = {'hendrydong/gpqa_diamond'}
-
-    def sample(
-        self,
-        tokenizer: PreTrainedTokenizerBase,
-        num_requests: int,
-        output_len: int | None = None,
-        enable_multimodal_chat: bool = False,
-        request_id_prefix: str = "",
-        no_oversample: bool = False,
-        **kwargs,
-    ) -> list:
-        sampled_requests = []
-        ind = 0
-        dynamic_output = output_len is None
-
-        for item in self.data["test"]:
-            if len(sampled_requests) >= num_requests:
-                break
-
-            prompt, completion = item["problem"], item["solution"]
-
-            prompt_ids = tokenizer(prompt).input_ids
-            completion_ids = tokenizer(completion).input_ids
-
-            prompt_len = len(prompt_ids)
-            completion_len = len(completion_ids)
-            output_len = completion_len if dynamic_output else output_len
-
-            assert isinstance(output_len, int) and output_len > 0
-
-            sampled_requests.append(
-                SampleRequest(
-                    prompt=prompt,
-                    prompt_len=prompt_len,
-                    expected_output_len=output_len,
-                    multi_modal_data=None,
-                    request_id=request_id_prefix + str(ind),
-                )
-            )
-            ind += 1
-        self.maybe_oversample_requests(
-            sampled_requests, num_requests, request_id_prefix, no_oversample
-        )
-        return sampled_requests
-
-
-def benchmark(argv):
-    # vllm bench serve --model meta-llama/Meta-Llama-3-8B-Instruct --request-rate inf --dataset-name random --label milabench --backend openai --num-prompts 1000
-
-    # vllm bench serve                                      \
-    #     --backend openai                                  \
-    #     --label milabench                                 \
-    #     --model <your_model>                              \
-    #     --dataset-name <dataset_name. Default 'random'>   \
-    #     --request-rate inf                                \
-    #     --num-prompts 1000
-    import vllm.benchmarks.serve as bench
-    import vllm.benchmarks.datasets as datasets
-
-    
-    # datasets.InstructCoderDataset
-    # datasets.BlazeditDataset
-    #       Coding Task
-    # https://huggingface.co/datasets/likaixin/InstructCoder
-
-    # datasets.MTBenchDataset
-    #       Open ended writing
-    #  https://huggingface.co/datasets/philschmid/mt-bench
-
-    # datasets.AIMODataset
-    #       reasoning questions
-
-
-    def open_dataset(dataset_cls, args, tokenizer):
-        hf_kwargs = {}
-        return dataset_cls(
-            dataset_path=args.dataset_path,
-            dataset_subset=args.hf_subset,
-            dataset_split=args.hf_split,
-            random_seed=args.seed,
-            no_stream=args.no_stream,
-            hf_name=args.hf_name,
-            # missing arg ?
-            # disable_shuffle=args.disable_shuffle,
-        ).sample(
-            num_requests=args.num_prompts,
-            tokenizer=tokenizer,
-            output_len=args.hf_output_len,
-            request_id_prefix=args.request_id_prefix,
-            no_oversample=args.no_oversample,
-            # missing arg ?
-            # skip_chat_template=args.skip_chat_template,
-            **hf_kwargs,
-        )
-           
-
-    original_get_samples = bench.get_samples
-    def get_samples(args, tokenizer):
-        match args.hf_name:
-            case "openslr/librispeech_asr":
-                return open_dataset(datasets.ASRDataset, args, tokenizer)
-            
-            case "hendrydong/gpqa_diamond":
-                return open_dataset(GPQADiamond, args, tokenizer)
-
-            case _:
-                return original_get_samples(args, tokenizer)
-
-    bench.get_samples = get_samples
-
-    original = bench.calculate_metrics
-
-    def new_calculate_metrics(*args, **kwargs):
-        calculate_metrics(*args, **kwargs)
-        return original(*args, **kwargs)
-
-    bench.calculate_metrics = new_calculate_metrics
-
-    parser = ArgumentParser()
-    bench.add_cli_args(parser)
-
-    print("BENCH:", " ".join(['vllm', 'bench', 'serve'] + argv))
-    args = parser.parse_args(argv)
-
-    bench.main(args)
-    print("FINISHED")
-
 
 def prepare_voir():
-    global push_metric 
-
     from benchmate.observer import BenchObserver
     from benchmate.monitor import bench_monitor
     from benchmate.toggles import get_observation_count
 
     observer = BenchObserver(
-        accelerator.Event, 
+        accelerator.Event,
         earlystop=get_observation_count(120),
         batch_size_fn=lambda x: len(x[0]),
         raise_stop_program=False,
         stdout=True,
     )
 
-    push_metric = observer.record_metric
+    set_metric_sink(observer.record_metric)
     return observer, bench_monitor
 
 
-
-class InferenceServer:
-    """Run an inference server and abort the benchmark if it exits abnormally."""
-
-    def __init__(self, argv, *, backend: str | None = None, command: list[str] | None = None):
-        backend = backend or resolved_server_backend()
-        server_args = build_server_command(argv, backend=backend, command=command)
-        print("SERVER:", " ".join(server_args), flush=True)
-        self.backend = backend
-        self.proc = subprocess.Popen(server_args)
-        self.returncode: int | None = None
-        self._failed = threading.Event()
-        self._watch = threading.Thread(target=self._monitor, daemon=True)
-        self._watch.start()
-
-    def _monitor(self):
-        self.returncode = self.proc.wait()
-        if self.returncode != 0:
-            print(
-                f"\n[ERROR] {self.backend} server exited with code {self.returncode}",
-                file=sys.stderr,
-                flush=True,
-            )
-            self._failed.set()
-
-    def check(self):
-        if self._failed.is_set():
-            raise InferenceServerError(
-                f"{self.backend} server exited early (code {self.returncode})"
-            )
-
-    def shutdown(self):
-        if self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.shutdown()
-        return False
-
-
-def _run_benchmark(bench_argv, error_box: list):
-    try:
-        benchmark(bench_argv)
-    except BaseException as exc:
-        error_box.append(exc)
-
-
-def inference_server(argv):
-    """Deprecated: use InferenceServer context manager."""
-    return InferenceServer(argv).proc
-
-
-def split_args(argv):
-    sep = len(argv)
-    for i, arg in enumerate(argv):
-        if arg == "--":
-            sep = i
-            break
-
-    server_argv = argv[1:sep]
-    bench_argv = argv[(sep + 1):]
-
-    args = []
-    for arg in server_argv:
-        # Voir already has a --config argument so we have to rename it
-        if arg == "--wth-config":
-            args.append("--config")
-        else:
-            args.append(arg)
-
-    return args, bench_argv
-
-
 def main(argv):
-    global push_metric 
-
     ensure_atom_aiter_compat()
 
-    # from argparse import ArgumentParser
-    # parser = ArgumentParser()
-    # parser.add_argument("--prepare", action="store_true", default=True)
-    # args, argv = parser.parse_known_args(argv)
+    server_argv, bench_argv = split_args(argv, skip_program=True)
 
-    server_argv, bench_argv = split_args(argv)
+    backend = resolved_server_backend()
+    command = build_server_command(
+        server_argv, backend=backend, command=resolved_server_command()
+    )
 
-    observer, bench_monitor= prepare_voir()
+    observer, bench_monitor = prepare_voir()
 
-    with bench_monitor() as log:
-        with InferenceServer(server_argv) as server:
-            bench_error: list[BaseException] = []
-            bench_thread = threading.Thread(
-                target=_run_benchmark,
-                args=(bench_argv, bench_error),
-                daemon=True,
-            )
-            bench_thread.start()
-
-            while bench_thread.is_alive():
-                server.check()
-                bench_thread.join(timeout=0.5)
-
-            server.check()
-
-            if bench_error:
-                raise bench_error[0]
+    with bench_monitor():
+        with InferenceServer(command, name=f"{backend} server") as server:
+            run_benchmark_watched(server, bench_argv)
 
 
 if __name__ == "__main__":
-    import sys
-
-    # import debugpy
-    # debugpy.listen(("0.0.0.0", 5678))
-
-    # python -c "import debugpy; debugpy.connect(('localhost', 5678')); debugpy.breakpoint()"
-
     main(sys.argv)
