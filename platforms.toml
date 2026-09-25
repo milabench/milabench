@@ -141,7 +141,7 @@ pydantic = ">=2,<3"
 # are injected. The oneCCL runtime arrives as torch's own wheel dependency.
 
 [xpu]
-requires = []
+requires = ["dpctl"]
 
 [xpu.indexes]
 # Official +xpu wheels (torch, torchvision, torchaudio) on pytorch.org.
