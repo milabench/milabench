@@ -46,6 +46,11 @@ class BenchmarkRequirements:
             deps.extend(section.dependencies)
         return deps
 
+    def use_platform_constraints(self, backend: str) -> bool:
+        """True unless the backend section opts out (self-pinned stack)."""
+        section = self.backends.get(backend)
+        return section.platform_constraints if section else True
+
 
 @dataclass
 class BackendSection:
@@ -55,6 +60,12 @@ class BackendSection:
     enabled: bool = True
     dependencies: list[str] = field(default_factory=list)
     overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Set false for self-pinned stacks (e.g. unsloth intel extras) to skip
+    # platforms.toml platform/compat constraints for this benchmark only.
+    platform_constraints: bool = True
+
+    def get_platform_constraints(self) -> bool:
+        return self.platform_constraints
 
 
 def has_toml_requirements(benchmark_path: Path | str) -> bool:
@@ -102,6 +113,10 @@ def load_benchmark_requirements(path: Path | str) -> BenchmarkRequirements:
             section.enabled = section_data.get("enabled", True)
             section.dependencies = section_data.get("dependencies", [])
             section.overrides = section_data.get("overrides", {})
+            section.platform_constraints = section_data.get(
+                "platform_constraints",
+                section_data.get("platform-constraints", True),
+            )
         else:
             section.enabled = False
 

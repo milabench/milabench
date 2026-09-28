@@ -99,7 +99,7 @@ def main():
         val_count=args.val_images,
     )
 
-    out_dir = Path(args.output or Path.cwd() / "output-kohya")
+    out_dir = Path(args.output or diffusion.output_dir("kohya"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     seconds = diffusion.timed_run(

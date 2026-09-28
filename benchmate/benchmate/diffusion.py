@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,6 +27,13 @@ REPOS = {
 def cache_root(cache: str = None) -> Path:
     base = cache or os.environ.get("MILABENCH_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(base).expanduser() / "sdiffusion"
+
+
+def output_dir(tool: str) -> Path:
+    """Artifact location: under $MILABENCH_BASE (never inside the repo)."""
+    base = os.environ.get("MILABENCH_BASE")
+    root = Path(base) if base else Path(tempfile.gettempdir()) / "milabench"
+    return root / "outputs" / tool
 
 
 def vendor_dir(name: str, rev: str = None, cache: str = None) -> Path:

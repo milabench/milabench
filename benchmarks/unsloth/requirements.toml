@@ -1,0 +1,20 @@
+[common]
+dependencies = [
+    "argklass",
+    "datasets",
+]
+
+[cuda]
+dependencies = [
+    "torch",
+    "unsloth",
+]
+
+[xpu]
+# Self-pins the Intel stack: torch 2.10.0+xpu, triton-xpu, bitsandbytes-xpu,
+# transformers/trl/peft/... See unsloth.ai/docs/get-started/install/intel.
+# See also pyproject extra "intelgputorch210".
+platform_constraints = false
+dependencies = [
+    "unsloth[intel-gpu-torch210] @ git+https://github.com/unslothai/unsloth.git",
+]

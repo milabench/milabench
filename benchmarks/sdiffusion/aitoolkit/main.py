@@ -97,7 +97,7 @@ def main():
         val_count=args.val_images,
     )
 
-    out_dir = Path(args.output or Path.cwd() / "output-aitoolkit")
+    out_dir = Path(args.output or diffusion.output_dir("aitoolkit"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     job_file = out_dir / "milabench.yaml"

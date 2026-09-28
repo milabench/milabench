@@ -1,0 +1,17 @@
+_unsloth:
+  inherits: _defaults
+  definition: .
+  install_group: unsloth
+  install_variant: unpinned
+  tags:
+    - unsloth
+  argv:
+    --steps: 60
+    --batch_size: 1
+
+unsloth-sft:
+  inherits: _unsloth
+  num_machines: 1
+  plan:
+    method: njobs
+    n: 1

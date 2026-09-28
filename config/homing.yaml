@@ -521,3 +521,38 @@ homing-comfyui-wan22-a14b-t2v:
       - UNET_LOW=wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors
       - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
       - VAE=wan_2.1_vae.safetensors
+
+# -----------------------------------------------------------------------------
+# Tier 4 — LLM fine-tuning (unsloth, own venv via requirements.toml [xpu])
+# -----------------------------------------------------------------------------
+
+homing-llm-ft-unsloth:
+  name: homing-llm-ft-unsloth
+  definition: ../benchmarks/unsloth
+  inherits: _defaults
+  group: finetune
+  install_group: unsloth
+  install_variant: unpinned
+  enabled: true
+  weight: 1
+  max_duration: 3600
+  tags:
+    - training
+    - llm
+    - finetune
+    - unsloth
+    - homing
+    - monogpu
+  num_machines: 1
+  voir:
+    options:
+      stop: 20
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --model: unsloth/Llama-3.2-1B
+    --dataset: Trelis/tiny-shakespeare
+    --steps: 60
+    --seq_length: 2048
+    --batch_size: 1

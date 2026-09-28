@@ -126,10 +126,15 @@ def install_args(
 
     # Platform policy constraints (compat matrix, backend.constraints, vLLM version)
     platform_constraint_file = None
-    platform_lines = _build_constraints_content(
+    from .requirements import load_benchmark_requirements
+
+    skip_platform = not load_benchmark_requirements(
+        benchmark_path
+    ).use_platform_constraints(backend)
+    platform_lines = [] if skip_platform else _build_constraints_content(
         platform_config, backend, all_overrides
     )
-    if vllm_mapping is not None:
+    if vllm_mapping is not None and not skip_platform:
         platform_lines.append(vllm_mapping.as_constraint())
     if platform_lines:
         temp_cons = tempfile.NamedTemporaryFile(

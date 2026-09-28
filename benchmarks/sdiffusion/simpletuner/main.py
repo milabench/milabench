@@ -74,7 +74,7 @@ def main():
         val_count=args.val_images,
     )
 
-    out_dir = Path(args.output or Path.cwd() / "output-simpletuner")
+    out_dir = Path(args.output or diffusion.output_dir("simpletuner"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ, USE_DEEPSPEED="false", BENCH_NAME="sdxl")
