@@ -1,0 +1,18 @@
+_sdiffusion-kohya:
+  inherits: _defaults
+  definition: .
+  install_group: sdiffusion-kohya
+  install_variant: unpinned
+  tags:
+    - sdiffusion
+
+  argv:
+    --cache: "{milabench_cache}"
+    --steps: 200
+    --batch_size: 1
+
+sdiffusion-kohya:
+  inherits: _sdiffusion-kohya
+  num_machines: 1
+  plan:
+    method: per_gpu

@@ -1,0 +1,18 @@
+_sdiffusion-simpletuner:
+  inherits: _defaults
+  definition: .
+  install_group: sdiffusion-simpletuner
+  install_variant: unpinned
+  tags:
+    - sdiffusion
+
+  argv:
+    --cache: "{milabench_cache}"
+    --steps: 200
+    --batch_size: 1
+
+sdiffusion-simpletuner:
+  inherits: _sdiffusion-simpletuner
+  num_machines: 1
+  plan:
+    method: per_gpu

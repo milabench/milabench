@@ -460,3 +460,64 @@ homing-comfyui-z-image-turbo:
       - TE=qwen_3_4b.safetensors
       - VAE=ae.safetensors
       - LORA=z_image_turbo_distill_patch_lora_bf16.safetensors
+
+homing-comfyui-krea2-turbo:
+  name: homing-comfyui-krea2-turbo
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/krea2_turbo_fp8.json
+    --model:
+      - diffusion_models:Comfy-Org/Krea-2:diffusion_models/krea2_turbo_fp8_scaled.safetensors
+      - text_encoders:Comfy-Org/Krea-2:text_encoders/qwen3vl_4b_fp8_scaled.safetensors
+      - vae:Comfy-Org/Krea-2:vae/qwen_image_vae.safetensors
+    --set:
+      - UNET=krea2_turbo_fp8_scaled.safetensors
+      - TE=qwen3vl_4b_fp8_scaled.safetensors
+      - VAE=qwen_image_vae.safetensors
+
+homing-comfyui-pony-v6:
+  name: homing-comfyui-pony-v6
+  inherits: _comfyui
+  enabled: false  # aging SDXL line, low adoption now
+  weight: 1
+  argv:
+    --workflow: workflows/pony_v6.json
+    --model: checkpoints:LyliaEngine/Pony_Diffusion_V6_XL:ponyDiffusionV6XL_v6StartWithThisOne.safetensors
+    --set: CKPT=ponyDiffusionV6XL_v6StartWithThisOne.safetensors
+
+homing-comfyui-wan22-5b-ti2v:
+  name: homing-comfyui-wan22-5b-ti2v
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/wan22_ti2v_5b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan2.2_vae.safetensors
+    --set:
+      - UNET=wan2.2_ti2v_5B_fp16.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan2.2_vae.safetensors
+
+homing-comfyui-wan22-a14b-t2v:
+  name: homing-comfyui-wan22-a14b-t2v
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  max_duration: 7200
+  argv:
+    --workflow: workflows/wan22_t2v_14b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan_2.1_vae.safetensors
+    --set:
+      - UNET_HIGH=wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors
+      - UNET_LOW=wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan_2.1_vae.safetensors

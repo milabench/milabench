@@ -1,0 +1,6 @@
+torch
+torchvision
+argklass
+datasets
+Pillow
+tqdm
