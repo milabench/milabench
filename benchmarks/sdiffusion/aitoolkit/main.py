@@ -41,17 +41,17 @@ def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
                 "type": "sd_trainer",
                 "training_folder": str(out_dir),
                 "device": "cuda:0",
+                "datasets": [{
+                    "folder_path": str(data_dir),
+                    "caption_ext": "txt",
+                    "caption_dropout_rate": 0.0,
+                    "cache_latents_to_disk": False,
+                    "resolution": [args.resolution],
+                }],
                 "train": {
-                    "datasets": [{
-                        "folder_path": str(data_dir),
-                        "caption_ext": "txt",
-                        "caption_dropout_rate": 0.0,
-                        "cache_latents_to_disk": False,
-                        "resolution": [args.resolution],
-                    }],
                     "train_unet": True,
                     "train_text_encoder": False,
-                    "gradient_accumulation_steps": args.gradient_accumulation,
+                    "gradient_accumulation": args.gradient_accumulation,
                     "batch_size": args.batch_size,
                     "steps": args.steps,
                     "lr": args.learning_rate,
@@ -59,7 +59,9 @@ def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
                     "optimizer": "adamw",
                     "noise_scheduler": "ddpm",
                     "dtype": args.mixed_precision,
-                    "content_or_style": "balance",
+                    "gradient_checkpointing": True,
+                    "skip_first_sample": True,
+                    "disable_sampling": True,
                 },
                 "model": {
                     "name_or_path": args.model,
@@ -71,7 +73,6 @@ def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
                     "linear_alpha": args.lora_rank,
                 },
                 "save_every": 100000,
-                "sample": False,
             }],
         },
         "run": True,
@@ -103,10 +104,12 @@ def main():
     job_file = out_dir / "milabench.yaml"
     job_file.write_text(yaml.safe_dump(build_job(args, data_dir, out_dir)))
 
+    shim = str(Path(__file__).parent / "shim")
     env = dict(
         os.environ,
         ACCELERATE_NUM_PROCESSES="1",
         MILABENCH_DATASET_NUM_WORKERS=str(args.num_workers),
+        PYTHONPATH=shim + os.pathsep + os.environ.get("PYTHONPATH", ""),
     )
 
     seconds = diffusion.timed_run(

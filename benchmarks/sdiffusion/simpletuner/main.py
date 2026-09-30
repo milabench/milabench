@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 """SimpleTuner (bghira) fine-tuning benchmark.
 
-Runs a fixed number of SDXL LoRA training steps with `python train_sdxl.py`
-on a vendored checkout of https://github.com/bghira/SimpleTuner.
+Runs a fixed number of SDXL LoRA training steps with the 1.x config-driven
+CLI (`simpletuner train` + config.json + multidatabackend.json) on a vendored
+checkout of https://github.com/bghira/SimpleTuner.
 """
 
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -32,27 +34,76 @@ class Arguments:
     output: str = None
 
 
-def build_command(args: Arguments, data_dir: Path, out_dir: Path):
+def build_config(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
+    return {
+        "model_family": "sdxl",
+        "model_type": "lora",
+        "pretrained_model_name_or_path": args.model,
+        "output_dir": str(out_dir),
+        "data_backend_config": "user_data/milabench-multidatabackend.json",
+        "train_batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation,
+        "max_train_steps": args.steps,
+        "num_train_epochs": 0,
+        "learning_rate": args.learning_rate,
+        "lr_scheduler": "constant",
+        "optimizer": "adamw_bf16",
+        "mixed_precision": args.mixed_precision,
+        "gradient_checkpointing": True,
+        "resolution": args.resolution,
+        "resolution_type": "pixel_area",
+        "minimum_image_size": 0,
+        "aspect_bucket_rounding": 2,
+        "caption_dropout_probability": 0.0,
+        "lora_rank": args.lora_rank,
+        "use_ema": False,
+        "checkpoint_step_interval": 100000000,
+        "checkpoints_total_limit": 1,
+        "validation_steps": 100000000,
+        "validation_prompt": "a ninja with an orange",
+        "validation_resolution": f"{args.resolution}x{args.resolution}",
+        "num_validation_images": 1,
+        "validation_seed": 42,
+        "seed": 42,
+        "push_to_hub": False,
+        "push_checkpoints_to_hub": False,
+        "report_to": "none",
+        "disable_benchmark": True,
+    }
+
+
+def build_data_backend(args: Arguments, data_dir: Path) -> list:
     return [
-        sys.executable, "train_sdxl.py",
-        f"--pretrained_model_name_or_path={args.model}",
-        f"--instance_data_dir={data_dir}",
-        "--caption_strategy=textfile",
-        f"--resolution={args.resolution}",
-        f"--train_batch_size={args.batch_size}",
-        f"--gradient_accumulation_steps={args.gradient_accumulation}",
-        f"--max_train_steps={args.steps}",
-        f"--learning_rate={args.learning_rate}",
-        "--lr_scheduler=constant",
-        f"--mixed_precision={args.mixed_precision}",
-        f"--dataloader_num_workers={args.num_workers}",
-        "--add_lora=True",
-        f"--lora_rank={args.lora_rank}",
-        f"--output_dir={out_dir}",
-        "--checkpointing_steps=1000000",
-        "--validation_steps=1000000",
-        "--report_to=none",
-        "--checkpoint_with_model=True",
+        {
+            "id": "milabench-instance",
+            "type": "local",
+            "instance_data_dir": str(data_dir),
+            "crop": True,
+            "crop_style": "random",
+            "crop_aspect": "square",
+            "resolution": args.resolution,
+            "resolution_type": "pixel_area",
+            "minimum_image_size": 0,
+            "repeats": 1,
+            "shuffle_tokens": False,
+            "caption_strategy": "textfile",
+            "metadata_backend": "discovery",
+            "dataset_type": "image",
+        },
+        {
+            "id": "milabench-text-embeds",
+            "dataset_type": "text_embeds",
+            "default": True,
+            "type": "local",
+            "cache_dir": "cache/text/milabench",
+        },
+        {
+            "id": "milabench-image-embeds",
+            "dataset_type": "image_embeds",
+            "default": True,
+            "type": "local",
+            "cache_dir": "cache/image/milabench",
+        },
     ]
 
 
@@ -77,10 +128,19 @@ def main():
     out_dir = Path(args.output or diffusion.output_dir("simpletuner"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    env = dict(os.environ, USE_DEEPSPEED="false", BENCH_NAME="sdxl")
+    config_json = json.dumps(build_config(args, data_dir, out_dir), indent=2)
+    (repo / "config.json").write_text(config_json)
+    (repo / "config" / "config.json").write_text(config_json)
+    user_data = repo / "user_data"
+    user_data.mkdir(exist_ok=True)
+    (user_data / "milabench-multidatabackend.json").write_text(
+        json.dumps(build_data_backend(args, data_dir), indent=2)
+    )
+
+    env = dict(os.environ, TRACKER_DISABLED="1")
 
     seconds = diffusion.timed_run(
-        build_command(args, data_dir, out_dir), cwd=repo, env=env
+        [sys.executable, "st_cli.py", "train"], cwd=repo, env=env
     )
 
     diffusion.report_metrics(

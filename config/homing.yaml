@@ -492,7 +492,12 @@ homing-comfyui-wan22-5b-ti2v:
   inherits: _comfyui
   enabled: true
   weight: 1
+  # ~325s/clip on B70: 30 steps cannot fit in max_duration
+  voir:
+    options:
+      stop: 5
   argv:
+    --max-steps: 6
     --workflow: workflows/wan22_ti2v_5b.json
     --model:
       - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors
@@ -508,8 +513,13 @@ homing-comfyui-wan22-a14b-t2v:
   inherits: _comfyui
   enabled: true
   weight: 1
-  max_duration: 7200
+  max_duration: 9000
+  # ~1000s/clip on B70 (warmup ~950s): 30 steps cannot fit in max_duration
+  voir:
+    options:
+      stop: 4
   argv:
+    --max-steps: 5
     --workflow: workflows/wan22_t2v_14b.json
     --model:
       - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors

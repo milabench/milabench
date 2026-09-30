@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """LLM LoRA/QLoRA fine-tuning benchmark via unsloth + trl SFTTrainer.
 
 Mirrors the sdiffusion packs: fixed job shape, wall-clock throughput metrics.
@@ -10,8 +11,36 @@ from dataclasses import dataclass
 
 from argklass import ArgumentParser
 
-import unsloth  # noqa: F401  (must precede trl/transformers)
+import torch
+
+if hasattr(torch, "xpu"):
+    # Auto padding-free injects packed_seq_lengths whose metadata path
+    # deadlocks on Intel XPU (torch 2.10+xpu, unsloth 2026.9.12).
+    os.environ.setdefault("UNSLOTH_DISABLE_AUTO_PADDING_FREE", "1")
+
+import unsloth  # noqa: E402  (must precede trl/transformers)
 from unsloth import FastLanguageModel
+
+if hasattr(torch, "xpu"):
+    import unsloth.models.llama as _ul
+
+    def _safe_set_cos_sin_cache(self, seq_len, device, dtype):
+        # unsloth computes the rope cache on CPU then copies it with
+        # non_blocking=True; async H2D from pageable memory faults the xe
+        # driver (UR_RESULT_ERROR_DEVICE_LOST). Build it on device instead.
+        self.current_rope_size = seq_len
+        inv_freq = self.inv_freq.to(device=device, dtype=torch.float32)
+        t = torch.arange(seq_len, device=device, dtype=torch.float32)
+        t = self._apply_time_scaling(t)
+        freqs = torch.outer(t, inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        cos = (emb.cos() * self.attention_scaling).to(dtype)
+        sin = (emb.sin() * self.attention_scaling).to(dtype)
+        self.multi_gpu_cos_cached[device.index] = cos
+        self.multi_gpu_sin_cached[device.index] = sin
+        return cos, sin
+
+    _ul.LlamaRotaryEmbedding._set_cos_sin_cache = _safe_set_cos_sin_cache
 from datasets import load_dataset
 from trl import SFTConfig, SFTTrainer
 
@@ -65,8 +94,6 @@ def main():
 
         args.seed = _r.randint(0, 2**32 - 1)
 
-    import torch
-
     device = args.device
     if device is None:
         if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -74,15 +101,16 @@ def main():
         elif torch.cuda.is_available():
             device = f"cuda:{os.environ.get('MILABENCH_GPU_ID', '0')}"
 
+    grad_ckpt = {"unsloth": "unsloth", "true": True, "none": False}[args.grad_ckpt]
+
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
         max_seq_length=args.seq_length,
         load_in_4bit=args.load_in_4bit,
         device_map=device,
         token=args.hf_token,
+        use_gradient_checkpointing=grad_ckpt,
     )
-
-    grad_ckpt = {"unsloth": "unsloth", "true": True, "none": False}[args.grad_ckpt]
 
     model = FastLanguageModel.get_peft_model(
         model,

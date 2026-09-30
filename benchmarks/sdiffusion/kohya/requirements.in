@@ -4,3 +4,5 @@ argklass
 datasets
 Pillow
 tqdm
+torch
+torchvision

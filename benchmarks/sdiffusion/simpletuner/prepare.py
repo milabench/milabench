@@ -2,6 +2,9 @@
 """Clone SimpleTuner and materialize the shared fine-tuning dataset."""
 
 import os
+import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,21 +14,22 @@ from benchmate import diffusion
 @dataclass
 class PrepareConfig:
     cache: str = None
-    rev: str = None            # git tag/branch/commit to pin SimpleTuner
     dataset: str = "naruto-blip-captions"
     dataset_id: str = diffusion.DEFAULT_DATASET
     train_images: int = 1000
     val_images: int = 32
-    install_deps: bool = True  # pip install the repo's own requirements files
+    install_deps: bool = True  # pip install the repo (platform=cpu deps)
 
 
-def candidate_requirements(repo: Path):
-    # Layout changed over time: root requirements.txt (older) or
-    # requirements/{cuda,torch,sdxl}.txt (newer split files).
-    for name in ["requirements.txt"]:
-        yield repo / name
-    for name in ["cuda.txt", "torch.txt", "sdxl.txt"]:
-        yield repo / "requirements" / name
+def install_repo(repo: Path):
+    # The 1.x deps come from the package metadata; SIMPLETUNER_PLATFORM=cpu
+    # avoids the CUDA/ROCm torch pins so the XPU torch in the venv is kept.
+    uv = shutil.which("uv")
+    if uv:
+        cmd = [uv, "pip", "install", "--python", sys.executable, str(repo)]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", str(repo)]
+    subprocess.run(cmd, check=True, env=dict(os.environ, SIMPLETUNER_PLATFORM="cpu"))
 
 
 def main():
@@ -38,12 +42,10 @@ def main():
     if args.cache:
         os.environ.setdefault("XDG_CACHE_HOME", str(args.cache))
 
-    repo = diffusion.clone_repo("simpletuner", rev=args.rev, cache=args.cache)
+    repo = diffusion.clone_repo("simpletuner", cache=args.cache)
 
     if args.install_deps:
-        for req in candidate_requirements(repo):
-            if req.exists():
-                diffusion.install_requirements(req)
+        install_repo(repo)
 
     diffusion.materialize_dataset(
         diffusion.dataset_dir(args.dataset, args.cache),

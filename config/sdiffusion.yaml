@@ -6,6 +6,9 @@ include:
 
 _sdiffusion:
   inherits: _defaults
+  enabled: true
+  install_variant: unpinned
+  max_duration: 1800
   tags:
     - sdiffusion
   plan:
