@@ -3,8 +3,9 @@
 #   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #
-# Per-GPU settings (seq 8192, 1 sequence per GPU, selective AC, compile regions +
-# CUDA graphs) are identical in every entry: weak scaling. Entries only differ in
+# Per-GPU settings (seq 8192, 1 sequence per GPU, full AC, compile regions +
+# CUDA graphs) are identical in every entry: weak scaling. Full AC because
+# selective AC + compile OOMs on 4 nodes (Fir, 2026-10-19). Entries only differ in
 # node count, model depth (1-node runs use a truncated model), measurement
 # length and the explicit variants (eager compile, full AC fallback).
 #
@@ -35,7 +36,7 @@ _tt_native:
     --seq-len: 8192
     --microbatch-sequences: 1
     --compile: regions+graphs
-    --ac: selective
+    --ac: full
     --warmup-steps: 40
     --measure-steps: 100
     --results-dir: "{milabench_extra}/results"
@@ -82,8 +83,8 @@ tt-qwen38-n4:
     <<: *tt_native_argv
     --run-name: qwen38-n4
 
-# --- Variants (same per-GPU batch; one knob changed). Select several in one
-#     allocation: --select tt-qwen38-1node,tt-qwen38-1node-eager,... ---
+# --- Variants (same per-GPU batch; one knob changed). Several can run in one
+#     allocation: --select a,b,c (multi-node entries use the first N nodes). ---
 
 tt-qwen38-1node-eager:
   inherits: tt-qwen38-1node
@@ -97,11 +98,11 @@ tt-qwen38-1node-regions:
     --compile: regions
     --run-name: qwen38-l16-n1-regions
 
-tt-qwen38-1node-fullac:
+tt-qwen38-1node-selective:
   inherits: tt-qwen38-1node
   argv:
-    --ac: full
-    --run-name: qwen38-l16-n1-fullac
+    --ac: selective
+    --run-name: qwen38-l16-n1-selective
 
 tt-qwen38-1node-noac:
   inherits: tt-qwen38-1node
@@ -109,40 +110,30 @@ tt-qwen38-1node-noac:
     --ac: none
     --run-name: qwen38-l16-n1-noac
 
-# --- Multi-node variants (full 27B) ---
-
-tt-qwen38-n2-fullac:
-  inherits: tt-qwen38-n2
-  argv:
-    --ac: full
-    --run-name: qwen38-n2-fullac
-
-tt-qwen38-n3-fullac:
-  inherits: tt-qwen38-n3
-  argv:
-    --ac: full
-    --run-name: qwen38-n3-fullac
-
-tt-qwen38-n4-fullac:
-  inherits: tt-qwen38-n4
-  argv:
-    --ac: full
-    --run-name: qwen38-n4-fullac
-
 tt-qwen38-n4-eager:
   inherits: tt-qwen38-n4
   argv:
     --compile: eager
     --run-name: qwen38-n4-eager
 
-# HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs. Full AC:
-# 8-way sharded state is ~54 GB/GPU.
+tt-qwen38-n4-regions:
+  inherits: tt-qwen38-n4
+  argv:
+    --compile: regions
+    --run-name: qwen38-n4-regions
+
+tt-qwen38-n4-selective:
+  inherits: tt-qwen38-n4
+  argv:
+    --ac: selective
+    --run-name: qwen38-n4-selective
+
+# HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs.
 tt-qwen38-n4-hsdp:
   inherits: tt-qwen38-n4
   argv:
     --dp-replicate: 2
-    --ac: full
-    --run-name: qwen38-n4-hsdp-r2s8-fullac
+    --run-name: qwen38-n4-hsdp-r2s8
 
 # TP=2 inside a node: 2 sequences per DP rank keeps 8192 tokens per GPU.
 tt-qwen38-n4-tp2:
@@ -151,3 +142,17 @@ tt-qwen38-n4-tp2:
     --tp: 2
     --microbatch-sequences: 2
     --run-name: qwen38-n4-tp2
+
+# Low-memory fallback: no CUDA graphs (their memory pools roughly double
+# reserved memory: 25 GiB allocated / 51 GiB reserved at 4 nodes).
+tt-qwen38-n2-lowmem:
+  inherits: tt-qwen38-n2
+  argv:
+    --compile: regions
+    --run-name: qwen38-n2-lowmem
+
+tt-qwen38-n3-lowmem:
+  inherits: tt-qwen38-n3
+  argv:
+    --compile: regions
+    --run-name: qwen38-n3-lowmem
