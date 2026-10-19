@@ -33,6 +33,8 @@ export PYTHONUNBUFFERED=1
 
 echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST"
 squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
+nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
+ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
 
 SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$SYSTEM"
