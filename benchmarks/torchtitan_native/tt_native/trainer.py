@@ -249,6 +249,8 @@ class BenchTrainer(Trainer):
                 "global_batch_sequences": tokens // training.max_context_length,
                 "torchtitan_commit": _torchtitan_commit(),
                 "torch_version": torch.__version__,
+                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                "hosts": sorted(set(hostnames)),
             },
             "measurement": {
                 "warmup_steps": self._warmup_steps,
@@ -304,6 +306,9 @@ class BenchTrainer(Trainer):
         out_dir = Path(bench.results_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
+        if job_id := os.environ.get("SLURM_JOB_ID"):
+            # Concurrent runs (one per leaf switch) share a run name.
+            stamp = f"{stamp}-j{job_id}"
         record_path = out_dir / f"{bench.run_name}.{stamp}.json"
         per_rank_path = out_dir / f"{bench.run_name}.{stamp}.ranks.jsonl"
         record["per_rank_file"] = str(per_rank_path)

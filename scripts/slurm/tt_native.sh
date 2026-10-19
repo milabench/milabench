@@ -4,6 +4,8 @@
 #   sbatch --nodes=2 --time=00:45:00 --account=rrg-bengioy-ad_gpu \
 #       scripts/slurm/tt_native.sh tt-qwen38-n2 [extra milabench run args]
 #
+#   Window configs: sbatch --export=ALL,TT_CONFIG=window ... tt_native.sh tt-w-leaf3
+#
 # Expects (see journals/cluster-guidelines.md):
 #   $TT38/env        venv with milabench installed (uv venv --python 3.12; uv pip install -e)
 #   $TT38/milabench  this repository (branch torchtitan_qwen38)
@@ -27,7 +29,12 @@ unset PYTHONPATH PIP_CONFIG_FILE
 export PATH=$TT38/env/bin:$HOME/.local/bin:$PATH
 
 export MILABENCH_BASE=$TT38/output
-export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml
+# TT_CONFIG=window selects config/torchtitan_native_window.yaml.
+if [ "${TT_CONFIG:-}" = window ]; then
+    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_window.yaml
+else
+    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml
+fi
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 
