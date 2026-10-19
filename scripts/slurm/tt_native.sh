@@ -36,9 +36,27 @@ squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
 
+# Pre-warmed torch.compile caches (Inductor + Triton): unpack an archive onto
+# every node's local disk (same path as benchfile.py's cache dirs). Per-GPU
+# shapes are identical at every scale, so a cache built on a few nodes is
+# valid for large runs. TT_COMPILE_CACHE= (empty) disables it.
+LOCAL_CACHE=${SLURM_TMPDIR:-/tmp}/tt_native_cache
+CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache.tar}
+if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
+    srun --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
+    echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
+fi
+
 SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$SYSTEM"
 echo "[tt-native] system_ready_epoch=$(date +%s.%N)"
 
-milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" "$@"
+rc=0
+milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" "$@" || rc=$?
+
+if [ -n "$CACHE_ARCHIVE" ] && [ ! -f "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ]; then
+    tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"
+    echo "[tt-native] compile_cache_saved archive=$CACHE_ARCHIVE size=$(du -h "$CACHE_ARCHIVE" | cut -f1)"
+fi
 echo "[tt-native] job_end_epoch=$(date +%s.%N)"
+exit $rc
