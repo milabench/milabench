@@ -43,7 +43,12 @@ def make_node_list_from_slurm(node_list):
 
         return node
 
-    nodes = [make_node(i, ip) for i, ip in enumerate(node_list)]
+    # One ssh per node (gethostname): run them concurrently, the sequential
+    # version took ~4 s per node (minutes for large allocations).
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(32, max(1, len(node_list)))) as pool:
+        nodes = list(pool.map(make_node, range(len(node_list)), node_list))
 
     for node in nodes:
         if node.get("main", False):
