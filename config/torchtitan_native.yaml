@@ -108,3 +108,46 @@ tt-qwen38-1node-noac:
   argv:
     --ac: none
     --run-name: qwen38-l16-n1-noac
+
+# --- Multi-node variants (full 27B) ---
+
+tt-qwen38-n2-fullac:
+  inherits: tt-qwen38-n2
+  argv:
+    --ac: full
+    --run-name: qwen38-n2-fullac
+
+tt-qwen38-n3-fullac:
+  inherits: tt-qwen38-n3
+  argv:
+    --ac: full
+    --run-name: qwen38-n3-fullac
+
+tt-qwen38-n4-fullac:
+  inherits: tt-qwen38-n4
+  argv:
+    --ac: full
+    --run-name: qwen38-n4-fullac
+
+tt-qwen38-n4-eager:
+  inherits: tt-qwen38-n4
+  argv:
+    --compile: eager
+    --run-name: qwen38-n4-eager
+
+# HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs. Full AC:
+# 8-way sharded state is ~54 GB/GPU.
+tt-qwen38-n4-hsdp:
+  inherits: tt-qwen38-n4
+  argv:
+    --dp-replicate: 2
+    --ac: full
+    --run-name: qwen38-n4-hsdp-r2s8-fullac
+
+# TP=2 inside a node: 2 sequences per DP rank keeps 8192 tokens per GPU.
+tt-qwen38-n4-tp2:
+  inherits: tt-qwen38-n4
+  argv:
+    --tp: 2
+    --microbatch-sequences: 2
+    --run-name: qwen38-n4-tp2
