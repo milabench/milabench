@@ -57,6 +57,9 @@ class TorchtitanNative(Package):
     async def install(self):
         # The torch nightly index is declared inside requirements.in, which the
         # TOML/legacy install paths do not handle; install it directly.
+        # milabench installs without build isolation, so seed build backends
+        # first (torchtitan's git build needs setuptools).
+        await self.pip_install("setuptools", "wheel", build_isolation=True)
         await self.pip_install("-r", self.dirs.code / "requirements.in")
         await install_benchmate(self)
 
