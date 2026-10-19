@@ -72,6 +72,12 @@ class TorchtitanNative(Package):
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
         # The trainer owns the stop condition; never let voir early-stop it.
         env["BENCHMATE_OBSERVATION_COUNT"] = str(10**9)
+        # Compile caches on node-local disk: home is read-only on some compute
+        # nodes (Trillium), and the shared filesystem is slow for many ranks
+        # writing small files.
+        local = os.environ.get("SLURM_TMPDIR") or "/tmp"
+        env.setdefault("TRITON_CACHE_DIR", f"{local}/tt_native_cache/triton")
+        env.setdefault("TORCHINDUCTOR_CACHE_DIR", f"{local}/tt_native_cache/inductor")
         # Compute nodes have no internet access.
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("HF_DATASETS_OFFLINE", "1")
