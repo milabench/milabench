@@ -1,0 +1,83 @@
+# Native TorchTitan Qwen3.8-27B pre-training throughput benchmark.
+#
+#   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
+#   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
+#
+# Per-GPU settings (seq 8192, 1 sequence per GPU, selective AC, compile regions +
+# CUDA graphs) are identical in every entry: weak scaling. Entries only differ in
+# node count, model depth (1-node runs use a truncated model), measurement
+# length and the explicit variants (eager compile, full AC fallback).
+#
+# Results: one JSON record per run in {milabench_extra}/results.
+
+include:
+  - _defaults.yaml
+
+_tt_native:
+  inherits: _defaults
+  definition: ../benchmarks/torchtitan_native
+  enabled: true
+  install_group: torchtitan_native
+  install_variant: unpinned
+  weight: 0.0
+  max_duration: 3600
+  num_machines: 1
+  tags:
+    - nlp
+    - llm
+    - torchtitan
+    - multigpu
+  plan:
+    method: njobs
+    n: 1
+  argv: &tt_native_argv
+    --flavor: 27B
+    --seq-len: 8192
+    --microbatch-sequences: 1
+    --compile: regions+graphs
+    --ac: selective
+    --warmup-steps: 40
+    --measure-steps: 100
+    --results-dir: "{milabench_extra}/results"
+
+# --- 1 node (4 GPUs): truncated model (full 27B training state does not fit) ---
+
+tt-qwen38-smoke:
+  inherits: _tt_native
+  max_duration: 1800
+  argv:
+    <<: *tt_native_argv
+    --n-layers: 8
+    --warmup-steps: 5
+    --measure-steps: 10
+    --run-name: qwen38-smoke
+
+tt-qwen38-1node:
+  inherits: _tt_native
+  argv:
+    <<: *tt_native_argv
+    --n-layers: 16
+    --run-name: qwen38-l16-n1
+
+# --- Full 27B, multi-node ---
+
+tt-qwen38-n2:
+  inherits: _tt_native
+  num_machines: 2
+  argv:
+    <<: *tt_native_argv
+    --run-name: qwen38-n2
+
+tt-qwen38-n3:
+  inherits: _tt_native
+  num_machines: 3
+  argv:
+    <<: *tt_native_argv
+    --run-name: qwen38-n3
+
+tt-qwen38-n4:
+  inherits: _tt_native
+  num_machines: 4
+  argv:
+    <<: *tt_native_argv
+    --run-name: qwen38-n4
