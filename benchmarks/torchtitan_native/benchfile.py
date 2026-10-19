@@ -8,16 +8,14 @@ support and the PyTorch nightly it requires, in its own install group.
 from __future__ import annotations
 
 import os
-from copy import deepcopy
 
 from milabench.commands import (
     PackCommand,
     TorchrunAllGPU,
     TorchrunAllNodes,
     VoirCommand,
-    WorkingDir,
 )
-from milabench.commands.srun import ForeachSrun
+from milabench.commands.srun import ForeachSrun, TorchrunSrun
 from milabench.pack import Package, install_benchmate
 
 
@@ -28,9 +26,12 @@ class NativeTorchrun(TorchrunAllGPU):
         return True
 
 
-class NativeTorchrunSrun(ForeachSrun):
+class NativeTorchrunSrun(TorchrunSrun):
     """Main node locally; workers through one ``srun -x main``.
 
+    Same as milabench's ``TorchrunSrun`` but always wrapped by torchrun.
+    No ``WorkingDir`` wrapper: its ``env -`` clears the environment, which
+    drops voir's ``DATA_FD`` and this pack's ``make_env`` variables.
     Workers get ``--node-rank`` from ``SLURM_NODEID`` (see benchrun).
     """
 
@@ -41,12 +42,7 @@ class NativeTorchrunSrun(ForeachSrun):
             *args,
             **kwargs,
         )
-        super().__init__(WorkingDir(base_exec))
-
-    def main_executor(self):
-        main = deepcopy(self.executor)
-        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
-        return main
+        ForeachSrun.__init__(self, base_exec)
 
 
 class TorchtitanNative(Package):
