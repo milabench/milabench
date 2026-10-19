@@ -81,3 +81,30 @@ tt-qwen38-n4:
   argv:
     <<: *tt_native_argv
     --run-name: qwen38-n4
+
+# --- Variants (same per-GPU batch; one knob changed). Select several in one
+#     allocation: --select tt-qwen38-1node,tt-qwen38-1node-eager,... ---
+
+tt-qwen38-1node-eager:
+  inherits: tt-qwen38-1node
+  argv:
+    --compile: eager
+    --run-name: qwen38-l16-n1-eager
+
+tt-qwen38-1node-regions:
+  inherits: tt-qwen38-1node
+  argv:
+    --compile: regions
+    --run-name: qwen38-l16-n1-regions
+
+tt-qwen38-1node-fullac:
+  inherits: tt-qwen38-1node
+  argv:
+    --ac: full
+    --run-name: qwen38-l16-n1-fullac
+
+tt-qwen38-1node-noac:
+  inherits: tt-qwen38-1node
+  argv:
+    --ac: none
+    --run-name: qwen38-l16-n1-noac
