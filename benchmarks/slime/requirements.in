@@ -13,7 +13,6 @@ tensorboard
 wandb
 # Megatron-LM (NVIDIA) at the commit slime's docker image is built against
 megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d
-transformer-engine[pytorch]==2.18.0
 # RL variant only (rollout engine); train-only entries do not import it
 sglang
 slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230
