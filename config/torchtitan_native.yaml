@@ -128,6 +128,14 @@ tt-qwen38-n4-selective:
     --ac: selective
     --run-name: qwen38-n4-selective
 
+# Upstream stacked layout ([2, F, D], FSDP shards dim 1): A/B for the default
+# row layout. Only valid when the GPU count divides 17408 (4, 8, 16, ...).
+tt-qwen38-n4-ttlayout:
+  inherits: tt-qwen38-n4
+  argv:
+    --stacked-layout: torchtitan
+    --run-name: qwen38-n4-ttlayout
+
 # HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs.
 tt-qwen38-n4-hsdp:
   inherits: tt-qwen38-n4
@@ -140,6 +148,7 @@ tt-qwen38-n4-tp2:
   inherits: tt-qwen38-n4
   argv:
     --tp: 2
+    --stacked-layout: torchtitan
     --microbatch-sequences: 2
     --run-name: qwen38-n4-tp2
 

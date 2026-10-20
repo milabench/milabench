@@ -28,12 +28,14 @@ from torchtitan.models.qwen3_8 import build_model_config
 from torchtitan.observability.metrics import MetricsProcessor
 
 from .data import NullTokenizer, RandomTokenDataLoader
+from .layout import patch_fsdp_placements, use_row_stacked_linears
 from .trainer import BenchConfig, BenchTrainer
 
 OPTIONS_ENV = "TT_NATIVE_OPTIONS"
 
 CompileMode = Literal["eager", "regions", "regions+graphs"]
 ACMode = Literal["none", "selective", "full"]
+StackedLayout = Literal["rows", "torchtitan"]
 
 
 @dataclass(kw_only=True)
@@ -43,6 +45,10 @@ class Options:
     n_layers: int | None = None
     """Truncate to the first N layers (multiple of 4 keeps the 3:1 GDN/attention mix)."""
     attn_backend: str = "flex"
+    stacked_layout: StackedLayout = "rows"
+    """``rows``: store stacked W1/W3 as [F, 2, D] so FSDP shards rows (any GPU
+    count). ``torchtitan``: upstream [2, F, D] layout, FSDP shards dim 1 and
+    the shard group must divide F (see tt_native/layout.py)."""
 
     # Batch (per GPU, fixed across scales: weak scaling)
     seq_len: int = 8192
@@ -99,6 +105,11 @@ def _model_config(opts: Options):
         model.layers = model.layers[: opts.n_layers]
     if opts.compile == "eager":
         model.local_compile_regions = []
+    if opts.stacked_layout == "rows":
+        if opts.tp > 1:
+            raise ValueError("stacked_layout=rows does not support tensor parallelism")
+        use_row_stacked_linears(model)
+        patch_fsdp_placements()
     return model
 
 
@@ -129,6 +140,7 @@ def qwen38() -> BenchTrainer.Config:
         "n_layers": len(model.layers),
         "text_only": True,
         "attn_backend": opts.attn_backend,
+        "stacked_layout": opts.stacked_layout,
         "precision": "bf16 (fp32 master weights, FSDP mixed precision)",
         "compile": opts.compile,
         "cuda_graphs": opts.compile == "regions+graphs",
