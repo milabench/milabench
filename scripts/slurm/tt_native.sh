@@ -50,7 +50,15 @@ ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
 # large runs. TT_COMPILE_CACHE= (empty) disables it.
 LOCAL_CACHE=${TT_NATIVE_CACHE_DIR:-/tmp/$USER/tt_native_cache}
 export TT_NATIVE_CACHE_DIR=$LOCAL_CACHE
-CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache.tar}
+# Archive named by torch/Triton version and GPU model: a cache built with another
+# stack is never loaded. (Different model configs can share one archive:
+# Inductor keys each entry by graph and settings.)
+CACHE_KEY=$("$TT38/output/venv/torchtitan_native/bin/python" -c "
+import importlib.metadata as m, torch
+print(f'torch{torch.__version__}-triton{m.version(\"triton\")}'.replace('+', '_'))" 2>/dev/null || echo unknown)
+GPU_KEY=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr -cd '[:alnum:]')
+CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
+mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     srun --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
