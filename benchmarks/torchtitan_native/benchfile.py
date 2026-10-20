@@ -26,6 +26,12 @@ from milabench.utils import select_nodes
 from milabench.pack import Package, install_benchmate
 
 
+def default_cache_dir() -> str:
+    import getpass
+
+    return f"/tmp/{getpass.getuser()}/tt_native_cache"
+
+
 class NativeTorchrun(TorchrunAllGPU):
     """Always go through benchrun/torchrun, even on a single GPU."""
 
@@ -97,10 +103,12 @@ class TorchtitanNative(Package):
         env["BENCHMATE_OBSERVATION_COUNT"] = str(10**9)
         # Compile caches on node-local disk: home is read-only on some compute
         # nodes (Trillium), and the shared filesystem is slow for many ranks
-        # writing small files.
-        local = os.environ.get("SLURM_TMPDIR") or "/tmp"
-        env.setdefault("TRITON_CACHE_DIR", f"{local}/tt_native_cache/triton")
-        env.setdefault("TORCHINDUCTOR_CACHE_DIR", f"{local}/tt_native_cache/inductor")
+        # writing small files. The path must not depend on the job: cache
+        # entries store absolute paths, so a pre-warmed archive only works if
+        # it is restored at the same location (not under $SLURM_TMPDIR).
+        cache = os.environ.get("TT_NATIVE_CACHE_DIR") or default_cache_dir()
+        env.setdefault("TRITON_CACHE_DIR", f"{cache}/triton")
+        env.setdefault("TORCHINDUCTOR_CACHE_DIR", f"{cache}/inductor")
         # Compute nodes have no internet access.
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("HF_DATASETS_OFFLINE", "1")

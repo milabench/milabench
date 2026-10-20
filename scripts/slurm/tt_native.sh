@@ -44,10 +44,12 @@ nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
 
 # Pre-warmed torch.compile caches (Inductor + Triton): unpack an archive onto
-# every node's local disk (same path as benchfile.py's cache dirs). Per-GPU
-# shapes are identical at every scale, so a cache built on a few nodes is
-# valid for large runs. TT_COMPILE_CACHE= (empty) disables it.
-LOCAL_CACHE=${SLURM_TMPDIR:-/tmp}/tt_native_cache
+# every node's local disk (same path as benchfile.py's cache dirs; it must be
+# job-independent because cache entries store absolute paths). Per-GPU shapes
+# are identical at every scale, so a cache built on a few nodes is valid for
+# large runs. TT_COMPILE_CACHE= (empty) disables it.
+LOCAL_CACHE=${TT_NATIVE_CACHE_DIR:-/tmp/$USER/tt_native_cache}
+export TT_NATIVE_CACHE_DIR=$LOCAL_CACHE
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache.tar}
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     srun --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
@@ -59,6 +61,7 @@ FIRST_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)
 t0=$(date +%s.%N); ssh -oStrictHostKeyChecking=no -oPasswordAuthentication=no "$FIRST_NODE" cat /etc/hostname >/dev/null 2>&1 || true
 t1=$(date +%s.%N); python -c "import socket,sys; socket.gethostbyaddr(sys.argv[1])" "$FIRST_NODE" 2>/dev/null || true
 t2=$(date +%s.%N)
+echo "[tt-native] tmp $(df -h /tmp | tail -1)"
 echo "[tt-native] probe ssh_s=$(echo "$t1 - $t0" | bc) dns_s=$(echo "$t2 - $t1" | bc) node=$FIRST_NODE"
 
 SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}.yaml
