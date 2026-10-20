@@ -13,41 +13,6 @@ tensorboard
 wandb
 # Megatron-LM (NVIDIA) at the commit slime's docker image is built against
 megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d
-# RL variant only (rollout engine); train-only entries do not import it
-sglang
-pybase64
-# sglang keeps these behind its runtime_common extra (not pulled in by plain `sglang`);
-# the extra's own pins (torch/transformers/torchao) are left out on purpose
-aiohttp
-requests
-tqdm
-IPython
-setproctitle
-blobfile
-compressed-tensors
-fastapi
-hf_transfer
-interegular
-llguidance
-msgspec
-openai
-openai-harmony
-orjson
-outlines
-partial_json_parser
-pillow
-prometheus-client
-psutil
-pydantic
-pynvml
-python-multipart
-pyzmq
-sentencepiece
-soundfile
-scipy
-timm
-tiktoken
-uvicorn
-uvloop
-xgrammar
+# slime imports sglang even for train-only; 0.5.21 is the version slime's Dockerfile uses (pins torch==2.13.0)
+sglang==0.5.21
 slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230

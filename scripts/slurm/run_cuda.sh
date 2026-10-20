@@ -7,7 +7,8 @@ export MILABENCH_GPU_ARCH=cuda
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
 export MILABENCH_REPO=https://github.com/milabench/milabench.git
 export CUDA_VERSION="130"
-export PYTORCH_VERSION="2.10.0"
+# sglang==0.5.21 (slime's pinned version) requires torch==2.13.0
+export PYTORCH_VERSION="2.13.0"
 
 # slime is not in all.yaml: it lives in its own config, in the milabench checkout
 export CONFIG_PATH=benchmarks/slime/dev.yaml
