@@ -85,10 +85,16 @@ def _compile_stats() -> dict[str, Any]:
     try:
         from torch._dynamo.utils import compile_times
 
-        per_phase = compile_times(repr="raw", aggregate=True)
-        stats["compile_seconds"] = {
-            k: round(float(v), 2) for k, v in per_phase.items() if float(v) >= 0.5
-        }
+        # "name, seconds" lines after a two-line header.
+        seconds = {}
+        for line in (compile_times(repr="str", aggregate=True) or "").splitlines()[2:]:
+            name, _, value = line.rpartition(",")
+            try:
+                if float(value) >= 0.5:
+                    seconds[name.strip()] = round(float(value), 2)
+            except ValueError:
+                continue
+        stats["compile_seconds"] = seconds
     except Exception as exc:
         stats["compile_seconds_error"] = repr(exc)
     return stats
