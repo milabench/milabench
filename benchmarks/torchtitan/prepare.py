@@ -163,7 +163,7 @@ def main():
     download_assets(repo_id, mode, dest)
     argv = cfg.get("argv") or {}
     if argv.get("--dataloader.dataset") == "fineweb":
-        prepare_fineweb(data / "fineweb" / "sample-10BT", int(cfg["fineweb_samples"]))
+        prepare_fineweb(data / "fineweb" / "sample-10BT", int(argv["--dataloader.samples"]))
 
 
 if __name__ == "__main__":

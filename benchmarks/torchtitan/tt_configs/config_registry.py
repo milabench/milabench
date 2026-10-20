@@ -7,7 +7,7 @@ Paths resolve from MILABENCH_DIR_* at parse time.
 from __future__ import annotations
 
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from torchtitan.components.checkpoint import CheckpointManager
@@ -52,7 +52,7 @@ from torchtitan.hf_datasets.text_datasets import (
 from torchtitan.protocols.model_spec import ModelSpec
 from torchtitan.tools.profiler import Profiler
 
-from benchmate.fineweb import load_fineweb
+from benchmate.fineweb import load_fineweb, read_manifest
 
 
 def _data_dir() -> Path:
@@ -108,6 +108,25 @@ DATASETS["fineweb"] = DatasetConfig(
     loader=load_fineweb,
     sample_processor=_read_text,
 )
+
+
+class MilabenchTextDataLoader(HuggingFaceTextDataLoader):
+    """Text dataloader whose config also sizes datasets fetched by prepare.py."""
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(HuggingFaceTextDataLoader.Config):
+        samples: int | None = None
+        """Documents prepare.py downloads for ``fineweb``."""
+
+    def __init__(self, config: Config, **kwargs):
+        if config.dataset == "fineweb" and config.samples:
+            docs = (read_manifest(_fineweb_path()) or {}).get("docs", 0)
+            if docs < config.samples:
+                raise RuntimeError(
+                    f"FineWeb subset at {_fineweb_path()} has {docs:,} docs, "
+                    f"{config.samples:,} requested; run prepare"
+                )
+        super().__init__(config, **kwargs)
 
 
 def _sft_json() -> str:
@@ -181,7 +200,7 @@ def _base_pretrain(
             dtype="bfloat16",
             mixed_precision_param="bfloat16",
         ),
-        dataloader=HuggingFaceTextDataLoader.Config(dataset="c4_test"),
+        dataloader=MilabenchTextDataLoader.Config(dataset="c4_test"),
         metrics=MetricsProcessor.Config(log_freq=1),
         parallelism=ParallelismConfig(pipeline_parallel_schedule="1F1B"),
         checkpoint=CheckpointManager.Config(enable=False),

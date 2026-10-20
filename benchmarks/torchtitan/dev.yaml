@@ -35,7 +35,6 @@ _torchtitan:
 torchtitan-qwen3-4b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
-  fineweb_samples: 800_000
   tags:
     - multigpu
     - pretrain
@@ -43,6 +42,7 @@ torchtitan-qwen3-4b-pretrain:
     --module: tt_configs
     --config: qwen3_4b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 800_000
     --training.steps: 40
 
 # Short smoke for this machine (tokenizer + tiny c4_test only)
@@ -103,7 +103,6 @@ torchtitan-qwen3-4b-sft-smoke:
 torchtitan-mistral-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/mistralai/Mistral-7B-v0.1
-  fineweb_samples: 500_000
   tags:
     - multigpu
     - pretrain
@@ -112,6 +111,7 @@ torchtitan-mistral-7b-pretrain:
     --module: tt_configs
     --config: mistral_7b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 500_000
     --training.steps: 40
 
 torchtitan-mistral-7b-sft:
@@ -131,7 +131,6 @@ torchtitan-mistral-7b-sft:
 torchtitan-olmo-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/allenai/OLMo-7B-hf
-  fineweb_samples: 500_000
   tags:
     - multigpu
     - pretrain
@@ -140,6 +139,7 @@ torchtitan-olmo-7b-pretrain:
     --module: tt_configs
     --config: olmo_7b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 500_000
     --training.steps: 40
 
 torchtitan-olmo-7b-sft:
@@ -159,7 +159,6 @@ torchtitan-olmo-7b-sft:
 torchtitan-qwen3-30b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/Qwen/Qwen3-30B-A3B
-  fineweb_samples: 900_000
   tags:
     - multigpu
     - pretrain
@@ -171,6 +170,7 @@ torchtitan-qwen3-30b-pretrain:
     --module: tt_configs
     --config: qwen3_30b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 900_000
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -194,7 +194,6 @@ torchtitan-qwen3-30b-sft:
 torchtitan-mixtral-8x7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
-  fineweb_samples: 300_000
   tags:
     - multigpu
     - pretrain
@@ -206,6 +205,7 @@ torchtitan-mixtral-8x7b-pretrain:
     --module: tt_configs
     --config: mixtral_8x7b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 300_000
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -229,7 +229,6 @@ torchtitan-mixtral-8x7b-sft:
 torchtitan-olmoe-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
-  fineweb_samples: 2_300_000
   tags:
     - multigpu
     - pretrain
@@ -241,6 +240,7 @@ torchtitan-olmoe-7b-pretrain:
     --module: tt_configs
     --config: olmoe_7b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 2_300_000
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -264,7 +264,6 @@ torchtitan-olmoe-7b-sft:
 torchtitan-gemma4-26b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/google/gemma-4-26B-A4B
-  fineweb_samples: 800_000
   tags:
     - multigpu
     - pretrain
@@ -276,6 +275,7 @@ torchtitan-gemma4-26b-pretrain:
     --module: tt_configs
     --config: gemma4_26b_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 800_000
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -299,7 +299,6 @@ torchtitan-gemma4-26b-sft:
 torchtitan-deepseek-v2-lite-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
-  fineweb_samples: 1_300_000
   tags:
     - multigpu
     - pretrain
@@ -311,6 +310,7 @@ torchtitan-deepseek-v2-lite-pretrain:
     --module: tt_configs
     --config: deepseek_v2_lite_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 1_300_000
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -353,7 +353,6 @@ _glm5_torchtitan:
 torchtitan-glm5-pretrain:
   inherits: _glm5_torchtitan
   url: https://huggingface.co/zai-org/GLM-5
-  fineweb_samples: 100_000
   tags:
     - multigpu
     - pretrain
@@ -362,6 +361,7 @@ torchtitan-glm5-pretrain:
     --module: tt_configs
     --config: glm5_pretrain
     --dataloader.dataset: fineweb
+    --dataloader.samples: 100_000
     --training.steps: 20
     --training.seq_len: 1024
     --parallelism.expert_parallel_degree: 8
