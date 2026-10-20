@@ -16,4 +16,38 @@ megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea682
 # RL variant only (rollout engine); train-only entries do not import it
 sglang
 pybase64
+# sglang keeps these behind its runtime_common extra (not pulled in by plain `sglang`);
+# the extra's own pins (torch/transformers/torchao) are left out on purpose
+aiohttp
+requests
+tqdm
+IPython
+setproctitle
+blobfile
+compressed-tensors
+fastapi
+hf_transfer
+interegular
+llguidance
+msgspec
+openai
+openai-harmony
+orjson
+outlines
+partial_json_parser
+pillow
+prometheus-client
+psutil
+pydantic
+pynvml
+python-multipart
+pyzmq
+sentencepiece
+soundfile
+scipy
+timm
+tiktoken
+uvicorn
+uvloop
+xgrammar
 slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230
