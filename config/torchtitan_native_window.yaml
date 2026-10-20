@@ -15,6 +15,12 @@
 # Rorqual leaves (topology.conf): 22 leaves with 3 GPU nodes, plus leaves with
 # 7, 8 and 12 GPU nodes. The single-leaf runs therefore use 3 nodes; pass the
 # leaf's node list to sbatch (-w) and run one job per leaf concurrently.
+#
+# Planned topology comparisons at scale (2026-10-20):
+# - homogeneous: only 3-node leaves (22 leaves x 3 nodes = 264 GPUs max) vs
+#   heterogeneous mixes including the 7/8/12-node leaves;
+# - 48 GPUs on the 12-node leaf (one switch) vs 4 leaves x 3 nodes (4 switches):
+#   tt-w-leaf12 on the big leaf vs the same entry with a 4x3 node list.
 
 include:
   - torchtitan_native.yaml
