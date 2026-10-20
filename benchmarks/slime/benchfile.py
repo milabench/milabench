@@ -100,7 +100,8 @@ class Slime(Package):
         site = sorted(Path(str(self.dirs.venv)).glob("lib/python*/site-packages/nvidia"))
         includes = [str(d) for s in site for d in sorted(s.glob("*/include")) if d.is_dir()]
         libs = [str(d) for s in site for d in sorted(s.glob("*/lib")) if d.is_dir()]
-        for var, paths in (("CPATH", includes), ("LIBRARY_PATH", libs)):
+        # LD_LIBRARY_PATH: TE dlopen()s libcudnn*/libnccl at import, outside torch's RPATH
+        for var, paths in (("CPATH", includes), ("LIBRARY_PATH", libs), ("LD_LIBRARY_PATH", libs)):
             if paths:
                 env[var] = os.pathsep.join([*paths, *filter(None, [env.get(var) or os.environ.get(var)])])
         for d in includes:
