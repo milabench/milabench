@@ -32,6 +32,7 @@ MEGATRON_COMMIT = "4b4acac9a1d28ea6829c8d4f566d75698a21249d"
 # slime ships patches against the Megatron-LM commit its docker image uses
 MEGATRON_PATCHES = ("megatron.patch", "megatron-sglang-aligned.patch")
 PATCH_VERSION = "v0.5.21"
+BUILD_REQUIRES = ("setuptools", "wheel", "pybind11", "ninja", "packaging", "numpy")
 
 
 class Slime(Package):
@@ -57,6 +58,9 @@ class Slime(Package):
 
     async def install(self):
         self.clone()
+        # megatron-core / transformer-engine are built with --no-build-isolation
+        # and their setup.py import these at metadata time
+        await self.pip_install(*BUILD_REQUIRES, build_isolation=True)
         await super().install()
 
     @property
