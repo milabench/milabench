@@ -66,11 +66,12 @@ class Slime(Package):
     def toolkit_requirements(self):
         # nvcc (+ crt/ headers, nvvm) as wheels, the same CUDA release as the torch wheels: the cluster's
         # CUDA module is not used (it would mix 12.x nvcc/headers with the cu13 runtime). All three must
-        # match: an unpinned nvidia-nvvm pulls a newer cicc whose PTX the older ptxas rejects.
+        # match: an unpinned nvidia-nvvm pulls a newer cicc whose PTX the older ptxas rejects. cccl provides
+        # <nv/target> (included by cuda_fp16.h), which the toolkit wheels do not otherwise ship.
         cuda = str(self.config.get("version_overrides", {}).get("cuda", "130"))
         major, minor = cuda[:-1], cuda[-1]
         suffix = "-cu12" if major == "12" else ""
-        return [f"nvidia-{name}{suffix}=={major}.{minor}.*" for name in ("cuda-nvcc", "nvvm", "cuda-crt")]
+        return [f"nvidia-{name}{suffix}=={major}.{minor}.*" for name in ("cuda-nvcc", "nvvm", "cuda-crt", "cuda-cccl")]
 
     async def install(self):
         self.clone()
