@@ -34,7 +34,9 @@ MEGATRON_COMMIT = "4b4acac9a1d28ea6829c8d4f566d75698a21249d"
 MEGATRON_PATCHES = ("megatron.patch", "megatron-sglang-aligned.patch")
 PATCH_VERSION = "v0.5.21"
 TE_REQUIREMENT = "transformer-engine[pytorch]==2.18.0"
-BUILD_REQUIRES = ("setuptools", "wheel", "pybind11", "ninja", "packaging", "numpy")
+# slime's Dockerfile builds it from git (not on PyPI), after torch
+TMS_REQUIREMENT = "torch_memory_saver @ git+https://github.com/zhuzilin/torch_memory_saver.git@bdab8c55f490a00a746ec34e301391617f5ca878"
+BUILD_REQUIRES = ("setuptools", "wheel", "pybind11", "ninja", "packaging", "numpy", "scikit-build-core")
 
 
 class Slime(Package):
@@ -67,6 +69,8 @@ class Slime(Package):
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
+        # imported by slime's Megatron actor (memory offload between train/rollout)
+        await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
 
     @property
     def num_machines(self) -> int:
@@ -92,6 +96,10 @@ class Slime(Package):
         if self.uses_ray_cluster():
             env["RAY_ADDRESS"] = "auto"
         self.add_nvidia_wheel_paths(env)
+        # torch_memory_saver's build picks its CUDA flavour from this ("130" -> 13)
+        cuda = str(self.config.get("version_overrides", {}).get("cuda", ""))
+        if len(cuda) >= 3:
+            env.setdefault("TMS_CUDA_MAJOR", cuda[:-1])
         return env
 
     def add_nvidia_wheel_paths(self, env):
