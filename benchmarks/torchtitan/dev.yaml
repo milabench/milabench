@@ -30,20 +30,12 @@ _torchtitan:
     --training.steps: 40
     --metrics.log_freq: 1
 
-# FineWeb pretraining data (benchmate.fineweb), fetched by prepare.py.
-# fineweb_samples = docs to pre-download, sized to keep 8 GPUs at 2x B200
-# speed (4.5 PFLOP/s BF16 at 60% MFU) fed for 60s warmup + 300s measure:
-#   tokens/s = 8 * 4.5e15 * 0.6 / (6 * active_params)
-#   samples  = tokens/s * 360s * 1.5 safety / 660 tokens/doc
-# Scale up for faster GPUs or multi-node runs. Benches without it (smoke)
-# fall back to the bundled c4_test.
-
 # --- Qwen3-4B dense ---
 
 torchtitan-qwen3-4b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
-  fineweb_samples: 800_000  # 4.0B params
+  fineweb_samples: 800_000
   tags:
     - multigpu
     - pretrain
@@ -110,7 +102,7 @@ torchtitan-qwen3-4b-sft-smoke:
 torchtitan-mistral-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/mistralai/Mistral-7B-v0.1
-  fineweb_samples: 500_000  # 7.2B params
+  fineweb_samples: 500_000
   tags:
     - multigpu
     - pretrain
@@ -137,7 +129,7 @@ torchtitan-mistral-7b-sft:
 torchtitan-olmo-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/allenai/OLMo-7B-hf
-  fineweb_samples: 500_000  # 6.9B params
+  fineweb_samples: 500_000
   tags:
     - multigpu
     - pretrain
@@ -164,7 +156,7 @@ torchtitan-olmo-7b-sft:
 torchtitan-qwen3-30b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/Qwen/Qwen3-30B-A3B
-  fineweb_samples: 900_000  # 3.3B active params
+  fineweb_samples: 900_000
   tags:
     - multigpu
     - pretrain
@@ -198,7 +190,7 @@ torchtitan-qwen3-30b-sft:
 torchtitan-mixtral-8x7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
-  fineweb_samples: 300_000  # 12.9B active params
+  fineweb_samples: 300_000
   tags:
     - multigpu
     - pretrain
@@ -232,7 +224,7 @@ torchtitan-mixtral-8x7b-sft:
 torchtitan-olmoe-7b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
-  fineweb_samples: 2_300_000  # 1.3B active params
+  fineweb_samples: 2_300_000
   tags:
     - multigpu
     - pretrain
@@ -266,7 +258,7 @@ torchtitan-olmoe-7b-sft:
 torchtitan-gemma4-26b-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/google/gemma-4-26B-A4B
-  fineweb_samples: 800_000  # 3.8B active params
+  fineweb_samples: 800_000
   tags:
     - multigpu
     - pretrain
@@ -300,7 +292,7 @@ torchtitan-gemma4-26b-sft:
 torchtitan-deepseek-v2-lite-pretrain:
   inherits: _torchtitan
   url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
-  fineweb_samples: 1_300_000  # 2.4B active params
+  fineweb_samples: 1_300_000
   tags:
     - multigpu
     - pretrain
@@ -353,7 +345,7 @@ _glm5_torchtitan:
 torchtitan-glm5-pretrain:
   inherits: _glm5_torchtitan
   url: https://huggingface.co/zai-org/GLM-5
-  fineweb_samples: 100_000  # 40B active params
+  fineweb_samples: 100_000
   tags:
     - multigpu
     - pretrain
