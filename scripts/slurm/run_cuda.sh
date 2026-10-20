@@ -22,7 +22,7 @@ mkdir -p $OUTPUT_DIRECTORY/meta
 scontrol show job --json $SLURM_JOB_ID | jq '.jobs[0]' > $OUTPUT_DIRECTORY/meta/info.json
 # ===
 
-module load cuda/12.6.0
+# module load cuda/12.6.0
 
 export MILABENCH_WORDIR="/tmp/$SLURM_JOB_ID/$MILABENCH_GPU_ARCH"
 export MILABENCH_BASE="$MILABENCH_WORDIR/results"

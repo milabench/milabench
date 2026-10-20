@@ -73,7 +73,7 @@ def forward_metrics(collector, log, stop: threading.Event):
 # environment forwarded to the Ray workers (they do not inherit the driver's)
 _FORWARD = ("PYTHONPATH", "CUDA_DEVICE_MAX_CONNECTIONS", "PYTORCH_CUDA_ALLOC_CONF",
             "PYTHONUNBUFFERED", "NCCL_NVLS_ENABLE", "NCCL_CUMEM_ENABLE", "TOKENIZERS_PARALLELISM",
-            "HF_HOME", "HF_TOKEN")
+            "HF_HOME", "HF_TOKEN", "LD_LIBRARY_PATH", "NVTE_CUDA_INCLUDE_DIR")
 
 
 def main():

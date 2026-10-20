@@ -117,6 +117,10 @@ class Slime(Package):
             if paths:
                 env[var] = os.pathsep.join([*paths, *filter(None, [env.get(var) or os.environ.get(var)])])
         for d in includes:
+            if (Path(d) / "cuda_runtime.h").exists():
+                # TE compiles its normalization/RTC kernels with the NVRTC from the wheels (13.x, first on
+                # LD_LIBRARY_PATH); by default it takes headers from CUDA_HOME, the cluster's 12.6 module
+                env.setdefault("NVTE_CUDA_INCLUDE_DIR", d)
             if (Path(d) / "cudnn.h").exists():
                 env.setdefault("CUDNN_PATH", str(Path(d).parent))
             if (Path(d) / "nccl.h").exists():
