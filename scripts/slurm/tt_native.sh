@@ -54,6 +54,13 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
 
+# Startup probe: where does `milabench slurm system` spend its time?
+FIRST_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)
+t0=$(date +%s.%N); ssh -oStrictHostKeyChecking=no -oPasswordAuthentication=no "$FIRST_NODE" cat /etc/hostname >/dev/null 2>&1 || true
+t1=$(date +%s.%N); python -c "import socket,sys; socket.gethostbyaddr(sys.argv[1])" "$FIRST_NODE" 2>/dev/null || true
+t2=$(date +%s.%N)
+echo "[tt-native] probe ssh_s=$(echo "$t1 - $t0" | bc) dns_s=$(echo "$t2 - $t1" | bc) node=$FIRST_NODE"
+
 SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$SYSTEM"
 echo "[tt-native] system_ready_epoch=$(date +%s.%N)"
