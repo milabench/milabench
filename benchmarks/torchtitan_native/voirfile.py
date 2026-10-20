@@ -31,6 +31,12 @@ def _install_step_hook() -> None:
     push = sumggle_push()
 
     def on_step(step, step_time, tokens, loss):
+        # Global rank 0 only: rank 0 of every node runs this voirfile, and
+        # their stdout lines interleave (garbled JSON for milabench).
+        import torch.distributed as dist
+
+        if dist.is_initialized() and dist.get_rank() != 0:
+            return
         push(rate=tokens / step_time, units="tokens/s", task="train")
         if loss is not None:
             push(loss=float(loss), task="train")

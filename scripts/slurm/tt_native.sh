@@ -53,9 +53,10 @@ export TT_NATIVE_CACHE_DIR=$LOCAL_CACHE
 # Archive named by torch/Triton version and GPU model: a cache built with another
 # stack is never loaded. (Different model configs can share one archive:
 # Inductor keys each entry by graph and settings.)
+# Package metadata only: importing torch from the shared filesystem took ~100 s.
 CACHE_KEY=$("$TT38/output/venv/torchtitan_native/bin/python" -c "
-import importlib.metadata as m, torch
-print(f'torch{torch.__version__}-triton{m.version(\"triton\")}'.replace('+', '_'))" 2>/dev/null || echo unknown)
+import importlib.metadata as m
+print(f'torch{m.version(\"torch\")}-triton{m.version(\"triton\")}'.replace('+', '_'))" 2>/dev/null || echo unknown)
 GPU_KEY=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr -cd '[:alnum:]')
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
 mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
