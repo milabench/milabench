@@ -42,12 +42,16 @@ from .state_dict_adapter import MilabenchMoeStateDictAdapter
 from torchtitan.experiments.transformers_modeling_backend.tokenizer import (
     HFBackendTokenizer,
 )
+from torchtitan.hf_datasets import DatasetConfig
 from torchtitan.hf_datasets.text_datasets import (
+    DATASETS,
     ChatDataLoader,
     HuggingFaceTextDataLoader,
 )
 from torchtitan.protocols.model_spec import ModelSpec
 from torchtitan.tools.profiler import Profiler
+
+from benchmate.fineweb import load_fineweb, read_manifest
 
 
 def _data_dir() -> Path:
@@ -84,6 +88,35 @@ def _c4_path() -> str:
     bundled = _code_dir() / "assets" / "c4_test"
     staged = _data_dir() / "c4_test"
     return str(staged if staged.exists() else bundled)
+
+
+def _fineweb_path() -> Path:
+    """FineWeb subset written by prepare.py (see benchmate.fineweb)."""
+    return _data_dir() / "fineweb" / "sample-10BT"
+
+
+def _read_text(sample) -> str:
+    return sample["text"]
+
+
+DATASETS["fineweb"] = DatasetConfig(
+    path=str(_fineweb_path()),
+    loader=load_fineweb,
+    sample_processor=_read_text,
+)
+
+
+def _pretrain_dataset() -> HuggingFaceTextDataLoader.Config:
+    """Prefer the staged FineWeb subset; fall back to the tiny c4_test."""
+    if read_manifest(_fineweb_path()) is not None:
+        return HuggingFaceTextDataLoader.Config(
+            dataset="fineweb",
+            dataset_path=str(_fineweb_path()),
+        )
+    return HuggingFaceTextDataLoader.Config(
+        dataset="c4_test",
+        dataset_path=_c4_path(),
+    )
 
 
 def _sft_json() -> str:
@@ -157,10 +190,7 @@ def _base_pretrain(
             dtype="bfloat16",
             mixed_precision_param="bfloat16",
         ),
-        dataloader=HuggingFaceTextDataLoader.Config(
-            dataset="c4_test",
-            dataset_path=_c4_path(),
-        ),
+        dataloader=_pretrain_dataset(),
         metrics=MetricsProcessor.Config(log_freq=1),
         parallelism=ParallelismConfig(pipeline_parallel_schedule="1F1B"),
         checkpoint=CheckpointManager.Config(enable=False),
