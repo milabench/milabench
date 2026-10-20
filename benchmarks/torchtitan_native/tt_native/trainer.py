@@ -63,6 +63,37 @@ def _torchtitan_commit() -> str | None:
     return None
 
 
+def _compile_stats() -> dict[str, Any]:
+    """Inductor cache hits/misses and compile time so far (this rank)."""
+    stats: dict[str, Any] = {}
+    try:
+        from torch._dynamo.utils import counters
+
+        inductor = counters.get("inductor", {})
+        for key in (
+            "fxgraph_cache_hit",
+            "fxgraph_cache_miss",
+            "fxgraph_cache_bypass",
+            "autotune_local_cache_hit",
+            "autotune_local_cache_miss",
+        ):
+            if key in inductor:
+                stats[key] = int(inductor[key])
+        stats["frames_compiled"] = int(counters.get("stats", {}).get("unique_graphs", 0))
+    except Exception as exc:  # stats only
+        stats["error"] = repr(exc)
+    try:
+        from torch._dynamo.utils import compile_times
+
+        per_phase = compile_times(repr="raw", aggregate=True)
+        stats["compile_seconds"] = {
+            k: round(float(v), 2) for k, v in per_phase.items() if float(v) >= 0.5
+        }
+    except Exception as exc:
+        stats["compile_seconds_error"] = repr(exc)
+    return stats
+
+
 def _percentile(values: list[float], q: float) -> float:
     ordered = sorted(values)
     if not ordered:
@@ -102,6 +133,8 @@ class BenchTrainer(Trainer):
         self._last_step_end: float | None = None
         self._t_first_step_done: float | None = None
         self._t_measure_start: float | None = None
+        self._first_step_s: float | None = None
+        self._compile_stats: dict[str, Any] = {}
 
         ctx = self.engine.parallelism_context
         self._world_size = ctx.world_size
@@ -134,6 +167,9 @@ class BenchTrainer(Trainer):
         step = self.engine.num_completed_steps
         if step == 1:
             self._t_first_step_done = time.time()
+            self._first_step_s = step_time
+            self._compile_stats = _compile_stats()
+            logger.info(f"[bench] first step {step_time:.1f}s, compile: {self._compile_stats}")
         if step == self._warmup_steps:
             self._t_measure_start = time.time()
             self._plan_measurement()
@@ -300,6 +336,8 @@ class BenchTrainer(Trainer):
                 "model_initialized": since_start(4),
                 "first_step_done": since_start(5),
                 "measurement_start": since_start(6),
+                "first_step_s_rank0": self._first_step_s,
+                "compile_rank0": self._compile_stats,
                 "note": "seconds since the earliest rank's process start",
             },
         }
