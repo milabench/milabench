@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """slime driver: runs ``train.main`` against a Ray cluster.
 
 milabench owns the process and the arguments: the slime command line comes
