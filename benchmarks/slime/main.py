@@ -14,10 +14,34 @@ log function (stdout smuggling).
 
 from __future__ import annotations
 
+import faulthandler
 import os
 import sys
 import threading
 import time
+import traceback
+
+faulthandler.enable()
+
+
+def debug(*msg):
+    """Progress marker on stderr, also written under the runs dir (rsynced with the results).
+
+    stdout is reserved for milabench's smuggled events."""
+    line = f"[slime-main pid={os.getpid()} t={time.strftime('%H:%M:%S')}] " + " ".join(map(str, msg))
+    print(line, file=sys.stderr, flush=True)
+    runs = os.environ.get("MILABENCH_DIR_RUNS")
+    if runs:
+        try:
+            with open(os.path.join(runs, "slime-main.debug.log"), "a") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+
+debug("starting", "python", sys.executable, "argv", sys.argv[1:6], "...")
+debug("RAY_ADDRESS", os.environ.get("RAY_ADDRESS"), "CUDA_VISIBLE_DEVICES", os.environ.get("CUDA_VISIBLE_DEVICES"),
+      "LD_LIBRARY_PATH", os.environ.get("LD_LIBRARY_PATH", "")[:300])
 
 from benchmate.monitor import setupvoir
 
@@ -28,11 +52,20 @@ def forward_metrics(collector, log, stop: threading.Event):
     """Move events from the workers' collector actor to milabench."""
     import ray
 
+    count = 0
     while True:
         done = stop.is_set()
-        for event in ray.get(collector.drain.remote()):
-            log(event)
+        try:
+            for event in ray.get(collector.drain.remote()):
+                if count < 3:
+                    debug("forwarding event", event)
+                count += 1
+                log(event)
+        except Exception:
+            debug("forward_metrics failed:\n" + traceback.format_exc())
+            return
         if done:
+            debug("forwarded", count, "events")
             return
         time.sleep(0.5)
 
@@ -44,6 +77,7 @@ _FORWARD = ("PYTHONPATH", "CUDA_DEVICE_MAX_CONNECTIONS", "PYTORCH_CUDA_ALLOC_CON
 
 
 def main():
+    debug("main: begin")
     for p in reversed(os.environ["PYTHONPATH"].split(os.pathsep)):
         sys.path.insert(0, p)
 
@@ -51,6 +85,7 @@ def main():
     # other nodes. Metrics/monitoring are started from the script itself, on the
     # main node (GPU monitor covers the main node's GPUs only).
     log, monitor = setupvoir(monogpu=False, interval=0.5)
+    debug("main: setupvoir done")
 
     stop = threading.Event()
     forwarder = None
@@ -63,6 +98,7 @@ def main():
         env_vars = {k: os.environ[k] for k in _FORWARD if k in os.environ}
         # RAY_ADDRESS is honored when set
         ray.init(namespace=slime_metrics.NAMESPACE, runtime_env={"env_vars": env_vars})
+        debug("main: ray initialised", ray.cluster_resources())
 
         collector = slime_metrics.create()
         forwarder = threading.Thread(target=forward_metrics, args=(collector, log, stop), daemon=True)
@@ -74,9 +110,15 @@ def main():
         from slime.observability.logging_utils import configure_logger
         from slime.utils.arguments import parse_args
 
+        debug("main: parsing slime arguments")
         args, restore_plan = parse_args(return_restore_plan=True)
         configure_logger()
+        debug("main: train.main")
         train.main(args, restore_plan)
+        debug("main: train.main returned")
+    except BaseException:
+        debug("main: FAILED\n" + traceback.format_exc())
+        raise
     finally:
         stop.set()
         if forwarder is not None:
@@ -85,4 +127,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException:
+        debug("fatal:\n" + traceback.format_exc())
+        raise
+    finally:
+        debug("exit")

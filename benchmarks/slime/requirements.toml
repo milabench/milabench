@@ -15,6 +15,7 @@ dependencies = [
     "wandb",
     "megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d",
     "sglang",
+    "pybase64",
     "slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230",
 ]
 
