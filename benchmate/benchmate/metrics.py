@@ -18,7 +18,63 @@ except ImportError as err:
     TORCH_ERROR = err
 
 
-from .toggles import get_observation_count
+from .toggles import get_observation_count, _get_flag
+
+
+def _noop_push(**kwargs):
+    pass
+
+
+def wandb_push():
+    """Push metrics to wandb. Never raises, falls back to a no-op."""
+    import traceback
+
+    try:
+        import wandb
+
+        wandb.login()
+
+        config = json.loads(_get_flag("MILABENCH_CONFIG", str, "{}"))
+
+        benchname = "<missing>"
+        runname = "<missing>"
+
+        if config:
+            benchname = config["name"]
+            runname = config["run_name"]
+
+        project = _get_flag("BENCHMATE_WANDB_PROJECT", str, "milabench")
+
+        run = wandb.init(
+            project=project, group=runname, job_type=benchname, config=config
+        )
+
+        def message(**kwargs):
+            kwargs.pop("task", None)
+            run.log(kwargs)
+
+        return message
+
+    except ImportError:
+        # Wandb not installed, it is okay we dont actually want it
+        pass
+
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+
+    return _noop_push
+
+
+def tee_push(*pushes):
+    """Forward every message to all the given push functions."""
+    if len(pushes) == 1:
+        return pushes[0]
+
+    def message(**kwargs):
+        for push in pushes:
+            push(**kwargs)
+
+    return message
 
 
 def file_push(fp=sys.stdout):
