@@ -86,6 +86,8 @@ _slime:
     --accumulate-allreduce-grads-in-fp32: true
     --attention-softmax-in-fp32: true
     --attention-backend: flash
+    # APEX (fused_weight_gradient_mlp_cuda) is not installed
+    --no-gradient-accumulation-fusion: true
     # slime_hook.py: forwards rate/loss from the Ray workers to milabench
     --custom-megatron-init-path: slime_hook.install
 
