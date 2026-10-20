@@ -250,6 +250,7 @@ class BenchTrainer(Trainer):
                 "torchtitan_commit": _torchtitan_commit(),
                 "torch_version": torch.__version__,
                 "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                "run_tag": os.environ.get("TT_RUN_TAG"),
                 "hosts": sorted(set(hostnames)),
             },
             "measurement": {

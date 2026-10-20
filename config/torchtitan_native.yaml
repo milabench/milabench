@@ -165,3 +165,12 @@ tt-qwen38-n3-lowmem:
   argv:
     --adam-moments: bf16
     --run-name: qwen38-n3-lowmem
+
+# Topology / contention tests (scripts/slurm/tt_native_topology.sh): same as n4,
+# shorter measurement so several node layouts fit in one allocation.
+tt-qwen38-n4-topo:
+  inherits: tt-qwen38-n4
+  argv:
+    --warmup-steps: 30
+    --measure-steps: 60
+    --run-name: qwen38-n4-topo

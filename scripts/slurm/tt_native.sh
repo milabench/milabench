@@ -61,8 +61,10 @@ t1=$(date +%s.%N); python -c "import socket,sys; socket.gethostbyaddr(sys.argv[1
 t2=$(date +%s.%N)
 echo "[tt-native] probe ssh_s=$(echo "$t1 - $t0" | bc) dns_s=$(echo "$t2 - $t1" | bc) node=$FIRST_NODE"
 
-SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID.yaml
-milabench slurm system > "$SYSTEM"
+SYSTEM=$MILABENCH_BASE/system.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}.yaml
+# TT_NODES (hostlist): run on this subset of the allocation (this script must
+# then run on its first node, e.g. via `srun --overlap -N1 -n1 -w <first>`).
+SLURM_JOB_NODELIST=${TT_NODES:-$SLURM_JOB_NODELIST} milabench slurm system > "$SYSTEM"
 echo "[tt-native] system_ready_epoch=$(date +%s.%N)"
 
 rc=0

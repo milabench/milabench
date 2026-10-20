@@ -14,8 +14,15 @@ from milabench.commands import (
     TorchrunAllGPU,
     TorchrunAllNodes,
     VoirCommand,
+    max_node_count,
 )
-from milabench.commands.srun import ForeachSrun, TorchrunSrun
+from milabench.commands.srun import (
+    ForeachSrun,
+    SrunCommand,
+    TorchrunSrun,
+    _node_hostlist_token,
+)
+from milabench.utils import select_nodes
 from milabench.pack import Package, install_benchmate
 
 
@@ -43,6 +50,22 @@ class NativeTorchrunSrun(TorchrunSrun):
             **kwargs,
         )
         ForeachSrun.__init__(self, base_exec)
+
+    @property
+    def executors(self):
+        # Workers on exactly the selected nodes (``srun -w``), not on every
+        # other node of the allocation (``srun -x main``): a run may use fewer
+        # nodes than allocated (e.g. n3 inside a 4-node job, or a node subset
+        # chosen for a topology test).
+        config = self.executor.pack.config
+        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
+        if len(nodes) <= 1:
+            return [self.single_node()]
+        workers = ",".join(_node_hostlist_token(n) for n in nodes[1:])
+        return [
+            self.main_executor(),
+            SrunCommand(self.worker_executor(), nodelist=workers),
+        ]
 
 
 class TorchtitanNative(Package):
