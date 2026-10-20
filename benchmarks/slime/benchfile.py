@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 
 import milabench.commands as cmd
 from milabench.commands.ray import RayCluster
@@ -90,7 +91,23 @@ class Slime(Package):
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         if self.uses_ray_cluster():
             env["RAY_ADDRESS"] = "auto"
+        self.add_nvidia_wheel_paths(env)
         return env
+
+    def add_nvidia_wheel_paths(self, env):
+        # The cluster's CUDA module has no cudnn/nccl headers, but torch's nvidia-*
+        # wheels ship them: point the TE build (cudnn.h, nccl.h) at those.
+        site = sorted(Path(str(self.dirs.venv)).glob("lib/python*/site-packages/nvidia"))
+        includes = [str(d) for s in site for d in sorted(s.glob("*/include")) if d.is_dir()]
+        libs = [str(d) for s in site for d in sorted(s.glob("*/lib")) if d.is_dir()]
+        for var, paths in (("CPATH", includes), ("LIBRARY_PATH", libs)):
+            if paths:
+                env[var] = os.pathsep.join([*paths, *filter(None, [env.get(var) or os.environ.get(var)])])
+        for d in includes:
+            if (Path(d) / "cudnn.h").exists():
+                env.setdefault("CUDNN_PATH", str(Path(d).parent))
+            if (Path(d) / "nccl.h").exists():
+                env.setdefault("NCCL_HOME", str(Path(d).parent))
 
     def build_run_plan(self):
         # No VoirCommand: main.py reports through benchmate.monitor.setupvoir(), which
