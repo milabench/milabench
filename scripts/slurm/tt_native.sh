@@ -64,6 +64,41 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
 
+# TT_LOCAL_VENV=1: run the bench venv (and its Python) from node-local disk
+# instead of the shared filesystem, like the window's node-local image. The
+# venv + interpreter are packed once into a single archive on scratch (one
+# large sequential read per node), extracted on every node, and their
+# absolute paths rewritten.
+if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
+    SRC_VENV=$MILABENCH_BASE/venv/torchtitan_native
+    PY_REAL=$(readlink -f "$SRC_VENV/bin/python")              # .../cpython-3.12.13-.../bin/python3.12
+    PY_ROOT=$(dirname "$(dirname "$PY_REAL")")
+    PY_LINK_ROOT=$(dirname "$(dirname "$(readlink "$SRC_VENV/bin/python")")")  # cpython-3.12-... (symlinked dir)
+    LOCAL_SW=/tmp/$USER/tt_native_sw
+    VENV_ARCHIVE=$TT38/venv-archive/torchtitan_native-$CACHE_KEY.tar
+    mkdir -p "$(dirname "$VENV_ARCHIVE")"
+    t0=$(date +%s.%N)
+    if [ ! -f "$VENV_ARCHIVE" ]; then
+        tar -cf "$VENV_ARCHIVE.tmp" -C / "${SRC_VENV#/}" "${PY_ROOT#/}" && mv "$VENV_ARCHIVE.tmp" "$VENV_ARCHIVE"
+    fi
+    t1=$(date +%s.%N)
+    LOCAL_VENV=$LOCAL_SW$SRC_VENV
+    LOCAL_PY=$LOCAL_SW$PY_ROOT
+    srun --ntasks-per-node=1 bash -c "
+        set -e
+        rm -rf $LOCAL_SW && mkdir -p $LOCAL_SW && tar -xf $VENV_ARCHIVE -C $LOCAL_SW
+        for p in $LOCAL_VENV/bin/python $LOCAL_VENV/bin/python3 $LOCAL_VENV/bin/python3.12; do
+            [ -L \$p ] && ln -sfn $LOCAL_PY/bin/python3.12 \$p
+        done
+        sed -i -e 's|$PY_LINK_ROOT|$LOCAL_PY|g' -e 's|$PY_ROOT|$LOCAL_PY|g' -e 's|$SRC_VENV|$LOCAL_VENV|g' $LOCAL_VENV/pyvenv.cfg
+        grep -rlI --include='*' '^#!$SRC_VENV' $LOCAL_VENV/bin | xargs -r sed -i '1s|^#!$SRC_VENV|#!$LOCAL_VENV|'
+    "
+    t2=$(date +%s.%N)
+    export MILABENCH_DIRS_VENV=$LOCAL_VENV
+    echo "[tt-native] local_venv pack_s=$(echo "$t1 - $t0" | bc) stage_s=$(echo "$t2 - $t1" | bc) archive_size=$(du -h "$VENV_ARCHIVE" | cut -f1) venv=$LOCAL_VENV"
+    "$LOCAL_VENV/bin/python" -c "import sys, torch; print('[tt-native] local_venv check', sys.prefix, sys.base_prefix, torch.__file__)"
+fi
+
 # Startup probe: where does `milabench slurm system` spend its time?
 FIRST_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)
 t0=$(date +%s.%N); ssh -oStrictHostKeyChecking=no -oPasswordAuthentication=no "$FIRST_NODE" cat /etc/hostname >/dev/null 2>&1 || true
