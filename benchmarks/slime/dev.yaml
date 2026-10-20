@@ -86,8 +86,6 @@ _slime:
     --accumulate-allreduce-grads-in-fp32: true
     --attention-softmax-in-fp32: true
     --attention-backend: flash
-    # APEX (fused_weight_gradient_mlp_cuda) is not installed
-    --no-gradient-accumulation-fusion: true
     # slime_hook.py: forwards rate/loss from the Ray workers to milabench
     --custom-megatron-init-path: slime_hook.install
 
@@ -99,6 +97,8 @@ _qwen2_5_0_5b:
   model:
     hf: Qwen/Qwen2.5-0.5B-Instruct
     argv:
+      # APEX (fused_weight_gradient_mlp_cuda) is not installed
+      --no-gradient-accumulation-fusion: true
       --swiglu: true
       --num-layers: 24
       --hidden-size: 896
@@ -184,6 +184,8 @@ _glm5:
     hf: zai-org/GLM-5
     convert: false
     argv:
+      # APEX (fused_weight_gradient_mlp_cuda) is not installed
+      --no-gradient-accumulation-fusion: true
       --spec: slime_plugins.models.glm5.glm5 get_glm5_spec
       --moe-layer-freq: "[0]*3+[1]*75"
       --num-experts: 256
