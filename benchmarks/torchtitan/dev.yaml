@@ -42,6 +42,7 @@ torchtitan-qwen3-4b-pretrain:
   argv:
     --module: tt_configs
     --config: qwen3_4b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
 
 # Short smoke for this machine (tokenizer + tiny c4_test only)
@@ -110,6 +111,7 @@ torchtitan-mistral-7b-pretrain:
   argv:
     --module: tt_configs
     --config: mistral_7b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
 
 torchtitan-mistral-7b-sft:
@@ -137,6 +139,7 @@ torchtitan-olmo-7b-pretrain:
   argv:
     --module: tt_configs
     --config: olmo_7b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
 
 torchtitan-olmo-7b-sft:
@@ -167,6 +170,7 @@ torchtitan-qwen3-30b-pretrain:
   argv:
     --module: tt_configs
     --config: qwen3_30b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -201,6 +205,7 @@ torchtitan-mixtral-8x7b-pretrain:
   argv:
     --module: tt_configs
     --config: mixtral_8x7b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -235,6 +240,7 @@ torchtitan-olmoe-7b-pretrain:
   argv:
     --module: tt_configs
     --config: olmoe_7b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -269,6 +275,7 @@ torchtitan-gemma4-26b-pretrain:
   argv:
     --module: tt_configs
     --config: gemma4_26b_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -303,6 +310,7 @@ torchtitan-deepseek-v2-lite-pretrain:
   argv:
     --module: tt_configs
     --config: deepseek_v2_lite_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -353,6 +361,7 @@ torchtitan-glm5-pretrain:
   argv:
     --module: tt_configs
     --config: glm5_pretrain
+    --dataloader.dataset: fineweb
     --training.steps: 20
     --training.seq_len: 1024
     --parallelism.expert_parallel_degree: 8

@@ -185,7 +185,12 @@ def load_fineweb(dest, split: str = "train"):
     from datasets import load_dataset
 
     dest = Path(dest)
-    parts = read_manifest(dest)["parts"]
+    manifest = read_manifest(dest)
+    if manifest is None:
+        raise FileNotFoundError(
+            f"No FineWeb subset at {dest}; run prepare (e.g. `milabench prepare`) first"
+        )
+    parts = manifest["parts"]
     return load_dataset(
         "parquet",
         data_files=[str(dest / p) for p in parts],
