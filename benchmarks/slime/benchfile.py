@@ -33,6 +33,9 @@ MEGATRON_COMMIT = "4b4acac9a1d28ea6829c8d4f566d75698a21249d"
 # slime ships patches against the Megatron-LM commit its docker image uses
 MEGATRON_PATCHES = ("megatron.patch", "megatron-sglang-aligned.patch")
 PATCH_VERSION = "v0.5.21"
+# slime imports sglang (arguments, rollout) but the train-only path never runs it. Same version as slime's
+# Dockerfile; installed without its heavy native pins (cuda-tile, flash-attn-4, flashinfer, ...)
+SGLANG_REQUIREMENT = "sglang==0.5.21"
 TE_REQUIREMENT = "transformer-engine[pytorch]==2.18.0"
 # slime's Dockerfile builds it from git (not on PyPI), after torch
 TMS_REQUIREMENT = "torch_memory_saver @ git+https://github.com/zhuzilin/torch_memory_saver.git@bdab8c55f490a00a746ec34e301391617f5ca878"
@@ -68,6 +71,7 @@ class Slime(Package):
         await super().install()
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
+        await self.pip_install("--no-deps", SGLANG_REQUIREMENT, build_isolation=True)
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
