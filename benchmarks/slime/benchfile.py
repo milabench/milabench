@@ -63,11 +63,22 @@ class Slime(Package):
                 if patch.exists():
                     subprocess.run(["git", "apply", str(patch)], cwd=megatron, check=True)
 
+    def toolkit_requirements(self):
+        # nvcc (+ crt/ headers, nvvm) as wheels, the same CUDA release as the torch wheels: the cluster's
+        # CUDA module is not used (it would mix 12.x nvcc/headers with the cu13 runtime). All three must
+        # match: an unpinned nvidia-nvvm pulls a newer cicc whose PTX the older ptxas rejects.
+        cuda = str(self.config.get("version_overrides", {}).get("cuda", "130"))
+        major, minor = cuda[:-1], cuda[-1]
+        suffix = "-cu12" if major == "12" else ""
+        return [f"nvidia-{name}{suffix}=={major}.{minor}.*" for name in ("cuda-nvcc", "nvvm", "cuda-crt")]
+
     async def install(self):
         self.clone()
         # megatron-core / transformer-engine are built with --no-build-isolation
         # and their setup.py import these at metadata time
         await self.pip_install(*BUILD_REQUIRES, build_isolation=True)
+        # TE and torch_memory_saver compile CUDA code: they need nvcc and the toolkit headers
+        await self.pip_install(*self.toolkit_requirements(), build_isolation=True)
         await super().install()
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
@@ -116,6 +127,12 @@ class Slime(Package):
         for var, paths in (("CPATH", includes), ("LIBRARY_PATH", libs), ("LD_LIBRARY_PATH", libs)):
             if paths:
                 env[var] = os.pathsep.join([*paths, *filter(None, [env.get(var) or os.environ.get(var)])])
+        for s in site:
+            for toolkit in sorted(s.glob("cu*")):
+                if (toolkit / "bin" / "nvcc").exists():
+                    # pip toolkit (see toolkit_requirements): nvcc, headers and libs under one root
+                    env["CUDA_HOME"] = env["CUDA_PATH"] = str(toolkit)
+                    env["PATH"] = os.pathsep.join([str(toolkit / "bin"), env.get("PATH") or os.environ.get("PATH", "")])
         for d in includes:
             if (Path(d) / "cuda_runtime.h").exists():
                 # TE compiles its normalization/RTC kernels with the NVRTC from the wheels (13.x, first on
