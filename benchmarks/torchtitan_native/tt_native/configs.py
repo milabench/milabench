@@ -61,6 +61,8 @@ class Options:
     dp_replicate: int = 1
     tp: int = 1
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
+    adam_moments: Literal["fp32", "bf16"] = "fp32"
+    """AdamW moment dtype. bf16 saves 4 B/param (low-memory fallback)."""
 
     # Measurement
     warmup_steps: int = 40
@@ -146,6 +148,7 @@ def qwen38() -> BenchTrainer.Config:
         "cuda_graphs": opts.compile == "regions+graphs",
         "local_compile_regions": list(model.local_compile_regions),
         "activation_checkpointing": opts.ac,
+        "adam_moments": opts.adam_moments,
         "microbatch_sequences_per_gpu": opts.microbatch_sequences,
         "data": "random tokens (packed, fixed length)",
         "options": asdict(opts),
@@ -165,7 +168,15 @@ def qwen38() -> BenchTrainer.Config:
         ),
         optim=Optim.Config(
             optimizer=OptimizersContainer.Config(
-                optimizers=[AdamW.Config(pattern=r".*", lr=3e-4)]
+                optimizers=[
+                    AdamW.Config(
+                        pattern=r".*",
+                        lr=3e-4,
+                        moment_dtype=(
+                            "bfloat16" if opts.adam_moments == "bf16" else "parameter"
+                        ),
+                    )
+                ]
             ),
             lr_scheduler=LRSchedulersContainer.Config(warmup_steps=10),
         ),

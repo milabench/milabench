@@ -3,11 +3,12 @@
 #   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #
-# Per-GPU settings (seq 8192, 1 sequence per GPU, full AC, compile regions +
-# CUDA graphs) are identical in every entry: weak scaling. Full AC because
-# selective AC + compile OOMs on 4 nodes (Fir, 2026-10-19). Entries only differ in
+# Per-GPU settings (seq 8192, 1 sequence per GPU, full AC, compile regions, no
+# CUDA graphs, FSDP over all GPUs) are identical in every entry: weak scaling.
+# Full AC: selective AC + compile OOMs on 4 nodes. No CUDA graphs: no gain at
+# 4 nodes (1755 vs 1734 tok/s/GPU), extra startup and memory (Fir, 2026-10-19). Entries only differ in
 # node count, model depth (1-node runs use a truncated model), measurement
-# length and the explicit variants (eager compile, full AC fallback).
+# length and the explicit variants (eager, CUDA graphs, AC, layout, -lowmem).
 #
 # Results: one JSON record per run in {milabench_extra}/results.
 
@@ -35,7 +36,7 @@ _tt_native:
     --flavor: 27B
     --seq-len: 8192
     --microbatch-sequences: 1
-    --compile: regions+graphs
+    --compile: regions
     --ac: full
     --warmup-steps: 40
     --measure-steps: 100
@@ -92,11 +93,11 @@ tt-qwen38-1node-eager:
     --compile: eager
     --run-name: qwen38-l16-n1-eager
 
-tt-qwen38-1node-regions:
+tt-qwen38-1node-graphs:
   inherits: tt-qwen38-1node
   argv:
-    --compile: regions
-    --run-name: qwen38-l16-n1-regions
+    --compile: regions+graphs
+    --run-name: qwen38-l16-n1-graphs
 
 tt-qwen38-1node-selective:
   inherits: tt-qwen38-1node
@@ -116,11 +117,11 @@ tt-qwen38-n4-eager:
     --compile: eager
     --run-name: qwen38-n4-eager
 
-tt-qwen38-n4-regions:
+tt-qwen38-n4-graphs:
   inherits: tt-qwen38-n4
   argv:
-    --compile: regions
-    --run-name: qwen38-n4-regions
+    --compile: regions+graphs
+    --run-name: qwen38-n4-graphs
 
 tt-qwen38-n4-selective:
   inherits: tt-qwen38-n4
@@ -152,16 +153,15 @@ tt-qwen38-n4-tp2:
     --microbatch-sequences: 2
     --run-name: qwen38-n4-tp2
 
-# Low-memory fallback: no CUDA graphs (their memory pools roughly double
-# reserved memory: 25 GiB allocated / 51 GiB reserved at 4 nodes).
+# Low-memory fallback: bf16 AdamW moments (-4 B/param of optimizer state).
 tt-qwen38-n2-lowmem:
   inherits: tt-qwen38-n2
   argv:
-    --compile: regions
+    --adam-moments: bf16
     --run-name: qwen38-n2-lowmem
 
 tt-qwen38-n3-lowmem:
   inherits: tt-qwen38-n3
   argv:
-    --compile: regions
+    --adam-moments: bf16
     --run-name: qwen38-n3-lowmem

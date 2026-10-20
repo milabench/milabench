@@ -4,13 +4,13 @@
 #   (with MILABENCH_CONFIG pointing to this file, see journals/)
 #
 # Every entry has the same per-GPU settings as config/torchtitan_native.yaml
-# (seq 8192, 1 sequence/GPU, full AC, compile regions + CUDA graphs, FSDP over
-# all GPUs), so results are directly comparable (weak scaling). Global batch =
+# (seq 8192, 1 sequence/GPU, full AC, compile regions without CUDA graphs, FSDP
+# over all GPUs), so results are directly comparable (weak scaling). Global batch =
 # 8192 x GPUs tokens (2.42M tokens/step at 296 GPUs).
 #
 # Measurement: 30 warm-up steps, then a 5-minute window converted to a step
-# count after warm-up. Each entry has a "-lowmem" fallback (no CUDA graphs) for
-# out-of-memory errors.
+# count after warm-up. Each entry has a "-lowmem" fallback (bf16 AdamW moments,
+# -4 B/param) for out-of-memory errors.
 #
 # Rorqual leaves (topology.conf): 22 leaves with 3 GPU nodes, plus leaves with
 # 7, 8 and 12 GPU nodes. The single-leaf runs therefore use 3 nodes; pass the
@@ -88,40 +88,40 @@ tt-w-n70:
   argv:
     --run-name: w-n70
 
-# --- Low-memory fallbacks: same per-GPU batch and AC, no CUDA graphs ---
+# --- Low-memory fallbacks: same per-GPU batch and AC, bf16 AdamW moments ---
 
 tt-w-smoke-lowmem:
   inherits: tt-w-smoke
-  argv: {--compile: regions, --run-name: w-smoke-n1-l16-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-smoke-n1-l16-lowmem}
 
 tt-w-leaf3-lowmem:
   inherits: tt-w-leaf3
-  argv: {--compile: regions, --run-name: w-leaf3-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-leaf3-lowmem}
 
 tt-w-leaf7-lowmem:
   inherits: tt-w-leaf7
-  argv: {--compile: regions, --run-name: w-leaf7-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-leaf7-lowmem}
 
 tt-w-leaf8-lowmem:
   inherits: tt-w-leaf8
-  argv: {--compile: regions, --run-name: w-leaf8-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-leaf8-lowmem}
 
 tt-w-leaf12-lowmem:
   inherits: tt-w-leaf12
-  argv: {--compile: regions, --run-name: w-leaf12-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-leaf12-lowmem}
 
 tt-w-n28-lowmem:
   inherits: tt-w-n28
-  argv: {--compile: regions, --run-name: w-n28-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-n28-lowmem}
 
 tt-w-n74-lowmem:
   inherits: tt-w-n74
-  argv: {--compile: regions, --run-name: w-n74-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-n74-lowmem}
 
 tt-w-n72-lowmem:
   inherits: tt-w-n72
-  argv: {--compile: regions, --run-name: w-n72-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-n72-lowmem}
 
 tt-w-n70-lowmem:
   inherits: tt-w-n70
-  argv: {--compile: regions, --run-name: w-n70-lowmem}
+  argv: {--adam-moments: bf16, --run-name: w-n70-lowmem}
