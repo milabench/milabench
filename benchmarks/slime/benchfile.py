@@ -73,6 +73,15 @@ class Slime(Package):
         suffix = "-cu12" if major == "12" else ""
         return [f"nvidia-{name}{suffix}=={major}.{minor}.*" for name in ("cuda-nvcc", "nvvm", "cuda-crt", "cuda-cccl")]
 
+    def link_unversioned_libs(self):
+        # the nvidia wheels only ship libfoo.so.N: the linker (-lcudart, ...) needs libfoo.so
+        for lib_dir in Path(str(self.dirs.venv)).glob("lib/python*/site-packages/nvidia/*/lib"):
+            for lib in sorted(lib_dir.glob("lib*.so.*")):
+                base = lib.name.split(".so.")[0] + ".so"
+                if (lib_dir / base).exists() or not lib.name.split(".so.")[1].split(".")[0].isdigit():
+                    continue
+                (lib_dir / base).symlink_to(lib.name)
+
     async def install(self):
         self.clone()
         # megatron-core / transformer-engine are built with --no-build-isolation
@@ -80,6 +89,7 @@ class Slime(Package):
         await self.pip_install(*BUILD_REQUIRES, build_isolation=True)
         # TE and torch_memory_saver compile CUDA code: they need nvcc and the toolkit headers
         await self.pip_install(*self.toolkit_requirements(), build_isolation=True)
+        self.link_unversioned_libs()
         await super().install()
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
