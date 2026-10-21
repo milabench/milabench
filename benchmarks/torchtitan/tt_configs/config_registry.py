@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 
 from torchtitan.components.checkpoint import CheckpointManager
@@ -52,7 +53,7 @@ from torchtitan.hf_datasets.text_datasets import (
 from torchtitan.protocols.model_spec import ModelSpec
 from torchtitan.tools.profiler import Profiler
 
-from benchmate.fineweb import load_fineweb, read_manifest
+from benchmate.fineweb import load_fineweb
 
 
 def _data_dir() -> Path:
@@ -116,16 +117,15 @@ class MilabenchTextDataLoader(HuggingFaceTextDataLoader):
     @dataclass(kw_only=True, slots=True)
     class Config(HuggingFaceTextDataLoader.Config):
         samples: int | None = None
-        """Documents prepare.py downloads for ``fineweb``."""
+        """Documents prepare.py downloads and the loader reads for ``fineweb``."""
 
     def __init__(self, config: Config, **kwargs):
-        if config.dataset == "fineweb" and config.samples:
-            docs = (read_manifest(_fineweb_path()) or {}).get("docs", 0)
-            if docs < config.samples:
-                raise RuntimeError(
-                    f"FineWeb subset at {_fineweb_path()} has {docs:,} docs, "
-                    f"{config.samples:,} requested; run prepare"
-                )
+        if config.dataset == "fineweb":
+            # Read exactly the first `samples` docs, even from a larger subset
+            # prepared for another bench.
+            DATASETS["fineweb"] = replace(
+                DATASETS["fineweb"], loader=partial(load_fineweb, samples=config.samples)
+            )
         super().__init__(config, **kwargs)
 
 

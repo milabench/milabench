@@ -22,15 +22,21 @@ Typical use from a benchmark's prepare.py::
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from itertools import islice
 from pathlib import Path
 
 REPO_ID = "HuggingFaceFW/fineweb"
+
+# Pinned so every prepare, on any machine or date, reads the same prefix: a
+# subset of N docs is then always the first N docs of any larger subset.
+REVISION = "9bb295ddab0e05d785b879661af7260fed5140fc"
 
 # Subset name -> shard glob inside the dataset repo. The samples are random
 # draws over all CommonCrawl dumps, so their first row groups are already
@@ -59,7 +65,7 @@ def prepare_fineweb(
     dest,
     samples: int,
     subset: str = "sample-10BT",
-    revision: str = "main",
+    revision: str = REVISION,
     token: str | None = None,
     warm_cache: bool = True,
     workers: int = 16,
@@ -68,19 +74,51 @@ def prepare_fineweb(
 
     Idempotent: returns immediately if ``dest`` already holds at least
     ``samples`` documents of the same subset, so benchmarks sharing ``dest``
-    get the largest subset any of them asked for. Writes into ``<dest>.tmp``
-    and swaps it in at the end so an interrupted prepare never leaves a
-    partial dataset that looks complete.
-    """
-    import pyarrow.compute as pc
-    import pyarrow.parquet as pq
-    from huggingface_hub import HfApi, HfFileSystem
+    get the largest subset any of them asked for. A larger subset keeps the
+    revision of the one it replaces, so it always starts with the same docs.
 
+    Safe to run concurrently (several benches or nodes on a shared
+    filesystem): an exclusive lock on ``<dest>.lock`` serializes downloads,
+    and the manifest is re-checked once the lock is held. Data is written
+    into ``<dest>.tmp`` and swapped in at the end, so an interrupted prepare
+    never leaves a partial dataset that looks complete.
+    """
     dest = Path(dest)
     existing = read_manifest(dest)
     if existing and existing["subset"] == subset and existing["docs"] >= samples:
         print(f"FineWeb {subset}: {existing['docs']:,} docs already at {dest}")
         return existing
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with _lock(dest):
+        # Another process may have prepared it while we waited for the lock.
+        existing = read_manifest(dest)
+        if existing and existing["subset"] == subset:
+            if existing["docs"] >= samples:
+                print(f"FineWeb {subset}: {existing['docs']:,} docs already at {dest}")
+                return existing
+            revision = existing["revision"]
+        manifest = _fetch(dest, samples, subset, revision, token, workers)
+        if warm_cache:
+            load_fineweb(dest)
+    return manifest
+
+
+@contextmanager
+def _lock(dest: Path):
+    with open(dest.with_name(dest.name + ".lock"), "w") as f:
+        print(f"Waiting for lock on {f.name}", flush=True)
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _fetch(dest: Path, samples, subset, revision, token, workers) -> dict:
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfApi, HfFileSystem
 
     token = token or os.environ.get("MILABENCH_HF_TOKEN") or os.environ.get("HF_TOKEN")
     sha = HfApi(token=token).dataset_info(REPO_ID, revision=revision).sha
@@ -146,9 +184,6 @@ def prepare_fineweb(
     shutil.rmtree(dest, ignore_errors=True)
     tmp.rename(dest)
     print(f"FineWeb {subset}: {total_docs:,} docs / {total_tokens:,} tokens at {dest}")
-
-    if warm_cache:
-        load_fineweb(dest)
     return manifest
 
 
@@ -176,8 +211,11 @@ def _read_chunk(fs, file, metadata, row_groups):
     return file, table
 
 
-def load_fineweb(dest, split: str = "train"):
+def load_fineweb(dest, samples: int | None = None, split: str = "train"):
     """Load a prepared subset as a map-style ``datasets.Dataset``.
+
+    ``samples`` keeps only the first ``samples`` docs, so a bench reads the
+    same data whether ``dest`` was prepared for it or for a larger bench.
 
     The Arrow cache is pinned inside ``dest`` so it is shared between prepare
     and run regardless of HF_HOME, and ranks never race to build it.
@@ -190,10 +228,17 @@ def load_fineweb(dest, split: str = "train"):
         raise FileNotFoundError(
             f"No FineWeb subset at {dest}; run prepare (e.g. `milabench prepare`) first"
         )
-    parts = manifest["parts"]
-    return load_dataset(
+    if samples is not None and manifest["docs"] < samples:
+        raise ValueError(
+            f"FineWeb subset at {dest} has {manifest['docs']:,} docs, "
+            f"{samples:,} requested; run prepare"
+        )
+    dataset = load_dataset(
         "parquet",
-        data_files=[str(dest / p) for p in parts],
+        data_files=[str(dest / p) for p in manifest["parts"]],
         split=split,
         cache_dir=str(dest / ".hf_cache"),
     )
+    if samples is not None:
+        dataset = dataset.select(range(samples))
+    return dataset
