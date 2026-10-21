@@ -79,9 +79,13 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     VENV_ARCHIVE=$TT38/venv-archive/torchtitan_native-$CACHE_KEY.tar
     mkdir -p "$(dirname "$VENV_ARCHIVE")"
     t0=$(date +%s.%N)
-    if [ ! -f "$VENV_ARCHIVE" ]; then
-        tar -cf "$VENV_ARCHIVE.tmp" -C / "${SRC_VENV#/}" "${PY_ROOT#/}" && mv "$VENV_ARCHIVE.tmp" "$VENV_ARCHIVE"
-    fi
+    # flock: concurrent jobs (e.g. one per leaf switch) must not build it twice.
+    (
+        flock 9
+        if [ ! -f "$VENV_ARCHIVE" ]; then
+            tar -cf "$VENV_ARCHIVE.tmp" -C / "${SRC_VENV#/}" "${PY_ROOT#/}" && mv "$VENV_ARCHIVE.tmp" "$VENV_ARCHIVE"
+        fi
+    ) 9>"$VENV_ARCHIVE.lock"
     t1=$(date +%s.%N)
     LOCAL_VENV=$LOCAL_SW$SRC_VENV
     LOCAL_PY=$LOCAL_SW$PY_ROOT
@@ -118,7 +122,10 @@ rc=0
 milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" "$@" || rc=$?
 
 if [ -n "$CACHE_ARCHIVE" ] && [ ! -f "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ]; then
-    tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"
+    (
+        flock 9
+        [ -f "$CACHE_ARCHIVE" ] || { tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"; }
+    ) 9>"$CACHE_ARCHIVE.lock"
     echo "[tt-native] compile_cache_saved archive=$CACHE_ARCHIVE size=$(du -h "$CACHE_ARCHIVE" | cut -f1)"
 fi
 echo "[tt-native] job_end_epoch=$(date +%s.%N)"
