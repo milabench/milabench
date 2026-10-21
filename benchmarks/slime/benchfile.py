@@ -126,6 +126,11 @@ class Slime(Package):
 
     async def install(self):
         self.clone()
+        # All the entries share one venv (install_group torch) but milabench installs once per entry: every
+        # repeat would re-resolve against the extra indexes (flashinfer.ai answers 429 after a few) for nothing.
+        done = Path(str(self.dirs.venv)) / ".slime_installed"
+        if done.exists():
+            return
         # megatron-core / transformer-engine are built with --no-build-isolation
         # and their setup.py import these at metadata time
         await self.pip_install(*BUILD_REQUIRES, build_isolation=True)
@@ -141,6 +146,7 @@ class Slime(Package):
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
+        done.write_text("ok")
 
     @property
     def num_machines(self) -> int:
