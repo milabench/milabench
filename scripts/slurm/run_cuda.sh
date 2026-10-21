@@ -12,7 +12,8 @@ export PYTORCH_VERSION="2.13.0"
 
 # slime is not in all.yaml: it lives in its own config, in the milabench checkout
 export CONFIG_PATH=benchmarks/slime/dev.yaml
-export MILABENCH_ARGS="--select slime-qwen2.5-0.5b-sft-smoke"
+# every single-node entry (the glm5 ones need 32 nodes, see num_machines in dev.yaml)
+export MILABENCH_ARGS="--select slime-qwen2.5-0.5b-sft-smoke,slime-qwen2.5-0.5b-fineweb-smoke,slime-qwen2.5-0.5b-grpo-smoke"
 
 set -ex
 
@@ -52,11 +53,12 @@ export MILABENCH_USE_TOML_DEPS=1
 # the TE / sglang builds need the CUDA toolkit and a few cores
 export MAX_JOBS=${SLURM_CPUS_PER_TASK:-8}
 
-milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+# a failing stage must not stop the later ones: we want every issue from one job
+milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: install"
 
-milabench prepare --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+milabench prepare --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: prepare"
 
-milabench run --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+milabench run --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: run"
 
 rsync -az $MILABENCH_WORDIR/results/runs $OUTPUT_DIRECTORY
 
