@@ -41,7 +41,8 @@ def prepare_model(cfg):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(common.code_dir()), str(common.slime_src()), str(common.megatron_src()), env.get("PYTHONPATH", "")]
     )
-    nproc = os.environ.get("SLIME_CONVERT_NPROC", "1")
+    # >1 spreads the layers over the GPUs (the converter makes pipeline size = world size), needed for big models
+    nproc = os.environ.get("SLIME_CONVERT_NPROC") or str(cfg["model"].get("convert_nproc", 1))
     run(
         [
             "torchrun", f"--nproc-per-node={nproc}",

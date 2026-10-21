@@ -15,6 +15,7 @@ log function (stdout smuggling).
 from __future__ import annotations
 
 import faulthandler
+import json
 import os
 import sys
 import threading
@@ -48,11 +49,12 @@ from benchmate.monitor import setupvoir
 import common
 
 
-def forward_metrics(collector, log, stop: threading.Event):
+def forward_metrics(collector, log, stop: threading.Event, started: float):
     """Move events from the workers' collector actor to milabench."""
     import ray
 
     count = 0
+    first_step = False
     while True:
         done = stop.is_set()
         try:
@@ -61,6 +63,10 @@ def forward_metrics(collector, log, stop: threading.Event):
                     debug("forwarding event", event)
                 count += 1
                 log(event)
+                if not first_step and "rate" in event:
+                    # launch -> first training step: Ray, model load, rollout engines, first rollout, first step
+                    first_step = True
+                    log({"time_to_first_step": time.time() - started, "units": "s", "task": "main", "time": time.time()})
         except Exception:
             debug("forward_metrics failed:\n" + traceback.format_exc())
             return
@@ -73,7 +79,7 @@ def forward_metrics(collector, log, stop: threading.Event):
 # environment forwarded to the Ray workers (they do not inherit the driver's)
 _FORWARD = ("PYTHONPATH", "CUDA_DEVICE_MAX_CONNECTIONS", "PYTORCH_CUDA_ALLOC_CONF",
             "PYTHONUNBUFFERED", "NCCL_NVLS_ENABLE", "NCCL_CUMEM_ENABLE", "TOKENIZERS_PARALLELISM",
-            "HF_HOME", "HF_TOKEN", "LD_LIBRARY_PATH", "NVTE_CUDA_INCLUDE_DIR")
+            "HF_HOME", "HF_TOKEN", "LD_LIBRARY_PATH", "NVTE_CUDA_INCLUDE_DIR", "SLIME_SCHEDULE")
 
 
 def main():
@@ -89,6 +95,12 @@ def main():
 
     stop = threading.Event()
     forwarder = None
+    started = time.time()
+
+    # in-run schedules (response-length cap, router forcing): read by slime_rollout.py / slime_hook.py in the workers
+    if schedule := common.config().get("schedule"):
+        os.environ["SLIME_SCHEDULE"] = json.dumps(schedule)
+        debug("schedule", os.environ["SLIME_SCHEDULE"])
 
     try:
         import ray
@@ -101,7 +113,7 @@ def main():
         debug("main: ray initialised", ray.cluster_resources())
 
         collector = slime_metrics.create()
-        forwarder = threading.Thread(target=forward_metrics, args=(collector, log, stop), daemon=True)
+        forwarder = threading.Thread(target=forward_metrics, args=(collector, log, stop, started), daemon=True)
         forwarder.start()
 
         sys.argv = ["train.py", *common.expand_multi_value(sys.argv[1:])]

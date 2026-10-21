@@ -13,7 +13,11 @@ export PYTORCH_VERSION="2.13.0"
 # slime is not in all.yaml: it lives in its own config, in the milabench checkout
 export CONFIG_PATH=benchmarks/slime/dev.yaml
 # every single-node entry (the glm5 ones need 32 nodes, see num_machines in dev.yaml)
-export MILABENCH_ARGS="--select slime-qwen2.5-0.5b-sft-smoke,slime-qwen2.5-0.5b-fineweb-smoke,slime-qwen2.5-0.5b-grpo-smoke"
+SMOKE="slime-qwen2.5-0.5b-sft-smoke,slime-qwen2.5-0.5b-fineweb-smoke,slime-qwen2.5-0.5b-grpo-smoke"
+EIGHT_GPU="slime-qwen2.5-0.5b-sft-8gpu,slime-qwen2.5-0.5b-grpo-colocate-8gpu,slime-qwen2.5-0.5b-grpo-disagg-4p4"
+SCHEDULES="slime-qwen2.5-0.5b-grpo-schedule-smoke"
+MOE="slime-qwen3-30b-a3b-sft,slime-qwen3-30b-a3b-sft-routing"
+export MILABENCH_ARGS="--select $SMOKE,$EIGHT_GPU,$SCHEDULES,$MOE"
 
 set -ex
 
