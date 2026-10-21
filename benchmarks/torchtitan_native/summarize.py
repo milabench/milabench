@@ -25,7 +25,7 @@ def _records(paths):
 def main(argv):
     columns = [
         "run", "gpus", "layers", "compile", "ac", "par", "tok/s/gpu", "MFU %",
-        "step med (s)", "p90/med", "alloc GiB", "rsvd GiB", "init s", "1st step s",
+        "step med (s)", "p90/med", "alloc GiB", "rsvd GiB", "data %", "init s", "1st step s",
     ]
     print("| " + " | ".join(columns) + " |")
     print("|" + "---|" * len(columns))
@@ -47,6 +47,8 @@ def main(argv):
             f"{st['p90'] / st['median']:.3f}",
             f"{m['peak_allocated']['max']:.1f}",
             f"{m['peak_reserved']['max']:.1f}",
+            (f"{100 * r['data_loading']['fraction_of_median_step']:.2f}"
+             if "data_loading" in r else "-"),
             f"{s['model_initialized']['max_s']:.0f}",
             f"{s['first_step_done']['max_s'] - s['model_initialized']['max_s']:.0f}",
         ]

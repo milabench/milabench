@@ -136,6 +136,8 @@ class BenchTrainer(Trainer):
         self._warmup_steps = bench.warmup_steps
         self._total_steps = bench.warmup_steps + bench.measure_steps
         self._step_times: list[float] = []
+        self._data_times: list[float] = []
+        self._data_time_acc = 0.0
         self._last_step_end: float | None = None
         self._t_first_step_done: float | None = None
         self._t_measure_start: float | None = None
@@ -154,6 +156,18 @@ class BenchTrainer(Trainer):
 
     # -- training loop -----------------------------------------------------
 
+    def microbatch_generator(self, data_iterable):
+        """Accumulate the time spent fetching microbatches for the current step."""
+        inner = super().microbatch_generator(data_iterable)
+        while True:
+            start = time.perf_counter()
+            try:
+                microbatch = next(inner)
+            except StopIteration:
+                return
+            self._data_time_acc += time.perf_counter() - start
+            yield microbatch
+
     def should_continue_training(self) -> bool:
         return self.engine.num_completed_steps < self._total_steps
 
@@ -169,6 +183,8 @@ class BenchTrainer(Trainer):
         step_time = now - self._last_step_end
         self._last_step_end = now
         self._step_times.append(step_time)
+        self._data_times.append(self._data_time_acc)
+        self._data_time_acc = 0.0
 
         step = self.engine.num_completed_steps
         if step == 1:
@@ -234,6 +250,8 @@ class BenchTrainer(Trainer):
             self._t_model_initialized,
             self._t_first_step_done or float("nan"),
             self._t_measure_start or float("nan"),
+            statistics.median(self._data_times[self._warmup_steps :] or [0.0]),
+            max(self._data_times[self._warmup_steps :] or [0.0]),
         ]
         all_scalars = self._gather_floats(scalars)
         all_steps = self._gather_floats(measured)
@@ -302,6 +320,15 @@ class BenchTrainer(Trainer):
                 "step_time_definition": (
                     "wall time between consecutive step ends (after "
                     "cuda.synchronize), max over ranks per step"
+                ),
+            },
+            "data_loading": {
+                "median_s_per_step": max(row[7] for row in all_scalars),
+                "max_s_per_step": max(row[8] for row in all_scalars),
+                "fraction_of_median_step": max(row[7] for row in all_scalars) / median,
+                "definition": (
+                    "CPU time fetching a step's microbatches, measured steps; "
+                    "median per rank, worst rank reported"
                 ),
             },
             "throughput": {
