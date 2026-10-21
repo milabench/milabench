@@ -85,7 +85,8 @@ _slime:
     --hidden-dropout: 0.0
     --accumulate-allreduce-grads-in-fp32: true
     --attention-softmax-in-fp32: true
-    --attention-backend: flash
+    # "flash" disables TE's fused/unfused attention and flash-attn is not installed: let TE pick (cuDNN fused on A100)
+    --attention-backend: auto
     # slime_hook.py: forwards rate/loss from the Ray workers to milabench
     --custom-megatron-init-path: slime_hook.install
 
