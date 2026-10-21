@@ -49,9 +49,14 @@ class NativeTorchrunSrun(TorchrunSrun):
     """
 
     def __init__(self, executor, *args, **kwargs) -> None:
+        # Static rendezvous waits for every node: fail within a few minutes
+        # if one never joins (torchrun default: 600 s). Configurable per
+        # bench with `rdzv_timeout` (seconds).
+        rdzv_timeout = int(executor.pack.config.get("rdzv_timeout", 300))
         base_exec = TorchrunAllNodes.make_base_executor(
             NativeTorchrun,
             executor,
+            f"--rdzv-conf=timeout={rdzv_timeout}",
             *args,
             **kwargs,
         )
