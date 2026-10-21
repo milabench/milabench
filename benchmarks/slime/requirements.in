@@ -35,6 +35,10 @@ xgrammar==0.2.7
 soundfile
 python-multipart
 sglang-kernel==0.4.7
+# flashinfer is imported by sglang at module load on CUDA (fp8_utils); installed --no-deps by benchfile.py
+nvidia-ml-py
+tabulate
+apache-tvm-ffi>=0.1.6,<0.2,!=0.1.8,!=0.1.8.post0
 uvicorn
 fastapi
 slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230

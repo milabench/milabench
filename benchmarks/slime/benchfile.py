@@ -36,6 +36,9 @@ PATCH_VERSION = "v0.5.21"
 # slime imports sglang (arguments, rollout) but the train-only path never runs it. Same version as slime's
 # Dockerfile; installed without its heavy native pins (cuda-tile, flash-attn-4, flashinfer, ...)
 SGLANG_REQUIREMENT = "sglang==0.5.21"
+# sglang imports it at module load on CUDA; its own pins (cuda-tile, cutlass-dsl pre-releases, ...) are heavy and
+# only needed for the kernels we do not select (triton attention + pytorch sampling), so no deps
+FLASHINFER_REQUIREMENT = "flashinfer-python==0.6.18"
 TE_REQUIREMENT = "transformer-engine[pytorch]==2.18.0"
 # slime's Dockerfile builds it from git (not on PyPI), after torch
 TMS_REQUIREMENT = "torch_memory_saver @ git+https://github.com/zhuzilin/torch_memory_saver.git@bdab8c55f490a00a746ec34e301391617f5ca878"
@@ -93,7 +96,7 @@ class Slime(Package):
         await super().install()
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
-        await self.pip_install("--no-deps", SGLANG_REQUIREMENT, build_isolation=True)
+        await self.pip_install("--no-deps", SGLANG_REQUIREMENT, FLASHINFER_REQUIREMENT, build_isolation=True)
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
