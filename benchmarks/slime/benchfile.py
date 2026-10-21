@@ -143,7 +143,11 @@ class Slime(Package):
                 if (toolkit / "bin" / "nvcc").exists():
                     # pip toolkit (see toolkit_requirements): nvcc, headers and libs under one root
                     env["CUDA_HOME"] = env["CUDA_PATH"] = str(toolkit)
-                    env["PATH"] = os.pathsep.join([str(toolkit / "bin"), env.get("PATH") or os.environ.get("PATH", "")])
+                    # `python` (the shebang of main.py/prepare.py) must stay the benchmark venv's: make_env() is
+                    # merged over the session env, so a PATH built from os.environ would hide the venv's bin
+                    # (and pick up the milabench env activated by the job script instead)
+                    base = env.get("PATH") or os.environ.get("PATH", "")
+                    env["PATH"] = os.pathsep.join([str(toolkit / "bin"), str(Path(str(self.dirs.venv)) / "bin"), base])
         for d in includes:
             if (Path(d) / "cuda_runtime.h").exists():
                 # TE compiles its normalization/RTC kernels with the NVRTC from the wheels (13.x, first on
