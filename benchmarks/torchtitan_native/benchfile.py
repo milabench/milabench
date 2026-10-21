@@ -104,8 +104,6 @@ class TorchtitanNative(Package):
         env["PYTHONPATH"] = code if not prev else f"{code}{os.pathsep}{prev}"
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
-        # The trainer owns the stop condition; never let voir early-stop it.
-        env["BENCHMATE_OBSERVATION_COUNT"] = str(10**9)
         # Compile caches on node-local disk: home is read-only on some compute
         # nodes (Trillium), and the shared filesystem is slow for many ranks
         # writing small files. The path must not depend on the job: cache

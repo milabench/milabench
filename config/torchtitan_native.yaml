@@ -32,34 +32,38 @@ _tt_native:
   plan:
     method: njobs
     n: 1
+  # Measurement window (tt_native/instrument.py): `skip` warm-up steps, then
+  # `stop` measured steps, or `stop_seconds` of measurement when > 0.
+  voir:
+    options:
+      skip: 40
+      stop: 100
+      stop_seconds: 0
   argv: &tt_native_argv
     --flavor: 27B
     --seq-len: 8192
     --microbatch-sequences: 1
     --compile: regions
     --ac: full
-    --warmup-steps: 40
-    --measure-steps: 100
-    --results-dir: "{milabench_extra}/results"
 
 # --- 1 node (4 GPUs): truncated model (full 27B training state does not fit) ---
 
 tt-qwen38-smoke:
   inherits: _tt_native
   max_duration: 1800
+  voir:
+    options:
+      skip: 5
+      stop: 10
   argv:
     <<: *tt_native_argv
     --n-layers: 8
-    --warmup-steps: 5
-    --measure-steps: 10
-    --run-name: qwen38-smoke
 
 tt-qwen38-1node:
   inherits: _tt_native
   argv:
     <<: *tt_native_argv
     --n-layers: 16
-    --run-name: qwen38-l16-n1
 
 # --- Full 27B, multi-node ---
 
@@ -68,21 +72,18 @@ tt-qwen38-n2:
   num_machines: 2
   argv:
     <<: *tt_native_argv
-    --run-name: qwen38-n2
 
 tt-qwen38-n3:
   inherits: _tt_native
   num_machines: 3
   argv:
     <<: *tt_native_argv
-    --run-name: qwen38-n3
 
 tt-qwen38-n4:
   inherits: _tt_native
   num_machines: 4
   argv:
     <<: *tt_native_argv
-    --run-name: qwen38-n4
 
 # --- Variants (same per-GPU batch; one knob changed). Several can run in one
 #     allocation: --select a,b,c (multi-node entries use the first N nodes). ---
@@ -91,43 +92,36 @@ tt-qwen38-1node-eager:
   inherits: tt-qwen38-1node
   argv:
     --compile: eager
-    --run-name: qwen38-l16-n1-eager
 
 tt-qwen38-1node-graphs:
   inherits: tt-qwen38-1node
   argv:
     --compile: regions+graphs
-    --run-name: qwen38-l16-n1-graphs
 
 tt-qwen38-1node-selective:
   inherits: tt-qwen38-1node
   argv:
     --ac: selective
-    --run-name: qwen38-l16-n1-selective
 
 tt-qwen38-1node-noac:
   inherits: tt-qwen38-1node
   argv:
     --ac: none
-    --run-name: qwen38-l16-n1-noac
 
 tt-qwen38-n4-eager:
   inherits: tt-qwen38-n4
   argv:
     --compile: eager
-    --run-name: qwen38-n4-eager
 
 tt-qwen38-n4-graphs:
   inherits: tt-qwen38-n4
   argv:
     --compile: regions+graphs
-    --run-name: qwen38-n4-graphs
 
 tt-qwen38-n4-selective:
   inherits: tt-qwen38-n4
   argv:
     --ac: selective
-    --run-name: qwen38-n4-selective
 
 # Upstream stacked layout ([2, F, D], FSDP shards dim 1): A/B for the default
 # row layout. Only valid when the GPU count divides 17408 (4, 8, 16, ...).
@@ -135,14 +129,12 @@ tt-qwen38-n4-ttlayout:
   inherits: tt-qwen38-n4
   argv:
     --stacked-layout: torchtitan
-    --run-name: qwen38-n4-ttlayout
 
 # HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs.
 tt-qwen38-n4-hsdp:
   inherits: tt-qwen38-n4
   argv:
     --dp-replicate: 2
-    --run-name: qwen38-n4-hsdp-r2s8
 
 # TP=2 inside a node: 2 sequences per DP rank keeps 8192 tokens per GPU.
 tt-qwen38-n4-tp2:
@@ -151,26 +143,23 @@ tt-qwen38-n4-tp2:
     --tp: 2
     --stacked-layout: torchtitan
     --microbatch-sequences: 2
-    --run-name: qwen38-n4-tp2
 
 # Low-memory fallback: bf16 AdamW moments (-4 B/param of optimizer state).
 tt-qwen38-n2-lowmem:
   inherits: tt-qwen38-n2
   argv:
     --adam-moments: bf16
-    --run-name: qwen38-n2-lowmem
 
 tt-qwen38-n3-lowmem:
   inherits: tt-qwen38-n3
   argv:
     --adam-moments: bf16
-    --run-name: qwen38-n3-lowmem
 
 # Topology / contention tests (scripts/slurm/tt_native_topology.sh): same as n4,
 # shorter measurement so several node layouts fit in one allocation.
 tt-qwen38-n4-topo:
   inherits: tt-qwen38-n4
-  argv:
-    --warmup-steps: 30
-    --measure-steps: 60
-    --run-name: qwen38-n4-topo
+  voir:
+    options:
+      skip: 30
+      stop: 60

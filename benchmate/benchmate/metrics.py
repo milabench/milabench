@@ -49,6 +49,28 @@ def give_push():
     return file_push()
 
 
+def agree_observation_count(seconds, step_time, device=None, max_count=None):
+    """Turn a time budget into an observation count every rank agrees on.
+
+    ``step_time`` is this rank's estimate of one observation (e.g. measured
+    during warm-up). In a distributed run the slowest estimate wins
+    (all-reduce MAX), so every rank stops after the same number of steps,
+    which a rank-local time check cannot guarantee. Must be called by all
+    ranks at the same point.
+    """
+    import math
+
+    estimate = float(step_time)
+    if not TORCH_ERROR and dist.is_initialized():
+        value = torch.tensor([estimate], dtype=torch.float64, device=device)
+        dist.all_reduce(value, op=dist.ReduceOp.MAX)
+        estimate = float(value.item())
+    count = max(1, math.ceil(float(seconds) / estimate)) if estimate > 0 else 1
+    if max_count is not None:
+        count = min(count, int(max_count))
+    return count
+
+
 def earlystop_count():
     default_count = int(os.getenv("VOIR_EARLYSTOP_COUNT", 60)) 
     skip_count = int(os.getenv("VOIR_EARLYSTOP_SKIP", 10))

@@ -29,7 +29,9 @@ from torchtitan.observability.metrics import MetricsProcessor
 
 from .data import NullTokenizer, RandomTokenDataLoader
 from .layout import patch_fsdp_placements, use_row_stacked_linears
-from .trainer import BenchConfig, BenchTrainer
+from torchtitan.trainer import Trainer
+
+from . import instrument
 
 OPTIONS_ENV = "TT_NATIVE_OPTIONS"
 
@@ -63,13 +65,6 @@ class Options:
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
     adam_moments: Literal["fp32", "bf16"] = "fp32"
     """AdamW moment dtype. bf16 saves 4 B/param (low-memory fallback)."""
-
-    # Measurement
-    warmup_steps: int = 40
-    measure_steps: int = 100
-    measure_seconds: float | None = None
-    results_dir: str = "./results"
-    run_name: str = "qwen38"
 
     # Distributed timeouts. init covers process-group setup, model init and the
     # first step (compilation, CUDA graph capture); train covers later steps.
@@ -125,7 +120,7 @@ def _activation_checkpoint(mode: ACMode):
     raise ValueError(f"unknown activation checkpointing mode {mode!r}")
 
 
-def qwen38() -> BenchTrainer.Config:
+def qwen38() -> Trainer.Config:
     opts = Options.from_env()
     model = _model_config(opts)
     vocab_size = decoder_vocab_size(model)
@@ -154,7 +149,10 @@ def qwen38() -> BenchTrainer.Config:
         "options": asdict(opts),
     }
 
-    return BenchTrainer.Config(
+    # Recorded in the summary pushed by the voirfile (tt_native.instrument).
+    instrument.RUN_DESCRIPTION = description
+
+    return Trainer.Config(
         model=model,
         loss=ChunkedLossWrapper.Config(
             loss_fn=CrossEntropyLoss.Config(global_vocab_size=vocab_size),
@@ -184,7 +182,7 @@ def qwen38() -> BenchTrainer.Config:
             num_tokens_per_microbatch_per_dp_rank=tokens_per_microbatch,
             num_tokens_per_train_step=tokens_per_train_step,
             max_context_length=opts.seq_len,
-            # The bench trainer decides when to stop; keep the LR schedule long.
+            # The voirfile stops the run (voir skip/stop); keep the LR schedule long.
             steps=1_000_000,
             disable_cuda_graphs=opts.compile != "regions+graphs",
             mixed_precision_param="bfloat16",
@@ -208,12 +206,4 @@ def qwen38() -> BenchTrainer.Config:
         checkpointer=None,
         activation_checkpoint=_activation_checkpoint(opts.ac),
         dump_folder=opts.dump_folder,
-        bench=BenchConfig(
-            warmup_steps=opts.warmup_steps,
-            measure_steps=opts.measure_steps,
-            measure_seconds=opts.measure_seconds,
-            results_dir=opts.results_dir,
-            run_name=opts.run_name,
-            description=description,
-        ),
     )

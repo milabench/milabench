@@ -47,9 +47,10 @@ include:
 _tt_window:
   inherits: _tt_native
   max_duration: 2400
-  argv:
-    --warmup-steps: 30
-    --measure-seconds: 300
+  voir:
+    options:
+      skip: 30
+      stop_seconds: 300
 
 # Smoke test: 1 node. The full 27B training state (~430 GB) does not fit on 4
 # GPUs, so the smoke test uses the first 16 layers (same per-GPU settings).
@@ -58,95 +59,78 @@ tt-w-smoke:
   num_machines: 1
   argv:
     --n-layers: 16
-    --run-name: w-smoke-n1-l16
 
 # Single leaf switch: 3 nodes (12 GPUs). Tightest memory of the full-model
 # configs (36 GB of sharded state per GPU).
 tt-w-leaf3:
   inherits: _tt_window
   num_machines: 3
-  argv:
-    --run-name: w-leaf3
 
 # Larger leaves (7, 8 and 12 GPU nodes).
 tt-w-leaf7:
   inherits: _tt_window
   num_machines: 7
-  argv:
-    --run-name: w-leaf7
 
 tt-w-leaf8:
   inherits: _tt_window
   num_machines: 8
-  argv:
-    --run-name: w-leaf8
 
 tt-w-leaf12:
   inherits: _tt_window
   num_machines: 12
-  argv:
-    --run-name: w-leaf12
 
 # Mid scale: 28 nodes (112 GPUs).
 tt-w-n28:
   inherits: _tt_window
   num_machines: 28
-  argv:
-    --run-name: w-n28
 
 # Full scale and fallbacks if nodes are excluded at the health check.
 tt-w-n74:
   inherits: _tt_window
   num_machines: 74
-  argv:
-    --run-name: w-n74
 
 tt-w-n72:
   inherits: _tt_window
   num_machines: 72
-  argv:
-    --run-name: w-n72
 
 tt-w-n70:
   inherits: _tt_window
   num_machines: 70
-  argv:
-    --run-name: w-n70
 
 # --- Low-memory fallbacks: same per-GPU batch and AC, bf16 AdamW moments ---
 
 tt-w-smoke-lowmem:
   inherits: tt-w-smoke
-  argv: {--adam-moments: bf16, --run-name: w-smoke-n1-l16-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-leaf3-lowmem:
   inherits: tt-w-leaf3
-  argv: {--adam-moments: bf16, --run-name: w-leaf3-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-leaf7-lowmem:
   inherits: tt-w-leaf7
-  argv: {--adam-moments: bf16, --run-name: w-leaf7-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-leaf8-lowmem:
   inherits: tt-w-leaf8
-  argv: {--adam-moments: bf16, --run-name: w-leaf8-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-leaf12-lowmem:
   inherits: tt-w-leaf12
-  argv: {--adam-moments: bf16, --run-name: w-leaf12-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-n28-lowmem:
   inherits: tt-w-n28
-  argv: {--adam-moments: bf16, --run-name: w-n28-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-n74-lowmem:
   inherits: tt-w-n74
-  argv: {--adam-moments: bf16, --run-name: w-n74-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-n72-lowmem:
   inherits: tt-w-n72
-  argv: {--adam-moments: bf16, --run-name: w-n72-lowmem}
+  argv: {--adam-moments: bf16}
 
 tt-w-n70-lowmem:
   inherits: tt-w-n70
-  argv: {--adam-moments: bf16, --run-name: w-n70-lowmem}
+  argv: {--adam-moments: bf16}

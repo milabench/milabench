@@ -47,9 +47,9 @@ def _parse_args(argv):
 
 
 def main():
-    import tt_native.trainer as bench_trainer
+    import tt_native.instrument as instrument
 
-    bench_trainer.PROCESS_START = _PROCESS_START
+    instrument.PROCESS_START = _PROCESS_START
     _parse_args(sys.argv[1:])
 
     from torchtitan.train import main as torchtitan_main

@@ -1,10 +1,17 @@
-"""Report benchmark throughput to milabench (rank 0 of the main node only).
+"""voir instrumentation for the native TorchTitan benchmark.
 
-The authoritative numbers are in the JSON results record written by
-``tt_native.trainer``; this only feeds milabench's live metrics/report.
+Same structure as the other milabench voirfiles: TorchTitan's Trainer is
+wrapped (see tt_native/instrument.py), benchmate times the steps and pushes
+one ``rate`` (global tokens/s) per measured step, plus ``loss`` and a final
+``summary`` event. The official throughput is the median of the rates.
+
+Options (milabench ``voir.options``):
+    skip          warm-up steps, not timed
+    stop          measured steps
+    stop_seconds  if > 0, measure for this long instead of ``stop`` steps
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from voir import configurable
 from voir.phase import StopProgram
@@ -20,39 +27,32 @@ class Config:
     dash: bool = False
     interval: str = "1s"
     gpu_poll: float = 1.0
-    # The bench trainer decides when to stop (warm-up + measurement window);
-    # voir's early stop must never cut a run short.
-    stop: int = 10**9
-
-
-def _install_step_hook() -> None:
-    import tt_native.trainer as bench_trainer
-
-    push = sumggle_push()
-
-    def on_step(step, step_time, tokens, loss):
-        # Global rank 0 only: rank 0 of every node runs this voirfile, and
-        # their stdout lines interleave (garbled JSON for milabench).
-        import torch.distributed as dist
-
-        if dist.is_initialized() and dist.get_rank() != 0:
-            return
-        push(rate=tokens / step_time, units="tokens/s", task="train")
-        if loss is not None:
-            push(loss=float(loss), task="train")
-
-    bench_trainer.STEP_HOOK = on_step
+    skip: int = 40
+    stop: int = 100
+    stop_seconds: float = 0.0
 
 
 @configurable
 def instrument_main(ov, options: Config):
     yield ov.phases.init
 
-    voirfile_monitor(ov, options)
+    # The stop is applied on every rank by the instrumented trainer at the
+    # same step. voir's own early stop acts on rank 0 only, which would leave
+    # the other ranks blocked in collectives: keep it out of reach.
+    voirfile_monitor(ov, replace(options, stop=10**9))
 
     yield ov.phases.load_script
 
-    _install_step_hook()
+    from tt_native.instrument import TrainerInstrument, install
+
+    install(
+        TrainerInstrument(
+            skip=options.skip,
+            stop=options.stop,
+            stop_seconds=options.stop_seconds or None,
+            push=sumggle_push(),
+        )
+    )
 
     with forward_voir_file():
         try:

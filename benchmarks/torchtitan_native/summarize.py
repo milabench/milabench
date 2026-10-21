@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """Tabulate torchtitan_native results records (Markdown).
 
-    python summarize.py <results dir or *.json files>...
+    python summarize.py <records dir or *.json files>...
+
+Records come from export_record.py (milabench run data).
 """
 
 import json
@@ -35,7 +37,7 @@ def main(argv):
         p = c["parallelism"]
         par = f"r{p['dp_replicate']}s{p['dp_shard']}t{p['tp']}"
         row = [
-            r["run_name"],
+            r.get("bench") or r.get("run_name"),
             c["gpus"],
             c.get("n_layers"),
             c.get("compile"),
