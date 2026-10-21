@@ -237,7 +237,6 @@ def load_fineweb(dest, samples: int | None = None, split: str = "train"):
         "parquet",
         data_files=[str(dest / p) for p in manifest["parts"]],
         split=split,
-        cache_dir=str(dest / ".hf_cache"),
     )
     if samples is not None:
         dataset = dataset.select(range(samples))
