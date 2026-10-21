@@ -116,6 +116,13 @@ def _lock(dest: Path):
 
 
 def _fetch(dest: Path, samples, subset, revision, token, workers) -> dict:
+     """Fetch the specified number of samples.
+     If dest already exists but doesn't hold enough samples 
+     we will refetch all the samples (including already downloaded ones) and update dest.
+     
+     TODO: Tweak the fetch so it only downloads missing samples, 
+     so running prepare on bench1 and bench2, if bench1 has less sample 
+     we do not redo everything when bench2 prepare gets executed."""
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
     from huggingface_hub import HfApi, HfFileSystem
