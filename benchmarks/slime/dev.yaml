@@ -87,6 +87,9 @@ _slime:
     --attention-softmax-in-fp32: true
     # "flash" disables TE's fused/unfused attention and flash-attn is not installed: let TE pick (cuDNN fused on A100)
     --attention-backend: auto
+    # TE falls back to unfused attention here (activations grow with seq_len^2: 66GB peak for a 0.5B model,
+    # OOM with long documents or DP=8): recompute them. The big-model entries set `full` themselves.
+    --recompute-granularity: selective
     # slime_hook.py: forwards rate/loss from the Ray workers to milabench
     --custom-megatron-init-path: slime_hook.install
 
@@ -139,8 +142,6 @@ slime-qwen2.5-0.5b-fineweb-smoke:
   dataset: fineweb
   argv:
     <<: *sft_argv
-    # ~4k-token documents: without recompute the attention activations alone fill an 80GB GPU (OOM)
-    --recompute-granularity: selective
     --prompt-data: "{milabench_data}/slime/datasets/fineweb_small.parquet"
     --rollout-batch-size: 8
     --global-batch-size: 8
@@ -253,7 +254,7 @@ slime-qwen2.5-0.5b-grpo-schedule-smoke:
     --actor-num-gpus-per-node: 1
 
 # --- MoE proxy: Qwen3-30B-A3B on one node ---
-# Same layout as slime's scripts/run-qwen3-30B-A3B.sh (TP4 x CP2 x EP8 = 8 GPUs), SFT mode. Exercises the
+# Layout of slime's scripts/run-qwen3-30B-A3B.sh with CP=1 (TP4 x EP8, DP=2), SFT mode. Exercises the
 # router, expert parallelism and all-to-all that the GLM-5 runs rely on, on a model that fits 8 GPUs.
 _qwen3_30b_a3b:
   inherits: _slime
@@ -300,7 +301,9 @@ _qwen3_30b_a3b:
     --tensor-model-parallel-size: 4
     --sequence-parallel: true
     --pipeline-model-parallel-size: 1
-    --context-parallel-size: 2
+    # slime's recipe uses CP=2 (H100 + flash/fused attention). Here TE finds no attention backend with CP>1
+    # (unfused cannot do context parallelism, flash-attn is not installed, cuDNN fused is rejected): CP=1, DP=2.
+    --context-parallel-size: 1
     --expert-model-parallel-size: 8
     --expert-tensor-parallel-size: 1
     --recompute-granularity: full
