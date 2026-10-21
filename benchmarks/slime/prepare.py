@@ -110,3 +110,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # The streamed FineWeb download leaves a background HTTP thread behind; at interpreter shutdown it
+    # aborts the process ("PyGILState_Release", exit -6) although everything was written. Everything is
+    # done and flushed here, so skip the finalization.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
