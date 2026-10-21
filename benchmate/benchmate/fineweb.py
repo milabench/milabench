@@ -116,13 +116,14 @@ def _lock(dest: Path):
 
 
 def _fetch(dest: Path, samples, subset, revision, token, workers) -> dict:
-     """Fetch the specified number of samples.
-     If dest already exists but doesn't hold enough samples 
-     we will refetch all the samples (including already downloaded ones) and update dest.
-     
-     TODO: Tweak the fetch so it only downloads missing samples, 
-     so running prepare on bench1 and bench2, if bench1 has less sample 
-     we do not redo everything when bench2 prepare gets executed."""
+    """Fetch the first ``samples`` docs into ``dest``.
+
+    If ``dest`` already exists but holds fewer docs, everything is fetched
+    again (including docs already downloaded) and ``dest`` is replaced.
+
+    TODO: only download the missing docs, so preparing bench1 then a bench2
+    with more samples does not redo bench1's download.
+    """
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
     from huggingface_hub import HfApi, HfFileSystem
@@ -224,8 +225,8 @@ def load_fineweb(dest, samples: int | None = None, split: str = "train"):
     ``samples`` keeps only the first ``samples`` docs, so a bench reads the
     same data whether ``dest`` was prepared for it or for a larger bench.
 
-    The Arrow cache is pinned inside ``dest`` so it is shared between prepare
-    and run regardless of HF_HOME, and ranks never race to build it.
+    The Arrow cache follows milabench's HF_HOME (the data dir in both prepare
+    and run), so the copy built by ``prepare_fineweb`` is the one runs reuse.
     """
     from datasets import load_dataset
 
