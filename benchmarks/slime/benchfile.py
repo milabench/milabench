@@ -16,7 +16,9 @@ start a local Ray.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import milabench.commands as cmd
@@ -38,6 +40,11 @@ PATCH_VERSION = "v0.5.21"
 SGLANG_REQUIREMENT = "sglang==0.5.21"
 # sglang imports it at module load on CUDA; its own pins (cuda-tile, cutlass-dsl pre-releases, ...) are heavy and
 # only needed for the kernels we do not select (triton attention + pytorch sampling), so no deps
+# slime patches the SGLang it runs against (docker/patch/<version>/, applied by its Dockerfile): without them
+# SGLang rejects slime's weight updates ("update_weights_from_tensor must run between begin_weight_update()...")
+SGLANG_PATCHES = ("sglang.patch", "sglang-top_p.patch", "sglang-release_hicache.patch", "sglang-pull_weights.patch",
+                  "sglang-deterministic.patch")
+SGLANG_REQUIRED_PATCHES = ("sglang.patch",)
 FLASHINFER_REQUIREMENT = "flashinfer-python==0.6.18"
 TE_REQUIREMENT = "transformer-engine[pytorch]==2.18.0"
 # slime's Dockerfile builds it from git (not on PyPI), after torch
@@ -85,6 +92,38 @@ class Slime(Package):
                     continue
                 (lib_dir / base).symlink_to(lib.name)
 
+    def patch_sglang(self):
+        """Apply slime's SGLang patches to the installed package. Returns (applied, skipped) names.
+
+        The patches are written against the sglang repo (python/sglang/...), so they are applied to a copy
+        laid out that way (git apply refuses to go through symlinks) and the result is copied back."""
+        pkg = next(Path(str(self.dirs.venv)).glob("lib/python*/site-packages/sglang"))
+        marker = pkg / ".slime_patched"
+        if marker.exists():
+            return [], []
+
+        patches = self.dirs.code / "slime_src" / "docker" / "patch" / PATCH_VERSION
+        applied, skipped = [], []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copytree(pkg, root / "python" / "sglang")
+            for name in SGLANG_PATCHES:
+                patch = patches / name
+                result = subprocess.run(
+                    ["git", "apply", "--include=python/*", f"--exclude=python/sglang/kernels/*/tests/*", str(patch)],
+                    cwd=root, capture_output=True, text=True,
+                ) if patch.exists() else None
+                if result is not None and result.returncode == 0:
+                    applied.append(name)
+                elif name in SGLANG_REQUIRED_PATCHES:
+                    raise RuntimeError(f"required sglang patch {name} does not apply: "
+                                       f"{result.stderr[:500] if result else 'missing'}")
+                else:
+                    skipped.append(name)
+            shutil.copytree(root / "python" / "sglang", pkg, dirs_exist_ok=True)
+        marker.write_text("\n".join(applied))
+        return applied, skipped
+
     async def install(self):
         self.clone()
         # megatron-core / transformer-engine are built with --no-build-isolation
@@ -97,6 +136,8 @@ class Slime(Package):
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
         await self.pip_install("--no-deps", SGLANG_REQUIREMENT, FLASHINFER_REQUIREMENT, build_isolation=True)
+        applied, skipped = self.patch_sglang()
+        await self.message("sglang patches applied:", applied, "skipped (not needed or do not apply):", skipped)
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
