@@ -220,6 +220,8 @@ class TrainerInstrument:
             earlystop=count,
             raise_stop_program=False,
         )
+        # Manual stepping: set what TimedIterator.__iter__ would have set.
+        self.timer.last_time = time.time()
         self.timer.start = torch.cuda.Event(enable_timing=True)
         self.timer.start.record()
         self._step_ends = [self.timer.start]
