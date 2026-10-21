@@ -51,10 +51,14 @@ dirs): it catches mismatches with the HF config (rotary base, ...) and batch-siz
 - `--attention-backend auto` (`flash` leaves no backend without flash-attn); fineweb needs selective recompute.
 
 ## Status / TODO
-- Validated on 1 node of 8 x A100: `slime-qwen2.5-0.5b-{sft,fineweb,grpo}-smoke` (sft ~1.5-2k tokens/s, fineweb
-  ~1.5k, grpo ~1k). Everything else above is new: see the job logs.
-- `rate` is slime's `actor_train_tok_per_s`, computed from the logging rank's local sequences. The 8-GPU entries
-  settle whether it should be scaled by the DP size.
+- Validated on 1 node of 8 x A100 (all passing): the three smoke entries, `sft-8gpu`, the colocated and the
+  disaggregated 8-GPU GRPO entries, the response-cap schedule, and the Qwen3-30B-A3B MoE proxy with and without the
+  routing switch (forced balance: expert imbalance ~1.4, real routing: ~10-14). The GLM-5.3 and GLM-5.3-Flash entries
+  are config only (they pass slime's argument validation).
+- `rate` is slime's `actor_train_tok_per_s`: the tokens of the **whole** rollout batch (all data-parallel ranks,
+  `Timer().seq_lens` in `slime/utils/data.py`) over the training time, so it is already the global throughput:
+  do not scale it by the DP size. It is logged by DP rank 0 only. The first training step is several times slower
+  (warm-up; ~180 s vs ~30 s on the 30B MoE), so drop the first step(s) before comparing runs.
 - Multi-node (`RayCluster`) is untested: the venv and the data have to be on a shared filesystem (the slurm scripts
   install under the per-job `/tmp` of one node), and the GPU monitor only covers the main node.
 - GLM-5.x: the checkpoint has to be converted on a multi-node job (`SLIME_CONVERT=1`) or provided at `--ref-load`;
