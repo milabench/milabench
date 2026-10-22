@@ -5,6 +5,7 @@
 #       scripts/slurm/tt_native.sh tt-qwen38-n2 [extra milabench run args]
 #
 #   Window configs: sbatch --export=ALL,TT_CONFIG=window ... tt_native.sh tt-w-leaf3
+#   Per-job environment as leading arguments: tt_native.sh TT_LOCAL_VENV=1 tt-w-leaf3
 #
 # Expects (see journals/cluster-guidelines.md):
 #   $TT38/env        venv with milabench installed (uv venv --python 3.12; uv pip install -e)
@@ -20,7 +21,14 @@
 
 set -euo pipefail
 
-BENCH=${1:?usage: tt_native.sh <bench-name> [milabench run args]}
+# Leading NAME=value arguments are exported for the job (for launchers that
+# cannot pass per-job environment, e.g. cluv: `-- NCCL_DEBUG=INFO <bench>`).
+while [[ "${1:-}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+    export "$1"
+    shift
+done
+
+BENCH=${1:?usage: tt_native.sh [NAME=value ...] <bench-name> [milabench run args]}
 shift
 
 TT38=${TT38:-$SCRATCH/tt38}
