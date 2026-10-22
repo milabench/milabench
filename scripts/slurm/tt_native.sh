@@ -42,6 +42,11 @@ echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_
 squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
+# InfiniBand adapters and link rates (inter-node bandwidth per node).
+for ca in /sys/class/infiniband/*; do
+    [ -e "$ca" ] || continue
+    echo "[tt-native] hca $(basename "$ca") $(cat "$ca"/ports/1/rate 2>/dev/null) $(cat "$ca"/ports/1/link_layer 2>/dev/null)"
+done
 
 # Pre-warmed torch.compile caches (Inductor + Triton): unpack an archive onto
 # every node's local disk (same path as benchfile.py's cache dirs; it must be
