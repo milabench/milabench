@@ -163,3 +163,12 @@ tt-qwen38-n4-topo:
     options:
       skip: 30
       stop: 60
+
+# Short 2-node network diagnostic (run with NCCL_DEBUG=INFO): same per-GPU
+# settings as n2-lowmem, few steps.
+tt-qwen38-n2-diag:
+  inherits: tt-qwen38-n2-lowmem
+  voir:
+    options:
+      skip: 5
+      stop: 20
