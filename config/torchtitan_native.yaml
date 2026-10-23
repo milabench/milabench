@@ -172,3 +172,10 @@ tt-qwen38-n2-diag:
     options:
       skip: 5
       stop: 20
+
+# Same diagnostic with 2 sequences (16k tokens) per GPU: more compute per FSDP
+# collective (inter-node bandwidth-bound clusters such as Rorqual).
+tt-qwen38-n2-diag-mb2:
+  inherits: tt-qwen38-n2-diag
+  argv:
+    --microbatch-sequences: 2
