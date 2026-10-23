@@ -4,9 +4,9 @@
 #   (with MILABENCH_CONFIG pointing to this file, see journals/)
 #
 # Every entry has the same per-GPU settings as config/torchtitan_native.yaml
-# (seq 8192, 1 sequence/GPU, full AC, compile regions without CUDA graphs, FSDP
-# over all GPUs), so results are directly comparable (weak scaling). Global batch =
-# 8192 x GPUs tokens (2.42M tokens/step at 296 GPUs).
+# (seq 8192, 2 sequences = 16k tokens/GPU, full AC, compile regions without CUDA
+# graphs, FSDP over all GPUs), so results are directly comparable (weak scaling).
+# Global batch = 16384 x GPUs tokens (4.85M tokens/step at 296 GPUs).
 #
 # Measurement: 30 warm-up steps, then a 5-minute window converted to a step
 # count after warm-up. Each entry has a "-lowmem" fallback (bf16 AdamW moments,
@@ -23,23 +23,24 @@
 #   tt-w-leaf12 on the big leaf vs the same entry with a 4x3 node list.
 
 # Expected memory per GPU (H100 80 GB = 79.2 GiB usable). Model: sharded state
-# = 16 B/param x 26.9e9 / GPUs (12 B/param with -lowmem), plus a ~12-14 GiB
-# working set that does not depend on the GPU count (gathered layer, grads,
-# activations, logits chunks); reserved ~ allocated + 12-15 GiB. Fitted on Fir
-# runs at 8, 12 and 16 GPUs (full AC, no CUDA graphs); larger counts are
-# extrapolated, not measured.
+# = 16 B/param x 26.9e9 / GPUs (12 B/param with -lowmem), plus a working set
+# that does not depend on the GPU count (gathered layer, grads, activations,
+# logits chunks): ~12-14 GiB at 1 sequence/GPU, ~6 GiB more at 2 sequences
+# (measured at 8 GPUs, bf16 moments: 45.1/63.9 -> 50.9/69.0 GiB alloc/rsvd).
+# Reserved ~ allocated + 12-18 GiB. Fitted on Fir runs at 8, 12 and 16 GPUs
+# (full AC, no CUDA graphs); larger counts are extrapolated, not measured.
 #
-#   entry          GPUs   state   alloc (est.)   reserved (est.)   measured
-#   tt-w-smoke        4   n/a     40.4            55.7             yes (16 layers)
-#   tt-w-leaf3       12   33.4    ~46             ~60              45.1 / 59.6
-#   tt-w-leaf7       28   14.3    ~28             ~42
-#   tt-w-leaf8       32   12.5    ~26             ~40
-#   tt-w-leaf12      48    8.4    ~22             ~36
-#   tt-w-n28        112    3.6    ~17             ~31
-#   tt-w-n70/72/74  280-296 1.4   ~15             ~29
+#   entry          GPUs   state   alloc (est.)   reserved (est.)   measured (2 seq)
+#   tt-w-smoke        4   n/a     ~46             ~61              to re-measure
+#   tt-w-leaf3       12   33.4    ~52             ~66              to re-measure
+#   tt-w-leaf7       28   14.3    ~34             ~48
+#   tt-w-leaf8       32   12.5    ~32             ~46
+#   tt-w-leaf12      48    8.4    ~28             ~42
+#   tt-w-n28        112    3.6    ~23             ~37
+#   tt-w-n70/72/74  280-296 1.4   ~21             ~35
 #
-#   -lowmem (bf16 moments) lowers the state term by 25 %; measured at 8 GPUs:
-#   45.1 / 63.9 GiB (fp32 moments OOM'd there).
+#   -lowmem (bf16 moments) lowers the state term by 25 %; measured at 8 GPUs,
+#   2 seq: 50.9 / 69.0 GiB (fp32 moments OOM'd there at 1 seq).
 
 include:
   - torchtitan_native.yaml

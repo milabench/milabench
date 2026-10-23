@@ -77,6 +77,7 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     srun --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
+CACHE_FILES_BEFORE=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
 
 # TT_LOCAL_VENV=1: run the bench venv (and its Python) from node-local disk
 # instead of the shared filesystem, like the window's node-local image. The
@@ -134,12 +135,16 @@ echo "[tt-native] system_ready_epoch=$(date +%s.%N)"
 rc=0
 milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" "$@" || rc=$?
 
-if [ -n "$CACHE_ARCHIVE" ] && [ ! -f "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ]; then
+# Save (or refresh) the archive when this run compiled something new, e.g. a
+# config with new shapes: the main node's cache = restored entries + new ones.
+CACHE_FILES_AFTER=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
+if [ -n "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ] \
+        && { [ ! -f "$CACHE_ARCHIVE" ] || [ "$CACHE_FILES_AFTER" -gt "$CACHE_FILES_BEFORE" ]; }; then
     (
         flock 9
-        [ -f "$CACHE_ARCHIVE" ] || { tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"; }
+        tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"
     ) 9>"$CACHE_ARCHIVE.lock"
-    echo "[tt-native] compile_cache_saved archive=$CACHE_ARCHIVE size=$(du -h "$CACHE_ARCHIVE" | cut -f1)"
+    echo "[tt-native] compile_cache_saved archive=$CACHE_ARCHIVE files=$CACHE_FILES_BEFORE->$CACHE_FILES_AFTER size=$(du -h "$CACHE_ARCHIVE" | cut -f1)"
 fi
 echo "[tt-native] job_end_epoch=$(date +%s.%N)"
 exit $rc

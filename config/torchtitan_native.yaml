@@ -3,8 +3,11 @@
 #   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #
-# Per-GPU settings (seq 8192, 1 sequence per GPU, full AC, compile regions, no
-# CUDA graphs, FSDP over all GPUs) are identical in every entry: weak scaling.
+# Per-GPU settings (seq 8192, 2 sequences = 16k tokens per GPU per step, full AC,
+# compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
+# entry: weak scaling. 2 sequences: on Rorqual (1 HDR HCA per node) 2-node
+# throughput 954 -> 1722 tok/s/GPU vs 1 sequence, FSDP collectives being the
+# bottleneck (2026-10-23).
 # Full AC: selective AC + compile OOMs on 4 nodes. No CUDA graphs: no gain at
 # 4 nodes (1755 vs 1734 tok/s/GPU), extra startup and memory (Fir, 2026-10-19). Entries only differ in
 # node count, model depth (1-node runs use a truncated model), measurement
@@ -42,7 +45,7 @@ _tt_native:
   argv: &tt_native_argv
     --flavor: 27B
     --seq-len: 8192
-    --microbatch-sequences: 1
+    --microbatch-sequences: 2
     --compile: regions
     --ac: full
 
@@ -136,13 +139,13 @@ tt-qwen38-n4-hsdp:
   argv:
     --dp-replicate: 2
 
-# TP=2 inside a node: 2 sequences per DP rank keeps 8192 tokens per GPU.
+# TP=2 inside a node: 4 sequences per DP rank keeps 16k tokens per GPU.
 tt-qwen38-n4-tp2:
   inherits: tt-qwen38-n4
   argv:
     --tp: 2
     --stacked-layout: torchtitan
-    --microbatch-sequences: 2
+    --microbatch-sequences: 4
 
 # Low-memory fallback: bf16 AdamW moments (-4 B/param of optimizer state).
 tt-qwen38-n2-lowmem:
@@ -173,9 +176,9 @@ tt-qwen38-n2-diag:
       skip: 5
       stop: 20
 
-# Same diagnostic with 2 sequences (16k tokens) per GPU: more compute per FSDP
-# collective (inter-node bandwidth-bound clusters such as Rorqual).
-tt-qwen38-n2-diag-mb2:
+# Same diagnostic with the previous default of 1 sequence (8k tokens) per GPU:
+# less compute per FSDP collective (Rorqual: 954 vs 1722 tok/s/GPU).
+tt-qwen38-n2-diag-mb1:
   inherits: tt-qwen38-n2-diag
   argv:
-    --microbatch-sequences: 2
+    --microbatch-sequences: 1

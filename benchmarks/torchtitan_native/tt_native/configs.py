@@ -54,7 +54,7 @@ class Options:
 
     # Batch (per GPU, fixed across scales: weak scaling)
     seq_len: int = 8192
-    microbatch_sequences: int = 1
+    microbatch_sequences: int = 2
     grad_accum: int = 1
 
     # Performance
