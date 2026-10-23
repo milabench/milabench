@@ -1,0 +1,187 @@
+# Rorqual window configs (4x H100 per node) for Qwen3.8-27B pre-training.
+#
+#   sbatch --nodes=<N> [-w <node list>] ... scripts/slurm/tt_native.sh \
+#       TT_CONFIG=window tt-w-<name>
+#
+# Every entry has the same per-GPU settings as config/torchtitan_native.yaml
+# (seq 4096, 3 sequences = 12,288 tokens/GPU, full AC, compile regions without
+# CUDA graphs, FSDP over all GPUs), so results are directly comparable (weak
+# scaling). Global batch = 12,288 x GPUs tokens (3.24M tokens/step at 264 GPUs).
+#
+# Measurement: 30 warm-up steps, then a 5-minute window converted to a step
+# count after warm-up. Each entry has a "-lowmem" fallback (bf16 AdamW moments,
+# -4 B/param) for out-of-memory errors.
+#
+# Rorqual GPU nodes (topology.conf + node Gres, 2026-10-23): 93 GPU nodes, of
+# which 27 are MIG-partitioned (9 leaves ihpc125-133, unusable) -> 66 full
+# nodes = 264 GPUs: 13 leaves with 3 nodes (ihpc134-136, ihpc317-326) and three
+# big leaves ihpc217 (8), ihpc218 (7), ihpc316 (12). Full scale is therefore
+# 66 nodes (fallbacks 63, 60 after the health check), not 74.
+#
+# Topology study (journals/2026-10-23.md): at equal node count, compare 3 nodes
+# per switch (H) with packed / single-switch placements (S, P). Node counts are
+# entries below; placement comes from the -w node list given to sbatch.
+#
+# Expected memory per GPU (H100 80 GB = 79.2 GiB usable). Model: sharded state
+# = 16 B/param x 26.9e9 / GPUs (12 B/param with -lowmem), plus a working set
+# that does not depend on the GPU count. Measured at 8192 tokens/GPU (1 x 8192):
+# ~12-14 GiB; at 16,384 tokens/GPU (2 x 8192): ~6 GiB more. 12,288 tokens/GPU
+# (3 x 4096) is expected in between (~+3 GiB over 1 x 8192): to re-measure.
+# Reserved ~ allocated + 12-18 GiB. Larger counts are extrapolated.
+#
+#   entry          GPUs   state   alloc (est.)   reserved (est.)
+#   tt-w-smoke        4   n/a     ~43             ~58     (16 layers)
+#   tt-w-leaf3       12   33.4    ~49             ~63
+#   tt-w-n6          24   16.7    ~33             ~47
+#   tt-w-leaf7/8     28-32 14.3-12.5 ~29-31       ~43-45
+#   tt-w-n9          36   11.1    ~28             ~42
+#   tt-w-leaf12      48    8.4    ~25             ~39
+#   tt-w-n15/n27     60-108 6.7-3.7 ~20-23        ~34-37
+#   tt-w-n28        112    3.6    ~20             ~34
+#   tt-w-n48        192    2.1    ~19             ~33
+#   tt-w-n60/63/66  240-264 1.5-1.7 ~18           ~32
+#
+# Previous measurements (2 x 8192): 12 GPUs 50.9 / 64.7 GiB (Fir and Rorqual);
+# 8 GPUs bf16 moments 50.9 / 69.0 GiB.
+
+include:
+  - torchtitan_native.yaml
+
+_tt_window:
+  inherits: _tt_native
+  max_duration: 2400
+  voir:
+    options:
+      skip: 30
+      stop_seconds: 300
+
+# Smoke test: 1 node. The full 27B training state (~430 GB) does not fit on 4
+# GPUs, so the smoke test uses the first 16 layers (same per-GPU settings).
+tt-w-smoke:
+  inherits: _tt_window
+  num_machines: 1
+  argv:
+    --n-layers: 16
+
+# Single 3-node leaf (12 GPUs): tightest memory of the full-model configs.
+tt-w-leaf3:
+  inherits: _tt_window
+  num_machines: 3
+
+# Topology pairs H2 / S6 (2 x 3 nodes vs 6 nodes on one switch).
+tt-w-n6:
+  inherits: _tt_window
+  num_machines: 6
+
+# Big leaf ihpc218 (7 nodes).
+tt-w-leaf7:
+  inherits: _tt_window
+  num_machines: 7
+
+# Big leaf ihpc217 (8 nodes).
+tt-w-leaf8:
+  inherits: _tt_window
+  num_machines: 8
+
+# Topology pairs H3 / S9.
+tt-w-n9:
+  inherits: _tt_window
+  num_machines: 9
+
+# Big leaf ihpc316 (12 nodes); topology pairs H4 / S12.
+tt-w-leaf12:
+  inherits: _tt_window
+  num_machines: 12
+
+# Topology pairs H5 / P15 (ihpc217 + ihpc218).
+tt-w-n15:
+  inherits: _tt_window
+  num_machines: 15
+
+# Topology pairs H9 / P27 (all three big leaves).
+tt-w-n27:
+  inherits: _tt_window
+  num_machines: 27
+
+# Mid scale (112 GPUs).
+tt-w-n28:
+  inherits: _tt_window
+  num_machines: 28
+
+# Topology pairs H16 / P48.
+tt-w-n48:
+  inherits: _tt_window
+  num_machines: 48
+
+# Full scale: every full GPU node (264 GPUs).
+tt-w-n66:
+  inherits: _tt_window
+  num_machines: 66
+
+# Full-scale fallback after health-check exclusions.
+tt-w-n63:
+  inherits: _tt_window
+  num_machines: 63
+
+# Full-scale fallback after health-check exclusions.
+tt-w-n60:
+  inherits: _tt_window
+  num_machines: 60
+
+# --- Low-memory fallbacks: same per-GPU batch and AC, bf16 AdamW moments ---
+
+tt-w-smoke-lowmem:
+  inherits: tt-w-smoke
+  argv: {--adam-moments: bf16}
+
+tt-w-leaf3-lowmem:
+  inherits: tt-w-leaf3
+  argv: {--adam-moments: bf16}
+
+tt-w-n6-lowmem:
+  inherits: tt-w-n6
+  argv: {--adam-moments: bf16}
+
+tt-w-leaf7-lowmem:
+  inherits: tt-w-leaf7
+  argv: {--adam-moments: bf16}
+
+tt-w-leaf8-lowmem:
+  inherits: tt-w-leaf8
+  argv: {--adam-moments: bf16}
+
+tt-w-n9-lowmem:
+  inherits: tt-w-n9
+  argv: {--adam-moments: bf16}
+
+tt-w-leaf12-lowmem:
+  inherits: tt-w-leaf12
+  argv: {--adam-moments: bf16}
+
+tt-w-n15-lowmem:
+  inherits: tt-w-n15
+  argv: {--adam-moments: bf16}
+
+tt-w-n27-lowmem:
+  inherits: tt-w-n27
+  argv: {--adam-moments: bf16}
+
+tt-w-n28-lowmem:
+  inherits: tt-w-n28
+  argv: {--adam-moments: bf16}
+
+tt-w-n48-lowmem:
+  inherits: tt-w-n48
+  argv: {--adam-moments: bf16}
+
+tt-w-n66-lowmem:
+  inherits: tt-w-n66
+  argv: {--adam-moments: bf16}
+
+tt-w-n63-lowmem:
+  inherits: tt-w-n63
+  argv: {--adam-moments: bf16}
+
+tt-w-n60-lowmem:
+  inherits: tt-w-n60
+  argv: {--adam-moments: bf16}
