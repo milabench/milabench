@@ -4,7 +4,8 @@
 #   sbatch --nodes=N ... scripts/slurm/tt_healthcheck.sh            # standalone
 #   bash scripts/slurm/tt_healthcheck.sh                             # inside a job
 #
-# Per node: 4 non-MIG H100, no uncorrected ECC errors, InfiniBand port Active,
+# Per node: 4 non-MIG H100, no uncorrected ECC errors, InfiniBand ports Active
+# (same adapter count / rates as most nodes of the allocation),
 # bf16 matmul TFLOPS per GPU, intra-node all-reduce bandwidth. Then one
 # all-reduce over all nodes of the allocation. A node fails if any check fails
 # or if its slowest GPU / intra-node bandwidth is > 5 % (matmul) / 10 %
@@ -72,6 +73,9 @@ for line in open(f"{out}/raw.log"):
     elif "allreduce scope=all" in line:
         print(line.strip())
 mm = statistics.median(min(n["tflops"]) for n in nodes.values() if n.get("tflops"))
+# InfiniBand: every port ACTIVE, and the same adapter count / rates as most nodes
+# of the allocation (1x200 on Rorqual, 4 adapters on Fir and Tamia).
+ib_common = statistics.mode(n.get("ib", "none") for n in nodes.values())
 bw = statistics.median(n["intra_busbw"] for n in nodes.values() if "intra_busbw" in n)
 healthy, excluded = [], []
 with open(f"{out}/nodes.tsv", "w") as tsv:
@@ -81,7 +85,11 @@ with open(f"{out}/nodes.tsv", "w") as tsv:
         if n.get("gpus") != "4": reasons.append(f"gpus={n.get('gpus')}")
         if n.get("mig") not in (None, "0"): reasons.append("mig")
         if n.get("ecc") not in (None, "0"): reasons.append(f"ecc={n.get('ecc')}")
-        if not n.get("ib", "none").startswith("ACTIVE@200"): reasons.append(f"ib={n.get('ib')}")
+        ib = n.get("ib", "none")
+        if ib == "none" or any(not p.startswith("ACTIVE@") for p in ib.split("+")):
+            reasons.append(f"ib={ib}")
+        elif ib != ib_common:
+            reasons.append(f"ib={ib} differs from {ib_common}")
         t = min(n.get("tflops", [0]))
         if t < 0.95 * mm: reasons.append(f"matmul {t:.0f} < 95% of {mm:.0f}")
         b = n.get("intra_busbw", 0)

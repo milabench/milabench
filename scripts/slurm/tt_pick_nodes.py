@@ -100,10 +100,17 @@ def main(argv=None) -> int:
     parser.add_argument("--candidates", required=True, help="usable nodes (hostlist or comma/space separated)")
     parser.add_argument("--exclude", default="", help="nodes to leave out (hostlist)")
     parser.add_argument("--leaf", help="switch for family S")
-    parser.add_argument("--prefix", default="rg", help="GPU node name prefix")
+    parser.add_argument("--prefix", help="GPU node name prefix (default: inferred from --candidates)")
     args = parser.parse_args(argv)
 
     candidates = set(hostnames(",".join(args.candidates.split())))
+    if args.prefix is None:
+        # Leading letters shared by the candidates: rg (Rorqual), tg (Tamia), fc (Fir).
+        import os.path
+        import re
+
+        common = os.path.commonprefix(sorted(candidates))
+        args.prefix = re.match(r"[A-Za-z]*", common).group(0)
     exclude = set(hostnames(",".join(args.exclude.split())))
     by_leaf = usable_by_leaf(candidates, exclude, args.prefix)
     try:
