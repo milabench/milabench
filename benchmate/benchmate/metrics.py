@@ -19,6 +19,7 @@ except ImportError as err:
 
 
 from .toggles import get_observation_count, _get_flag
+from .config import tag_metric
 
 
 def _noop_push(**kwargs):
@@ -80,6 +81,7 @@ def tee_push(*pushes):
 def file_push(fp=sys.stdout):
     def message(**kwargs):
         kwargs.setdefault("task", "train")
+        tag_metric(kwargs)
         msg = json.dumps(kwargs)
         print(msg, file=fp)
 
@@ -99,7 +101,10 @@ def give_push():
     ov = current_overseer.get()
 
     if ov is not None:
-        return ov.give
+        def give(**kwargs):
+            return ov.give(**tag_metric(kwargs))
+
+        return give
 
     print("No overseer found")
     return file_push()
