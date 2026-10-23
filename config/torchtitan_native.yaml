@@ -7,7 +7,9 @@
 # compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
 # entry: weak scaling. 2 sequences: on Rorqual (1 HDR HCA per node) 2-node
 # throughput 954 -> 1722 tok/s/GPU vs 1 sequence, FSDP collectives being the
-# bottleneck (2026-10-23).
+# bottleneck (2026-10-23). Global batch at 296 GPUs: 4.85M tokens, still below
+# the 8-25M-token batches Qwen's scaling law prescribes at production budgets
+# (arXiv 2608.30320, MoE models; no published value for the 27B dense).
 # Full AC: selective AC + compile OOMs on 4 nodes. No CUDA graphs: no gain at
 # 4 nodes (1755 vs 1734 tok/s/GPU), extra startup and memory (Fir, 2026-10-19). Entries only differ in
 # node count, model depth (1-node runs use a truncated model), measurement
