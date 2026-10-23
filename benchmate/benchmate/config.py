@@ -29,6 +29,10 @@ Usage in a benchmark:
     # or equivalently
     run_multiconfig(lambda argv: train(parser.parse_args(argv)))
 
+More configs can be added while the benchmark is running by appending to
+``runtime_config.yaml`` (see ``add_runtime_config``). The file is reloaded each
+time a config finishes and entries that have not run yet are queued.
+
 Every metric pushed through ``benchmate.metrics`` carries a ``config_key``
 (hash of the config) so metrics can be mapped back to the config that
 produced them.
@@ -39,6 +43,7 @@ import json
 import os
 import sys
 import traceback
+from collections import deque
 
 
 class ConfigChange(BaseException):
@@ -165,25 +170,156 @@ class Config(list):
             set_config_key(None)
 
 
-def multiconfig(configs=None):
+RUNTIME_CONFIG_NAME = "runtime_config.yaml"
+LOCK_TIMEOUT = 1
+
+
+def runtime_config_path(environ=None):
+    """Location of the runtime config file, ``None`` if it cannot be determined.
+
+    ``MILABENCH_RUNTIME_CONFIG`` wins, else ``$MILABENCH_DIR_RUNS/<bench>/runtime_config.yaml``
+    """
+    environ = os.environ if environ is None else environ
+
+    explicit = environ.get("MILABENCH_RUNTIME_CONFIG")
+    if explicit:
+        return explicit
+
+    runs = environ.get("MILABENCH_DIR_RUNS")
+    if not runs:
+        return None
+
+    name = None
+    try:
+        name = json.loads(environ.get("MILABENCH_CONFIG") or "{}").get("name")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    return os.path.join(runs, name or "", RUNTIME_CONFIG_NAME)
+
+
+def _lock(path, timeout):
+    from filelock import FileLock
+
+    return FileLock(path + ".lock", timeout=timeout)
+
+
+def _normalize(argv):
+    if isinstance(argv, str):
+        argv = argv.split()
+    return [str(a) for a in argv]
+
+
+def load_runtime_config(path):
+    """Read the argv list from the runtime config file.
+
+    Never raises: a missing, locked or malformed file gives an empty list
+    (with a warning when it is not simply missing).
+    """
+    if not path or not os.path.exists(path):
+        return []
+
+    try:
+        import yaml
+
+        with _lock(path, LOCK_TIMEOUT):
+            with open(path) as fp:
+                data = yaml.safe_load(fp)
+
+        configs = data.get("multiconfig") if isinstance(data, dict) else None
+        if configs is None:
+            return []
+        if not isinstance(configs, list):
+            raise ValueError("multiconfig should be a list")
+
+        return [_normalize(argv) for argv in configs]
+
+    except Exception as err:
+        print(f"[multiconfig] ignoring {path}: {err!r}", file=sys.stderr)
+        return []
+
+
+def add_runtime_config(argv, path=None):
+    """Append a config to the runtime config file, to be picked up by a running benchmark."""
+    add_runtime_configs([argv], path)
+
+
+def add_runtime_configs(argvs, path=None):
+    """Append configs to the runtime config file, to be picked up by a running benchmark.
+
+    The write is done under the lock and atomically (temp file + rename)
+    so a reader never sees a partial file.
+    """
+    import yaml
+
+    path = path or runtime_config_path()
+    if path is None:
+        raise ValueError("No runtime config path, set MILABENCH_RUNTIME_CONFIG")
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+
+    with _lock(path, 10):
+        configs = []
+        if os.path.exists(path):
+            with open(path) as fp:
+                data = yaml.safe_load(fp) or {}
+            configs = list(data.get("multiconfig") or [])
+
+        configs.extend(_normalize(argv) for argv in argvs)
+
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as fp:
+            yaml.safe_dump({"multiconfig": configs}, fp)
+        os.replace(tmp, path)
+
+
+def sync_configs(configs):
+    """Hook to make every rank agree on the configs to run.
+
+    No-op by default, distributed benchmarks should override it (pass ``sync=``
+    to ``multiconfig``) to broadcast rank 0's list, otherwise ranks reading the
+    file at different times could run different configs.
+    """
+    return configs
+
+
+def multiconfig(configs=None, runtime_config=None, sync=sync_configs):
     """Iterate over the configs to run, defaults to ``multiconfig`` of the bench config.
 
     Without any ``multiconfig`` a single config is yielded: the process argv.
+
+    After each config the runtime config file is reloaded, entries that were
+    not already queued or run (by config key) are appended to the queue.
+    ``runtime_config`` is the file path, by default ``runtime_config_path()``
+    when ``configs`` is not given, else no runtime config.
     """
     if configs is None:
         configs = load_multiconfig()
+        if runtime_config is None:
+            runtime_config = runtime_config_path()
 
     if not configs:
         configs = [sys.argv[1:]]
 
-    for argv in configs:
-        if isinstance(argv, str):
-            argv = argv.split()
-        yield Config(argv)
+    pending = deque(Config(_normalize(argv)) for argv in configs)
+    known = {c.key for c in pending}
+
+    while True:
+        if runtime_config:
+            for argv in sync(load_runtime_config(runtime_config)):
+                config = Config(_normalize(argv))
+                if config.key not in known:
+                    known.add(config.key)
+                    pending.append(config)
+
+        if not pending:
+            return
+
+        yield pending.popleft()
 
 
-def run_multiconfig(fn, configs=None):
+def run_multiconfig(fn, configs=None, runtime_config=None):
     """Call ``fn(argv)`` for each config, a failing config does not stop the others"""
-    for argv in multiconfig(configs):
+    for argv in multiconfig(configs, runtime_config):
         with argv:
             fn(list(argv))

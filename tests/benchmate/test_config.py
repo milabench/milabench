@@ -7,6 +7,9 @@ import pytest
 from benchmate import config as cfg
 from benchmate.config import (
     Config,
+    add_runtime_config,
+    load_runtime_config,
+    runtime_config_path,
     ConfigChange,
     compute_config_key,
     get_config_key,
@@ -270,3 +273,185 @@ def test_give_push_tags_metrics(monkeypatch):
     give(rate=2)
 
     assert given == [{"rate": 1, "config_key": config.key}, {"rate": 2}]
+
+
+# Runtime config
+
+
+@pytest.fixture
+def runtime(tmp_path):
+    return str(tmp_path / "sub" / "runtime_config.yaml")
+
+
+def test_runtime_config_path(tmp_path):
+    assert runtime_config_path({}) is None
+    assert runtime_config_path({"MILABENCH_RUNTIME_CONFIG": "/x.yaml"}) == "/x.yaml"
+
+    env = {
+        "MILABENCH_DIR_RUNS": str(tmp_path),
+        "MILABENCH_CONFIG": json.dumps({"name": "bench"}),
+    }
+    assert runtime_config_path(env) == str(tmp_path / "bench" / "runtime_config.yaml")
+
+
+def test_add_and_load_runtime_config(runtime):
+    assert load_runtime_config(runtime) == []
+
+    add_runtime_config(["--a", 1], runtime)
+    add_runtime_config("--b 2", runtime)
+
+    assert load_runtime_config(runtime) == [["--a", "1"], ["--b", "2"]]
+
+
+def _write(path, content):
+    import os
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fp:
+        fp.write(content)
+
+
+@pytest.mark.parametrize("content", ["{{{ nope", "multiconfig: 3"])
+def test_malformed_runtime_config_is_ignored(runtime, content, capsys):
+    _write(runtime, content)
+    assert load_runtime_config(runtime) == []
+    assert "ignoring" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("content", ["", "- a\n- b", "other: 1"])
+def test_runtime_config_without_multiconfig_is_empty(runtime, content):
+    _write(runtime, content)
+    assert load_runtime_config(runtime) == []
+
+
+def test_runtime_config_locked_is_skipped(runtime, monkeypatch, capsys):
+    add_runtime_config(["--a"], runtime)
+    monkeypatch.setattr(cfg, "LOCK_TIMEOUT", 0.05)
+
+    from filelock import FileLock
+
+    with FileLock(runtime + ".lock"):
+        assert load_runtime_config(runtime) == []
+    assert "ignoring" in capsys.readouterr().err
+
+    assert load_runtime_config(runtime) == [["--a"]]
+
+
+def test_runtime_config_picked_up_between_configs(runtime):
+    seen = []
+
+    def run(argv):
+        seen.append(argv)
+        if argv == ["--a"]:
+            add_runtime_config(["--late"], runtime)
+
+    run_multiconfig(run, [["--a"], ["--b"]], runtime)
+
+    # static configs first, then the runtime ones
+    assert seen == [["--a"], ["--b"], ["--late"]]
+
+
+def test_runtime_config_chain(runtime):
+    seen = []
+
+    def run(argv):
+        seen.append(argv)
+        if argv == ["--a"]:
+            add_runtime_config(["--x"], runtime)
+        if argv == ["--x"]:
+            add_runtime_config(["--y"], runtime)
+
+    run_multiconfig(run, [["--a"]], runtime)
+    assert seen == [["--a"], ["--x"], ["--y"]]
+
+
+def test_runtime_config_is_deduplicated(runtime):
+    add_runtime_config(["--a"], runtime)  # already a static config
+    add_runtime_config(["--new"], runtime)
+
+    seen = []
+    run_multiconfig(seen.append, [["--a"]], runtime)
+
+    # the file is reloaded after each config, nothing runs twice
+    assert seen == [["--a"], ["--new"]]
+
+
+def test_runtime_config_crash_does_not_stop(runtime):
+    seen = []
+
+    def run(argv):
+        seen.append(argv)
+        if argv == ["--a"]:
+            add_runtime_config(["--late"], runtime)
+            raise ValueError("boom")
+
+    run_multiconfig(run, [["--a"]], runtime)
+    assert seen == [["--a"], ["--late"]]
+
+
+def test_runtime_config_from_env(runtime, monkeypatch):
+    monkeypatch.setenv("MILABENCH_RUNTIME_CONFIG", runtime)
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({"multiconfig": [["--a"]]}))
+    add_runtime_config(["--b"])
+
+    assert [list(c) for c in multiconfig()] == [["--a"], ["--b"]]
+
+
+def test_explicit_configs_ignore_runtime_file(runtime, monkeypatch):
+    monkeypatch.setenv("MILABENCH_RUNTIME_CONFIG", runtime)
+    add_runtime_config(["--b"])
+    assert [list(c) for c in multiconfig([["--a"]])] == [["--a"]]
+
+
+def test_sync_hook(runtime):
+    add_runtime_config(["--b"], runtime)
+    add_runtime_config(["--c"], runtime)
+
+    got = [list(c) for c in multiconfig([["--a"]], runtime, sync=lambda cs: cs[:1])]
+    assert got == [["--a"], ["--b"]]
+
+
+# CLI: milabench rtconfig add
+
+
+def test_cli_add_appends_to_bench_runtime_config(tmp_path):
+    from milabench.cli.rtconfig.add import Add, resolve_target
+    from argparse import Namespace
+
+    src = tmp_path / "mine.yaml"
+    src.write_text("multiconfig:\n  - [--batch-size, '64']\n  - --batch-size 128\n")
+    base = tmp_path / "base"
+
+    args = Namespace(bench="bert-fp16", config=str(src), base=str(base), path=None)
+    assert Add.execute(args) == 0
+    assert Add.execute(args) == 0  # appended, not replaced
+
+    target = resolve_target("bert-fp16", str(base), environ={})
+    assert target == str(base / "runs" / "bert-fp16" / "runtime_config.yaml")
+    assert load_runtime_config(target) == [["--batch-size", "64"], ["--batch-size", "128"]] * 2
+
+
+def test_cli_matches_what_the_benchmark_reads(tmp_path):
+    from milabench.cli.rtconfig.add import resolve_target
+
+    env = {
+        "MILABENCH_DIR_RUNS": str(tmp_path / "runs"),
+        "MILABENCH_CONFIG": json.dumps({"name": "bert-fp16"}),
+    }
+    assert resolve_target("bert-fp16", None, environ=env) == runtime_config_path(env)
+    assert resolve_target("bert-fp16", str(tmp_path), environ={}) == runtime_config_path(env)
+
+
+def test_cli_accepts_plain_list_and_rejects_bad_files(tmp_path, capsys):
+    from milabench.cli.rtconfig.add import Add, load_configs
+    from argparse import Namespace
+
+    plain = tmp_path / "plain.yaml"
+    plain.write_text("- [--a]\n")
+    assert load_configs(str(plain)) == [["--a"]]
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("other: 1\n")
+    args = Namespace(bench="b", config=str(bad), base=str(tmp_path), path=None)
+    assert Add.execute(args) == 1
+    assert "Error" in capsys.readouterr().err
