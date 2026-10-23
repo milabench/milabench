@@ -56,6 +56,12 @@ for ca in /sys/class/infiniband/*; do
     echo "[tt-native] hca $(basename "$ca") $(cat "$ca"/ports/1/rate 2>/dev/null) $(cat "$ca"/ports/1/link_layer 2>/dev/null)"
 done
 
+# Nodes that get the compile cache / local venv: the run's subset (TT_NODES) or
+# the whole job. Explicit, because inside a job step a plain srun inherits the
+# step's node count (e.g. 1 node when launched by tt_variants.sh).
+STAGE_NODES=${TT_NODES:-$SLURM_JOB_NODELIST}
+STAGE_N=$(scontrol show hostnames "$STAGE_NODES" | wc -l)
+
 # Pre-warmed torch.compile caches (Inductor + Triton): unpack an archive onto
 # every node's local disk (same path as benchfile.py's cache dirs; it must be
 # job-independent because cache entries store absolute paths). Per-GPU shapes
@@ -74,7 +80,7 @@ GPU_KEY=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr -cd '
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
 mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
-    srun --overlap --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
 CACHE_FILES_BEFORE=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
@@ -103,7 +109,7 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     t1=$(date +%s.%N)
     LOCAL_VENV=$LOCAL_SW$SRC_VENV
     LOCAL_PY=$LOCAL_SW$PY_ROOT
-    srun --overlap --ntasks-per-node=1 bash -c "
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
         set -e
         rm -rf $LOCAL_SW && mkdir -p $LOCAL_SW && tar -xf $VENV_ARCHIVE -C $LOCAL_SW
         for p in $LOCAL_VENV/bin/python $LOCAL_VENV/bin/python3 $LOCAL_VENV/bin/python3.12; do
