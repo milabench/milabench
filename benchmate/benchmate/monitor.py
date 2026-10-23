@@ -15,13 +15,14 @@ from voir.instruments.monitor import monitor
 from voir.helpers import current_overseer
 
 
-from .metrics import sumggle_push, give_push, file_push
+from .metrics import sumggle_push, give_push, file_push, wandb_push, tee_push
 from .toggles import (
     get_poll_interval,
     log_pattern,
     get_observation_count,
     torchmem_enabled,
     jaxmem_enabled,
+    wandb_enabled,
 )
 from .torchmem import torchmem_fetcher
 from .jaxmem import jaxmem_fetcher
@@ -74,6 +75,15 @@ def log_patterns():
 
 
 def auto_push():
+    push = _auto_push()
+
+    if wandb_enabled():
+        return tee_push(push, wandb_push())
+
+    return push
+
+
+def _auto_push():
     # use_stdout = int(os.getenv("MILABENCH_USE_STDOUT", 0))
     mb_managed = int(os.getenv("MILABENCH_MANAGED", 0))
 
@@ -82,8 +92,8 @@ def auto_push():
         # Using voir, DATA_FD is defined as well
         ov = current_overseer.get()
         if ov is not None:
-            return ov.give
-        
+            return give_push()
+
         # Not using Voir, using structured stdout
         if int(os.getenv("MILABENCH_USE_STDOUT", 0)) == 1:
             return sumggle_push()
@@ -244,7 +254,7 @@ def smuggle_monitor(
             yield mblog
         finally:
             mon.stop()
-        
+
     else:
         # rank > 0
         yield
@@ -364,12 +374,12 @@ def voirfile_monitor(ov, options):
 
     if options.dash:
         ov.require(dash)
-    
+
     instruments = [
         log(
             *log_patterns(), context="task"
         )
-    ] 
+    ]
 
     rank = get_rank()
 
@@ -378,7 +388,7 @@ def voirfile_monitor(ov, options):
         instruments.append(
             early_stop(n=get_observation_count(options.stop), key="rate", task="train", signal="stop")
         )
-    
+
     gpu_poll = get_poll_interval(options.gpu_poll)
     system_poll = get_poll_interval(DEFAULT_SYSTEM_POLL_INTERVAL)
 

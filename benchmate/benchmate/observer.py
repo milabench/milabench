@@ -3,7 +3,8 @@ from time import time as get_time
 
 from voir.helpers import current_overseer
 
-from .metrics import LazyLossPusher, TimedIterator, ManualTimedIterator, give_push, sumggle_push
+from .metrics import LazyLossPusher, TimedIterator, ManualTimedIterator, give_push, sumggle_push, wandb_push, tee_push
+from .toggles import wandb_enabled
 
 
 class BenchObserver:
@@ -47,6 +48,9 @@ class BenchObserver:
         self.pusher = give_push()
         if self.stdout:
             self.pusher = sumggle_push()
+
+        if wandb_enabled():
+            self.pusher = tee_push(self.pusher, wandb_push())
 
     def on_iterator_stop_iterator(self):
         """Called when the timed iterator stops, used to do extra work when timers are off"""

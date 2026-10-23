@@ -263,7 +263,7 @@ single-H100:
   - --ntasks-per-node=1
   - --exclusive
   - --export=ALL
-  - -w cn-d[003-004]
+  - -w cn-d004
 1x4xL40S:
   cluster: mila
   args:
