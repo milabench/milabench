@@ -74,7 +74,7 @@ GPU_KEY=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr -cd '
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
 mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
-    srun --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
+    srun --overlap --ntasks-per-node=1 bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
 CACHE_FILES_BEFORE=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
@@ -103,7 +103,7 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     t1=$(date +%s.%N)
     LOCAL_VENV=$LOCAL_SW$SRC_VENV
     LOCAL_PY=$LOCAL_SW$PY_ROOT
-    srun --ntasks-per-node=1 bash -c "
+    srun --overlap --ntasks-per-node=1 bash -c "
         set -e
         rm -rf $LOCAL_SW && mkdir -p $LOCAL_SW && tar -xf $VENV_ARCHIVE -C $LOCAL_SW
         for p in $LOCAL_VENV/bin/python $LOCAL_VENV/bin/python3 $LOCAL_VENV/bin/python3.12; do
