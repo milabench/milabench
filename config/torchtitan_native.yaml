@@ -3,13 +3,14 @@
 #   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
 #
-# Per-GPU settings (seq 8192, 2 sequences = 16k tokens per GPU per step, full AC,
-# compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
-# entry: weak scaling. 2 sequences: on Rorqual (1 HDR HCA per node) 2-node
-# throughput 954 -> 1722 tok/s/GPU vs 1 sequence, FSDP collectives being the
-# bottleneck (2026-10-23). Global batch at 296 GPUs: 4.85M tokens, still below
-# the 8-25M-token batches Qwen's scaling law prescribes at production budgets
-# (arXiv 2608.30320, MoE models; no published value for the 27B dense).
+# Per-GPU settings (seq 4096, 3 sequences = 12,288 tokens per GPU per step, full
+# AC, compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
+# entry: weak scaling. Seq 4096 = Qwen3 main pretraining stages; 3 x 4096 tokens
+# per GPU = assumed original per-GPU load (reference batch 25.17M tokens from
+# Qwen3.8's scaling law / assumed 2,048 GPUs). Global batch at 264 GPUs (all full
+# Rorqual GPU nodes): 3.24M tokens. See journals/2026-10-23.md ("Hyperparameter
+# selection"). History: 1 x 8192 until 10-23, then 2 x 8192 (Rorqual 2-node 954 ->
+# 1722 tok/s/GPU, FSDP collectives being the bottleneck).
 # Full AC: selective AC + compile OOMs on 4 nodes. No CUDA graphs: no gain at
 # 4 nodes (1755 vs 1734 tok/s/GPU), extra startup and memory (Fir, 2026-10-19). Entries only differ in
 # node count, model depth (1-node runs use a truncated model), measurement
@@ -46,8 +47,8 @@ _tt_native:
       stop_seconds: 0
   argv: &tt_native_argv
     --flavor: 27B
-    --seq-len: 8192
-    --microbatch-sequences: 2
+    --seq-len: 4096
+    --microbatch-sequences: 3
     --compile: regions
     --ac: full
 
@@ -141,13 +142,13 @@ tt-qwen38-n4-hsdp:
   argv:
     --dp-replicate: 2
 
-# TP=2 inside a node: 4 sequences per DP rank keeps 16k tokens per GPU.
+# TP=2 inside a node: 6 sequences per DP rank keeps 12,288 tokens per GPU.
 tt-qwen38-n4-tp2:
   inherits: tt-qwen38-n4
   argv:
     --tp: 2
     --stacked-layout: torchtitan
-    --microbatch-sequences: 4
+    --microbatch-sequences: 6
 
 # Low-memory fallback: bf16 AdamW moments (-4 B/param of optimizer state).
 tt-qwen38-n2-lowmem:
@@ -178,9 +179,27 @@ tt-qwen38-n2-diag:
       skip: 5
       stop: 20
 
-# Same diagnostic with the previous default of 1 sequence (8k tokens) per GPU:
-# less compute per FSDP collective (Rorqual: 954 vs 1722 tok/s/GPU).
+# Previous per-GPU settings, kept to bridge new numbers to the 10-19..10-23 runs:
+# 1 x 8192 (Rorqual 2 nodes: 954 tok/s/GPU) and 2 x 8192 (1722).
 tt-qwen38-n2-diag-mb1:
   inherits: tt-qwen38-n2-diag
   argv:
+    --seq-len: 8192
     --microbatch-sequences: 1
+
+tt-qwen38-n2-diag-8k2:
+  inherits: tt-qwen38-n2-diag
+  argv:
+    --seq-len: 8192
+    --microbatch-sequences: 2
+
+# Strong-scaling functional check: gradient accumulation (4 micro-steps of 3 x
+# 4096 per optimizer step). Rate = tokens per optimizer step / step time.
+tt-qwen38-1node-accum:
+  inherits: tt-qwen38-1node
+  voir:
+    options:
+      skip: 5
+      stop: 10
+  argv:
+    --grad-accum: 4

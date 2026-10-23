@@ -53,8 +53,8 @@ class Options:
     the shard group must divide F (see tt_native/layout.py)."""
 
     # Batch (per GPU, fixed across scales: weak scaling)
-    seq_len: int = 8192
-    microbatch_sequences: int = 2
+    seq_len: int = 4096
+    microbatch_sequences: int = 3
     grad_accum: int = 1
 
     # Performance
