@@ -31,6 +31,10 @@ def prepare_model(cfg):
 
     if (torch_dist / "latest_checkpointed_iteration.txt").exists():
         return
+    if os.environ.get("SLIME_DOWNLOAD_ONLY"):
+        # the conversion runs Megatron/TE on GPUs: do it later on a GPU node
+        print(f"[slime] SLIME_DOWNLOAD_ONLY: skipping conversion to {torch_dist}", file=sys.stderr)
+        return
     if cfg["model"].get("convert") is False and not os.environ.get("SLIME_CONVERT"):
         # e.g. 744B: the conversion needs a multi-node job; provide a converted
         # checkpoint at --ref-load or set SLIME_CONVERT=1.

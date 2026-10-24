@@ -143,6 +143,11 @@ class Slime(Package):
         await self.pip_install("--no-deps", SGLANG_REQUIREMENT, FLASHINFER_REQUIREMENT, build_isolation=True)
         applied, skipped = self.patch_sglang()
         await self.message("sglang patches applied:", applied, "skipped (not needed or do not apply):", skipped)
+        if os.environ.get("SLIME_DOWNLOAD_ONLY"):
+            # login node (no GPU/libcuda): TE and torch_memory_saver cannot be built, and `prepare` needs neither.
+            # No marker: a later install on a GPU node still builds them.
+            await self.message("SLIME_DOWNLOAD_ONLY: skipping the TE / torch_memory_saver builds")
+            return
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
