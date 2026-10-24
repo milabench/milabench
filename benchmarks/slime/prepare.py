@@ -21,7 +21,9 @@ def run(cmd, **kw):
 
 def prepare_model(cfg):
     argv = cfg["argv"]
-    hf_dir, torch_dist = common.resolve(argv["--hf-checkpoint"]), common.resolve(argv["--ref-load"])
+    hf_dir = common.resolve(argv["--hf-checkpoint"])
+    # no --ref-load (e.g. GLM-5.3-Flash, recipe without KL loss): nothing to convert to
+    torch_dist = common.resolve(argv["--ref-load"]) if "--ref-load" in argv else None
     snapshot_download(
         cfg["model"]["hf"],
         local_dir=hf_dir,
@@ -29,7 +31,7 @@ def prepare_model(cfg):
         allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.jinja", "*.py"],
     )
 
-    if (torch_dist / "latest_checkpointed_iteration.txt").exists():
+    if torch_dist is None or (torch_dist / "latest_checkpointed_iteration.txt").exists():
         return
     if os.environ.get("SLIME_DOWNLOAD_ONLY"):
         # the conversion runs Megatron/TE on GPUs: do it later on a GPU node
