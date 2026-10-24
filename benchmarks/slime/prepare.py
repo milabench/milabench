@@ -24,12 +24,16 @@ def prepare_model(cfg):
     hf_dir = common.resolve(argv["--hf-checkpoint"])
     # no --ref-load (e.g. GLM-5.3-Flash, recipe without KL loss): nothing to convert to
     torch_dist = common.resolve(argv["--ref-load"]) if "--ref-load" in argv else None
-    snapshot_download(
-        cfg["model"]["hf"],
-        local_dir=hf_dir,
-        token=os.environ.get("MILABENCH_HF_TOKEN") or os.environ.get("HF_TOKEN"),
-        allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.jinja", "*.py"],
-    )
+    if os.environ.get("HF_HUB_OFFLINE") and any(hf_dir.glob("*.safetensors")):
+        # compute nodes have no internet: the weights were downloaded from a login node
+        print(f"[slime] offline, using {hf_dir}", file=sys.stderr)
+    else:
+        snapshot_download(
+            cfg["model"]["hf"],
+            local_dir=hf_dir,
+            token=os.environ.get("MILABENCH_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+            allow_patterns=["*.json", "*.safetensors", "*.model", "*.txt", "*.jinja", "*.py"],
+        )
 
     if torch_dist is None or (torch_dist / "latest_checkpointed_iteration.txt").exists():
         return

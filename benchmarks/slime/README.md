@@ -65,3 +65,6 @@ dirs): it catches mismatches with the HF config (rotary base, ...) and batch-siz
   208-296 GPUs need their own parallel layouts (the 256-GPU one is TP4 x PP8 x CP8, DP=1). A truncated variant for
   1-4 nodes needs a truncated HF checkpoint.
 - Pins (slime `a4202e0`, Megatron `4b4acac`, TE 2.18.0, sglang 0.5.21, torch 2.13.0) mirror slime's Dockerfile.
+- 4-GPU nodes (Rorqual): `slime-qwen2.5-0.5b-{sft,grpo-colocate}-2n4g`, `slime-qwen3-30b-a3b-sft{,-routing}-2n4g` (2 nodes) and
+  `slime-glm5.3-flash-sft-frozen` (8 nodes, 32 GPUs: PP4 x DP8, EP8, `--freeze-params-name-list experts`; frozen weights keep
+  no gradient or optimizer state). Config only, not validated. Submit with `slurm/schedule_slime_multinode.sh`.

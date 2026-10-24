@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 
 # flags that take several values (nargs>1): configured as one string in the yaml
-_MULTI_VALUE = ("--spec",)
+_MULTI_VALUE = ("--spec", "--freeze-params-name-list", "--only-train-params-name-list")
 
 
 def config() -> dict:

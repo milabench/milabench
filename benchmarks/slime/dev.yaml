@@ -598,3 +598,103 @@ slime-glm5.3-flash-grpo:
     --sglang-page-size: 64
     --sglang-kv-cache-dtype: bfloat16
     --sglang-watchdog-timeout: 3600
+
+# --- Multi-node on 4-GPU nodes (Rorqual: 4 x H100 per node, 21 nodes reserved) ---
+# The entries above assume 8 GPUs per node. These spell out --actor-num-gpus-per-node 4 and take their node
+# count from num_machines (Ray through RayCluster, the first num_machines nodes of the --system file).
+# NOT yet validated end to end.
+
+slime-qwen2.5-0.5b-sft-2n4g:
+  inherits: _qwen2_5_0_5b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [pretrain, multinode]
+  max_duration: 1800
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --actor-num-gpus-per-node: 4
+
+slime-qwen2.5-0.5b-grpo-colocate-2n4g:
+  inherits: _qwen2_5_0_5b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [rl, multinode]
+  max_duration: 2400
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    --rollout-batch-size: 8
+    --n-samples-per-prompt: 4
+    --global-batch-size: 32
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 256
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.4
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 4
+
+# Qwen3-30B-A3B: TP4 x EP8 over 2 nodes (DP=2). The torch_dist conversion runs on one node: 4 GPUs.
+_qwen3_30b_a3b_2n4g:
+  inherits: _qwen3_30b_a3b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [multinode, moe]
+  model:
+    convert_nproc: 4
+  argv:
+    --actor-num-gpus-per-node: 4
+
+slime-qwen3-30b-a3b-sft-2n4g:
+  inherits: _qwen3_30b_a3b_2n4g
+  tags: [pretrain]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+slime-qwen3-30b-a3b-sft-routing-2n4g:
+  inherits: _qwen3_30b_a3b_2n4g
+  tags: [pretrain]
+  dataset: openhermes
+  schedule:
+    router: {force_balance_until: 3}
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+# GLM-5.3-Flash with most of the weights frozen, to run the pipeline (PP, EP all-to-all, router, optimizer) on
+# 8 nodes x 4 GPUs = 32 GPUs instead of the recipe's 64. Frozen parameters keep their bf16 weights but have
+# no gradient buffer and no optimizer state. The experts hold almost all the parameters: freeze them, the
+# attention, router and norms stay trainable so the backward pass still goes through the whole model.
+#   - SFT (--debug-train-only, no SGLang) with short sequences: the recipe's CP8 / 512k context is for rollouts
+#   - PP4 x DP8, EP8 (288 experts / 8 = 36 per GPU); the HF checkpoint is loaded directly (no conversion)
+slime-glm5.3-flash-sft-frozen:
+  inherits: _glm5_flash
+  num_machines: 8
+  max_duration: 7200
+  tags: [multinode, moe, frozen]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --actor-num-gpus-per-node: 4
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --allgather-cp: null
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --max-tokens-per-gpu: 8192
+    --rollout-batch-size: 32
+    --global-batch-size: 32
+    --num-rollout: 3
+    --freeze-params-name-list: experts
