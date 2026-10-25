@@ -17,7 +17,7 @@ from typing import Any
 
 import torch
 
-from torchtitan.components.data.loader import BaseDataLoader
+from torchtitan.components.data.loader import BaseDataLoader, GrainDataLoader
 from torchtitan.components.data.types import (
     DatasetIterationPolicy,
     TokenizedTrainingMicrobatch,
@@ -33,6 +33,8 @@ class FineWebSource(Configurable):
     class Config(Configurable.Config):
         path: str
         samples: int
+        cache_dir: str | None = None
+        """Copy of the datasets cache to read (node-local disk); None: HF_HOME."""
 
     def __init__(
         self, config: Config, *, dataset_iteration_policy: DatasetIterationPolicy
@@ -40,13 +42,51 @@ class FineWebSource(Configurable):
         del dataset_iteration_policy
         from benchmate.fineweb import load_fineweb
 
-        self._dataset = load_fineweb(config.path, samples=config.samples)
+        self._dataset = load_fineweb(
+            config.path, samples=config.samples, cache_dir=config.cache_dir
+        )
 
     def __len__(self) -> int:
         return len(self._dataset)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         return self._dataset[index]
+
+
+class PooledGrainDataLoader(GrainDataLoader):
+    """GrainDataLoader that can serve a fixed pool of microbatches from memory.
+
+    With ``pool > 0``, the first ``pool`` microbatches are read at startup, the
+    Grain pipeline (and its prefetch thread) is closed, and the pool is cycled:
+    real documents and masks, but no file reads or tokenization while training
+    (A/B against the streaming loader).
+    """
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(GrainDataLoader.Config):
+        pool: int = 0
+
+    def __init__(self, config: Config, **kwargs: Any) -> None:
+        super().__init__(config, **kwargs)
+        self._pool = None
+        if config.pool > 0:
+            iterator = super().__iter__()
+            self._pool = [next(iterator) for _ in range(config.pool)]
+            super().close()
+
+    def __iter__(self) -> Iterator[Any]:
+        if self._pool is None:
+            return super().__iter__()
+        return _cycle(self._pool)
+
+    def close(self) -> None:
+        if self._pool is None:
+            super().close()
+
+
+def _cycle(pool):
+    while True:
+        yield from pool
 
 
 class NullTokenizer(BaseTokenizer):

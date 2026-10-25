@@ -69,6 +69,13 @@ tt-w-smoke-random:
   argv:
     --dataset: random
 
+# FineWeb microbatches read at startup and cycled from memory: same documents
+# and masks, no file reads or tokenization while training (loader cost A/B).
+tt-w-smoke-pool:
+  inherits: tt-w-smoke
+  argv:
+    --data-pool: 16
+
 # Single 3-node leaf (12 GPUs): tightest memory of the full-model configs.
 tt-w-leaf3:
   inherits: _tt_window

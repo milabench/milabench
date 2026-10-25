@@ -219,7 +219,9 @@ def _read_chunk(fs, file, metadata, row_groups):
     return file, table
 
 
-def load_fineweb(dest, samples: int | None = None, split: str = "train"):
+def load_fineweb(
+    dest, samples: int | None = None, split: str = "train", cache_dir=None
+):
     """Load a prepared subset as a map-style ``datasets.Dataset``.
 
     ``samples`` keeps only the first ``samples`` docs, so a bench reads the
@@ -227,6 +229,8 @@ def load_fineweb(dest, samples: int | None = None, split: str = "train"):
 
     The Arrow cache follows milabench's HF_HOME (the data dir in both prepare
     and run), so the copy built by ``prepare_fineweb`` is the one runs reuse.
+    ``cache_dir`` reads a copy of that cache instead (e.g. on node-local disk):
+    the cache key only depends on the parquet paths, which stay at ``dest``.
     """
     from datasets import load_dataset
 
@@ -245,6 +249,7 @@ def load_fineweb(dest, samples: int | None = None, split: str = "train"):
         "parquet",
         data_files=[str(dest / p) for p in manifest["parts"]],
         split=split,
+        cache_dir=None if cache_dir is None else str(cache_dir),
     )
     if samples is not None:
         dataset = dataset.select(range(samples))

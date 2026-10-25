@@ -108,6 +108,9 @@ class TorchtitanNative(Package):
         cache = os.environ.get("TT_NATIVE_CACHE_DIR") or default_cache_dir()
         env.setdefault("TRITON_CACHE_DIR", f"{cache}/triton")
         env.setdefault("TORCHINDUCTOR_CACHE_DIR", f"{cache}/inductor")
+        # Node-local copy of the datasets cache (scripts/slurm/tt_native.sh).
+        if os.environ.get("TT_NATIVE_DATASETS_CACHE"):
+            env["TT_NATIVE_DATASETS_CACHE"] = os.environ["TT_NATIVE_DATASETS_CACHE"]
         # Compute nodes have no internet access.
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("HF_DATASETS_OFFLINE", "1")

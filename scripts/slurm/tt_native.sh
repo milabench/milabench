@@ -124,6 +124,23 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     "$LOCAL_VENV/bin/python" -c "import sys, torch; print('[tt-native] local_venv check', sys.prefix, sys.base_prefix, torch.__file__)"
 fi
 
+# TT_LOCAL_DATA=1: copy the Hugging Face datasets cache (the Arrow files the
+# FineWeb runs read) to node-local disk, so training reads documents from /tmp
+# instead of the shared filesystem. The cache key only depends on the parquet
+# paths, which stay on the shared filesystem (stat only).
+if [ "${TT_LOCAL_DATA:-0}" = 1 ]; then
+    SRC_DATASETS=$MILABENCH_BASE/data/datasets
+    LOCAL_DATASETS=/tmp/$USER/tt_native_data/datasets
+    t0=$(date +%s.%N)
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
+        set -e
+        rm -rf $LOCAL_DATASETS && mkdir -p $(dirname $LOCAL_DATASETS) && cp -r $SRC_DATASETS $LOCAL_DATASETS
+    "
+    t1=$(date +%s.%N)
+    export TT_NATIVE_DATASETS_CACHE=$LOCAL_DATASETS
+    echo "[tt-native] local_data stage_s=$(echo "$t1 - $t0" | bc) size=$(du -sh "$SRC_DATASETS" | cut -f1) cache=$LOCAL_DATASETS"
+fi
+
 # Startup probe: where does `milabench slurm system` spend its time?
 FIRST_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)
 t0=$(date +%s.%N); ssh -oStrictHostKeyChecking=no -oPasswordAuthentication=no "$FIRST_NODE" cat /etc/hostname >/dev/null 2>&1 || true

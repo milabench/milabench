@@ -252,6 +252,8 @@ class TrainerInstrument:
             max(self._data_times) if self._data_times else 0.0,
         ]
         rows = _gather_floats(local)
+        # Every rank measured the same number of steps (agreed count).
+        data_rows = _gather_floats(self._data_times)
         hosts = _gather_hosts()
         if _rank() != 0:
             return
@@ -331,6 +333,7 @@ class TrainerInstrument:
                     "CPU time fetching a step's microbatches, measured steps; "
                     "median per rank, worst rank reported"
                 ),
+                "stragglers": _data_stragglers(data_rows, steps, hosts),
             },
             "startup": {
                 "process_start_epoch": spread(2),
@@ -351,11 +354,62 @@ class TrainerInstrument:
                     "step_max": round(row[9], 5),
                     "peak_alloc_gib": round(row[0], 2),
                     "peak_reserved_gib": round(row[1], 2),
+                    "data_wait_sum_s": round(sum(data_rows[r]), 4),
+                    "data_wait_max_s": round(max(data_rows[r], default=0.0), 4),
                 }
                 for r, row in enumerate(rows)
             ],
         }
         self.push(summary=summary, task="train")
+
+
+def _data_stragglers(
+    data_rows: list[list[float]], steps: list[float], hosts: list[str]
+) -> dict[str, Any]:
+    """How much waiting for data on the slowest rank costs each step.
+
+    With FSDP every rank waits for the slowest one, so the per-step cost is the
+    maximum wait over ranks (``data_rows[rank][step]``), compared with the
+    step time measured on rank 0.
+    """
+    n = min(len(steps), *(len(r) for r in data_rows)) if data_rows else 0
+    if n == 0:
+        return {}
+    worst = [max(r[i] for r in data_rows) for i in range(n)]
+    step = steps[:n]
+    totals = sorted(
+        ((sum(r[:n]), rank) for rank, r in enumerate(data_rows)), reverse=True
+    )
+
+    def mean_step(selected):
+        return statistics.fmean(selected) if selected else None
+
+    corr = None
+    if n > 2 and statistics.pstdev(worst) > 0 and statistics.pstdev(step) > 0:
+        corr = statistics.correlation(worst, step)
+    return {
+        "worst_rank_wait_s": {
+            "mean": statistics.fmean(worst),
+            "median": statistics.median(worst),
+            "p90": percentile(worst, 0.9),
+            "max": max(worst),
+        },
+        "exposed_fraction": sum(worst) / sum(step),
+        "steps_over_0.1s": sum(w > 0.1 for w in worst),
+        "steps_over_0.5s": sum(w > 0.5 for w in worst),
+        "steps": n,
+        "mean_step_s_wait_over_0.1s": mean_step([s for s, w in zip(step, worst) if w > 0.1]),
+        "mean_step_s_wait_under_0.1s": mean_step([s for s, w in zip(step, worst) if w <= 0.1]),
+        "corr_worst_wait_vs_step": corr,
+        "top_ranks": [
+            {"rank": rank, "host": hosts[rank], "wait_sum_s": total}
+            for total, rank in totals[:3]
+        ],
+        "definition": (
+            "per measured step: max over ranks of the data wait; step time from "
+            "rank 0 device events; exposed_fraction = sum(max wait) / sum(step time)"
+        ),
+    }
 
 
 def _rank() -> int:

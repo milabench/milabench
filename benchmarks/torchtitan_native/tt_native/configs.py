@@ -14,7 +14,6 @@ from typing import Literal
 
 from torchtitan.components.data import (
     ConcatThenSplitPackingConfig,
-    GrainDataLoader,
     SingleDatasetConfig,
 )
 from torchtitan.components.loss import ChunkedLossWrapper, CrossEntropyLoss
@@ -35,7 +34,12 @@ from torchtitan.models.qwen3_8 import build_model_config
 from torchtitan.observability.metrics import MetricsProcessor
 
 from . import assets
-from .data import FineWebSource, NullTokenizer, RandomTokenDataLoader
+from .data import (
+    FineWebSource,
+    NullTokenizer,
+    PooledGrainDataLoader,
+    RandomTokenDataLoader,
+)
 from .layout import patch_fsdp_placements, use_row_stacked_linears
 from torchtitan.trainer import Trainer
 
@@ -65,6 +69,9 @@ class Options:
     dataset: Dataset = "fineweb"
     samples: int = assets.DEFAULT_FINEWEB_SAMPLES
     """FineWeb documents read (and downloaded by prepare.py)."""
+    data_pool: int = 0
+    """> 0: read this many FineWeb microbatches at startup and cycle them (no
+    file reads or tokenization while training; A/B of the loader cost)."""
     max_documents: int = 64
     """Document segments per microbatch (fixed varlen/mask capacity). The packer
     pads the microbatch when it is reached; padding is not counted as tokens."""
@@ -148,17 +155,23 @@ def _data(opts: Options, vocab_size: int):
     # the GatedDeltaNet recurrence stay within documents (segments of at most
     # seq_len tokens).
     dataset = SingleDatasetConfig(
-        source=FineWebSource.Config(path=str(assets.fineweb_dir()), samples=opts.samples),
+        source=FineWebSource.Config(
+            path=str(assets.fineweb_dir()),
+            samples=opts.samples,
+            # Set by scripts/slurm/tt_native.sh (TT_LOCAL_DATA=1).
+            cache_dir=os.environ.get("TT_NATIVE_DATASETS_CACHE"),
+        ),
         processor=TextProcessor.Config(),
         post_filters=(_not_none,),
     )
     return (
         str(assets.tokenizer_dir()),
         HuggingFaceTokenizer.Config(),
-        GrainDataLoader.Config(
+        PooledGrainDataLoader.Config(
             dataset=ConcatThenSplitPackingConfig(dataset=dataset),
             seed=opts.seed,
             max_num_documents=opts.max_documents,
+            pool=opts.data_pool,
         ),
     )
 
@@ -204,6 +217,7 @@ def qwen38() -> Trainer.Config:
             else f"FineWeb {assets.FINEWEB_SUBSET} (first {opts.samples} docs), "
             f"{assets.TOKENIZER_REPO} tokenizer, packed with document masking"
         ),
+        "data_cache": os.environ.get("TT_NATIVE_DATASETS_CACHE") or "HF_HOME",
         "options": asdict(opts),
     }
 
