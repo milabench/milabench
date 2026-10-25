@@ -111,6 +111,11 @@ tt-w-n15:
   inherits: _tt_window
   num_machines: 15
 
+# ihpc217 + ihpc218 (7 each), no ihpc316: control for tt-w-n21.
+tt-w-n14:
+  inherits: _tt_window
+  num_machines: 14
+
 # The whole MILABENCH2026 reservation (ihpc217 + ihpc218 + ihpc316, 7 each):
 # pre-window scale check (FineWeb, startup, health check at 84 GPUs).
 tt-w-n21:
