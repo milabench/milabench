@@ -674,17 +674,20 @@ slime-qwen3-30b-a3b-sft-routing-2n4g:
     <<: *sft_argv
     --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
 
-# GLM-5.3-Flash with most of the weights frozen, to run the pipeline (PP, EP all-to-all, router, optimizer) on
-# 8 nodes x 4 GPUs = 32 GPUs instead of the recipe's 64. Frozen parameters keep their bf16 weights but have
-# no gradient buffer and no optimizer state. The experts hold almost all the parameters: freeze them, the
-# attention, router and norms stay trainable so the backward pass still goes through the whole model.
+# GLM-5.3-Flash SFT on 4-GPU nodes, to run the pipeline (PP, EP all-to-all, router, optimizer) with fewer GPUs than
+# the recipe's 64. The experts hold almost all the parameters: freezing them removes their gradient buffers and
+# optimizer state (the bf16 weights stay), the attention, router and norms stay trainable so the backward pass still
+# goes through the whole model.
 #   - SFT (--debug-train-only, no SGLang) with short sequences: the recipe's CP8 / 512k context is for rollouts
-#   - PP4 x DP8, EP8 (288 experts / 8 = 36 per GPU); the HF checkpoint is loaded directly (no conversion)
-slime-glm5.3-flash-sft-frozen:
+#   - PP4 x DP(N*4/4), EP = DP (288 experts / EP per GPU); the HF checkpoint is loaded directly (no conversion)
+#   - 10 rollouts: the first steps are warm-up, drop them when comparing
+# Sweep (schedule_slime_flash_sweep.sh): frozen / unfrozen at 8 nodes (what freezing saves), frozen at 4 and 2 nodes
+# (how few GPUs the pipeline needs), frozen with the router forced to balance for the first rollouts.
+_glm5_flash_sft:
   inherits: _glm5_flash
   num_machines: 8
   max_duration: 7200
-  tags: [multinode, moe, frozen]
+  tags: [multinode, moe]
   dataset: openhermes
   argv:
     <<: *sft_argv
@@ -698,5 +701,41 @@ slime-glm5.3-flash-sft-frozen:
     --max-tokens-per-gpu: 8192
     --rollout-batch-size: 32
     --global-batch-size: 32
-    --num-rollout: 3
+    --num-rollout: 10
+
+slime-glm5.3-flash-sft-frozen:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --freeze-params-name-list: experts
+
+# Same layout, nothing frozen: may not fit (fp32 gradients + optimizer state of every expert), which is then the result.
+slime-glm5.3-flash-sft-unfrozen:
+  inherits: _glm5_flash_sft
+
+# Router forced to balance for the first 4 rollouts, then the real router (slime_hook.py).
+slime-glm5.3-flash-sft-frozen-routing:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  schedule:
+    router: {force_balance_until: 4}
+  argv:
+    --freeze-params-name-list: experts
+
+# 16 GPUs: PP4 x DP4, EP4 (72 experts per GPU)
+slime-glm5.3-flash-sft-frozen-4n:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --freeze-params-name-list: experts
+
+# 8 GPUs: PP4 x DP2, EP2 (144 experts per GPU, about 41 GB of expert weights each): may not fit
+slime-glm5.3-flash-sft-frozen-2n:
+  inherits: _glm5_flash_sft
+  num_machines: 2
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 2
     --freeze-params-name-list: experts
