@@ -111,6 +111,12 @@ tt-w-n15:
   inherits: _tt_window
   num_machines: 15
 
+# The whole MILABENCH2026 reservation (ihpc217 + ihpc218 + ihpc316, 7 each):
+# pre-window scale check (FineWeb, startup, health check at 84 GPUs).
+tt-w-n21:
+  inherits: _tt_window
+  num_machines: 21
+
 # Topology pairs H9 / P27 (all three big leaves).
 tt-w-n27:
   inherits: _tt_window
