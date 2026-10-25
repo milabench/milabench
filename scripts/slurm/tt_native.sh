@@ -124,11 +124,13 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     "$LOCAL_VENV/bin/python" -c "import sys, torch; print('[tt-native] local_venv check', sys.prefix, sys.base_prefix, torch.__file__)"
 fi
 
-# TT_LOCAL_DATA=1: copy the Hugging Face datasets cache (the Arrow files the
-# FineWeb runs read) to node-local disk, so training reads documents from /tmp
-# instead of the shared filesystem. The cache key only depends on the parquet
-# paths, which stay on the shared filesystem (stat only).
-if [ "${TT_LOCAL_DATA:-0}" = 1 ]; then
+# TT_LOCAL_DATA=1 (default): copy the Hugging Face datasets cache (the Arrow
+# files the FineWeb runs read) to node-local disk, so training reads documents
+# from /tmp instead of the shared filesystem. The cache key only depends on the
+# parquet paths, which stay on the shared filesystem (stat only). Reading from
+# Lustre caused data stalls of up to 1.4-2 s per step on one node (2026-10-25);
+# staging takes ~6 s for 597 MB.
+if [ "${TT_LOCAL_DATA:-1}" = 1 ] && [ -d "$MILABENCH_BASE/data/datasets" ]; then
     SRC_DATASETS=$MILABENCH_BASE/data/datasets
     LOCAL_DATASETS=/tmp/$USER/tt_native_data/datasets
     t0=$(date +%s.%N)
