@@ -86,6 +86,27 @@ tt-w-n6:
   inherits: _tt_window
   num_machines: 6
 
+# Bridge to the earlier per-GPU batch (2 x 8192 = 16,384 tokens/GPU), same nodes
+# and session as tt-w-n6 (Fig. 6).
+tt-w-n6-8k2:
+  inherits: tt-w-n6
+  argv:
+    --seq-len: 8192
+    --microbatch-sequences: 2
+
+# Gradient accumulation (4 microbatches per optimizer step): splits the step
+# into per-microbatch work and per-step overhead (Fig. 9). Steps are ~4x longer,
+# so fewer warm-up and measured steps.
+tt-w-n6-accum:
+  inherits: tt-w-n6
+  voir:
+    options:
+      skip: 5
+      stop: 10
+      stop_seconds: 0
+  argv:
+    --grad-accum: 4
+
 # Big leaf ihpc218 (7 nodes).
 tt-w-leaf7:
   inherits: _tt_window
