@@ -10,6 +10,8 @@ from pathlib import Path
 
 from huggingface_hub import snapshot_download
 
+from benchmate.fineweb import prepare_fineweb
+
 
 # Bench name → (hf_repo_id, mode)
 BENCHES = {
@@ -159,6 +161,9 @@ def main():
     repo_id, mode = BENCHES[name]
     dest = data / "hf" / repo_id.split("/")[-1]
     download_assets(repo_id, mode, dest)
+    argv = cfg.get("argv") or {}
+    if argv.get("--dataloader.dataset") == "fineweb":
+        prepare_fineweb(data / "fineweb" / "sample-10BT", int(argv["--dataloader.samples"]))
 
 
 if __name__ == "__main__":
