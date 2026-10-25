@@ -63,6 +63,12 @@ tt-w-smoke:
   argv:
     --n-layers: 16
 
+# Same with random tokens (FineWeb vs random-token A/B).
+tt-w-smoke-random:
+  inherits: tt-w-smoke
+  argv:
+    --dataset: random
+
 # Single 3-node leaf (12 GPUs): tightest memory of the full-model configs.
 tt-w-leaf3:
   inherits: _tt_window

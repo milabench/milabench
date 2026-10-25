@@ -16,6 +16,11 @@
 # node count, model depth (1-node runs use a truncated model), measurement
 # length and the explicit variants (eager, CUDA graphs, AC, layout, -lowmem).
 #
+# Data: the first 500k documents of FineWeb sample-10BT (benchmate.fineweb),
+# downloaded with the Qwen3.8 tokenizer by `milabench prepare` (needs internet:
+# run it on a login node). Documents are packed with document masking, at most
+# 64 per microbatch. `--dataset random` gives the previous random-token runs.
+#
 # Results: one JSON record per run in {milabench_extra}/results.
 
 include:
@@ -51,6 +56,9 @@ _tt_native:
     --microbatch-sequences: 3
     --compile: regions
     --ac: full
+    --dataset: fineweb
+    --samples: 500000
+    --max-documents: 64
 
 # --- 1 node (4 GPUs): truncated model (full 27B training state does not fit) ---
 

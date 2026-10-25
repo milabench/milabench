@@ -12,6 +12,11 @@ import os
 from dataclasses import asdict, dataclass, fields
 from typing import Literal
 
+from torchtitan.components.data import (
+    ConcatThenSplitPackingConfig,
+    GrainDataLoader,
+    SingleDatasetConfig,
+)
 from torchtitan.components.loss import ChunkedLossWrapper, CrossEntropyLoss
 from torchtitan.components.optim import (
     AdamW,
@@ -22,12 +27,15 @@ from torchtitan.components.optim import (
 from torchtitan.config import TrainingConfig
 from torchtitan.config.configs import CommConfig, DebugConfig
 from torchtitan.config.parallelism import ParallelismConfig
+from torchtitan.components.tokenizer import HuggingFaceTokenizer
 from torchtitan.distributed.activation_checkpoint import FullAC, SelectiveAC
+from torchtitan.hf_datasets.text_datasets import TextProcessor
 from torchtitan.models.common.config_utils import decoder_vocab_size
 from torchtitan.models.qwen3_8 import build_model_config
 from torchtitan.observability.metrics import MetricsProcessor
 
-from .data import NullTokenizer, RandomTokenDataLoader
+from . import assets
+from .data import FineWebSource, NullTokenizer, RandomTokenDataLoader
 from .layout import patch_fsdp_placements, use_row_stacked_linears
 from torchtitan.trainer import Trainer
 
@@ -37,6 +45,7 @@ OPTIONS_ENV = "TT_NATIVE_OPTIONS"
 
 CompileMode = Literal["eager", "regions", "regions+graphs"]
 ACMode = Literal["none", "selective", "full"]
+Dataset = Literal["fineweb", "random"]
 StackedLayout = Literal["rows", "torchtitan"]
 
 
@@ -51,6 +60,14 @@ class Options:
     """``rows``: store stacked W1/W3 as [F, 2, D] so FSDP shards rows (any GPU
     count). ``torchtitan``: upstream [2, F, D] layout, FSDP shards dim 1 and
     the shard group must divide F (see tt_native/layout.py)."""
+
+    # Data
+    dataset: Dataset = "fineweb"
+    samples: int = assets.DEFAULT_FINEWEB_SAMPLES
+    """FineWeb documents read (and downloaded by prepare.py)."""
+    max_documents: int = 64
+    """Document segments per microbatch (fixed varlen/mask capacity). The packer
+    pads the microbatch when it is reached; padding is not counted as tokens."""
 
     # Batch (per GPU, fixed across scales: weak scaling)
     seq_len: int = 4096
@@ -110,6 +127,42 @@ def _model_config(opts: Options):
     return model
 
 
+def _not_none(sample) -> bool:
+    return sample is not None
+
+
+def _data(opts: Options, vocab_size: int):
+    """(hf_assets_path, tokenizer, dataloader) configs for ``opts.dataset``."""
+    if opts.dataset == "random":
+        return (
+            None,
+            NullTokenizer.Config(vocab_size=vocab_size),
+            RandomTokenDataLoader.Config(
+                vocab_size=vocab_size,
+                seed=opts.seed,
+                max_num_documents=opts.microbatch_sequences,
+            ),
+        )
+    # Documents (BOS/EOS added by the tokenizer) are concatenated and split
+    # into microbatches; positions restart at each document, so attention and
+    # the GatedDeltaNet recurrence stay within documents (segments of at most
+    # seq_len tokens).
+    dataset = SingleDatasetConfig(
+        source=FineWebSource.Config(path=str(assets.fineweb_dir()), samples=opts.samples),
+        processor=TextProcessor.Config(),
+        post_filters=(_not_none,),
+    )
+    return (
+        str(assets.tokenizer_dir()),
+        HuggingFaceTokenizer.Config(),
+        GrainDataLoader.Config(
+            dataset=ConcatThenSplitPackingConfig(dataset=dataset),
+            seed=opts.seed,
+            max_num_documents=opts.max_documents,
+        ),
+    )
+
+
 def _activation_checkpoint(mode: ACMode):
     if mode == "none":
         return None
@@ -145,9 +198,16 @@ def qwen38() -> Trainer.Config:
         "activation_checkpointing": opts.ac,
         "adam_moments": opts.adam_moments,
         "microbatch_sequences_per_gpu": opts.microbatch_sequences,
-        "data": "random tokens (packed, fixed length)",
+        "data": (
+            "random tokens (packed, fixed length)"
+            if opts.dataset == "random"
+            else f"FineWeb {assets.FINEWEB_SUBSET} (first {opts.samples} docs), "
+            f"{assets.TOKENIZER_REPO} tokenizer, packed with document masking"
+        ),
         "options": asdict(opts),
     }
+
+    hf_assets_path, tokenizer, dataloader = _data(opts, vocab_size)
 
     # Recorded in the summary pushed by the voirfile (tt_native.instrument).
     instrument.RUN_DESCRIPTION = description
@@ -157,13 +217,9 @@ def qwen38() -> Trainer.Config:
         loss=ChunkedLossWrapper.Config(
             loss_fn=CrossEntropyLoss.Config(global_vocab_size=vocab_size),
         ),
-        hf_assets_path=None,
-        tokenizer=NullTokenizer.Config(vocab_size=vocab_size),
-        dataloader=RandomTokenDataLoader.Config(
-            vocab_size=vocab_size,
-            seed=opts.seed,
-            max_num_documents=opts.microbatch_sequences,
-        ),
+        hf_assets_path=hf_assets_path,
+        tokenizer=tokenizer,
+        dataloader=dataloader,
         optim=Optim.Config(
             optimizer=OptimizersContainer.Config(
                 optimizers=[

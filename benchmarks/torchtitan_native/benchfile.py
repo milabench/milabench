@@ -81,7 +81,7 @@ class NativeTorchrunSrun(TorchrunSrun):
 
 class TorchtitanNative(Package):
     base_requirements = "requirements.in"
-    prepare_script = None
+    prepare_script = "prepare.py"
     main_script = "main.py"
 
     async def install(self):
@@ -92,10 +92,6 @@ class TorchtitanNative(Package):
         await self.pip_install("setuptools", "wheel", build_isolation=True)
         await self.pip_install("-r", self.dirs.code / "requirements.in")
         await install_benchmate(self)
-
-    async def prepare(self):
-        # Random tokens, random init: nothing to download or stage.
-        pass
 
     def make_env(self):
         env = super().make_env()

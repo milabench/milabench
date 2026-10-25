@@ -1,7 +1,12 @@
-"""Synthetic data for throughput runs: random token ids, no file I/O.
+"""Data for throughput runs.
 
-Every microbatch is fully packed (no padding), so each step processes exactly
-``num_tokens_per_microbatch`` tokens per data-parallel rank.
+``fineweb``: documents of the FineWeb subset prepared by ``prepare.py``
+(``benchmate.fineweb``), tokenized on the fly and packed by TorchTitan's
+Grain loader (``FineWebSource``).
+
+``random``: random token ids, no file I/O. Every microbatch is fully packed
+(no padding), so each step processes exactly ``num_tokens_per_microbatch``
+tokens per data-parallel rank.
 """
 
 from __future__ import annotations
@@ -13,8 +18,35 @@ from typing import Any
 import torch
 
 from torchtitan.components.data.loader import BaseDataLoader
-from torchtitan.components.data.types import TokenizedTrainingMicrobatch
+from torchtitan.components.data.types import (
+    DatasetIterationPolicy,
+    TokenizedTrainingMicrobatch,
+)
 from torchtitan.components.tokenizer import BaseTokenizer
+from torchtitan.config import Configurable
+
+
+class FineWebSource(Configurable):
+    """Random access to the first ``samples`` documents of a prepared subset."""
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(Configurable.Config):
+        path: str
+        samples: int
+
+    def __init__(
+        self, config: Config, *, dataset_iteration_policy: DatasetIterationPolicy
+    ) -> None:
+        del dataset_iteration_policy
+        from benchmate.fineweb import load_fineweb
+
+        self._dataset = load_fineweb(config.path, samples=config.samples)
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return self._dataset[index]
 
 
 class NullTokenizer(BaseTokenizer):
