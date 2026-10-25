@@ -641,6 +641,8 @@ slime-qwen2.5-0.5b-grpo-colocate-2n4g:
     --sglang-attention-backend: triton
     --sglang-sampling-backend: pytorch
     --actor-num-gpus-per-node: 4
+    # rollout side: slime assumes 8 GPUs per node (engine placement, ports) unless told otherwise
+    --num-gpus-per-node: 4
 
 # Qwen3-30B-A3B: TP4 x EP8 over 2 nodes (DP=2). The torch_dist conversion runs on one node: 4 GPUs.
 _qwen3_30b_a3b_2n4g:
