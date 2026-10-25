@@ -23,7 +23,7 @@ def prepare_model(cfg):
     argv = cfg["argv"]
     hf_dir = common.resolve(argv["--hf-checkpoint"])
     # no --ref-load (e.g. GLM-5.3-Flash, recipe without KL loss): nothing to convert to
-    torch_dist = common.resolve(argv["--ref-load"]) if "--ref-load" in argv else None
+    torch_dist = common.resolve(argv["--ref-load"]) if argv.get("--ref-load") else None
     if os.environ.get("HF_HUB_OFFLINE") and any(hf_dir.glob("*.safetensors")):
         # compute nodes have no internet: the weights were downloaded from a login node
         print(f"[slime] offline, using {hf_dir}", file=sys.stderr)

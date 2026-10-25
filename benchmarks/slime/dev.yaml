@@ -739,3 +739,81 @@ slime-glm5.3-flash-sft-frozen-2n:
   argv:
     --expert-model-parallel-size: 2
     --freeze-params-name-list: experts
+
+# Throughput scaling check: the frozen runs above use a global batch of 32 sequences (4 per data-parallel rank at 8
+# nodes), small enough that pipeline bubbles and the cross-node all-to-all may dominate. Same layouts, bigger batches.
+slime-glm5.3-flash-sft-frozen-gbs64:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-gbs128:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-4n-gbs64:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-4n-gbs128:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --freeze-params-name-list: experts
+
+# --- GLM-5.3 744B-A40B with frozen experts, 16 nodes x 4 GPUs = 64 GPUs (the recipe uses 256) ---
+# zai-org/GLM-5.3 is the FP8 checkpoint (755 GB); slime's raw HF loader maps model_type glm_moe_dsa and dequantizes
+# FP8 on load, so, as for Flash, no torch_dist conversion: --load <hf dir> --megatron-to-hf-mode raw.
+# NOT validated: the recipe itself loads a converted torch_dist checkpoint.
+# bf16 weights are about 1.5 TB: 64 GPUs = 23 GB each (32 GPUs would be 45 GB, no room left). PP8 x DP8, EP8
+# (32 experts per GPU), the recipe's 14 / 16 first / last pipeline stage layers (14 + 6 x 8 + 16 = 78).
+# SFT (--debug-train-only, no SGLang), 8k sequences instead of the recipe's CP8 long context.
+slime-glm5-sft-frozen-16n:
+  inherits: _glm5
+  num_machines: 16
+  max_duration: 14400
+  tags: [pretrain, frozen]
+  dataset: openhermes
+  model:
+    argv:
+      --allgather-cp: null
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --actor-num-gpus-per-node: 4
+    --tensor-model-parallel-size: 1
+    --sequence-parallel: null
+    --pipeline-model-parallel-size: 8
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --ref-load: null
+    --load: "{milabench_data}/slime/models/glm5/hf"
+    --megatron-to-hf-mode: raw
+    --no-load-optim: true
+    --no-load-rng: true
+    --no-save-optim: true
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --max-tokens-per-gpu: 8192
+    --data-pad-size-multiplier: 128
+    --rollout-batch-size: 32
+    --global-batch-size: 32
+    --num-rollout: 6
+    --freeze-params-name-list: experts
