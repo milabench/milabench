@@ -1,0 +1,188 @@
+# GLM-5 training on plain Megatron-LM (torchrun over srun, random packed data, random init), frozen parameters.
+# Usage:
+#   milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#   milabench prepare --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#   milabench run     --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#
+# Config sections read by the pack (the rest is the Megatron command line: model.argv + argv):
+#   frozen:     preset none | experts | attention-only, plus freeze / only_train (regex on parameter names), indexer
+#   placement:  nodes (as-is | sorted | topology | [list]), order (tp-cp-ep-dp-pp | tp-cp-ep-pp-dp),
+#               topology {node: switch} (else node.switch, else `scontrol show topology`), gpus_per_node,
+#               nccl {NCCL_TOPO_FILE: ..., NCCL_CROSS_NIC: ...}
+#   data:       docs_per_sample
+# main.py prints the node order and, per parallel group, how many nodes / switches it spans (stderr, rank 0).
+
+include:
+  - ../../config/_defaults.yaml
+
+_megatron_glm5:
+  inherits: _defaults
+  definition: .
+  enabled: true
+  install_variant: unpinned
+  install_group: torch
+  weight: 0.0
+  url: https://huggingface.co/zai-org/GLM-5.3
+  num_machines: 16
+  max_duration: 7200
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [nlp, llm, megatron, multinode, moe, pretrain]
+  plan:
+    method: njobs
+    n: 1
+  env:
+    NCCL_NVLS_ENABLE: "0"
+    NCCL_CUMEM_ENABLE: "0"
+    # the glm5 plugin's RoPE needs NVIDIA apex (not installed): SGLang's kernels instead (plugin needs TP=1, CP=1)
+    MEGATRON_USE_SGLANG_ROPE: "1"
+  frozen:
+    preset: experts
+  placement:
+    nodes: as-is
+    order: tp-cp-ep-dp-pp
+    gpus_per_node: 4
+  data:
+    docs_per_sample: 8
+  model:
+    hf: zai-org/GLM-5.3
+    hf_path: "{milabench_data}/megatron/hf"
+    argv:
+      --no-gradient-accumulation-fusion: true
+      --moe-layer-freq: "[0]*3+[1]*75"
+      --num-experts: 256
+      --moe-shared-expert-intermediate-size: 2048
+      --moe-router-topk: 8
+      --moe-grouped-gemm: true
+      --moe-permute-fusion: true
+      --moe-ffn-hidden-size: 2048
+      --moe-router-score-function: sigmoid
+      --moe-router-pre-softmax: true
+      --moe-router-enable-expert-bias: true
+      --moe-router-bias-update-rate: 0
+      --moe-router-load-balancing-type: seq_aux_loss
+      --moe-router-topk-scaling-factor: 2.5
+      --moe-aux-loss-coeff: 0
+      --moe-router-dtype: fp32
+      --moe-token-dispatcher-type: alltoall
+      --make-vocab-size-divisible-by: 16
+      --num-layers: 78
+      --hidden-size: 6144
+      --ffn-hidden-size: 12288
+      --num-attention-heads: 64
+      --disable-bias-linear: true
+      --swiglu: true
+      --untie-embeddings-and-output-weights: true
+      --position-embedding-type: rope
+      --no-position-embedding: true
+      --normalization: RMSNorm
+      --qk-layernorm: true
+      --multi-latent-attention: true
+      --q-lora-rank: 2048
+      --kv-lora-rank: 512
+      --qk-head-dim: 192
+      --v-head-dim: 256
+      --kv-channels: 192
+      --qk-pos-emb-head-dim: 64
+      --rotary-base: 8000000
+      --enable-experimental: true
+  argv:
+    --tokenizer-type: NullTokenizer
+    --vocab-size: 154880
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --micro-batch-size: 1
+    --global-batch-size: 64
+    --train-iters: 10
+    --eval-iters: 0
+    --log-interval: 1
+    --bf16: true
+    --attention-backend: auto
+    --transformer-impl: transformer_engine
+    --dataloader-inter-document-masking: true
+    --tensor-model-parallel-size: 1
+    --pipeline-model-parallel-size: 8
+    --decoder-first-pipeline-num-layers: 14
+    --decoder-last-pipeline-num-layers: 16
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --use-distributed-optimizer: true
+    --optimizer: adam
+    --lr: 1e-6
+    --lr-decay-style: constant
+    --weight-decay: 0.1
+    --adam-beta1: 0.9
+    --adam-beta2: 0.98
+    --attention-dropout: 0.0
+    --hidden-dropout: 0.0
+    --recompute-granularity: full
+    --recompute-method: uniform
+    --recompute-num-layers: 1
+    --optimizer-cpu-offload: true
+    --use-precision-aware-optimizer: true
+    --no-save-optim: true
+    --no-save-rng: true
+
+# Reference: experts frozen (as slime-glm5-sft-frozen-16n-gbs64), nodes in the scheduler's order.
+megatron-glm5-frozen-16n:
+  inherits: _megatron_glm5
+  tags: [frozen]
+
+# What freezing costs / saves: everything trains.
+megatron-glm5-unfrozen-16n:
+  inherits: _megatron_glm5
+  frozen:
+    preset: none
+
+# Only the attention (MLA + DSA indexer) trains.
+megatron-glm5-attn-only-16n:
+  inherits: _megatron_glm5
+  tags: [frozen]
+  frozen:
+    preset: attention-only
+
+# Same layout, nodes packed per leaf switch: expert / data parallel groups stay under one switch,
+# pipeline hops cross switches (default tp-cp-ep-dp-pp order puts the stages far apart).
+megatron-glm5-frozen-16n-topo:
+  inherits: _megatron_glm5
+  tags: [frozen, topology]
+  placement:
+    nodes: topology
+
+# Consecutive ranks hold consecutive pipeline stages (--use-tp-pp-dp-mapping): pipeline hops stay under a switch,
+# data-parallel groups (gradient reduce of the trainable weights) span switches.
+megatron-glm5-frozen-16n-topo-pp:
+  inherits: _megatron_glm5
+  tags: [frozen, topology]
+  placement:
+    nodes: topology
+    order: tp-cp-ep-pp-dp
+
+# Rorqual test (2 nodes, 8 GPUs): 4 layers (1 dense + 3 MoE), PP2 x EP4 x DP4, experts frozen. Random init: no weights to
+# load, only config.json. Submit with slurm/schedule_megatron.sh.
+megatron-glm5-frozen-smoke-2n:
+  inherits: _megatron_glm5
+  tags: [frozen, smoke]
+  num_machines: 2
+  max_duration: 1800
+  model:
+    argv:
+      --num-layers: 4
+      --moe-layer-freq: "[0]*1+[1]*3"
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --global-batch-size: 8
+    --train-iters: 6
+    --pipeline-model-parallel-size: 2
+    --expert-model-parallel-size: 4
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --optimizer-cpu-offload: null
+    --use-precision-aware-optimizer: null
+
+megatron-glm5-frozen-smoke-2n-topo:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke, topology]
+  placement:
+    nodes: topology

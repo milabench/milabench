@@ -48,6 +48,8 @@ class _TrainStepMetrics:
         self._started = True
 
     def reset_step(self) -> None:
+        # start the clock before the first step runs, otherwise step 1 is timed as ~0s
+        self._ensure_started()
         self._state = {"local_tokens": 0, "loss": None}
 
     def note_local_tokens(self, count: int) -> None:
