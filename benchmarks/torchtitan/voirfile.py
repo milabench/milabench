@@ -85,6 +85,13 @@ def _install_torchtitan_metrics() -> None:
         def _wrapped_train_step(self, data_iterator):
             _metrics.reset_step()
             _orig_train_step(self, data_iterator)
+            if not _metrics._state.get("local_tokens"):
+                # structured logger did not report tokens: fall back to the nominal batch
+                try:
+                    training = self.config.training
+                    _metrics.note_local_tokens(training.local_batch_size * training.seq_len)
+                except AttributeError:
+                    pass
             _metrics.finish_step()
 
         _wrapped_train_step._milabench_timed = True  # type: ignore[attr-defined]

@@ -91,8 +91,8 @@ def _generate_dataset(name: str, dst: Path) -> None:
     """Synthetic fallback: benchmarks/torchtitan/assets is gitignored and absent on clusters."""
     dst.mkdir(parents=True, exist_ok=True)
     if name == "c4_test":
-        # HuggingFaceTextDataLoader reads the "text" column of a local json dataset
-        with open(dst / "c4_test.json", "w") as fp:
+        # HuggingFaceTextDataLoader reads the "text" column; the file must be named train.* (HF infers the split from the name, "test" breaks split="train")
+        with open(dst / "train.json", "w") as fp:
             for i in range(2000):
                 fp.write(json.dumps({"text": f"Document {i}. " + _LOREM * 20}) + "\n")
     else:
