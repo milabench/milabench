@@ -230,3 +230,23 @@ tt-w-n63-lowmem:
 tt-w-n60-lowmem:
   inherits: tt-w-n60
   argv: {--adam-moments: bf16}
+
+# --- Any node count: every node of the run's node list ---------------------
+# For window blocks (scripts/slurm/tt_block.sh): the node count comes from the
+# picked list (TT_NODES), not from the entry; num_machines is only an upper
+# bound (milabench caps it at the system's node count). Same per-GPU settings.
+
+tt-w-nodes:
+  inherits: _tt_window
+  num_machines: 999
+
+tt-w-nodes-lowmem:
+  inherits: tt-w-nodes
+  argv: {--adam-moments: bf16}
+
+# Bridge to 2 x 8192 (Fig. 6).
+tt-w-nodes-8k2:
+  inherits: tt-w-nodes
+  argv:
+    --seq-len: 8192
+    --microbatch-sequences: 2
