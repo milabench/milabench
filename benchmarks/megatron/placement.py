@@ -86,15 +86,97 @@ def switch_map(nodes: list[dict], placement: dict) -> dict[str, str]:
 
 
 # --- node order --------------------------------------------------------------------------------------------------
+#
+# ``placement.nodes``:
+#   as-is | sorted | [explicit list]   the nodes as they come / by name / the given order
+#   leaf (alias topology)              leaf switch by leaf switch, main node's leaf first, fullest leaves next
+#   aligned                            like leaf, on a set with a multiple of ``group_nodes`` nodes per leaf: no group
+#                                      of ``group_nodes`` consecutive nodes (an expert group) crosses a switch
+#   crossed                            same set, every group takes its nodes from ``group_nodes`` different leaves
+#   mixed                              aligned, but ``mixed_swaps`` pairs of one-group leaves swap partners
+# ``placement.set``: all (default) | even: keep only a multiple of ``group_nodes`` nodes on every leaf (aligned,
+# crossed and mixed always do). ``group_nodes`` = nodes of one expert group = EP size / GPUs per node.
+
+def main_node(nodes: list[dict]) -> dict:
+    return next((n for n in nodes if n.get("main")), nodes[0])
+
+
+def by_leaf(nodes: list[dict], switches: dict[str, str]) -> "OrderedDict[str, list[dict]]":
+    leaves = OrderedDict()
+    for node in nodes:
+        leaves.setdefault(switches[node["name"]], []).append(node)
+    return leaves
+
+
+def even_set(nodes: list[dict], switches: dict[str, str], g: int) -> "OrderedDict[str, list[dict]]":
+    """leaf -> the kept nodes: a multiple of ``g`` on each leaf (the main node is kept first on its leaf)."""
+    main = main_node(nodes)
+    keep = OrderedDict()
+    for leaf, members in by_leaf(nodes, switches).items():
+        members = sorted(members, key=lambda n: (n["name"] != main["name"], n["name"]))
+        kept = members[: len(members) // g * g]
+        if kept:
+            keep[leaf] = kept
+    if not any(n["name"] == main["name"] for ns in keep.values() for n in ns):
+        raise ValueError(f"the main node {main['name']} is on a leaf with fewer than {g} nodes: it would be dropped")
+    return keep
+
+
+def leaf_order(keep: "OrderedDict[str, list[dict]]", main: dict, switches: dict[str, str]) -> list[str]:
+    """Main node's leaf first, then the fullest leaves."""
+    main_leaf = switches[main["name"]]
+    return sorted(keep, key=lambda leaf: (leaf != main_leaf, -len(keep[leaf]), leaf))
+
+
+def order_aligned(keep, main, switches) -> list[dict]:
+    return [n for leaf in leaf_order(keep, main, switches) for n in keep[leaf]]
+
+
+def order_crossed(keep, main, switches, g: int) -> list[dict]:
+    """Every group of ``g`` consecutive nodes takes one node from each of ``g`` different leaves."""
+    pools = OrderedDict((leaf, list(ns)) for leaf, ns in keep.items())
+    main_leaf = switches[main["name"]]
+    ordered = []
+    while sum(map(len, pools.values())) >= g:
+        live = [leaf for leaf in pools if pools[leaf]]
+        live.sort(key=lambda leaf: (leaf != main_leaf or bool(ordered), -len(pools[leaf]), leaf))
+        if len(live) < g:
+            break  # not enough distinct leaves left: the rest cannot cross
+        for leaf in live[:g]:
+            ordered.append(pools[leaf].pop(0))
+    for leaf in pools:  # leftovers, unavoidably aligned
+        ordered.extend(pools[leaf])
+    return ordered
+
+
+def order_mixed(keep, main, switches, g: int, swaps: int) -> list[dict]:
+    """Aligned, except ``swaps`` pairs of one-group leaves swap partners: (A1 A2)(B1 B2) -> (A1 B1)(A2 B2)."""
+    if g != 2:
+        raise ValueError("placement.nodes: mixed is defined for groups of 2 nodes (EP8 on 4-GPU nodes)")
+    leaves = leaf_order(keep, main, switches)
+    slots = {leaf: list(keep[leaf]) for leaf in leaves}
+    main_leaf = switches[main["name"]]
+    singles = [leaf for leaf in leaves if len(keep[leaf]) == g and leaf != main_leaf]
+    if 2 * swaps > len(singles):
+        raise ValueError(f"mixed: {swaps} swaps need {2 * swaps} leaves with exactly {g} kept nodes, found {len(singles)}")
+    for k in range(swaps):
+        a, b = singles[2 * k], singles[2 * k + 1]
+        (a1, a2), (b1, b2) = keep[a], keep[b]
+        slots[a], slots[b] = [a1, b1], [a2, b2]
+    return [n for leaf in leaves for n in slots[leaf]]
+
 
 def order_nodes(nodes: list[dict], placement: dict | None) -> list[dict]:
-    """Return the nodes in rank order. The first node (the main node, where milabench runs) always stays first."""
+    """Return the nodes in rank order (a subset for the ``even`` set and the aligned / crossed / mixed modes).
+
+    The main node always comes first."""
     placement = placement or {}
     mode = placement.get("nodes", "as-is")
     if mode == "as-is" or len(nodes) <= 1:
         return list(nodes)
 
-    main, rest = nodes[0], nodes[1:]
+    main = main_node(nodes)
+    rest = [n for n in nodes if n["name"] != main["name"]]
     if isinstance(mode, list):
         position = {name: i for i, name in enumerate(mode)}
         missing = [n["name"] for n in nodes if n["name"] not in position]
@@ -106,20 +188,54 @@ def order_nodes(nodes: list[dict], placement: dict | None) -> list[dict]:
         return ordered
     if mode == "sorted":
         return [main, *sorted(rest, key=lambda n: n["name"])]
+
+    g = int(placement.get("group_nodes", 2))
+    switches = switch_map(nodes, placement)
     if mode == "topology":
-        switches = switch_map(nodes, placement)
-        by_switch = defaultdict(list)
-        for node in rest:
-            by_switch[switches[node["name"]]].append(node)
-        # the main node's switch first (so rank 0's pipeline stage is not split), then the fullest switches:
-        # consecutive ranks are packed under as few switches as possible
-        main_switch = switches[main["name"]]
-        order = sorted(by_switch, key=lambda s: (s != main_switch, -len(by_switch[s]), s))
-        ordered = [main]
-        for switch in order:
-            ordered.extend(sorted(by_switch[switch], key=lambda n: n["name"]))
-        return ordered
-    raise ValueError(f"unknown placement.nodes {mode!r}")
+        mode = "leaf"
+    if mode in ("aligned", "crossed", "mixed") or placement.get("set") == "even":
+        # the set keeps a multiple of set_group nodes per leaf (default: the group size; G6 keeps G1's set at EP16)
+        keep = even_set(nodes, switches, int(placement.get("set_group", g)))
+    else:
+        keep = by_leaf(sorted(nodes, key=lambda n: (n["name"] != main["name"], n["name"])), switches)
+
+    if mode == "leaf" or mode == "aligned":
+        ordered = order_aligned(keep, main, switches)
+    elif mode == "crossed":
+        ordered = order_crossed(keep, main, switches, g)
+    elif mode == "mixed":
+        ordered = order_mixed(keep, main, switches, g, int(placement.get("mixed_swaps", 3)))
+    else:
+        raise ValueError(f"unknown placement.nodes {mode!r}")
+
+    if mode == "leaf" and placement.get("set") != "even":
+        ordered = ordered[: len(ordered) // g * g]  # the last, partial group is dropped
+    if ordered[0]["name"] != main["name"]:
+        raise ValueError(f"placement.nodes={mode}: the main node {main['name']} is not first, it cannot lead the job")
+    return ordered
+
+
+def crossing(ordered: list[dict], g: int, switches: dict[str, str]) -> tuple[int, int]:
+    """(groups of ``g`` consecutive nodes that span more than one leaf, groups)."""
+    groups = [ordered[i : i + g] for i in range(0, len(ordered) - g + 1, g)]
+    return sum(1 for grp in groups if len({switches[n["name"]] for n in grp}) > 1), len(groups)
+
+
+def plan(nodes: list[dict], placement: dict) -> dict:
+    """The node lists the different modes give, with their crossing counts (login-node check, no GPU)."""
+    out = {}
+    g = int(placement.get("group_nodes", 2))
+    switches = switch_map(nodes, placement)
+    for mode in ("aligned", "crossed", "mixed", "leaf"):
+        for variant in ("even", "all") if mode == "leaf" else ("even",):
+            try:
+                ordered = order_nodes(nodes, {**placement, "nodes": mode, "set": variant})
+            except ValueError as exc:
+                out[f"{mode}/{variant}"] = {"error": str(exc)}
+                continue
+            bad, total = crossing(ordered, g, switches)
+            out[f"{mode}/{variant}"] = {"nodes": [n["name"] for n in ordered], "groups": total, "crossing": bad}
+    return out
 
 
 # --- Megatron rank groups ----------------------------------------------------------------------------------------
@@ -259,3 +375,35 @@ def format_layout(nodes: list[dict], placement: dict, tp: int, pp: int, cp: int,
     for r in [header, *rows]:
         lines.append(f"{r[0]:<{widths[0]}}  {r[1]:<{widths[1]}} | " + " | ".join(f"{c:<{w}}" for c, w in zip(r[2:], widths[2:])))
     return "\n".join(lines)
+
+
+def _cli(argv=None):
+    import argparse
+
+    p = argparse.ArgumentParser(description="Node lists (aligned / crossed / mixed / leaf) and their crossing counts")
+    p.add_argument("--hosts", required=True, help="healthy full-GPU nodes, Slurm hostlist syntax; the first is the main node")
+    p.add_argument("--topology-file", help="`scontrol show topology` output (default: run scontrol)")
+    p.add_argument("--group-nodes", type=int, default=2, help="nodes per expert group (EP size / GPUs per node)")
+    p.add_argument("--mixed-swaps", type=int, default=3)
+    args = p.parse_args(argv)
+
+    hosts = expand_hostlist(args.hosts)
+    nodes = [{"name": h, "main": i == 0} for i, h in enumerate(hosts)]
+    if args.topology_file:
+        text = open(args.topology_file).read()
+        topo = parse_scontrol_topology(text)
+    else:
+        topo = slurm_topology()
+    placement = {"topology": {h: topo.get(h, "unknown") for h in hosts}, "group_nodes": args.group_nodes,
+                 "mixed_swaps": args.mixed_swaps}
+    result = plan(nodes, placement)
+    for name, r in result.items():
+        if "error" in r:
+            print(f"{name:>12}: {r['error']}")
+        else:
+            print(f"{name:>12}: {len(r['nodes'])} nodes, {r['crossing']} / {r['groups']} groups cross a switch")
+            print("              " + ",".join(r["nodes"]))
+
+
+if __name__ == "__main__":
+    _cli()

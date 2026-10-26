@@ -94,9 +94,27 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
         return get_glm5_spec(args, cfg.transformer, vp_stage)
 
     def freeze_hook(models):
+        import torch.distributed as dist
+
+        collect_ep_groups(config())
+        PLACEMENT["timing"] = bool((config().get("placement") or {}).get("a2a_timing", True))
+        if PLACEMENT["timing"]:
+            install_a2a_timer()
+        counts = [0, 0]
         for i, chunk in enumerate(models):
             trainable, total = freeze_model(chunk, spec)
+            counts[0] += trainable
+            counts[1] += total
             debug(f"model chunk {i}: {trainable:,} trainable / {total:,} parameters on this rank")
+        # fraction over all the ranks' parameters: the replicated (non-expert) ones count once per data-parallel rank,
+        # so this is a weighted figure, close to the real fraction of the model that trains
+        gathered = [None] * dist.get_world_size()
+        dist.all_gather_object(gathered, tuple(counts))
+        trainable, total = (sum(c[k] for c in gathered) for k in (0, 1))
+        if LOG is not None and total:
+            fraction = trainable / total
+            debug(f"params_trainable_fraction: {fraction:.4f}")
+            LOG({"params_trainable_fraction": fraction, "units": "ratio", "task": "main", "time": time.time()})
         return models
 
     model_cfg.transformer_layer_spec = layer_spec
@@ -144,6 +162,123 @@ def build_dataset_provider(docs: int):
     return provider
 
 
+# --- placement at run time -----------------------------------------------------------------------------------------
+# The node order only means something if Megatron's expert groups are the consecutive hosts we think they are:
+# read the real groups and the real hostnames once the process groups exist, and time the expert all-to-all per group.
+
+LOG = None          # milabench event sink on rank 0 (setupvoir), None elsewhere
+STARTED = time.time()
+
+PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False}
+
+
+def short(host: str) -> str:
+    return host.split(".")[0]
+
+
+def collect_ep_groups(cfg: dict):
+    """Gather (rank, hostname, expert group ranks) from every rank; rank 0 logs the groups and how many cross a switch."""
+    import socket
+
+    import torch.distributed as dist
+    from megatron.core import parallel_state
+
+    import placement
+
+    group = parallel_state.get_expert_model_parallel_group()
+    PLACEMENT["ep_group"] = group
+    info = (dist.get_rank(), socket.gethostname(), tuple(dist.get_process_group_ranks(group)))
+    infos = [None] * dist.get_world_size()
+    dist.all_gather_object(infos, info)
+
+    groups = sorted({ranks for _, _, ranks in infos})
+    PLACEMENT["groups"] = groups
+    PLACEMENT["group_of_rank"] = {r: i for i, ranks in enumerate(groups) for r in ranks}
+    if dist.get_rank() != 0:
+        return
+
+    host_of_rank = {r: short(h) for r, h, _ in infos}
+    nodes = (cfg.get("system") or {}).get("nodes") or []
+    switch_of = {short(n): s for n, s in placement.switch_map(nodes, cfg.get("placement") or {}).items()} if nodes else {}
+    node_hosts = list(dict.fromkeys(host_of_rank[r] for r in sorted(host_of_rank)))  # hosts in rank order
+    debug("hosts in rank order:", node_hosts)
+    expected = [short(n["name"]) for n in nodes]
+    if expected and expected != node_hosts:
+        debug("WARNING: the hosts run in another order than the placement (system.nodes):", expected)
+
+    crosses = []
+    for i, ranks in enumerate(groups):
+        hs = list(dict.fromkeys(host_of_rank[r] for r in ranks))
+        sw = {switch_of.get(h, "unknown") for h in hs}
+        crosses.append(len(sw) > 1)
+        debug(f"ep group {i:>3}: ranks {ranks[0]}..{ranks[-1]} ({len(ranks)}), hosts {hs}, switches {sorted(sw)}"
+              f"{'  CROSSES' if len(sw) > 1 else ''}")
+    PLACEMENT["crosses"] = crosses
+    debug(f"expert groups crossing a switch: {sum(crosses)} / {len(groups)}")
+
+
+def install_a2a_timer():
+    """Time every all-to-all on the expert group (forward, backward and recompute) with CUDA events.
+
+    An async all-to-all (``async_op``, used with a separate NCCL stream) is timed up to its ``wait()``."""
+    import torch.distributed as dist
+
+    original = dist.all_to_all_single
+
+    class TimedHandle:
+        def __init__(self, handle, start):
+            self.handle, self.start = handle, start
+
+        def wait(self, *args, **kwargs):
+            result = self.handle.wait(*args, **kwargs)
+            end = torch.cuda.Event(enable_timing=True)
+            end.record()
+            PLACEMENT["events"].append((self.start, end))
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+
+    def timed(*args, **kwargs):
+        group = kwargs.get("group")
+        if group is None or group is not PLACEMENT["ep_group"]:
+            return original(*args, **kwargs)
+        start = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = original(*args, **kwargs)
+        if kwargs.get("async_op"):
+            return TimedHandle(result, start)
+        end = torch.cuda.Event(enable_timing=True)
+        end.record()
+        PLACEMENT["events"].append((start, end))
+        return result
+
+    dist.all_to_all_single = timed
+
+
+def report_a2a(log):
+    """After a step: every rank's all-to-all time, averaged per expert group (a collective: all ranks call it)."""
+    import torch.distributed as dist
+
+    events, PLACEMENT["events"] = PLACEMENT["events"], []
+    ms = sum(s.elapsed_time(e) for s, e in events) if events else 0.0
+    mine = torch.tensor([ms], device="cuda")
+    gathered = [torch.empty_like(mine) for _ in range(dist.get_world_size())]
+    dist.all_gather(gathered, mine)
+    if log is None or not PLACEMENT["groups"]:
+        return
+    now = time.time()
+    times = [g.item() for g in gathered]
+    per_group = [sum(times[r] for r in ranks) / len(ranks) for ranks in PLACEMENT["groups"]]
+    for i, value in enumerate(per_group):
+        log({"a2a_time": value, "units": "ms", "ep_group": i, "crosses_switch": PLACEMENT["crosses"][i],
+             "task": "train", "time": now})
+    for label, flag in (("crossing", True), ("aligned", False)):
+        values = [v for v, c in zip(per_group, PLACEMENT["crosses"]) if c == flag]
+        if values:
+            log({f"a2a_time_{label}": sum(values) / len(values), "units": "ms", "task": "train", "time": now})
+
+
 # --- metrics -----------------------------------------------------------------------------------------------------
 
 def patch_train_step(log):
@@ -160,6 +295,11 @@ def patch_train_step(log):
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         state["step"] += 1
+        if state["step"] == 1 and log is not None:
+            # launch -> end of the first (warm-up) step: imports, init, model build, first step
+            log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
+        if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
+            report_a2a(log)
         if log is not None:
             margs = get_args()
             tokens = margs.global_batch_size * margs.seq_length
@@ -206,6 +346,7 @@ def report_placement(cfg: dict, argv: list[str]):
 
 
 def main():
+    global LOG
     cfg = config()
     # Megatron parses sys.argv: nothing of ours must be left in it
     argv = sys.argv[1:]
@@ -215,6 +356,7 @@ def main():
         from benchmate.monitor import setupvoir
 
         log, monitor = setupvoir(monogpu=False, interval=0.5)
+        LOG = log
         report_placement(cfg, argv)
 
     spec = freeze_patterns(cfg.get("frozen"))

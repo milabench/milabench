@@ -14,11 +14,12 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from copy import deepcopy
 from pathlib import Path
 
-from milabench.commands import PackCommand, TorchrunAllGPU
-from milabench.commands.srun import TorchrunSrun
-from milabench.utils import assemble_options
+from milabench.commands import PackCommand, TorchrunAllGPU, TorchrunAllNodes, max_node_count
+from milabench.commands.srun import ForeachSrun, SrunCommand, _node_hostlist_token
+from milabench.utils import assemble_options, select_nodes
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import placement as placement_lib  # noqa: E402
@@ -33,6 +34,36 @@ def _load_slime():
 
 
 Slime = _load_slime().Slime
+
+
+class PlacedTorchrunSrun(ForeachSrun):
+    """torchrun with the node order of ``system.nodes``: node i runs on host i with ``--node-rank=i``.
+
+    ``TorchrunSrun`` starts all the workers with one ``srun -x main`` and takes their rank from ``SLURM_NODEID``,
+    which is Slurm's own (sorted) order: it cannot follow a placement. Here every worker is its own
+    ``srun -w <host>`` step with an explicit rank (benchrun keeps an explicit ``--node-rank``)."""
+
+    def __init__(self, executor, *args, **kwargs) -> None:
+        base_exec = TorchrunAllNodes.make_base_executor(TorchrunAllGPU, executor, *args, **kwargs)
+        super().__init__(base_exec)
+
+    def main_executor(self):
+        main = deepcopy(self.executor)
+        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
+        return main
+
+    @property
+    def executors(self):
+        config = self.executor.pack.config
+        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
+        if len(nodes) <= 1:
+            return [self.single_node()]
+        executors = [self.main_executor()]
+        for rank, node in enumerate(nodes[1:], start=1):
+            worker = self.worker_executor()
+            worker.wrapper_argv = (*worker.wrapper_argv, f"--node-rank={rank}")
+            executors.append(SrunCommand(worker, nodelist=_node_hostlist_token(node)))
+        return executors
 
 
 class MegatronGlm5(Slime):
@@ -63,22 +94,37 @@ class MegatronGlm5(Slime):
             env[str(key)] = str(value)
         return env
 
+    def placement(self) -> dict:
+        """``placement:`` with the size of an expert group, in nodes (EP size / GPUs per node)."""
+        placement = dict(self.config.get("placement") or {})
+        gpus = int(placement.get("gpus_per_node", 4))
+        ep = int((self.config.get("argv") or {}).get("--expert-model-parallel-size", 1))
+        placement.setdefault("group_nodes", max(1, ep // gpus))
+        return placement
+
     def place_nodes(self):
-        """Reorder ``system.nodes`` by ``placement.nodes``: torchrun's node rank is the position in that list."""
-        placement = self.config.get("placement") or {}
+        """Order (and, for the aligned / crossed / mixed modes, select) ``system.nodes``: the rank of a node is its position."""
         system = self.config.get("system") or {}
         nodes = system.get("nodes")
         if not nodes or len(nodes) <= 1:
             return
-        system["nodes"] = placement_lib.order_nodes(nodes, placement)
+        ordered = placement_lib.order_nodes(nodes, self.placement())
+        want = self.num_machines
+        if len(ordered) < want:
+            raise RuntimeError(
+                f"placement.nodes={self.placement().get('nodes')} gives {len(ordered)} nodes, the entry wants {want} "
+                f"(num_machines): nodes were excluded, set num_machines to {len(ordered)} for all the runs you compare"
+            )
+        system["nodes"] = ordered
 
     def build_run_plan(self):
         self.place_nodes()
         # voir main.py ... is not used: main.py reports through benchmate.monitor.setupvoir() (stdout smuggling)
         workload = PackCommand(self, lazy=True)
-        # torchrun on the main node locally, the same argv on the others through one srun (node rank from SLURM_NODEID)
+        # torchrun on the main node locally; one explicit `srun -w host --node-rank=i` per other node, in the order
+        # of system.nodes (the placement)
         if self.num_machines > 1:
-            return TorchrunSrun(workload).use_stdout()
+            return PlacedTorchrunSrun(workload).use_stdout()
         return TorchrunAllGPU(workload).use_stdout()
 
 

@@ -188,3 +188,193 @@ megatron-glm5-frozen-smoke-2n-topo:
   tags: [frozen, smoke, topology]
   placement:
     nodes: topology
+
+# --- FP8 (TransformerEngine block scaling), same layouts as the bf16 twins to compare against ---
+# Slime's recipe (scripts/low_precision/run-qwen3-30b-a3b-fp8.sh): bf16 master weights, TE autocast with
+# --fp8-format e4m3 --fp8-recipe blockwise, NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1.
+# - --moe-router-padding-for-quantization: every expert gets a token count the FP8 grouped GEMM accepts.
+# - no --fp8-param-gather: the weights stay bf16 and TE keeps quantized copies per step.
+# - only TransformerEngine modules run in FP8: the GLM-5 plugin's own attention ops (DSA indexer, sparse MLA) stay bf16.
+# NOT validated: compare `rate` and peak memory against the bf16 twin.
+_fp8: &fp8_argv
+  --fp8-format: e4m3
+  --fp8-recipe: blockwise
+  --moe-router-padding-for-quantization: true
+
+megatron-glm5-frozen-smoke-2n-fp8:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-frozen-16n-fp8:
+  inherits: megatron-glm5-frozen-16n
+  tags: [frozen, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# --- GLM-5 expert placement (scripts/analysis/GLM_RUNS.md: G1-G6) ----------------------------------------------------
+# One question: is using every node worth it compared with the largest set where no expert group crosses a switch?
+# Held fixed in G1-G3, G5, G6 (TO CONFIRM, then frozen): full depth, TP1 / CP1, PP13 x DP16 on 208 GPUs, micro-batch 1,
+# global batch 256 (16 micro-batches per pipeline), seq 8192, experts frozen, recompute full, 12 steps.
+# The node list is generated at run time from the allocation and `scontrol show topology` (placement.py): allocate every
+# healthy full-GPU node, the 52-node even-per-leaf set is picked from it. Expert groups = EP8 = 2 consecutive nodes;
+# main.py prints the real groups, their hosts and how many cross a switch, and logs `a2a_time` per expert group.
+# Layout constraint: world % (EP x PP) == 0 (TP1). 208 GPUs: PP in {1, 2, 13, 26}; 264 GPUs (66 nodes): PP in {1, 3, 11, 33}:
+# G4 cannot keep PP13, so it runs PP3 (26 layers per stage): the comparison with G1-G3 changes PP as well as DP.
+_megatron_glm5_g:
+  inherits: _megatron_glm5
+  tags: [frozen, placement, moe]
+  num_machines: 52
+  max_duration: 3600
+  frozen:
+    preset: experts
+  placement:
+    nodes: aligned
+    gpus_per_node: 4
+    a2a_timing: true
+  argv:
+    --pipeline-model-parallel-size: 13
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --global-batch-size: 256
+    --train-iters: 12
+
+# G1: EP8 aligned, both nodes of every expert group on one leaf (0 / 26 groups cross)
+megatron-glm5-g1-ep8-aligned:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: aligned
+
+# G2: EP8 crossed, every group takes one node from two different leaves (26 / 26)
+megatron-glm5-g2-ep8-crossed:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: crossed
+
+# G3: EP8 mixed, aligned except 3 pairs of one-group leaves swap partners (6 / 26, about 1 in 4)
+megatron-glm5-g3-ep8-mixed:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: mixed
+    mixed_swaps: 3
+
+# G4: EP8, every healthy node (an even count), the nodes in the order of the allocation, PP3 (see above). Record the count.
+megatron-glm5-g4-ep8-all-nodes:
+  inherits: _megatron_glm5_g
+  num_machines: 66
+  placement:
+    nodes: as-is
+  argv:
+    --pipeline-model-parallel-size: 3
+
+# G5: FP8, otherwise G1
+megatron-glm5-g5-fp8:
+  inherits: megatron-glm5-g1-ep8-aligned
+  tags: [frozen, placement, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# G6: EP16 (expert group = 4 nodes), otherwise G1's set, Megatron's default order (leaf by leaf). Record the crossing count.
+megatron-glm5-g6-ep16:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: leaf
+    set: even
+    set_group: 2
+  argv:
+    --expert-model-parallel-size: 16
+
+# --- checks to run before the G runs (scripts/analysis/GLM_RUNS.md, "Before the window") ---------------------------
+# Small truncated runs on 4 nodes (16 GPUs), 4 layers (1 dense + 3 MoE), PP1: only the expert-parallel size and the
+# precision change. They test the whole pipeline end to end (placement report, expert-group hosts, a2a timers, events),
+# give Fig. 10's small-scale points and the run length (`time_to_first_step`). The experts are frozen, so
+# params_trainable_fraction < 1: these runs are not the same model as the G runs. Submit with
+# slurm/schedule_megatron_glm_checks.sh.
+_megatron_glm5_check:
+  inherits: _megatron_glm5
+  tags: [frozen, check, smoke]
+  num_machines: 4
+  max_duration: 1500
+  frozen:
+    preset: experts
+  placement:
+    nodes: as-is
+    gpus_per_node: 4
+    a2a_timing: true
+  model:
+    argv:
+      --num-layers: 4
+      --moe-layer-freq: "[0]*1+[1]*3"
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --micro-batch-size: 1
+    --global-batch-size: 16
+    --train-iters: 8
+    --pipeline-model-parallel-size: 1
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --expert-model-parallel-size: 8
+
+# Expert-group-to-host mapping: groups made of crossed pairs when the 4 nodes span two leaves; compare the logged groups
+# (`ep group N: hosts [...] switches [...]`) with the node list.
+megatron-glm5-check-mapping-4n:
+  inherits: _megatron_glm5_check
+  tags: [frozen, check, smoke, topology]
+  placement:
+    nodes: crossed
+    set: even
+
+megatron-glm5-check-ep4-bf16-4n:
+  inherits: _megatron_glm5_check
+  argv:
+    --expert-model-parallel-size: 4
+
+megatron-glm5-check-ep8-bf16-4n:
+  inherits: _megatron_glm5_check
+
+megatron-glm5-check-ep16-bf16-4n:
+  inherits: _megatron_glm5_check
+  argv:
+    --expert-model-parallel-size: 16
+
+megatron-glm5-check-ep4-fp8-4n:
+  inherits: megatron-glm5-check-ep4-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-check-ep8-fp8-4n:
+  inherits: megatron-glm5-check-ep8-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-check-ep16-fp8-4n:
+  inherits: megatron-glm5-check-ep16-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# Does the full model fit on 208 GPUs at EP8 (memory at the chosen micro-batch), and how long does a run take?
+# G1's configuration, 4 steps. Peak memory is in the milabench report; if it does not fit, choose one truncated depth for
+# ALL the G runs (--num-layers / --moe-layer-freq, PP dividing the depth) and say so in the summary's deviations.
+megatron-glm5-check-fit-52n:
+  inherits: megatron-glm5-g1-ep8-aligned
+  tags: [frozen, check, placement]
+  max_duration: 2400
+  argv:
+    --train-iters: 4
