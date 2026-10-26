@@ -39,14 +39,14 @@ Slime = _load_slime().Slime
 class SrunOneNode(SrunCommand):
     """``srun -w <host>`` on exactly one node.
 
-    ``milabench slurm srun`` forwards its arguments to Slurm's srun, which only gets a node count from milabench for
-    ``-x``: with ``-w`` alone the step spans the whole job (default node count) and also starts the worker on the main
-    node (rank 4 and rank 0 on the same GPU: "Duplicate GPU detected")."""
+    ``milabench slurm srun`` forwards its arguments to Slurm's srun, but its own parser rejects the node-count flags
+    and only ``-x`` gets a node count: with ``-w`` alone the step spans the whole job (default node count) and also
+    starts the worker on the main node (rank 4 and rank 0 on the same GPU: "Duplicate GPU detected").
+    So call srun directly, with what ``milabench slurm srun`` would exec (``--overlap``)."""
 
     def _argv(self, **kwargs):
-        argv = super()._argv(**kwargs)
-        sep = argv.index("--")
-        return [*argv[:sep], "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", *argv[sep:]]
+        host = self.resolve_nodelist()
+        return ["srun", "--overlap", "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", "-w", host, "--"]
 
 
 class PlacedTorchrunSrun(ForeachSrun):
