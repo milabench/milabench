@@ -7,6 +7,7 @@
 #   e.g. block 4:  tt_block.sh TT_CAMPAIGN=window-1030 H:27 S:12:ihpc316u25
 #        block 2:  tt_block.sh ALL
 #        block 1:  tt_block.sh O:1::tt-w-smoke          (next to GLM's 52 nodes)
+#        block 37: tt_block.sh ALL:::tt-w-nodes-long
 #
 # FAMILY is H / S / P / O (tt_pick_nodes.py) or ALL (every healthy node not used
 # by the block's earlier runs; NODES is ignored). Runs of one block never share
@@ -58,7 +59,8 @@ for spec in "$@"; do
     fi
     n=$(tr , '\n' <<<"$nodelist" | wc -l)
     variant=$family$n
-    [ "$bench" = tt-w-nodes ] || variant=$variant-${bench#tt-w-}
+    suffix=${bench#tt-w-}
+    [ "$bench" = tt-w-nodes ] || variant=$variant-${suffix#nodes-}
     echo "[tt-block] spec=$spec variant=$variant bench=$bench nodes=$nodelist"
     runs+=("$nodelist:$bench:$variant:$family")
     used=${used:+$used,}$nodelist
