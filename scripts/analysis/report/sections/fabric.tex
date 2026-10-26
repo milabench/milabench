@@ -1,0 +1,61 @@
+\section{Fabric and topology}
+\label{sec:fabric}
+
+\begin{question}
+  \textbf{How much does the network limit training?} Does placement on leaf switches matter (same leaf
+  vs.\ across leaves, nodes per switch, packed vs.\ balanced)? How does Rorqual's single HCA per node
+  compare with clusters that have one per GPU?
+\end{question}
+
+\paragraph{Raw bandwidth.} \Cref{fig:comm} places each communication scope on one axis, from NVLink inside a
+node to all-to-all across every leaf. On Rorqual, every all-reduce that leaves a node is capped near the
+line rate of its single 200\,Gb/s HCA (25\,GB/s). The scopes are those the health checks measure:
+per node, per pair, and all the nodes of a check job. The window needs two health-check runs to cover
+both one leaf and the whole machine: \texttt{--job-per switch} (default) and \texttt{--job-per cluster}.
+Intermediate scopes (2 or 3 leaves) come from the allocation-wide all-reduce of \texttt{tt\_healthcheck}.
+
+\begin{figure}[h]
+  \centering\fig[0.75\linewidth]{comm_scopes}
+  \caption{Peak bus bandwidth by scope, over the tested message sizes (128\,MiB--1\,GiB). Gray:
+    preliminary health checks (\texttt{tt\_healthcheck}); orange: uplink tests between ihpc217 and ihpc316
+    (pairs alone, then 7 pairs at once; 2026-10-24); blue: window health check (srygaard). All-to-all
+    and all-reduce bus bandwidths are not comparable (different normalization). \syntheticnote{comm_scopes}}
+  \label{fig:comm}
+\end{figure}
+
+\placeholder{per-scope medians; the drop across leaves including ihpc316 (19.2 vs.\ 24.6\,GB/s in the
+NCCL tests, $-35\,\%$ for 217+316) and whether it comes from ihpc316's uplinks.}
+
+\paragraph{Placement at scale: balance or pack?} Up to 12 nodes, placement is analysed with scale in
+\cref{sec:scaling} (\cref{fig:placement-scaling}). Beyond 12 nodes no switch holds the job, and the
+allocation choice is between spreading it 3 per switch (balanced, over the 3-node leaves) and packing it
+into the fewest switches (the big leaves first). \Cref{fig:placement-at-scale} plots throughput per GPU
+against total throughput, so both read at once: runs with the same GPU count lie on one ray through the
+origin. Along a ray, placement changes only throughput per GPU; from one ray to the next, adding nodes
+lowers throughput per GPU but raises the total.
+
+\begin{figure}[h]
+  \centering\fig{placement_at_scale}
+  \caption{Rorqual beyond one switch: throughput per GPU vs.\ total throughput, for 3 per switch
+    (balanced) and fewest switches (packed). Gray rays: same GPU count. \syntheticnote{placement_at_scale}}
+  \label{fig:placement-at-scale}
+\end{figure}
+
+\placeholder{measured so far, all preliminary: H6 = S6 within 0.2\,\% on Rorqual, repeats within 0.1\,\%; but
+H6 crossed the spine outside our control while S6 stayed in one reserved switch, so the pair mixes placement
+with possible traffic from other users. P12 split 6+6 across ihpc218 and ihpc316 is 4.5\,\% below S6, not
+separable from 6$\to$12-node scaling.}
+
+\paragraph{Per-GPU batch.} With FSDP, every step all-gathers the parameters and reduce-scatters the
+gradients: a volume that does not depend on the batch. If communication dominates, more tokens per GPU
+per step cost almost no extra time (\cref{fig:batch}).
+
+\begin{figure}[h]
+  \centering\fig{batch_effect}
+  \caption{Throughput vs.\ tokens per GPU per step. On 2 nodes, all runs use BF16 AdamW moments (low-memory
+    variant).}
+  \label{fig:batch}
+\end{figure}
+
+\placeholder{Rorqual 2 nodes: $1\to2$ sequences of 8192 gives $+80\,\%$ (954 $\to$ 1722); Fir 3 nodes:
+$+24\,\%$. Step time on Rorqual barely changes with the batch: communication-bound.}

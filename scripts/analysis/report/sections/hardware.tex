@@ -1,0 +1,51 @@
+\section{Hardware baseline}
+\label{sec:hardware}
+
+\begin{question}
+  \textbf{Do nodes perform as expected and uniformly?} A slow GPU or a degraded link slows every rank of
+  a synchronous job, so outliers must be found before the runs, not inferred from them.
+\end{question}
+
+\Cref{fig:health-tt} shows the health checks of the preliminary allocations on Rorqual: every GPU's BF16
+matmul throughput and every node's intra-node all-reduce bandwidth, grouped by leaf switch. A node is
+excluded if its slowest GPU is more than 5\,\% below the allocation median, or its intra-node bandwidth
+more than 10\,\% below.
+
+\begin{figure}[h]
+  \centering\fig{health_tt}
+  \caption{Preliminary health checks on Rorqual (\texttt{tt\_healthcheck.sh}). Left: BF16 matmul
+    ($8192^2$) per GPU; right: intra-node all-reduce bus bandwidth per node (1\,GiB). One point per
+    measurement; a node checked in several allocations appears several times.}
+  \label{fig:health-tt}
+\end{figure}
+
+\placeholder{spread (max/min) of matmul TFLOPS; whether intra-node bandwidth differs by leaf (two levels,
+$\sim$320 and $\sim$338\,GB/s, visible above: check whether it follows the node model or the leaf).}
+
+\Cref{fig:health-window} is the window version, from the health check that will run in the window
+(srygaard/slurm-healthcheck): NVLink, NIC loopback and pairwise bandwidths for every node.
+
+\begin{figure}[h]
+  \centering\fig{health_srygaard}
+  \caption{\syntheticnote{health_srygaard}Window health check on all 66 nodes, by leaf. Dotted: the
+    tool's failure thresholds (absolute floors; for pairs, also 70\,\% of the median); gray: median.
+    Nodes below a threshold are crossed and named.}
+  \label{fig:health-window}
+\end{figure}
+
+\placeholder{number of nodes excluded and why; whether failures cluster on a leaf.}
+
+\paragraph{Same GPU everywhere?} Cross-cluster comparisons (\cref{sec:fabric,sec:scaling}) attribute
+multi-node differences to the network. That holds only if a GPU computes at the same speed on every
+cluster. \Cref{fig:health-gpus} compares the per-GPU matmul throughput of the health checks.
+
+\begin{figure}[h]
+  \centering\fig[0.62\linewidth]{health_gpus}
+  \caption{BF16 matmul throughput per GPU on each cluster (health checks). Black: median; dotted: 5\,\%
+    below the median (exclusion threshold). \syntheticnote{health_gpus}}
+  \label{fig:health-gpus}
+\end{figure}
+
+\placeholder{medians per cluster. The same holds for training: single-node runs (16 layers) on Rorqual
+and Fir are within 0.6\,\% at $2\times8192$ tokens per GPU (\cref{tab:results}). The Rorqual single-node run at $3\times4096$ was noisy (p90/median 1.31) and is to be repeated: it sets Rorqual's ceiling in \cref{fig:scaling}. The window health check
+(srygaard) has no per-GPU throughput number yet (DCGM gives pass/fail): see \texttt{FORMAT.md}.}
