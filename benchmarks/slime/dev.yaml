@@ -791,6 +791,10 @@ slime-glm5-sft-frozen-16n:
   max_duration: 14400
   tags: [pretrain, frozen]
   dataset: openhermes
+  env:
+    # the glm5 plugin's RoPE needs NVIDIA apex (a CUDA extension, not installed): this switches it to SGLang's kernels
+    # (plugin requires TP=1 and CP=1, as here). Forwarded to the Ray workers by main.py.
+    MEGATRON_USE_SGLANG_ROPE: "1"
   model:
     argv:
       --allgather-cp: null
