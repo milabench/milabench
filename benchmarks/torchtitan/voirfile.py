@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 from voir import configurable
@@ -42,6 +43,8 @@ class _TrainStepMetrics:
             return
         self.timer.start = self.timer.event_fn(enable_timing=True)
         self.timer.start.record()
+        # normally set by __iter__, which this manually-stepped timer never runs
+        self.timer.last_time = time.time()
         self._started = True
 
     def reset_step(self) -> None:

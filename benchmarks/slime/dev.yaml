@@ -862,3 +862,41 @@ slime-glm5-sft-frozen-10n-gbs64:
     --rollout-batch-size: 64
     --global-batch-size: 64
     --num-rollout: 10
+
+# --- FP8 training (TransformerEngine block-scaling), same layouts as the bf16 twins to compare against ---
+# Slime's recipe (scripts/low_precision/run-qwen3-30b-a3b-fp8.sh): bf16 master weights, TE autocast with
+# --fp8-format e4m3 --fp8-recipe blockwise, NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1 (forwarded to the Ray workers by main.py).
+# - --fp8-param-gather is NOT used: Megatron asserts it only works with the optimizer CPU offload when the recipe is
+#   "delayed", and these entries offload the optimizer. So the weights stay bf16 (TE keeps quantized copies per step).
+# - --moe-router-padding-for-quantization: every expert gets a token count the FP8 grouped GEMM accepts.
+# - Only TransformerEngine modules run in FP8: the glm5 / glm5_next plugin's own attention ops stay bf16.
+# NOT validated: compare against slime-glm5.3-flash-sft-frozen-gbs64 / slime-glm5-sft-frozen-16n-gbs64.
+slime-glm5.3-flash-sft-frozen-gbs64-fp8:
+  inherits: _glm5_flash_sft
+  tags: [frozen, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+    --transformer-impl: transformer_engine
+    --fp8-format: e4m3
+    --fp8-recipe: blockwise
+    --moe-router-padding-for-quantization: true
+    --freeze-params-name-list: experts
+
+slime-glm5-sft-frozen-16n-gbs64-fp8:
+  inherits: _glm5_sft_frozen
+  tags: [fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+    --transformer-impl: transformer_engine
+    --fp8-format: e4m3
+    --fp8-recipe: blockwise
+    --moe-router-padding-for-quantization: true
+
