@@ -40,11 +40,12 @@ class _TrainStepMetrics:
     def _ensure_started(self) -> None:
         if self._started:
             return
-        self.timer.start = self.timer.event_fn(enable_timing=True)
-        self.timer.start.record()
+        self.timer.start_manual()
         self._started = True
 
-    def reset_step(self) -> None:
+    def start_step(self) -> None:
+        """Start timing before the step runs."""
+        self._ensure_started()
         self._state = {"local_tokens": 0, "loss": None}
 
     def note_local_tokens(self, count: int) -> None:
@@ -56,7 +57,6 @@ class _TrainStepMetrics:
     def finish_step(self) -> None:
         tokens = self._state.get("local_tokens", 0)
         if tokens > 0:
-            self._ensure_started()
             self.timer.step(batch_override=tokens)
             self.timer._push()
 
@@ -83,7 +83,7 @@ def _install_torchtitan_metrics() -> None:
         _orig_train_step = Trainer.train_step
 
         def _wrapped_train_step(self, data_iterator):
-            _metrics.reset_step()
+            _metrics.start_step()
             _orig_train_step(self, data_iterator)
             _metrics.finish_step()
 
@@ -102,7 +102,8 @@ def _install_torchtitan_metrics() -> None:
         Trainer.forward_backward_step = _wrapped_fwb
 
     try:
-        from torchtitan.observability.structured_logger import structured_logging as sl
+        # Trainer calls sl.log_trace_scalar on the package re-export, so patch it there
+        from torchtitan.observability import structured_logger as sl
 
         if not getattr(sl.log_trace_scalar, "_milabench_tokens", False):
             _orig_log_scalar = sl.log_trace_scalar

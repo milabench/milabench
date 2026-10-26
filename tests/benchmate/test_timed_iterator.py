@@ -180,3 +180,21 @@ def test_manual_timed_iterator_prefetch_batch_counted(monkeypatch):
     rates = [msg["rate"] for msg in messages if msg.get("rate") is not None]
     assert rates, "expected at least one rate event"
     assert all(rate > 0 for rate in rates)
+
+
+def test_manual_timed_iterator_start_manual():
+    """step()/_push() without iterating, as voirfiles that hook train_step do."""
+    messages = []
+    timer = ManualTimedIterator(iter(()), event_fn=CPUEvent, push=lambda **kw: messages.append(kw))
+
+    before = time.time()
+    timer.start_manual()
+    time.sleep(0.01)
+    timer.step(batch_override=10)
+    timer._push()
+
+    (msg,) = [m for m in messages if "rate" in m]
+    # First rate spans the step, not ~0s since start
+    assert msg["elapsed"] >= 0.01
+    # Rate timestamps are wall clock, starting from start_manual()
+    assert before < msg["time"] <= time.time()

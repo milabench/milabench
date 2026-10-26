@@ -50,7 +50,7 @@ def give_push():
 
 
 def earlystop_count():
-    default_count = int(os.getenv("VOIR_EARLYSTOP_COUNT", 60)) 
+    default_count = int(os.getenv("VOIR_EARLYSTOP_COUNT", 60))
     skip_count = int(os.getenv("VOIR_EARLYSTOP_SKIP", 10))
     return default_count + skip_count
 
@@ -123,7 +123,7 @@ class CPUTimer:
 
     def elapsed(self):
         return self._end + self._start
-    
+
     def synchronize(self):
         pass
 
@@ -151,13 +151,30 @@ class DeviceTimer:
         return self._start.elapsed_time(self._end)
 
 
+class CPUEvent:
+    """Device Event with the same interface as torch.cuda.Event"""
+
+    def __init__(self, *args, **kwargs):
+        self.time = 0
+
+    def record(self) -> None:
+        self.time = time.time()
+
+    def elapsed_time(self, end) -> float:
+        """time in milliseconds"""
+        return (end.time - self.time) * 1000
+
+    def synchronize(self) -> None:
+        pass
+
+
 def default_event():
     try:
         import torchcompat.core as accelerator
         return accelerator.Event
     except:
         print("Could not find a device timer")
-        return CPUTimer()
+        return CPUEvent
 
 
 def default_device():
@@ -341,7 +358,7 @@ class TimedIterator:
 
         self.unique_iterator = 0
         self.multi_call_guard = 0
-        
+
         self.sub_overhead = 0
         self.batch_id = 0
 
@@ -417,21 +434,21 @@ class TimedIterator:
                     # ... huggingface ... is changing the batch sometimes...
                     bs = self.deduce_batch_size(data)
 
-                    with lazy_record_timing("work", self.event_fn) as work_time: 
+                    with lazy_record_timing("work", self.event_fn) as work_time:
                         yield data
 
-                    with lazy_record_timing("step", self.event_fn) as step_time: 
+                    with lazy_record_timing("step", self.event_fn) as step_time:
                         if should_break := self.step(bs):
                             self.break_count += 1
                             break
-                        
+
                     if next_time:
                         self._record_event(next_time)
-                
+
                     self._record_event(work_time)
                     self._record_event(step_time)
                     self.batch_id += 1
-                
+
                 except StopIteration:
                     break
         finally:
@@ -460,7 +477,7 @@ class TimedIterator:
 
             # We could use event.query() to push events without blocking
             event = TimedEvent("rate", self.start, end, batch_size, self.batch_id)
-            
+
             if _flags.eager_sync:
                 rate, elapsed = self._make_rate(event)
                 self.log_rate(rate, time=time.time(), elapsed=elapsed, batch_id=event.batch_id)
@@ -483,10 +500,10 @@ class TimedIterator:
         # since we avoid sync it is possible the device is working during
         # the overhead section and that the effective overhead ends up being minimal
         self.previous_overhead = ct.elapsed()
-       
+
         if _flags.record_overhead:
             self.overhead.append(self.previous_overhead)
-    
+
         return should_break
 
     def deduce_batch_size(self, elem):
@@ -540,7 +557,7 @@ class TimedIterator:
 
         for iterinit in self.loader_init_time:
             self.message(__iter__=iterinit, units="s", task=self.task)
-        
+
         for event in self.recorded_timers:
             kwargs = {
                 event.name: event.elapsed_time() / self.unit,
@@ -619,7 +636,7 @@ class TimedIterator:
 
 class ManualTimedIterator(TimedIterator):
     """Used when the model is trained with graident accumulation steps.
-    
+
     Users need to call iterator.step() manually.
 
 
@@ -638,12 +655,28 @@ class ManualTimedIterator(TimedIterator):
                     loader.step()
 
     """
-    def __init__(self, loader, event_fn=default_event(), rank=int(os.getenv("RANK", 0)), push=file_push(), device=default_device(), earlystop=earlystop_count(), raise_stop_program=False, batch_size_fn=None):
+    def __init__(
+        self,
+        loader,
+        event_fn=default_event(),
+        rank=int(os.getenv("RANK", 0)),
+        push=file_push(),
+        device=default_device(),
+        earlystop=earlystop_count(),
+        raise_stop_program=False,
+        batch_size_fn=None
+    ):
         super().__init__(loader, event_fn, rank, push, device, earlystop, raise_stop_program, batch_size_fn)
         self.acc_batch_size = 0
         self.should_stop = False
         self.accumulation_steps = 0
         self.epochs = 0
+
+    def start_manual(self):
+        """Callers may use this on step() when they do not use __iter__"""
+        self.last_time = time.time()
+        self.start = self.event_fn(enable_timing=True)
+        self.start.record()
 
     def step(self, batch_override=None):
         if batch_override is None:
@@ -653,14 +686,14 @@ class ManualTimedIterator(TimedIterator):
         self.acc_batch_size = 0
         self.accumulation_steps = 0
         return self.should_stop
-       
+
     def wrapped(self, iterator, first_batches):
         # Time IO wait + batch compute
         self.record_lap("iter_start")
         self.start = self.event_fn(enable_timing=True)
         self.start.record()
         self.previous_overhead = 0
-        
+
         if first_batches:
             while first_batches:
                 data = first_batches.pop()
@@ -674,11 +707,11 @@ class ManualTimedIterator(TimedIterator):
                     break
 
         for data in iterator:
-            # we have to compute the batch size now because 
+            # we have to compute the batch size now because
             # step might be call before the execution returns to this  block
             self.accumulation_steps += 1
             self.acc_batch_size += self.deduce_batch_size(data)
-          
+
             with lazy_record_timing("work", self.event_fn) as work_time:
                 yield data # step will probably be called right before the control
                         # returns to this block
