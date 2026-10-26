@@ -785,7 +785,7 @@ slime-glm5.3-flash-sft-frozen-4n-gbs128:
 # bf16 weights are about 1.5 TB: 64 GPUs = 23 GB each (32 GPUs would be 45 GB, no room left). PP8 x DP8, EP8
 # (32 experts per GPU), the recipe's 14 / 16 first / last pipeline stage layers (14 + 6 x 8 + 16 = 78).
 # SFT (--debug-train-only, no SGLang), 8k sequences instead of the recipe's CP8 long context.
-slime-glm5-sft-frozen-16n:
+_glm5_sft_frozen:
   inherits: _glm5
   num_machines: 16
   max_duration: 14400
@@ -821,3 +821,44 @@ slime-glm5-sft-frozen-16n:
     --global-batch-size: 32
     --num-rollout: 6
     --freeze-params-name-list: experts
+
+slime-glm5-sft-frozen-16n:
+  inherits: _glm5_sft_frozen
+
+# 744B, bigger batches and 10 rollouts (the first run was batch 32 / 6 rollouts: 614 tokens/s, std 28%, warm-up heavy)
+slime-glm5-sft-frozen-16n-gbs64:
+  inherits: _glm5_sft_frozen
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+
+slime-glm5-sft-frozen-16n-gbs128:
+  inherits: _glm5_sft_frozen
+  argv:
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --num-rollout: 10
+
+# Fewer GPUs, same DP8 / EP8. The 16-node peak (58 GB / GPU) is probably set by its largest pipeline stage, 16 layers
+# (recipe split 14 first / 16 last, 8 in between), so keeping every stage <= 16 layers should keep the same peak:
+#   PP6: 14 + 4 x 12 + 16 = 78   48 GPUs (12 nodes), middle stages hold 12 layers
+#   PP5: 14 + 3 x 16 + 16 = 78   40 GPUs (10 nodes), every stage but the first holds 16 layers
+# PP4 would need 24-layer middle stages (3x the 16-node weights per GPU): not tried. Batch 64, as slime-glm5-sft-frozen-16n-gbs64.
+slime-glm5-sft-frozen-12n-gbs64:
+  inherits: _glm5_sft_frozen
+  num_machines: 12
+  argv:
+    --pipeline-model-parallel-size: 6
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+
+slime-glm5-sft-frozen-10n-gbs64:
+  inherits: _glm5_sft_frozen
+  num_machines: 10
+  argv:
+    --pipeline-model-parallel-size: 5
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
