@@ -2,6 +2,9 @@
 """GPU and NCCL checks used by tt_healthcheck.sh (runs in the bench venv).
 
     tt_health.py matmul                  # per local GPU: bf16 matmul TFLOPS
+    tt_health.py soak [SECONDS]          # all local GPUs at once, sustained: TFLOPS,
+                                         # SM clock, power, temperature, throttle
+                                         # reasons per 10 s window
     torchrun ... tt_health.py allreduce  # all-reduce bus bandwidth (GB/s)
 
 Prints one parsable line per result: "[tt-health] <key>=<value> ...".
@@ -30,6 +33,54 @@ def matmul(n: int = 8192, iters: int = 50) -> None:
         torch.cuda.synchronize()
         tflops = 2 * n**3 * iters / (time.perf_counter() - start) / 1e12
         print(f"[tt-health] matmul host={host} gpu={dev} tflops={tflops:.0f}", flush=True)
+
+
+def soak(seconds: float = 600, window: float = 10, n: int = 8192) -> None:
+    """Sustained load on every local GPU at once (as in training), so power and
+    thermal limits show up: the short matmul check loads one GPU for ~0.1 s."""
+    import subprocess
+    import threading
+
+    host = socket.gethostname().split(".")[0]
+    devices = range(torch.cuda.device_count())
+    done = {dev: 0 for dev in devices}  # matmuls finished, per GPU
+    stop = threading.Event()
+
+    def work(dev: int) -> None:
+        torch.cuda.set_device(dev)
+        a = torch.randn(n, n, device="cuda", dtype=torch.bfloat16)
+        b = torch.randn(n, n, device="cuda", dtype=torch.bfloat16)
+        while not stop.is_set():
+            for _ in range(10):
+                a @ b
+            torch.cuda.synchronize()
+            done[dev] += 10
+
+    threads = [threading.Thread(target=work, args=(dev,), daemon=True) for dev in devices]
+    for thread in threads:
+        thread.start()
+    query = "index,clocks.sm,power.draw,temperature.gpu,clocks_event_reasons.active"
+    start = last = time.perf_counter()
+    before = dict(done)
+    while last - start < seconds:
+        time.sleep(window)
+        now = time.perf_counter()
+        smi = subprocess.run(
+            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+        for dev in devices:
+            tflops = 2 * n**3 * (done[dev] - before[dev]) / (now - last) / 1e12
+            idx, sm, power, temp, reasons = (f.strip() for f in smi[dev].split(","))
+            print(
+                f"[tt-health] soak host={host} gpu={dev} t={now - start:.0f} tflops={tflops:.0f} "
+                f"sm_mhz={sm} power_w={power} temp_c={temp} reasons={reasons}",
+                flush=True,
+            )
+        before, last = dict(done), now
+    stop.set()
+    for thread in threads:
+        thread.join()
 
 
 def allreduce(size_mb: int = 1024, iters: int = 20) -> None:
@@ -61,4 +112,5 @@ def allreduce(size_mb: int = 1024, iters: int = 20) -> None:
 
 
 if __name__ == "__main__":
-    {"matmul": matmul, "allreduce": allreduce}[sys.argv[1]]()
+    command, *args = sys.argv[1:]
+    {"matmul": matmul, "allreduce": allreduce, "soak": soak}[command](*map(float, args))
