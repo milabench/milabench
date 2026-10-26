@@ -475,6 +475,12 @@ class WorkingDir(WrapperCommand):
         # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
         _merge_env(env, pack.config.get("env"), source="pack.env")
 
+        # `env -` also drops the DATA_FD voir's launcher sets for use_stdout();
+        # without it voir falls back to fd 3 (EBADF). Smuggle through stdout.
+        if self.options.get("use_stdout"):
+            env.setdefault("DATA_FD", "1")
+            env.setdefault("PYTHONUNBUFFERED", "1")
+
         # Allow callers (e.g. TorchtitanSrun.main_executor) to append extra
         # NAME=VALUE tokens after construction.
         for token in self.wrapper_argv:
