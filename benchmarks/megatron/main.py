@@ -197,19 +197,21 @@ def report_placement(cfg: dict, argv: list[str]):
     if len(nodes) < 1:
         return
     try:
-        rep = placement.describe(
-            nodes, place,
+        sizes = dict(
             tp=flag(argv, "--tensor-model-parallel-size"),
             pp=flag(argv, "--pipeline-model-parallel-size"),
             cp=flag(argv, "--context-parallel-size"),
             ep=flag(argv, "--expert-model-parallel-size"),
             etp=flag(argv, "--expert-tensor-model-parallel-size") if "--expert-tensor-model-parallel-size" in argv else None,
         )
+        rep = placement.describe(nodes, place, **sizes)
+        layout = placement.format_layout(nodes, place, **sizes)
     except Exception as exc:  # the report is informative, never fatal
         debug("placement report failed:", exc)
         return
     debug("node order:", [n["name"] for n in nodes])
     debug("placement\n" + placement.format_report(rep))
+    debug("layout (node, switch, GPU -> rank, pipeline stage / data / expert index)\n" + layout)
 
 
 def main():

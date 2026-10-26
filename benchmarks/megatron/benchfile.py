@@ -14,11 +14,10 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-from copy import deepcopy
 from pathlib import Path
 
-from milabench.commands import PackCommand, TorchrunAllGPU, TorchrunAllNodes, WorkingDir
-from milabench.commands.srun import ForeachSrun
+from milabench.commands import PackCommand, TorchrunAllGPU
+from milabench.commands.srun import TorchrunSrun
 from milabench.utils import assemble_options
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -34,24 +33,6 @@ def _load_slime():
 
 
 Slime = _load_slime().Slime
-
-
-class MegatronRun(TorchrunAllGPU):
-    def should_wrap(self):
-        return True
-
-
-class MegatronSrun(ForeachSrun):
-    """Main node locally, workers through ``srun -x main`` (same layout as the torchtitan pack)."""
-
-    def __init__(self, executor, *args, **kwargs) -> None:
-        base_exec = TorchrunAllNodes.make_base_executor(MegatronRun, executor, *args, **kwargs)
-        super().__init__(WorkingDir(base_exec))
-
-    def main_executor(self):
-        main = deepcopy(self.executor)
-        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
-        return main
 
 
 class MegatronGlm5(Slime):
@@ -95,9 +76,10 @@ class MegatronGlm5(Slime):
         self.place_nodes()
         # voir main.py ... is not used: main.py reports through benchmate.monitor.setupvoir() (stdout smuggling)
         workload = PackCommand(self, lazy=True)
+        # torchrun on the main node locally, the same argv on the others through one srun (node rank from SLURM_NODEID)
         if self.num_machines > 1:
-            return MegatronSrun(workload).use_stdout()
-        return MegatronRun(workload).use_stdout()
+            return TorchrunSrun(workload).use_stdout()
+        return TorchrunAllGPU(workload).use_stdout()
 
 
 __pack__ = MegatronGlm5

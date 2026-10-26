@@ -218,3 +218,44 @@ def format_report(report: dict) -> str:
     hops = report["pp-hops"]
     lines.append(f"   pp hops: {hops['same_switch']} inside a switch, {hops['cross_switch']} across switches")
     return "\n".join(lines)
+
+
+def coords(order: str, sizes: dict[str, int], rank: int) -> dict[str, int]:
+    """Index of ``rank`` along every parallel dimension (the inverse of ``rank_groups``)."""
+    out, stride = {}, 1
+    for d in order.split("-"):
+        out[d] = (rank // stride) % sizes[d]
+        stride *= sizes[d]
+    return out
+
+
+def format_layout(nodes: list[dict], placement: dict, tp: int, pp: int, cp: int, ep: int, etp: int | None = None) -> str:
+    """One line per node, one cell per GPU: global rank and its pipeline stage / data / expert (/ tp / cp) index.
+
+    Example (4 GPUs per node, PP2 x EP4 x DP4)::
+
+        node        switch  | gpu0                | gpu1                | ...
+        rc10101     leaf0   | r0   pp0 dp0 ep0    | r1   pp0 dp1 ep1    | ...
+    """
+    gpus = int(placement.get("gpus_per_node", 4))
+    order = placement.get("order", ORDERS[0])
+    dense, expert = layout_sizes(len(nodes) * gpus, tp, pp, cp, ep, etp)
+    switches = switch_map(nodes, placement)
+
+    def cell(rank):
+        c = coords(order, dense, rank)
+        e = coords(order, expert, rank)
+        parts = [f"pp{c['pp']}", f"dp{c['dp']}", f"ep{e['ep']}"]
+        if tp > 1:
+            parts.append(f"tp{c['tp']}")
+        if cp > 1:
+            parts.append(f"cp{c['cp']}")
+        return f"r{rank:<3} " + " ".join(parts)
+
+    rows = [[n["name"], switches[n["name"]], *(cell(i * gpus + g) for g in range(gpus))] for i, n in enumerate(nodes)]
+    header = ["node", "switch", *(f"gpu{g}" for g in range(gpus))]
+    widths = [max(len(r[i]) for r in [header, *rows]) for i in range(len(header))]
+    lines = []
+    for r in [header, *rows]:
+        lines.append(f"{r[0]:<{widths[0]}}  {r[1]:<{widths[1]}} | " + " | ".join(f"{c:<{w}}" for c, w in zip(r[2:], widths[2:])))
+    return "\n".join(lines)
