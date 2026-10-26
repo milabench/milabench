@@ -162,6 +162,25 @@ def build_dataset_provider(docs: int):
     return provider
 
 
+def with_wandb(log):
+    """Also push the events to wandb (benchmate's ``wandb_push``) when ``BENCHMATE_WANDB=1``.
+
+    ``setupvoir``'s log only writes to milabench's smuggled stdout: benchmate's ``auto_push`` (which adds wandb) is not
+    involved, so the opt-in flag would do nothing here. Offline nodes: ``WANDB_MODE=offline``, then ``wandb sync``."""
+    from benchmate.metrics import wandb_push
+    from benchmate.toggles import wandb_enabled
+
+    if not wandb_enabled():
+        return log
+    push = wandb_push()
+
+    def both(event):
+        log(event)
+        push(**event)
+
+    return both
+
+
 # --- placement at run time -----------------------------------------------------------------------------------------
 # The node order only means something if Megatron's expert groups are the consecutive hosts we think they are:
 # read the real groups and the real hostnames once the process groups exist, and time the expert all-to-all per group.
@@ -356,6 +375,7 @@ def main():
         from benchmate.monitor import setupvoir
 
         log, monitor = setupvoir(monogpu=False, interval=0.5)
+        log = with_wandb(log)
         LOG = log
         report_placement(cfg, argv)
 
