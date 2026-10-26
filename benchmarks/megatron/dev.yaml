@@ -187,6 +187,19 @@ megatron-glm5-frozen-smoke-2n:
     --decoder-first-pipeline-num-layers: null
     --decoder-last-pipeline-num-layers: null
 
+# One node (4 GPUs), 4 layers, EP4 x DP4, PP1: the quickest check of the model build, freezing, data and metrics. No
+# multi-node launch (no srun). Same model as the 2-node entry.
+megatron-glm5-frozen-smoke-1n:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke]
+  num_machines: 1
+  max_duration: 900
+  argv:
+    --pipeline-model-parallel-size: 1
+    --expert-model-parallel-size: 4
+    --global-batch-size: 4
+    --train-iters: 4
+
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n
   tags: [frozen, smoke, topology]
