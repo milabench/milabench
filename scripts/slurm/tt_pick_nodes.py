@@ -13,8 +13,9 @@ Families (journals/2026-10-23.md, "Rorqual topology"):
     S  all N nodes on one switch (--leaf, or the switch with the most usable
        nodes); N must be a multiple of 3.
     P  fewest switches: fill the switches with the most usable nodes first.
-    O  one node per switch on N switches (most spread out); switches with the
-       most usable nodes first, so O and H/S draw from the same big leaves.
+    O  one node per switch on N switches (most spread out); 3-node leaves first
+       (as H), so O up to 13 stays off the big leaves and can run next to S
+       on ihpc316.
 
 A node is usable if it is in --candidates (healthy nodes, e.g. from
 tt_healthcheck.sh, or a reservation's node list) and not in --exclude.
@@ -94,7 +95,8 @@ def pick(family: str, n: int, by_leaf: dict[str, list[str]], leaf: str | None, p
             raise ValueError(f"P{n}: only {n - left} usable nodes")
         return chosen
     if family == "O":
-        ok = sorted(by_leaf, key=lambda l: (-len(by_leaf[l]), l))
+        sizes = leaf_sizes(prefix)
+        ok = sorted(by_leaf, key=lambda l: (sizes.get(l, 0) != 3, l))
         if len(ok) < n:
             raise ValueError(f"O{n}: only {len(ok)} switches with a usable node")
         return {l: by_leaf[l][:1] for l in ok[:n]}

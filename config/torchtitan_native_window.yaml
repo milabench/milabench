@@ -250,3 +250,12 @@ tt-w-nodes-8k2:
   argv:
     --seq-len: 8192
     --microbatch-sequences: 2
+
+# Long stability run (>= 1 h, block 37): one hour of measurement.
+tt-w-nodes-long:
+  inherits: tt-w-nodes
+  max_duration: 4500
+  voir:
+    options:
+      skip: 30
+      stop_seconds: 3600
