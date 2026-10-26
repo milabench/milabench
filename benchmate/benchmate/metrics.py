@@ -251,54 +251,26 @@ class Flags:
 _flags = Flags()
 
 
-class TimedIterator:
-    """Time the body of a loop, ignoring the time it took to initialize the iterator.`
-    The timings are measured using `torch.cuda.Event` to avoid explicit sync.
+class StepTimer:
+    """Loader-free core of the step timing machinery.
 
-    An explicit sync is done at the end of an epoch or if the max number of observation is reached.
+    Times the interval between consecutive `step()` calls using device events
+    (no explicit sync), accumulates them and pushes them on `push()`.
 
-    Because the timings are async, voir only gets triggered when the explicit sync happens which
-    is outside of the scope of performance measure, so no matter how long voir takes to process
-    the events it will not impact the measures.
-
-    The wrapper also works in multi-gpu, multi-node setups and computes the real batch-size
-    by reducing the batch size on all processes. Only rank 0 logs data.
-
-    Notes
-    -----
-    The event progress is the only one that is feed synchronously so
-    this event should be handled quickly.
-
-    Arguments
-    ---------
-    loader: Dataloader
-        original pytorch dataloader
-
-    event_fn:
-        event constructor (torch.cuda.Evemt, toch.xpu.Event, etc...)
-
-    rank: int
-        rank of the current process, only required if distributed
-
-    device:
-        device used, only required if distributed
-
-    earlystop: int
-        number of observation to produce before raising StopProgram
-
-    push: function:
-        function used to message/push metrics
+    Use directly when there is no iterator to wrap, `TimedIterator` builds on
+    this class to time a loop over a loader.
 
     Examples
     --------
 
-    .. code-block::
+    .. code-block:: python
 
-       loader = TimedIterator(loader, torch.cuda.Event, earlystop=60)   # < here
-
-       for e in range(epochs):
-           for i in loader:
-               loss = criterion(model(x), y)
+        timer = StepTimer(earlystop=60)
+        timer.start()
+        for batch in batches:
+            train(batch)
+            timer.step(len(batch))
+        timer.push()
     """
     TIMED_ITERATOR_INSTANCE = 0
     ACTIVE_WRAPPED_ITERATOR = 0
@@ -314,10 +286,8 @@ class TimedIterator:
     @classmethod
     def with_give(cls, *args, push=None, **kwargs):
         return cls(*args, push=give_push(), **kwargs)
-
     def __init__(
         self,
-        loader,
         event_fn=None,
         rank=int(os.getenv("RANK", 0)),
         push=file_push(),
@@ -327,7 +297,6 @@ class TimedIterator:
         batch_size_fn=None,
     ):
         self.recored_laps = [LapEvent('first', time.time())]
-        self.loader = loader  # original iterator
         self.events: list[TimedEvent] = []  # accumulated events to be pushed
 
         self.task = "train"  # voir task usually train but could be validation/test
@@ -381,83 +350,21 @@ class TimedIterator:
         if _flags.record_laps:
             self.recored_laps.append(LapEvent(name, time.time()))
 
-    def __getattr__(self, item):
-        return getattr(self.loader, item)
-
-    def __len__(self):
-        return len(self.loader)
-
-    def __iter__(self):
-        self.record_lap("iter_create")
-        self.log_progress()
-
-        with CPUTimer() as ct:
-            iterator = iter(self.loader)
-            # This takes much more time than expected good thing to keep track of it
-            first_batches = [next(iterator) for i in range(_flags.force_batch_fetch)]
-
-        self.unique_iterator = id(iterator)
-        self.loader_init_time.append(ct.elapsed())
-
-        # with BENCHMATE_BATCH_FETCH this will ignore the dataloader setuptime
+    def start(self):
+        """Begin timing, the first step() measures the time elapsed since this call"""
         self.last_time = time.time()
+        self.start_event = self.event_fn(enable_timing=True)
+        self.start_event.record()
 
-        return self.wrapped(iterator, list(reversed(first_batches)))
+    def push(self):
+        """Push all the accumulated metrics"""
+        self._push()
 
     def _record_event(self, event: TimedEvent):
         """A TimedEvent is something that records a particular code duration"""
         if _flags.record_fine_grained:
             event.batch_id = self.batch_id
             self.recorded_timers.append(event)
-
-    def wrapped(self, iterator, first_batches):
-        # Time IO wait + batch compute
-        self.record_lap("iter_start")
-        self.start = self.event_fn(enable_timing=True)
-        self.start.record()
-        next_time = None
-        self.previous_overhead = 0
-
-        try:
-            while True:
-                assert self.unique_iterator == id(iterator)
-
-                try:
-                    if first_batches:
-                        while first_batches:
-                            data = first_batches.pop()
-                    else:
-                        with lazy_record_timing("next", self.event_fn) as next_time:
-                            data = next(iterator)
-
-                    # Simple one iteration = one backward
-                    # ... huggingface ... is changing the batch sometimes...
-                    bs = self.deduce_batch_size(data)
-
-                    with lazy_record_timing("work", self.event_fn) as work_time:
-                        yield data
-
-                    with lazy_record_timing("step", self.event_fn) as step_time:
-                        if should_break := self.step(bs):
-                            self.break_count += 1
-                            break
-
-                    if next_time:
-                        self._record_event(next_time)
-
-                    self._record_event(work_time)
-                    self._record_event(step_time)
-                    self.batch_id += 1
-
-                except StopIteration:
-                    break
-        finally:
-            self.multi_call_guard -= 1
-            self.unique_iterator = None
-            self.record_lap("iter_end")
-            self._push()
-            self._push_total_time_elapsed()
-            self.earlystop()
 
     def _make_rate(self, event: TimedEvent):
         event.end.synchronize()
@@ -476,7 +383,7 @@ class TimedIterator:
             end.record()
 
             # We could use event.query() to push events without blocking
-            event = TimedEvent("rate", self.start, end, batch_size, self.batch_id)
+            event = TimedEvent("rate", self.start_event, end, batch_size, self.batch_id)
 
             if _flags.eager_sync:
                 rate, elapsed = self._make_rate(event)
@@ -492,7 +399,7 @@ class TimedIterator:
             if self.is_done() and self.break_count == 0:
                 should_break = True
 
-            self.start = end
+            self.start_event = end
 
         # Note: first step does not have overhead because end event is recorded
         # before the overhead starts
@@ -505,17 +412,6 @@ class TimedIterator:
             self.overhead.append(self.previous_overhead)
 
         return should_break
-
-    def deduce_batch_size(self, elem):
-        if self.batch_size_fn:
-            return self.batch_size_fn(elem)
-
-        try:
-            if len(elem) == 2:
-                return len(elem[0])
-            return len(elem)
-        except ValueError:
-            return 0
 
     def progress(self):
         return len(self.events) + self.total_obs
@@ -634,6 +530,154 @@ class TimedIterator:
             self.message_push(**kwargs)
 
 
+class TimedIterator(StepTimer):
+    """Time the body of a loop, ignoring the time it took to initialize the iterator.`
+    The timings are measured using `torch.cuda.Event` to avoid explicit sync.
+
+    An explicit sync is done at the end of an epoch or if the max number of observation is reached.
+
+    Because the timings are async, voir only gets triggered when the explicit sync happens which
+    is outside of the scope of performance measure, so no matter how long voir takes to process
+    the events it will not impact the measures.
+
+    The wrapper also works in multi-gpu, multi-node setups and computes the real batch-size
+    by reducing the batch size on all processes. Only rank 0 logs data.
+
+    Notes
+    -----
+    The event progress is the only one that is feed synchronously so
+    this event should be handled quickly.
+
+    Arguments
+    ---------
+    loader: Dataloader
+        original pytorch dataloader
+
+    event_fn:
+        event constructor (torch.cuda.Evemt, toch.xpu.Event, etc...)
+
+    rank: int
+        rank of the current process, only required if distributed
+
+    device:
+        device used, only required if distributed
+
+    earlystop: int
+        number of observation to produce before raising StopProgram
+
+    push: function:
+        function used to message/push metrics
+
+    Examples
+    --------
+
+    .. code-block::
+
+       loader = TimedIterator(loader, torch.cuda.Event, earlystop=60)   # < here
+
+       for e in range(epochs):
+           for i in loader:
+               loss = criterion(model(x), y)
+    """
+
+    def __init__(
+        self,
+        loader,
+        event_fn=None,
+        rank=int(os.getenv("RANK", 0)),
+        push=file_push(),
+        device=default_device(),
+        earlystop=earlystop_count(),
+        raise_stop_program=False,
+        batch_size_fn=None,
+    ):
+        self.loader = loader  # original iterator
+        super().__init__(event_fn, rank, push, device, earlystop, raise_stop_program, batch_size_fn)
+
+    def __getattr__(self, item):
+        return getattr(self.loader, item)
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __iter__(self):
+        self.record_lap("iter_create")
+        self.log_progress()
+
+        with CPUTimer() as ct:
+            iterator = iter(self.loader)
+            # This takes much more time than expected good thing to keep track of it
+            first_batches = [next(iterator) for i in range(_flags.force_batch_fetch)]
+
+        self.unique_iterator = id(iterator)
+        self.loader_init_time.append(ct.elapsed())
+
+        # with BENCHMATE_BATCH_FETCH this will ignore the dataloader setuptime
+        self.last_time = time.time()
+
+        return self.wrapped(iterator, list(reversed(first_batches)))
+
+    def wrapped(self, iterator, first_batches):
+        # Time IO wait + batch compute
+        self.record_lap("iter_start")
+        self.start_event = self.event_fn(enable_timing=True)
+        self.start_event.record()
+        next_time = None
+        self.previous_overhead = 0
+
+        try:
+            while True:
+                assert self.unique_iterator == id(iterator)
+
+                try:
+                    if first_batches:
+                        while first_batches:
+                            data = first_batches.pop()
+                    else:
+                        with lazy_record_timing("next", self.event_fn) as next_time:
+                            data = next(iterator)
+
+                    # Simple one iteration = one backward
+                    # ... huggingface ... is changing the batch sometimes...
+                    bs = self.deduce_batch_size(data)
+
+                    with lazy_record_timing("work", self.event_fn) as work_time:
+                        yield data
+
+                    with lazy_record_timing("step", self.event_fn) as step_time:
+                        if should_break := self.step(bs):
+                            self.break_count += 1
+                            break
+
+                    if next_time:
+                        self._record_event(next_time)
+
+                    self._record_event(work_time)
+                    self._record_event(step_time)
+                    self.batch_id += 1
+
+                except StopIteration:
+                    break
+        finally:
+            self.multi_call_guard -= 1
+            self.unique_iterator = None
+            self.record_lap("iter_end")
+            self._push()
+            self._push_total_time_elapsed()
+            self.earlystop()
+
+    def deduce_batch_size(self, elem):
+        if self.batch_size_fn:
+            return self.batch_size_fn(elem)
+
+        try:
+            if len(elem) == 2:
+                return len(elem[0])
+            return len(elem)
+        except ValueError:
+            return 0
+
+
 class ManualTimedIterator(TimedIterator):
     """Used when the model is trained with graident accumulation steps.
 
@@ -672,12 +716,6 @@ class ManualTimedIterator(TimedIterator):
         self.accumulation_steps = 0
         self.epochs = 0
 
-    def start_manual(self):
-        """Callers may use this on step() when they do not use __iter__"""
-        self.last_time = time.time()
-        self.start = self.event_fn(enable_timing=True)
-        self.start.record()
-
     def step(self, batch_override=None):
         if batch_override is None:
             batch_override = self.acc_batch_size
@@ -690,8 +728,8 @@ class ManualTimedIterator(TimedIterator):
     def wrapped(self, iterator, first_batches):
         # Time IO wait + batch compute
         self.record_lap("iter_start")
-        self.start = self.event_fn(enable_timing=True)
-        self.start.record()
+        self.start_event = self.event_fn(enable_timing=True)
+        self.start_event.record()
         self.previous_overhead = 0
 
         if first_batches:

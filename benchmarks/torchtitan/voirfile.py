@@ -4,7 +4,7 @@ from voir import configurable
 from voir.phase import StopProgram
 from benchmate.metrics import (
     LazyLossPusher,
-    ManualTimedIterator,
+    StepTimer,
     default_device,
     default_event,
     sumggle_push,
@@ -21,11 +21,10 @@ def _milabench_rank() -> int:
 
 
 class _TrainStepMetrics:
-    """CUDA-event train throughput via ManualTimedIterator (openinstruct pattern)."""
+    """CUDA-event train throughput via StepTimer."""
 
     def __init__(self) -> None:
-        self.timer = ManualTimedIterator(
-            iter(()),
+        self.timer = StepTimer(
             event_fn=default_event(),
             rank=_milabench_rank(),
             push=sumggle_push(),
@@ -40,7 +39,7 @@ class _TrainStepMetrics:
     def _ensure_started(self) -> None:
         if self._started:
             return
-        self.timer.start_manual()
+        self.timer.start()
         self._started = True
 
     def start_step(self) -> None:
@@ -57,8 +56,8 @@ class _TrainStepMetrics:
     def finish_step(self) -> None:
         tokens = self._state.get("local_tokens", 0)
         if tokens > 0:
-            self.timer.step(batch_override=tokens)
-            self.timer._push()
+            self.timer.step(tokens)
+            self.timer.push()
 
         loss = self._state.get("loss")
         if loss is not None:
@@ -118,7 +117,7 @@ def _install_torchtitan_metrics() -> None:
     except ImportError:
         pass
 
-    print("[voirfile] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)
+    print("[voirfile] StepTimer metrics installed on Trainer.train_step", flush=True)
 
 
 @dataclass
