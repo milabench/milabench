@@ -55,9 +55,12 @@ def build_record(data_file: Path) -> dict | None:
     if summary is None or not rates:
         return None
 
-    config = summary["config"]
-    gpus = config["gpus"]
-    tokens = config["global_batch_tokens"]
+    if "workload" in summary:  # milabench.pretrain.v1
+        gpus = summary["parallelism"]["gpus"]
+        tokens = summary["workload"]["global_batch_tokens"]
+    else:  # milabench.torchtitan_native.v2
+        gpus = summary["config"]["gpus"]
+        tokens = summary["config"]["global_batch_tokens"]
     median = statistics.median(rates)
     step_times = [tokens / r for r in rates]
     mfu_in = summary["mfu_inputs"]

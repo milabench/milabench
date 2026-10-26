@@ -14,12 +14,20 @@ Measurement window
     ``should_continue_training``; voir's rank-0 stop signal is not used,
     since stopping rank 0 alone would leave the other ranks in collectives.
 
+Run identity
+    Rank 0 pushes a ``run_start`` data event when the trainer starts building
+    (before distributed init), so a run that fails early still records its
+    job, variant and nodes. Launcher variables (``TT_CAMPAIGN``, ``TT_VARIANT``,
+    ``TT_REPETITION``, ``TT_FAMILY``, ``TT_HEALTH_DIR``, ``TT_TOPOLOGY``,
+    ``TT_EXCLUSIVE_CLUSTER``) fill the ``run`` and ``placement`` blocks.
+
 Summary
     After training, per-rank memory, step times, data-loading time and
     startup timestamps are gathered and rank 0 pushes one ``summary`` data
-    event (config, MFU inputs, memory, startup, ...). Everything ends up in
-    milabench's run data; ``export_record.py`` builds the JSON results record
-    from it. The official throughput is the median of the pushed rates.
+    event (schema ``milabench.pretrain.v1``, scripts/analysis/FORMAT.md).
+    Everything ends up in milabench's run data; ``export_record.py`` builds
+    the JSON results record from it. The official throughput is the median of
+    the pushed rates.
 """
 
 from __future__ import annotations
@@ -29,13 +37,14 @@ import math
 import os
 import socket
 import statistics
+import subprocess
 import time
 from typing import Any
 
 import torch
 import torch.distributed as dist
 
-SCHEMA = "milabench.torchtitan_native.v2"
+SCHEMA = "milabench.pretrain.v1"
 
 # Set by main.py as early as possible (before heavy imports).
 PROCESS_START: float | None = None
@@ -113,6 +122,148 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
 
 
+# -- run identity (FORMAT.md "Summary schema", "What the launcher sets") ------
+
+
+def _env_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    return int(value) if value else None
+
+
+def run_block() -> dict[str, Any]:
+    return {
+        "cluster": os.environ.get("CC_CLUSTER") or os.environ.get("SLURM_CLUSTER_NAME"),
+        "campaign": os.environ.get("TT_CAMPAIGN"),
+        "variant": os.environ.get("TT_VARIANT") or os.environ.get("TT_RUN_TAG"),
+        "repetition": _env_int("TT_REPETITION"),
+        "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+        "slurm_step_id": os.environ.get("SLURM_STEP_ID"),
+        "slurm_reservation": os.environ.get("SLURM_JOB_RESERVATION") or None,
+        "exclusive_cluster": os.environ.get("TT_EXCLUSIVE_CLUSTER", "0") == "1",
+        "run_tag": os.environ.get("TT_RUN_TAG"),
+    }
+
+
+def workload_block() -> dict[str, Any]:
+    """Model and batch settings known before the trainer is built."""
+    d = RUN_DESCRIPTION
+    nccl = None
+    try:
+        nccl = ".".join(str(v) for v in torch.cuda.nccl.version())
+    except Exception:
+        pass
+    return {
+        "model": f"{d.get('model', '?')}-{d.get('flavor', '')}".strip("-"),
+        "framework": "torchtitan",
+        "framework_commit": _torchtitan_commit(),
+        "torch_version": torch.__version__,
+        "nccl_version": nccl,
+        "n_layers": d.get("n_layers"),
+        "n_layers_full": d.get("n_layers_full"),
+        "params_trainable_fraction": 1.0,
+        "seq_len": d.get("seq_len"),
+        "microbatch_sequences": d.get("microbatch_sequences_per_gpu"),
+        "grad_accum": d.get("grad_accum", 1),
+        "precision": "bf16",
+        "optimizer": "AdamW",
+        "optimizer_state_dtype": d.get("adam_moments"),
+        "activation_checkpointing": d.get("activation_checkpointing"),
+        "compile": d.get("compile"),
+        "moe": None,
+    }
+
+
+def _hostnames(spec: str) -> list[str]:
+    if "[" not in spec:
+        return [h for h in spec.replace(",", " ").split() if h]
+    try:
+        out = subprocess.run(
+            ["scontrol", "show", "hostnames", spec], capture_output=True, text=True, check=True
+        )
+        return out.stdout.split()
+    except Exception:
+        return []
+
+
+def _leaves(hosts: list[str]) -> tuple[dict[str, list[str]], float | None]:
+    """Leaf switch -> hosts of this run, from the launcher's topology snapshot."""
+    path = os.environ.get("TT_TOPOLOGY")
+    if not path or not os.path.exists(path):
+        return {}, None
+    wanted, leaves = set(hosts), {}
+    for line in open(path).read().splitlines():
+        fields = dict(f.split("=", 1) for f in line.split() if "=" in f)
+        if fields.get("Level") == "0" and "Nodes" in fields:
+            mine = sorted(wanted.intersection(_hostnames(fields["Nodes"])))
+            if mine:
+                leaves[fields["SwitchName"]] = mine
+    return leaves, os.path.getmtime(path)
+
+
+def _excluded_nodes() -> dict[str, str]:
+    """Nodes the launcher's health check excluded (``excluded.txt``: host, reason)."""
+    health = os.environ.get("TT_HEALTH_DIR")
+    path = os.path.join(health, "excluded.txt") if health else None
+    if not path or not os.path.exists(path):
+        return {}
+    excluded = {}
+    for line in open(path).read().splitlines():
+        host, _, reason = line.partition("\t")
+        if host:
+            excluded[host] = reason
+    return excluded
+
+
+def placement_block(hosts: list[str]) -> dict[str, Any]:
+    leaves, topology_epoch = _leaves(hosts)
+    return {
+        "hosts": hosts,
+        "family": os.environ.get("TT_FAMILY"),
+        "ep_groups": None,
+        "leaves": leaves,
+        "excluded_nodes": _excluded_nodes(),
+        "health_check": os.environ.get("TT_HEALTH_DIR"),
+        "topology_snapshot_epoch": topology_epoch,
+    }
+
+
+def deviations() -> list[dict[str, str]]:
+    d = RUN_DESCRIPTION
+    result = [
+        {"id": "mtp", "text": "MTP off"},
+        {"id": "text_only", "text": "text only (vision encoder removed)"},
+    ]
+    if d.get("n_layers") and d.get("n_layers_full") and d["n_layers"] < d["n_layers_full"]:
+        result.append({"id": "truncated", "text": f"{d['n_layers']} of {d['n_layers_full']} layers"})
+    if d.get("options", {}).get("dataset") == "random":
+        result.append({"id": "data", "text": "random tokens"})
+    return result
+
+
+def _launch_hosts() -> list[str]:
+    """Nodes of this run as the launcher gave them (before distributed init)."""
+    spec = os.environ.get("TT_NODES") or os.environ.get("SLURM_JOB_NODELIST") or ""
+    return sorted(set(_hostnames(spec))) or [socket.gethostname()]
+
+
+def _compile_cache_state(compile_mode: str | None, stats: dict[str, Any]) -> str:
+    if compile_mode in (None, "eager"):
+        return "none"
+    if stats.get("fxgraph_cache_miss", 0) == 0 and stats.get("fxgraph_cache_hit", 0) > 0:
+        return "warm"
+    return "cold"
+
+
+def _local_gpu() -> tuple[int, str | None]:
+    local_rank = int(os.environ.get("LOCAL_RANK", torch.cuda.current_device()))
+    try:
+        uuid = str(torch.cuda.get_device_properties(torch.cuda.current_device()).uuid)
+        uuid = uuid if uuid.startswith("GPU-") else f"GPU-{uuid}"
+    except Exception:
+        uuid = None
+    return local_rank, uuid
+
+
 class TrainerInstrument:
     """Per-process state; methods are called from the wrapped Trainer methods."""
 
@@ -142,6 +293,17 @@ class TrainerInstrument:
 
     def on_init_start(self) -> None:
         self.t_init_start = time.time()
+        if int(os.environ.get("RANK", "0")) == 0:
+            self.push(
+                run_start={
+                    "schema": SCHEMA,
+                    "run": run_block(),
+                    "workload": workload_block(),
+                    "placement": placement_block(_launch_hosts()),
+                    "process_start_epoch": _process_start(),
+                },
+                task="train",
+            )
 
     def on_init_done(self, trainer) -> None:
         self.t_model_initialized = time.time()
@@ -254,7 +416,8 @@ class TrainerInstrument:
         rows = _gather_floats(local)
         # Every rank measured the same number of steps (agreed count).
         data_rows = _gather_floats(self._data_times)
-        hosts = _gather_hosts()
+        ranks = _gather_objects((socket.gethostname(), *_local_gpu()))
+        hosts = [r[0] for r in ranks]
         if _rank() != 0:
             return
 
@@ -262,12 +425,12 @@ class TrainerInstrument:
         ctx = trainer.engine.parallelism_context
         training = trainer.config.training
         dp = ctx.world_size // (ctx.tp * ctx.cp * ctx.pp)
-        tokens_per_step = (
+        tokens_per_gpu = (
             training.num_tokens_per_microbatch_per_dp_rank
             * trainer.num_pp_microbatches
             * trainer.gradient_accumulation_steps
-            * dp
         )
+        tokens_per_step = tokens_per_gpu * dp
         t0 = min(r[2] for r in rows)
 
         def spread(i):
@@ -278,35 +441,39 @@ class TrainerInstrument:
             col = [r[i] - t0 for r in rows]
             return {"min_s": min(col), "max_s": max(col)}
 
+        params = getattr(trainer.engine, "model_param_count", None)
+        workload = {
+            **workload_block(),
+            "params_total": params,
+            "params_active": params,
+            "seq_len": training.max_context_length,
+            "grad_accum": trainer.gradient_accumulation_steps,
+            "tokens_per_gpu_per_step": tokens_per_gpu,
+            "global_batch_tokens": tokens_per_step,
+            "global_batch_sequences": tokens_per_step // training.max_context_length,
+        }
         summary = {
             "schema": SCHEMA,
-            "config": {
-                **RUN_DESCRIPTION,
+            "run": run_block(),
+            "workload": workload,
+            "parallelism": {
                 "gpus": ctx.world_size,
                 "nodes": len(set(hosts)),
-                "hosts": sorted(set(hosts)),
-                "parallelism": {
-                    "dp_replicate": ctx.dp_replicate,
-                    "dp_shard": ctx.dp_shard,
-                    "tp": ctx.tp,
-                    "pp": ctx.pp,
-                },
-                "seq_len": training.max_context_length,
-                "tokens_per_microbatch_per_dp_rank": (
-                    training.num_tokens_per_microbatch_per_dp_rank
-                ),
-                "gradient_accumulation_steps": trainer.gradient_accumulation_steps,
-                "global_batch_tokens": tokens_per_step,
-                "global_batch_sequences": tokens_per_step // training.max_context_length,
-                "torchtitan_commit": _torchtitan_commit(),
-                "torch_version": torch.__version__,
-                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
-                "run_tag": os.environ.get("TT_RUN_TAG"),
+                "dp_replicate": ctx.dp_replicate,
+                "dp_shard": ctx.dp_shard,
+                "tp": ctx.tp,
+                "pp": ctx.pp,
+                "cp": ctx.cp,
+                "ep": 1,
             },
+            "placement": placement_block(sorted(set(hosts))),
+            "framework_config": RUN_DESCRIPTION,
             "measurement": {
                 "warmup_steps": self.skip,
                 "measured_steps": len(steps),
                 "measure_seconds_budget": self.stop_seconds,
+                "measurement_start_epoch": self.t_measure_start,
+                "measurement_end_epoch": time.time(),
                 "rate_definition": (
                     "per step: global tokens / step time; step time from device "
                     "events on rank 0 (benchmate ManualTimedIterator); official "
@@ -342,13 +509,18 @@ class TrainerInstrument:
                 "first_step_done": since_start(5),
                 "measurement_start": since_start(6),
                 "first_step_s_rank0": self.first_step_s,
+                "compile_cache": _compile_cache_state(
+                    RUN_DESCRIPTION.get("compile"), self.compile
+                ),
                 "compile_rank0": self.compile,
                 "note": "seconds since the earliest rank's process start",
             },
             "per_rank": [
                 {
                     "rank": r,
-                    "host": hosts[r],
+                    "host": ranks[r][0],
+                    "local_rank": ranks[r][1],
+                    "gpu_uuid": ranks[r][2],
                     "step_median": round(row[7], 5),
                     "step_p90": round(row[8], 5),
                     "step_max": round(row[9], 5),
@@ -359,6 +531,8 @@ class TrainerInstrument:
                 }
                 for r, row in enumerate(rows)
             ],
+            "deviations": deviations(),
+            "estimates": [],
         }
         self.push(summary=summary, task="train")
 
@@ -425,12 +599,12 @@ def _gather_floats(values: list[float]) -> list[list[float]]:
     return [t.tolist() for t in out]
 
 
-def _gather_hosts() -> list[str]:
+def _gather_objects(value: Any) -> list[Any]:
     if not dist.is_initialized():
-        return [socket.gethostname()]
-    hosts: list[str] = [None] * dist.get_world_size()  # type: ignore[list-item]
-    dist.all_gather_object(hosts, socket.gethostname())
-    return hosts
+        return [value]
+    values: list[Any] = [None] * dist.get_world_size()
+    dist.all_gather_object(values, value)
+    return values
 
 
 def install(instrument: TrainerInstrument) -> None:

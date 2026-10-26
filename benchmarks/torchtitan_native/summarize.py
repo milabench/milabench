@@ -20,8 +20,18 @@ def _records(paths):
                 record = json.loads(file.read_text())
             except (OSError, json.JSONDecodeError):
                 continue
-            if record.get("schema", "").startswith("milabench.torchtitan_native"):
+            schema = record.get("schema", "")
+            if schema.startswith(("milabench.torchtitan_native", "milabench.pretrain")):
                 yield file, record
+
+
+def _columns(r):
+    """(gpus, n_layers, compile, ac, parallelism) for both summary layouts."""
+    if "workload" in r:  # milabench.pretrain.v1
+        w, p = r["workload"], r["parallelism"]
+        return p["gpus"], w.get("n_layers"), w.get("compile"), w.get("activation_checkpointing"), p
+    c = r["config"]  # milabench.torchtitan_native.v2
+    return c["gpus"], c.get("n_layers"), c.get("compile"), c.get("activation_checkpointing"), c["parallelism"]
 
 
 def main(argv):
@@ -32,16 +42,16 @@ def main(argv):
     print("| " + " | ".join(columns) + " |")
     print("|" + "---|" * len(columns))
     for _, r in _records(argv or ["."]):
-        c, t, m = r["config"], r["throughput"], r["memory_gib"]
+        t, m = r["throughput"], r["memory_gib"]
         st, s = t["step_time_s"], r["startup"]
-        p = c["parallelism"]
+        gpus, n_layers, compile_mode, ac, p = _columns(r)
         par = f"r{p['dp_replicate']}s{p['dp_shard']}t{p['tp']}"
         row = [
             r.get("bench") or r.get("run_name"),
-            c["gpus"],
-            c.get("n_layers"),
-            c.get("compile"),
-            c.get("activation_checkpointing"),
+            gpus,
+            n_layers,
+            compile_mode,
+            ac,
             par,
             f"{t['tokens_per_s_per_gpu']:.0f}",
             f"{r['mfu']['mfu_percent']:.1f}" if r["mfu"]["mfu_percent"] else "-",

@@ -120,6 +120,7 @@ def _model_config(opts: Options):
     # Text-only pre-training: the 27B flavor ships a vision encoder, which would
     # run on dummy inputs every step and is not part of the decoder FLOPs.
     model.vision_encoder = None
+    instrument.RUN_DESCRIPTION["n_layers_full"] = len(model.layers)
     if opts.n_layers is not None:
         if not 0 < opts.n_layers <= len(model.layers):
             raise ValueError(f"n_layers must be in [1, {len(model.layers)}]")
@@ -198,6 +199,7 @@ def qwen38() -> Trainer.Config:
         tokens_per_train_step = tokens_per_microbatch * dp_degree * opts.grad_accum
 
     description = {
+        **instrument.RUN_DESCRIPTION,
         "model": "qwen3_8",
         "flavor": opts.flavor,
         "n_layers": len(model.layers),
@@ -210,7 +212,9 @@ def qwen38() -> Trainer.Config:
         "local_compile_regions": list(model.local_compile_regions),
         "activation_checkpointing": opts.ac,
         "adam_moments": opts.adam_moments,
+        "seq_len": opts.seq_len,
         "microbatch_sequences_per_gpu": opts.microbatch_sequences,
+        "grad_accum": opts.grad_accum,
         "data": (
             "random tokens (packed, fixed length)"
             if opts.dataset == "random"

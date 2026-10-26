@@ -100,6 +100,8 @@ class TorchtitanNative(Package):
         env["PYTHONPATH"] = code if not prev else f"{code}{os.pathsep}{prev}"
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
+        # CUDA device index = DCGM GPU index (per_rank.local_rank joins telemetry).
+        env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
         # Compile caches on node-local disk: home is read-only on some compute
         # nodes (Trillium), and the shared filesystem is slow for many ranks
         # writing small files. The path must not depend on the job: cache
