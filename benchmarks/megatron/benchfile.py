@@ -36,6 +36,19 @@ def _load_slime():
 Slime = _load_slime().Slime
 
 
+class SrunOneNode(SrunCommand):
+    """``srun -w <host>`` on exactly one node.
+
+    ``milabench slurm srun`` forwards its arguments to Slurm's srun, which only gets a node count from milabench for
+    ``-x``: with ``-w`` alone the step spans the whole job (default node count) and also starts the worker on the main
+    node (rank 4 and rank 0 on the same GPU: "Duplicate GPU detected")."""
+
+    def _argv(self, **kwargs):
+        argv = super()._argv(**kwargs)
+        sep = argv.index("--")
+        return [*argv[:sep], "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", *argv[sep:]]
+
+
 class PlacedTorchrunSrun(ForeachSrun):
     """torchrun with the node order of ``system.nodes``: node i runs on host i with ``--node-rank=i``.
 
@@ -62,7 +75,7 @@ class PlacedTorchrunSrun(ForeachSrun):
         for rank, node in enumerate(nodes[1:], start=1):
             worker = self.worker_executor()
             worker.wrapper_argv = (*worker.wrapper_argv, f"--node-rank={rank}")
-            executors.append(SrunCommand(worker, nodelist=_node_hostlist_token(node)))
+            executors.append(SrunOneNode(worker, nodelist=_node_hostlist_token(node)))
         return executors
 
 
