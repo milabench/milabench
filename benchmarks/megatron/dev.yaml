@@ -95,6 +95,8 @@ _megatron_glm5:
     --global-batch-size: 64
     --train-iters: 10
     --eval-iters: 0
+    # Megatron divides train-iters by it even with eval-iters 0 (None by default)
+    --eval-interval: 1000
     --log-interval: 1
     --bf16: true
     --attention-backend: auto

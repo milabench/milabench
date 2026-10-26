@@ -20,7 +20,6 @@ import os
 import re
 import sys
 import time
-from functools import partial
 
 for _p in reversed(os.environ.get("PYTHONPATH", "").split(os.pathsep)):
     if _p:
@@ -80,37 +79,29 @@ def freeze_model(model, spec: dict):
 
 # --- model -------------------------------------------------------------------------------------------------------
 
-def build_model_provider(spec: dict, hf_path: str):
-    import gpt_builders
-    from megatron.training.arguments import core_transformer_config_from_args
-    from model_provider import model_provider
+def configure_model(model_cfg, args, spec: dict, hf_path: str):
+    """Hook the GLM-5 layer spec and the freezing into the model config.
 
+    With a config container Megatron builds the model through ``model_cfg.get_builder_cls()`` and ignores a
+    ``model_provider``: the layer spec is a callable on the config, and the freezing is a pre-wrap hook (it has
+    to run before the DDP wrapper, which only allocates gradient buffers for the parameters that require grad)."""
     from slime_plugins.models.glm5.glm5 import get_glm5_spec
 
-    counts = [0, 0]
+    # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
+    args.hf_checkpoint = hf_path
 
-    def builder(args, pre_process, post_process, vp_stage=None, config=None, pg_collection=None):
-        if config is None:
-            config = core_transformer_config_from_args(args)
-        # gpt_builder asks args.spec (an import path) for the layer spec: serve the GLM-5 one, which needs
-        # (args, config, vp_stage) and the HF config for the indexer sizes
-        args.hf_checkpoint = hf_path
-        original = gpt_builders.import_module
-        gpt_builders.import_module = lambda _spec: get_glm5_spec(args, config, vp_stage)
-        previous, args.spec = args.spec, ["glm5", "get_glm5_spec"]
-        try:
-            model = gpt_builders.gpt_builder(args, pre_process, post_process, vp_stage, config, pg_collection)
-        finally:
-            gpt_builders.import_module = original
-            args.spec = previous
-        trainable, total = freeze_model(model, spec)
-        counts[0] += trainable
-        counts[1] += total
-        debug(f"model chunk (vp_stage={vp_stage}): {trainable:,} trainable / {total:,} parameters "
-              f"on this rank (running total {counts[0]:,} / {counts[1]:,})")
-        return model
+    def layer_spec(cfg, vp_stage=None):
+        return get_glm5_spec(args, cfg.transformer, vp_stage)
 
-    return partial(model_provider, builder)
+    def freeze_hook(models):
+        for i, chunk in enumerate(models):
+            trainable, total = freeze_model(chunk, spec)
+            debug(f"model chunk {i}: {trainable:,} trainable / {total:,} parameters on this rank")
+        return models
+
+    model_cfg.transformer_layer_spec = layer_spec
+    model_cfg.pre_wrap_hooks.append(freeze_hook)
+    return model_cfg
 
 
 # --- data --------------------------------------------------------------------------------------------------------
@@ -238,7 +229,8 @@ def main():
     from pretrain_gpt import forward_step, get_embedding_ranks
 
     args = parse_and_validate_args(args_defaults={"tokenizer_type": "NullTokenizer"})
-    full_config = pretrain_cfg_container_from_args(args, gpt_config_from_args(args))
+    model_cfg = configure_model(gpt_config_from_args(args), args, spec, hf_path)
+    full_config = pretrain_cfg_container_from_args(args, model_cfg)
 
     patch_train_step(log)
     try:
@@ -247,7 +239,6 @@ def main():
             build_dataset_provider(docs),
             ModelType.encoder_or_decoder,
             forward_step,
-            model_provider=build_model_provider(spec, hf_path),
             get_embedding_ranks=get_embedding_ranks,
         )
     finally:
