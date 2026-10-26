@@ -4,6 +4,7 @@
     tt_pick_nodes.py --family H --nodes 6 --candidates "$(cat healthy.txt)"
     tt_pick_nodes.py --family S --nodes 6 --leaf ihpc316u25 --candidates ...
     tt_pick_nodes.py --family P --nodes 15 --candidates ... --exclude rg21701
+    tt_pick_nodes.py --family O --nodes 8 --candidates ...
 
 Families (journals/2026-10-23.md, "Rorqual topology"):
     H  3 nodes per leaf switch on N/3 switches (switches with < 3 usable nodes
@@ -12,6 +13,8 @@ Families (journals/2026-10-23.md, "Rorqual topology"):
     S  all N nodes on one switch (--leaf, or the switch with the most usable
        nodes); N must be a multiple of 3.
     P  fewest switches: fill the switches with the most usable nodes first.
+    O  one node per switch on N switches (most spread out); switches with the
+       most usable nodes first, so O and H/S draw from the same big leaves.
 
 A node is usable if it is in --candidates (healthy nodes, e.g. from
 tt_healthcheck.sh, or a reservation's node list) and not in --exclude.
@@ -90,12 +93,17 @@ def pick(family: str, n: int, by_leaf: dict[str, list[str]], leaf: str | None, p
         if left:
             raise ValueError(f"P{n}: only {n - left} usable nodes")
         return chosen
+    if family == "O":
+        ok = sorted(by_leaf, key=lambda l: (-len(by_leaf[l]), l))
+        if len(ok) < n:
+            raise ValueError(f"O{n}: only {len(ok)} switches with a usable node")
+        return {l: by_leaf[l][:1] for l in ok[:n]}
     raise ValueError(f"unknown family {family!r}")
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--family", required=True, choices=["H", "S", "P"])
+    parser.add_argument("--family", required=True, choices=["H", "S", "P", "O"])
     parser.add_argument("--nodes", type=int, required=True)
     parser.add_argument("--candidates", required=True, help="usable nodes (hostlist or comma/space separated)")
     parser.add_argument("--exclude", default="", help="nodes to leave out (hostlist)")
