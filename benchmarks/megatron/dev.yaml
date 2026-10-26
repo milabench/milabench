@@ -120,8 +120,6 @@ _megatron_glm5:
     --recompute-granularity: full
     --recompute-method: uniform
     --recompute-num-layers: 1
-    --optimizer-cpu-offload: true
-    --use-precision-aware-optimizer: true
     --no-save-optim: true
     --no-save-rng: true
 
@@ -135,6 +133,10 @@ megatron-glm5-unfrozen-16n:
   inherits: _megatron_glm5
   frozen:
     preset: none
+  argv:
+    # all 744B parameters train: the optimizer state does not fit on the GPUs (not validated)
+    --optimizer-cpu-offload: true
+    --use-precision-aware-optimizer: true
 
 # Only the attention (MLA + DSA indexer) trains.
 megatron-glm5-attn-only-16n:
@@ -180,8 +182,6 @@ megatron-glm5-frozen-smoke-2n:
     --expert-model-parallel-size: 4
     --decoder-first-pipeline-num-layers: null
     --decoder-last-pipeline-num-layers: null
-    --optimizer-cpu-offload: null
-    --use-precision-aware-optimizer: null
 
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n
