@@ -99,6 +99,8 @@ class Options:
     log_freq: int = 10
     wandb: bool = False
     """TorchTitan's wandb logger on rank 0 (also on with ``BENCHMATE_WANDB=1``)."""
+    wandb_all_ranks: bool = False
+    """One wandb run per rank instead of rank 0 only (also ``BENCHMATE_WANDB_ALL_RANKS=1``)."""
     structured_logging: bool = False
     """TorchTitan per-rank JSONL traces (one file per rank: off by default)."""
     dump_folder: str = "./outputs"
@@ -281,6 +283,8 @@ def qwen38() -> Trainer.Config:
         metrics=MetricsProcessor.Config(
             log_freq=opts.log_freq,
             enable_wandb=opts.wandb or os.environ.get("BENCHMATE_WANDB") == "1",
+            save_for_all_ranks=opts.wandb_all_ranks
+            or os.environ.get("BENCHMATE_WANDB_ALL_RANKS") == "1",
         ),
         checkpointer=None,
         activation_checkpoint=_activation_checkpoint(opts.ac),

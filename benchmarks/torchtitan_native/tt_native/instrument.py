@@ -278,17 +278,37 @@ def set_wandb_env() -> None:
     except ValueError:
         config = {}
     run = run_block()
+    name = run["run_tag"] or run["variant"]
     tags = [run["cluster"], os.environ.get("TT_FAMILY"), run["campaign"]]
     defaults = {
         "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
         "WANDB_RUN_GROUP": config.get("run_name"),
         "WANDB_RUN_JOB_TYPE": config.get("name"),
-        "WANDB_RUN_NAME": run["run_tag"] or run["variant"],
+        "WANDB_RUN_NAME": name,
         "WANDB_RUN_TAGS": ",".join(t for t in tags if t),
     }
+    if wandb_all_ranks():
+        # One run per rank: name it after its worker. Only local rank 0 samples the
+        # node's system metrics (every run would otherwise sample all its GPUs).
+        local_rank = os.environ.get("LOCAL_RANK", "0")
+        host = socket.gethostname().split(".")[0]
+        defaults["WANDB_RUN_NAME"] = f"{name or 'run'}-{host}-gpu{local_rank}"
+        defaults["WANDB_RUN_TAGS"] += f",{host}"
+        if local_rank != "0":
+            defaults["WANDB__DISABLE_STATS"] = "true"
     for name, value in defaults.items():
         if value:
             os.environ.setdefault(name, str(value))
+
+
+def wandb_all_ranks() -> bool:
+    """Per-rank wandb runs (TorchTitan ``save_for_all_ranks``), as tt_native.configs decides."""
+    if os.environ.get("BENCHMATE_WANDB_ALL_RANKS") == "1":
+        return True
+    try:
+        return bool(json.loads(os.environ.get("TT_NATIVE_OPTIONS") or "{}").get("wandb_all_ranks"))
+    except ValueError:
+        return False
 
 
 def _wandb_run():
@@ -305,6 +325,25 @@ def _local_gpu() -> tuple[int, str | None]:
     except Exception:
         uuid = None
     return local_rank, uuid
+
+
+def _worker() -> dict[str, Any]:
+    """This rank's identity: node, GPU (index, UUID, PCI address)."""
+    local_rank, uuid = _local_gpu()
+    pci = None
+    try:
+        p = torch.cuda.get_device_properties(torch.cuda.current_device())
+        pci = f"{p.pci_domain_id:08x}:{p.pci_bus_id:02x}:{p.pci_device_id:02x}.0"
+    except Exception:
+        pass
+    return {
+        "rank": _rank(),
+        "local_rank": local_rank,
+        "host": socket.gethostname().split(".")[0],
+        "cuda_device": torch.cuda.current_device(),
+        "gpu_uuid": uuid,
+        "gpu_pci_bus_id": pci,
+    }
 
 
 class TrainerInstrument:
@@ -332,6 +371,7 @@ class TrainerInstrument:
         self._local_tokens = 0
         self._loss = None
         self.run_start: dict[str, Any] | None = None
+        self.wandb_init_s: float | None = None  # this rank's wandb.init, when it ran
         self.global_tokens_per_step = 0
         self._walls_logged = 0  # warm-up wall times / step ends already in a wandb log
         self._ends_logged = 0
@@ -367,7 +407,13 @@ class TrainerInstrument:
         )
         run = _wandb_run()
         if run is not None:
-            run.config.update({"milabench": self.run_start}, allow_val_change=True)
+            config: dict[str, Any] = {"worker": _worker()}
+            if self.run_start is not None:
+                config["milabench"] = self.run_start
+            else:
+                config["milabench"] = {"run": run_block(), "workload": workload_block()}
+            run.config.update(config, allow_val_change=True)
+            run.summary["startup/wandb_init_s"] = self.wandb_init_s
 
         processor = trainer.metrics_processor
         orig_log = processor.log
@@ -505,7 +551,9 @@ class TrainerInstrument:
             max(steps) if steps else float("nan"),
             statistics.median(self._data_times) if self._data_times else 0.0,
             max(self._data_times) if self._data_times else 0.0,
+            self.wandb_init_s if self.wandb_init_s is not None else float("nan"),
         ]
+        self._wandb_rank_summary(local, steps)
         rows = _gather_floats(local)
         # Every rank measured the same number of steps (agreed count).
         data_rows = _gather_floats(self._data_times)
@@ -602,6 +650,7 @@ class TrainerInstrument:
                 "first_step_done": since_start(5),
                 "measurement_start": since_start(6),
                 "first_step_s_rank0": self.first_step_s,
+                "wandb_init_s": _finite_spread([r[12] for r in rows]),
                 "compile_cache": _compile_cache_state(
                     RUN_DESCRIPTION.get("compile"), self.compile
                 ),
@@ -621,6 +670,7 @@ class TrainerInstrument:
                     "peak_reserved_gib": round(row[1], 2),
                     "data_wait_sum_s": round(sum(data_rows[r]), 4),
                     "data_wait_max_s": round(max(data_rows[r], default=0.0), 4),
+                    "wandb_init_s": None if math.isnan(row[12]) else round(row[12], 3),
                 }
                 for r, row in enumerate(rows)
             ],
@@ -629,6 +679,23 @@ class TrainerInstrument:
         }
         self.push(summary=summary, task="train")
         self._wandb_summary(summary, steps, tokens_per_step)
+
+    def _wandb_rank_summary(self, local: list[float], steps: list[float]) -> None:
+        """This rank's own numbers in its wandb run (per-rank runs; rank 0 too)."""
+        run = _wandb_run()
+        if run is None:
+            return
+        run.summary.update(
+            {
+                "rank/step_time_median": local[7],
+                "rank/step_time_p90": local[8],
+                "rank/data_wait_median_s": local[10],
+                "rank/data_wait_max_s": local[11],
+                "rank/peak_allocated_gib": local[0],
+                "rank/peak_reserved_gib": local[1],
+                "rank/measured_steps": len(steps),
+            }
+        )
 
     def _wandb_summary(self, summary: dict[str, Any], steps: list[float], tokens: int) -> None:
         run = _wandb_run()
@@ -703,6 +770,13 @@ def _data_stragglers(
     }
 
 
+def _finite_spread(values: list[float]) -> dict[str, float] | None:
+    values = [v for v in values if not math.isnan(v)]
+    if not values:
+        return None
+    return {"min": min(values), "median": statistics.median(values), "max": max(values), "ranks": len(values)}
+
+
 def _rank() -> int:
     return dist.get_rank() if dist.is_initialized() else 0
 
@@ -740,6 +814,27 @@ def install(instrument: TrainerInstrument) -> None:
     orig_should_continue = Trainer.should_continue_training
     orig_microbatches = Trainer.microbatch_generator
     orig_scalar = sl.log_trace_scalar
+
+    # wandb.init on every logging rank: timed, and logged before and after, so a
+    # slow or hung init (known at scale) shows which rank and how long.
+    from torchtitan.observability import metrics as tt_metrics
+
+    orig_wandb_init = tt_metrics.WandBLogger.__init__
+
+    def wandb_init(self, *args, **kwargs):
+        rank = os.environ.get("RANK", "0")
+        print(f"[tt-native] wandb_init_start rank={rank} t={time.time():.3f}", flush=True)
+        start = time.perf_counter()
+        try:
+            orig_wandb_init(self, *args, **kwargs)
+        finally:
+            instrument.wandb_init_s = time.perf_counter() - start
+            print(
+                f"[tt-native] wandb_init_done rank={rank} s={instrument.wandb_init_s:.3f}",
+                flush=True,
+            )
+
+    tt_metrics.WandBLogger.__init__ = wandb_init
 
     def __init__(self, config):
         instrument.on_init_start()
