@@ -1,8 +1,5 @@
 import time
-from dataclasses import dataclass
 
-from voir import configurable
-from voir.phase import StopProgram
 from benchmate.metrics import (
     LazyLossPusher,
     ManualTimedIterator,
@@ -10,8 +7,7 @@ from benchmate.metrics import (
     default_event,
     sumggle_push,
 )
-from benchmate.monitor import get_rank, voirfile_monitor
-from benchmate.benchrun import forward_voir_file
+from benchmate.monitor import get_rank
 
 from torch_compat import ensure_torchtitan_torch_compat
 
@@ -74,7 +70,7 @@ class _TrainStepMetrics:
 _metrics: _TrainStepMetrics | None = None
 
 
-def _install_torchtitan_metrics() -> None:
+def install_torchtitan_metrics() -> None:
     global _metrics
     if _metrics is not None:
         return
@@ -129,32 +125,4 @@ def _install_torchtitan_metrics() -> None:
     except ImportError:
         pass
 
-    print("[voirfile] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)
-
-
-@dataclass
-class Config:
-    """voir configuration"""
-
-    dash: bool = False
-    interval: str = "1s"
-    skip: int = 5
-    stop: int = 20
-    gpu_poll: float = 0.25
-
-
-@configurable
-def instrument_main(ov, options: Config):
-    yield ov.phases.init
-
-    voirfile_monitor(ov, options)
-
-    yield ov.phases.load_script
-
-    _install_torchtitan_metrics()
-
-    with forward_voir_file():
-        try:
-            yield ov.phases.run_script
-        except StopProgram:
-            print("early stopped", flush=True)
+    print("[tt_metrics] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)

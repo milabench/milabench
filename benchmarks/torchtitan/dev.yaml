@@ -22,9 +22,6 @@ _torchtitan:
   plan:
     method: njobs
     n: 1
-  voir:
-    options:
-      stop: 30
   argv:
     --module: tt_configs
     --training.steps: 40
@@ -40,7 +37,7 @@ torchtitan-qwen3-4b-pretrain:
     - pretrain
   argv:
     --module: tt_configs
-    --tt-config: qwen3_4b_pretrain
+    --config: qwen3_4b_pretrain
     --training.steps: 40
 
 # Short smoke for this machine (tokenizer + tiny c4_test only)
@@ -55,13 +52,9 @@ torchtitan-qwen3-4b-pretrain-smoke:
   # Single-GPU smoke: 8-way torchrun was hanging in futex before train under the
   # glibc-2.38 python wrapper; multi-GPU covered by openinstruct/vllm smokes.
   devices: [0]
-  voir:
-    options:
-      stop: 10
-      skip: 2
   argv:
     --module: tt_configs
-    --tt-config: qwen3_4b_pretrain
+    --config: qwen3_4b_pretrain
     --training.steps: 15
     --training.seq_len: 512
     --training.local_batch_size: 1
@@ -74,7 +67,7 @@ torchtitan-qwen3-4b-sft:
     - sft
   argv:
     --module: tt_configs
-    --tt-config: qwen3_4b_sft
+    --config: qwen3_4b_sft
     --training.steps: 40
 
 torchtitan-qwen3-4b-sft-smoke:
@@ -85,13 +78,9 @@ torchtitan-qwen3-4b-sft-smoke:
     - sft
     - smoke
   max_duration: 1200
-  voir:
-    options:
-      stop: 8
-      skip: 2
   argv:
     --module: tt_configs
-    --tt-config: qwen3_4b_sft
+    --config: qwen3_4b_sft
     --training.steps: 10
     --training.seq_len: 512
     --training.local_batch_size: 1
@@ -107,7 +96,7 @@ torchtitan-mistral-7b-pretrain:
   max_duration: 5400
   argv:
     --module: tt_configs
-    --tt-config: mistral_7b_pretrain
+    --config: mistral_7b_pretrain
     --training.steps: 40
 
 torchtitan-mistral-7b-sft:
@@ -119,7 +108,7 @@ torchtitan-mistral-7b-sft:
   max_duration: 5400
   argv:
     --module: tt_configs
-    --tt-config: mistral_7b_sft
+    --config: mistral_7b_sft
     --training.steps: 40
 
 # --- OLMo-7B dense ---
@@ -133,7 +122,7 @@ torchtitan-olmo-7b-pretrain:
   max_duration: 5400
   argv:
     --module: tt_configs
-    --tt-config: olmo_7b_pretrain
+    --config: olmo_7b_pretrain
     --training.steps: 40
 
 torchtitan-olmo-7b-sft:
@@ -145,7 +134,7 @@ torchtitan-olmo-7b-sft:
   max_duration: 5400
   argv:
     --module: tt_configs
-    --tt-config: olmo_7b_sft
+    --config: olmo_7b_sft
     --training.steps: 40
 
 # --- Qwen3-30B-A3B MoE ---
@@ -162,7 +151,7 @@ torchtitan-qwen3-30b-pretrain:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: qwen3_30b_pretrain
+    --config: qwen3_30b_pretrain
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -178,7 +167,7 @@ torchtitan-qwen3-30b-sft:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: qwen3_30b_sft
+    --config: qwen3_30b_sft
     --training.steps: 40
 
 # --- Mixtral-8x7B MoE ---
@@ -195,7 +184,7 @@ torchtitan-mixtral-8x7b-pretrain:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: mixtral_8x7b_pretrain
+    --config: mixtral_8x7b_pretrain
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -211,7 +200,7 @@ torchtitan-mixtral-8x7b-sft:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: mixtral_8x7b_sft
+    --config: mixtral_8x7b_sft
     --training.steps: 40
 
 # --- OLMoE-1B-7B MoE ---
@@ -228,7 +217,7 @@ torchtitan-olmoe-7b-pretrain:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: olmoe_7b_pretrain
+    --config: olmoe_7b_pretrain
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -244,7 +233,7 @@ torchtitan-olmoe-7b-sft:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: olmoe_7b_sft
+    --config: olmoe_7b_sft
     --training.steps: 40
 
 # --- Gemma-4-26B-A4B MoE ---
@@ -261,7 +250,7 @@ torchtitan-gemma4-26b-pretrain:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: gemma4_26b_pretrain
+    --config: gemma4_26b_pretrain
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -277,7 +266,7 @@ torchtitan-gemma4-26b-sft:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: gemma4_26b_sft
+    --config: gemma4_26b_sft
     --training.steps: 40
 
 # --- DeepSeek-V2-Lite MoE ---
@@ -294,7 +283,7 @@ torchtitan-deepseek-v2-lite-pretrain:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: deepseek_v2_lite_pretrain
+    --config: deepseek_v2_lite_pretrain
     --training.steps: 40
     --training.seq_len: 2048
 
@@ -310,7 +299,7 @@ torchtitan-deepseek-v2-lite-sft:
     - "gpu['count'] > 1"
   argv:
     --module: tt_configs
-    --tt-config: deepseek_v2_lite_sft
+    --config: deepseek_v2_lite_sft
     --training.steps: 40
 
 # --- GLM-5 MoE+DSA (FSDP+EP only) ---
@@ -329,10 +318,6 @@ _glm5_torchtitan:
     # default heartbeat monitor (480s) aborts workers mid-init.
     TORCH_NCCL_ENABLE_MONITORING: "0"
     PYTHONFAULTHANDLER: "1"
-  voir:
-    options:
-      stop: 30
-      skip: 10
 
 torchtitan-glm5-pretrain:
   inherits: _glm5_torchtitan
@@ -343,7 +328,7 @@ torchtitan-glm5-pretrain:
     - moe
   argv:
     --module: tt_configs
-    --tt-config: glm5_pretrain
+    --config: glm5_pretrain
     --training.steps: 20
     --training.seq_len: 1024
     --parallelism.expert_parallel_degree: 8
@@ -359,7 +344,7 @@ torchtitan-glm5-sft:
     - moe
   argv:
     --module: tt_configs
-    --tt-config: glm5_sft
+    --config: glm5_sft
     --training.steps: 20
     --training.seq_len: 1024
     --parallelism.expert_parallel_degree: 8
