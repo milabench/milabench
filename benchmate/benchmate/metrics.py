@@ -725,11 +725,21 @@ class ManualTimedIterator(TimedIterator):
         self.accumulation_steps = 0
         self.epochs = 0
 
+    def _record_work(self, work_time, batch_id):
+        # step() has already bumped batch_id by the time control comes back here
+        if _flags.record_fine_grained:
+            work_time.batch_id = batch_id
+            self.recorded_timers.append(work_time)
+
     def step(self, batch_override=None):
         if batch_override is None:
             batch_override = self.acc_batch_size
 
-        self.should_stop = super().step(batch_override)
+        with lazy_record_timing("step", self.event_fn) as step_time:
+            self.should_stop = super().step(batch_override)
+
+        self._record_event(step_time)  # before the bump, same batch_id as the rate
+        self.batch_id += 1
         self.acc_batch_size = 0
         self.accumulation_steps = 0
         return self.should_stop
@@ -744,11 +754,14 @@ class ManualTimedIterator(TimedIterator):
         if first_batches:
             while first_batches:
                 data = first_batches.pop()
+                batch_id = self.batch_id
                 self.accumulation_steps += 1
                 self.acc_batch_size += self.deduce_batch_size(data)
 
-                with lazy_record_timing("work", self.event_fn):
+                with lazy_record_timing("work", self.event_fn) as work_time:
                     yield data
+
+                self._record_work(work_time, batch_id)
 
                 if self.should_stop:
                     break
@@ -759,9 +772,12 @@ class ManualTimedIterator(TimedIterator):
             self.accumulation_steps += 1
             self.acc_batch_size += self.deduce_batch_size(data)
           
+            batch_id = self.batch_id
             with lazy_record_timing("work", self.event_fn) as work_time:
                 yield data # step will probably be called right before the control
                         # returns to this block
+
+            self._record_work(work_time, batch_id)
 
             # step was called, should we stop ?
             if self.should_stop:
