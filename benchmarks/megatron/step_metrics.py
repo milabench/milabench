@@ -14,6 +14,12 @@ class LocalBatchTimer(ManualTimedIterator):
     """No all-reduce of the batch size: Megatron builds the train loader on some ranks only (first / last pipeline stage),
     a collective here would wait forever on the others. Rank 0 always has a loader and reports the global tokens."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # normally set by __iter__ / wrapped(), which only run if Megatron iterates the loader before the first step
+        self.last_time = time.time()
+        self.start = None
+
     def batch_size(self, bs):
         return bs
 
@@ -44,6 +50,9 @@ class StepTimer:
     def step(self, global_tokens):
         """Call on every rank after each optimizer step (ranks without a train loader have no timer)."""
         if self.timer is not None:
+            if self.timer.start is None:  # the loader was never iterated: the clock starts now
+                self.timer.start = self.timer.event_fn(enable_timing=True)
+                self.timer.start.record()
             self.timer.step(batch_override=global_tokens)
             self.timer._push()
 
