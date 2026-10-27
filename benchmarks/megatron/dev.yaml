@@ -217,9 +217,6 @@ _fp8: &fp8_argv
   --fp8-format: e4m3
   --fp8-recipe: blockwise
   --moe-router-padding-for-quantization: true
-  # The first FP8 steps compile (torch.compile'd weighted_swiglu, TE NVRTC kernels) at different times on each rank;
-  # the 16n run hit the default 10 min NCCL timeout while some ranks were still compiling.
-  --distributed-timeout-minutes: 60
 
 megatron-glm5-frozen-smoke-2n-fp8:
   inherits: megatron-glm5-frozen-smoke-2n
