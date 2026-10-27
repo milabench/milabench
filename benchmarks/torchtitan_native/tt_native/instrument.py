@@ -29,6 +29,15 @@ Summary
     the JSON results record from it. The official throughput is the median of
     the pushed rates.
 
+Per-rank step rows (level 2, live)
+    Every rank appends one JSONL row per step to its own file (no collective),
+    flushed on TorchTitan's logging steps, after the sync they already do:
+    step time (wall clock during warm-up, device events once measuring), data
+    wait, local tokens, allocated memory. The first row identifies the worker
+    (host, GPU index, UUID, PCI bus). Directory: ``TT_RANK_METRICS_DIR``, else
+    ``$MILABENCH_DIR_RUNS/rank-metrics/<job>-<tag>``; files ``metrics.<rank>.jsonl``
+    (rows carry ``rank`` and ``time``, as benchmate's rankstore).
+
 wandb (level-1 metrics, rank 0)
     TorchTitan's MetricsProcessor logs to wandb when enabled (``wandb`` option
     or ``BENCHMATE_WANDB=1``), every ``log_freq`` steps: loss, grad norm, lr,
@@ -372,6 +381,9 @@ class TrainerInstrument:
         self._loss = None
         self.run_start: dict[str, Any] | None = None
         self.wandb_init_s: float | None = None  # this rank's wandb.init, when it ran
+        self._pending_rows: list[dict[str, Any]] = []  # steps not yet written to the rank file
+        self._rank_file = None
+        self.rank_metrics_dir: str | None = None
         self.global_tokens_per_step = 0
         self._walls_logged = 0  # warm-up wall times / step ends already in a wandb log
         self._ends_logged = 0
@@ -421,6 +433,7 @@ class TrainerInstrument:
         def log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=None):
             extra = dict(extra_metrics or {})
             extra.update(self.wandb_metrics(step, global_avg_loss))
+            extra.update(self.flush_rank_rows())
             return orig_log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=extra)
 
         processor.log = log
@@ -451,6 +464,43 @@ class TrainerInstrument:
             metrics["time_remaining"] = max(self.stop - measured, 0) * step_time
         return metrics
 
+    def flush_rank_rows(self) -> dict[str, float]:
+        """Write the pending step rows to this rank's file. Call where the device
+        events of those steps have completed (logging steps, end of run).
+        Returns this window's data-wait metrics for the wandb log call."""
+        rows, self._pending_rows = self._pending_rows, []
+        if not rows:
+            return {}
+        for row in rows:
+            index = row.pop("_end_index", None)
+            if index is not None:
+                ends = self._step_ends
+                row["step_s"] = ends[index - 1].elapsed_time(ends[index]) / 1000
+                row["step_s_source"] = "cuda_events"
+        try:
+            f = self._open_rank_file()
+            f.write("".join(json.dumps({"rank": _rank(), **r}) + "\n" for r in rows))
+            f.flush()
+        except OSError as exc:  # never stop training for a metrics file
+            print(f"[tt-native] rank metrics write failed: {exc!r}", flush=True)
+        waits = [r["data_wait_s"] for r in rows]
+        return {"dataloader_wait": statistics.median(waits), "dataloader_wait_max": max(waits)}
+
+    def _open_rank_file(self):
+        if self._rank_file is None:
+            run = run_block()
+            directory = os.environ.get("TT_RANK_METRICS_DIR") or os.path.join(
+                os.environ.get("MILABENCH_DIR_RUNS", "."),
+                "rank-metrics",
+                f"{run['slurm_job_id'] or 'local'}-{run['run_tag'] or run['variant'] or 'run'}",
+            )
+            os.makedirs(directory, exist_ok=True)
+            self.rank_metrics_dir = directory
+            self._rank_file = open(os.path.join(directory, f"metrics.{_rank()}.jsonl"), "a")
+            header = {"rank": _rank(), "kind": "worker", "time": time.time(), **_worker(), "run": run}
+            self._rank_file.write(json.dumps(header) + "\n")
+        return self._rank_file
+
     def on_tokens(self, local_tokens: int) -> None:
         self._local_tokens = int(local_tokens)
 
@@ -476,13 +526,25 @@ class TrainerInstrument:
             self.t_first_step_done = time.time()
             self.first_step_s = wall
             self.compile = compile_stats()
+        row = {
+            "kind": "step",
+            "step": step,
+            "time": time.time(),
+            "data_wait_s": self._data_time_acc,
+            "local_tokens": self._local_tokens,
+            "mem_allocated_gib": torch.cuda.memory_allocated() / 1024**3,
+            "measuring": self.timer is not None,
+        }
+        self._pending_rows.append(row)
         if self.timer is None:
             self._warmup_walls.append(wall)
+            row["step_s"], row["step_s_source"] = wall, "wall"
             self._data_time_acc = 0.0
             return
         end = torch.cuda.Event(enable_timing=True)
         end.record()
         self._step_ends.append(end)
+        row["_end_index"] = len(self._step_ends) - 1
         self._data_times.append(self._data_time_acc)
         self._data_time_acc = 0.0
         # benchmate sums this over all ranks at push time.
@@ -531,9 +593,11 @@ class TrainerInstrument:
 
     def push_summary(self) -> None:
         if self.timer is None:
+            self.flush_rank_rows()
             return
         self.timer._push()
         torch.cuda.synchronize()
+        self.flush_rank_rows()
         ends = self._step_ends
         steps = [a.elapsed_time(b) / 1000 for a, b in zip(ends, ends[1:])]
         stats = torch.cuda.memory_stats()
@@ -674,6 +738,11 @@ class TrainerInstrument:
                 }
                 for r, row in enumerate(rows)
             ],
+            "rank_metrics": {
+                "dir": self.rank_metrics_dir,
+                "files": "metrics.<rank>.jsonl",
+                "rows": "worker header, then one row per step (step_s, data_wait_s, local_tokens, mem_allocated_gib)",
+            },
             "deviations": deviations(),
             "estimates": [],
         }
