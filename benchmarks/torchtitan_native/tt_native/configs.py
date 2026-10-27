@@ -97,6 +97,8 @@ class Options:
 
     # Logging
     log_freq: int = 10
+    wandb: bool = False
+    """TorchTitan's wandb logger on rank 0 (also on with ``BENCHMATE_WANDB=1``)."""
     structured_logging: bool = False
     """TorchTitan per-rank JSONL traces (one file per rank: off by default)."""
     dump_folder: str = "./outputs"
@@ -276,7 +278,10 @@ def qwen38() -> Trainer.Config:
             seed=opts.seed,
             enable_structured_logging=opts.structured_logging,
         ),
-        metrics=MetricsProcessor.Config(log_freq=opts.log_freq),
+        metrics=MetricsProcessor.Config(
+            log_freq=opts.log_freq,
+            enable_wandb=opts.wandb or os.environ.get("BENCHMATE_WANDB") == "1",
+        ),
         checkpointer=None,
         activation_checkpoint=_activation_checkpoint(opts.ac),
         dump_folder=opts.dump_folder,

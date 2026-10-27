@@ -28,6 +28,19 @@ Summary
     Everything ends up in milabench's run data; ``export_record.py`` builds
     the JSON results record from it. The official throughput is the median of
     the pushed rates.
+
+wandb (level-1 metrics, rank 0)
+    TorchTitan's MetricsProcessor logs to wandb when enabled (``wandb`` option
+    or ``BENCHMATE_WANDB=1``), every ``log_freq`` steps: loss, grad norm, lr,
+    tokens/s per GPU, TFLOPS, MFU, data-loading time, peak memory. On the same
+    log call this module adds the names shared with the other workloads
+    (``loss``, ``rate``: global tokens/s, ``step_time``: median since the last
+    log, from device events once measuring), ``measuring``,
+    ``time_remaining`` and, at step 1, ``time_to_first_step``. Run identity and
+    placement go to the run config, the official results to the run summary.
+    Run naming follows benchmate's ``wandb_push``: project
+    ``BENCHMATE_WANDB_PROJECT`` (default milabench), group = milabench run
+    name, job type = bench name. The entity comes from ``WANDB_ENTITY``.
 """
 
 from __future__ import annotations
@@ -38,6 +51,7 @@ import os
 import socket
 import statistics
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -254,6 +268,35 @@ def _compile_cache_state(compile_mode: str | None, stats: dict[str, Any]) -> str
     return "cold"
 
 
+def set_wandb_env() -> None:
+    """Name the run for TorchTitan's WandBLogger (reads WANDB_* at init).
+
+    Values already set in the environment win.
+    """
+    try:
+        config = json.loads(os.environ.get("MILABENCH_CONFIG") or "{}")
+    except ValueError:
+        config = {}
+    run = run_block()
+    tags = [run["cluster"], os.environ.get("TT_FAMILY"), run["campaign"]]
+    defaults = {
+        "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
+        "WANDB_RUN_GROUP": config.get("run_name"),
+        "WANDB_RUN_JOB_TYPE": config.get("name"),
+        "WANDB_RUN_NAME": run["run_tag"] or run["variant"],
+        "WANDB_RUN_TAGS": ",".join(t for t in tags if t),
+    }
+    for name, value in defaults.items():
+        if value:
+            os.environ.setdefault(name, str(value))
+
+
+def _wandb_run():
+    """The wandb run TorchTitan opened on this rank, if any (no import otherwise)."""
+    wandb = sys.modules.get("wandb")
+    return wandb.run if wandb is not None else None
+
+
 def _local_gpu() -> tuple[int, str | None]:
     local_rank = int(os.environ.get("LOCAL_RANK", torch.cuda.current_device()))
     try:
@@ -288,22 +331,25 @@ class TrainerInstrument:
         self._data_times: list[float] = []
         self._local_tokens = 0
         self._loss = None
+        self.run_start: dict[str, Any] | None = None
+        self.global_tokens_per_step = 0
+        self._walls_logged = 0  # warm-up wall times / step ends already in a wandb log
+        self._ends_logged = 0
 
     # -- wrapped methods ---------------------------------------------------
 
     def on_init_start(self) -> None:
         self.t_init_start = time.time()
+        set_wandb_env()
         if int(os.environ.get("RANK", "0")) == 0:
-            self.push(
-                run_start={
-                    "schema": SCHEMA,
-                    "run": run_block(),
-                    "workload": workload_block(),
-                    "placement": placement_block(_launch_hosts()),
-                    "process_start_epoch": _process_start(),
-                },
-                task="train",
-            )
+            self.run_start = {
+                "schema": SCHEMA,
+                "run": run_block(),
+                "workload": workload_block(),
+                "placement": placement_block(_launch_hosts()),
+                "process_start_epoch": _process_start(),
+            }
+            self.push(run_start=self.run_start, task="train")
 
     def on_init_done(self, trainer) -> None:
         self.t_model_initialized = time.time()
@@ -311,6 +357,53 @@ class TrainerInstrument:
         ctx = trainer.engine.parallelism_context
         # Ranks of a TP/CP group share the same tokens: count them once.
         self.dp_divisor = ctx.tp * ctx.cp
+        training = trainer.config.training
+        self.global_tokens_per_step = (
+            training.num_tokens_per_microbatch_per_dp_rank
+            * trainer.num_pp_microbatches
+            * trainer.gradient_accumulation_steps
+            * ctx.world_size
+            // (ctx.tp * ctx.cp * ctx.pp)
+        )
+        run = _wandb_run()
+        if run is not None:
+            run.config.update({"milabench": self.run_start}, allow_val_change=True)
+
+        processor = trainer.metrics_processor
+        orig_log = processor.log
+
+        def log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=None):
+            extra = dict(extra_metrics or {})
+            extra.update(self.wandb_metrics(step, global_avg_loss))
+            return orig_log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=extra)
+
+        processor.log = log
+
+    def wandb_metrics(self, step: int, loss: float) -> dict[str, float]:
+        """Metrics added to TorchTitan's log call (its logging steps are synchronized,
+        so the device events of the previous steps have completed)."""
+        metrics: dict[str, float] = {"loss": loss, "measuring": int(self.timer is not None)}
+        if step == 1:
+            metrics["time_to_first_step"] = time.time() - _process_start()
+        if self.timer is None:
+            times = self._warmup_walls[self._walls_logged :]
+            self._walls_logged = len(self._warmup_walls)
+        else:
+            ends = self._step_ends[self._ends_logged :]
+            times = [a.elapsed_time(b) / 1000 for a, b in zip(ends, ends[1:])]
+            self._ends_logged = max(len(self._step_ends) - 1, 0)
+        if not times:
+            return metrics
+        step_time = statistics.median(times)
+        metrics["step_time"] = step_time
+        metrics["rate"] = self.global_tokens_per_step / step_time
+        if self.timer is None:
+            measure = self.stop_seconds or self.stop * step_time
+            metrics["time_remaining"] = max(self.skip - step, 0) * step_time + measure
+        else:
+            measured = len(self._step_ends) - 1
+            metrics["time_remaining"] = max(self.stop - measured, 0) * step_time
+        return metrics
 
     def on_tokens(self, local_tokens: int) -> None:
         self._local_tokens = int(local_tokens)
@@ -535,6 +628,30 @@ class TrainerInstrument:
             "estimates": [],
         }
         self.push(summary=summary, task="train")
+        self._wandb_summary(summary, steps, tokens_per_step)
+
+    def _wandb_summary(self, summary: dict[str, Any], steps: list[float], tokens: int) -> None:
+        run = _wandb_run()
+        if run is None or not steps:
+            return
+        rates = [tokens / s for s in steps]
+        gpus = summary["parallelism"]["gpus"]
+        startup = summary["startup"]
+        run.summary.update(
+            {
+                "official/rate": statistics.median(rates),
+                "official/tokens_per_s_per_gpu": statistics.median(rates) / gpus,
+                "official/step_time_p10": percentile(steps, 0.1),
+                "official/step_time_median": statistics.median(steps),
+                "official/step_time_p90": percentile(steps, 0.9),
+                "official/measured_steps": len(steps),
+                "official/warmup_steps": self.skip,
+                "startup/model_initialized_s": startup["model_initialized"]["max_s"],
+                "startup/first_step_done_s": startup["first_step_done"]["max_s"],
+                "startup/compile_cache": startup["compile_cache"],
+                "memory/peak_reserved_gib_max": summary["memory_gib"]["peak_reserved"]["max"],
+            }
+        )
 
 
 def _data_stragglers(
