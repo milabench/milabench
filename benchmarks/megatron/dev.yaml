@@ -1,4 +1,4 @@
-# GLM-5 training on plain Megatron-LM (torchrun over srun, random packed data, random init), frozen parameters.
+# GLM-5 training on plain Megatron-LM (torchrun over srun, FineWeb packed data, random init), frozen parameters.
 # Usage:
 #   milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
 #   milabench prepare --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
@@ -9,7 +9,7 @@
 #   placement:  nodes (as-is | sorted | topology | [list]), order (tp-cp-ep-dp-pp | tp-cp-ep-pp-dp),
 #               topology {node: switch} (else node.switch, else `scontrol show topology`), gpus_per_node,
 #               nccl {NCCL_TOPO_FILE: ..., NCCL_CROSS_NIC: ...}
-#   data:       docs_per_sample
+#   data:       docs_per_sample, samples (FineWeb docs to stage), subset
 # main.py prints the node order and, per parallel group, how many nodes / switches it spans (stderr, rank 0).
 
 include:
@@ -48,6 +48,9 @@ _megatron_glm5:
     gpus_per_node: 4
   data:
     docs_per_sample: 8
+    # FineWeb docs staged by prepare (~660 tokens each): 10 steps x 64 x 8192 tokens needs ~8k, docs wrap around beyond
+    samples: 20000
+    subset: sample-10BT
   model:
     hf: zai-org/GLM-5.3
     hf_path: "{milabench_data}/megatron/hf"

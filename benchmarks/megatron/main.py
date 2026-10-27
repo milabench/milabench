@@ -6,8 +6,9 @@ config is read here:
 
     model.hf_path   local HF dir with config.json (the GLM-5 spec reads the DSA indexer sizes from it)
     frozen:         which parameters do not train, see ``freeze_patterns``
-    data:           {docs_per_sample: N}, random tokens packed in N documents per sample (THD layout, as the DSA
-                    attention needs ``packed_seq_params``)
+    data:           {docs_per_sample: N, samples: M, subset: S}, FineWeb text (benchmate.fineweb, staged by prepare.py),
+                    tokenized with the model's HF tokenizer and packed in N documents per sample (THD layout, as the
+                    DSA attention needs ``packed_seq_params``)
     placement:      node order / rank order, see placement.py (reported here, applied by benchfile.py)
 
 Throughput is reported as ``rate`` (global tokens / step time) from the first rank, through setupvoir.
@@ -20,6 +21,7 @@ import os
 import re
 import sys
 import time
+from pathlib import Path
 
 for _p in reversed(os.environ.get("PYTHONPATH", "").split(os.pathsep)):
     if _p:
@@ -124,38 +126,65 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
 
 # --- data --------------------------------------------------------------------------------------------------------
 
-class RandomPackedDataset(torch.utils.data.Dataset):
-    """Random tokens, ``docs`` equal-length documents per sample (THD layout: cu_seqlens)."""
+def fineweb_dir(data: dict) -> Path:
+    return Path(os.environ["MILABENCH_DIR_DATA"]) / "fineweb" / data.get("subset", "sample-10BT")
 
-    def __init__(self, samples: int, seq_length: int, vocab_size: int, docs: int):
+
+class FineWebPackedDataset(torch.utils.data.Dataset):
+    """FineWeb text, ``docs`` equal-length slots per sample (THD layout: cu_seqlens).
+
+    Each slot starts at its own FineWeb document, truncated to the slot; a document shorter than the slot is followed
+    by the next ones (separated by EOS) so the slot is always full and the tensor shapes stay fixed. Documents wrap
+    around when the subset is smaller than what the run consumes."""
+
+    def __init__(self, samples: int, seq_length: int, docs: int, hf_path: str, data: dict):
         assert seq_length % docs == 0, "seq-length must be a multiple of data.docs_per_sample"
-        self.samples, self.seq, self.vocab, self.docs = samples, seq_length, vocab_size, docs
+        from benchmate.fineweb import load_fineweb
+        from transformers import AutoTokenizer
+
+        self.samples, self.seq, self.docs = samples, seq_length, docs
+        self.doc_len = seq_length // docs
+        self.dataset = load_fineweb(fineweb_dir(data))
+        self.tokenizer = AutoTokenizer.from_pretrained(hf_path, trust_remote_code=True)
+        eos = self.tokenizer.eos_token_id
+        self.eos = 0 if eos is None else eos
 
     def __len__(self):
         return self.samples
 
+    def slot(self, first_doc: int):
+        """doc_len tokens starting at document ``first_doc``."""
+        tokens, i = [], first_doc
+        # ~4 characters per token: tokenize no more text than the slot can hold
+        while len(tokens) < self.doc_len + 1:
+            text = self.dataset[i % len(self.dataset)]["text"]
+            tokens += self.tokenizer(text[: 8 * self.doc_len], add_special_tokens=False)["input_ids"] + [self.eos]
+            i += 1
+        return tokens[: self.doc_len + 1]
+
     def __getitem__(self, idx):
-        gen = torch.Generator().manual_seed(idx)
-        tokens = torch.randint(0, self.vocab, (self.seq + 1,), generator=gen, dtype=torch.int64)
-        doc_len = self.seq // self.docs
-        cu = torch.arange(0, self.seq + 1, doc_len, dtype=torch.int32)
+        slots = [self.slot(idx * self.docs + j) for j in range(self.docs)]
+        # inputs and labels are shifted inside each slot: no label crosses a document boundary
+        tokens = torch.tensor([t for s in slots for t in s[:-1]], dtype=torch.int64)
+        labels = torch.tensor([t for s in slots for t in s[1:]], dtype=torch.int64)
+        cu = torch.arange(0, self.seq + 1, self.doc_len, dtype=torch.int32)
         return {
-            "tokens": tokens[:-1],
-            "labels": tokens[1:],
+            "tokens": tokens,
+            "labels": labels,
             "loss_mask": torch.ones(self.seq, dtype=torch.float32),
-            "position_ids": torch.arange(doc_len).repeat(self.docs),
+            "position_ids": torch.arange(self.doc_len).repeat(self.docs),
             "cu_seqlens": cu,
             "cu_seqlens_padded": cu.clone(),
-            "max_seqlen": torch.tensor(doc_len, dtype=torch.int32),
+            "max_seqlen": torch.tensor(self.doc_len, dtype=torch.int32),
         }
 
 
-def build_dataset_provider(docs: int):
+def build_dataset_provider(docs: int, hf_path: str, data: dict):
     from megatron.training import get_args
 
     def provider(train_val_test_num_samples, vp_stage=None):
         args = get_args()
-        train = RandomPackedDataset(train_val_test_num_samples[0], args.seq_length, args.padded_vocab_size, docs)
+        train = FineWebPackedDataset(train_val_test_num_samples[0], args.seq_length, docs, hf_path, data)
         return train, None, None
 
     provider.is_distributed = True
@@ -382,7 +411,8 @@ def main():
     spec = freeze_patterns(cfg.get("frozen"))
     debug("frozen:", spec)
     hf_path = str(cfg["model"]["hf_path"]).replace("{milabench_data}", os.environ["MILABENCH_DIR_DATA"])
-    docs = int((cfg.get("data") or {}).get("docs_per_sample", 8))
+    data = cfg.get("data") or {}
+    docs = int(data.get("docs_per_sample", 8))
 
     from megatron.core.enums import ModelType
     from megatron.training import pretrain
@@ -398,7 +428,7 @@ def main():
     try:
         pretrain(
             full_config,
-            build_dataset_provider(docs),
+            build_dataset_provider(docs, hf_path, data),
             ModelType.encoder_or_decoder,
             forward_step,
             get_embedding_ranks=get_embedding_ranks,

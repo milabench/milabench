@@ -3,8 +3,8 @@
 Same install as the ``slime`` pack (the GLM-5 layer spec, DSA indexer and sparse MLA live in slime's ``slime_plugins``;
 slime, Megatron-LM, TE and sglang are cloned/installed the same way). What differs:
 
-* the launcher is torchrun over srun (like torchtitan) and ``main.py`` drives Megatron's ``pretrain`` with random
-  packed (THD) data: no checkpoint, no dataset, no tokenizer,
+* the launcher is torchrun over srun (like torchtitan) and ``main.py`` drives Megatron's ``pretrain`` with FineWeb
+  text (benchmate.fineweb) packed in THD samples: no checkpoint, the HF tokenizer of the model,
 * ``frozen:`` selects which parameters get ``requires_grad = False`` (see main.py),
 * ``placement:`` controls the node order / Megatron rank order, see placement.py.
 """

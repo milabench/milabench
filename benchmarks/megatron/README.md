@@ -1,7 +1,7 @@
 # megatron
 
 GLM-5 training on plain Megatron-LM (`pretrain`), launched by torchrun over srun: no Ray, no SGLang rollout, random
-initialisation, random packed (THD) tokens. Same install as the `slime` pack (the GLM-5 layer spec, DSA indexer and
+initialisation, FineWeb text (`benchmate.fineweb`, staged by `prepare.py`, tokenized with the model's HF tokenizer) packed in THD samples. Same install as the `slime` pack (the GLM-5 layer spec, DSA indexer and
 sparse MLA come from slime's `slime_plugins`; its benchfile is imported and subclassed). Metric: `rate` = global
 tokens / step time (first rank), plus `step_time`.
 
