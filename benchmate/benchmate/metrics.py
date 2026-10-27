@@ -20,6 +20,7 @@ except ImportError as err:
 
 from .toggles import get_observation_count, _get_flag
 from .config import tag_metric
+from .rankstore import ranked_push
 
 
 def _noop_push(**kwargs):
@@ -27,8 +28,11 @@ def _noop_push(**kwargs):
 
 
 def wandb_push():
-    """Push metrics to wandb. Never raises, falls back to a no-op."""
+    """Push metrics to wandb from rank 0 only. Never raises, falls back to a no-op."""
     import traceback
+
+    if int(os.getenv("RANK", 0)) != 0:
+        return _noop_push
 
     try:
         import wandb
@@ -663,10 +667,15 @@ class TimedIterator:
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 
     def log_rate(self, rate, time=None, elapsed=None, batch_id=None, schedule_time=None):
-        self.message(
-            rate=rate, units="items/s", task=self.task,
-            time=time, elapsed=elapsed, batch_id=batch_id, schedule_time=schedule_time
-        )
+        if self.rank is None or self.rank == 0:
+            # Rate only makes sense on rank0
+            self.rank0_log(
+                rate=rate, units="items/s", task=self.task,
+                time=time, elapsed=elapsed, batch_id=batch_id, schedule_time=schedule_time
+            )
+        else:
+            # but we do have a step time from the workers
+            self.ranked_log(time=time, step_time=elapsed, batch_id=batch_id)
 
     def log_progress(self):
         if self.early_stop is not None:
@@ -676,6 +685,16 @@ class TimedIterator:
     def message(self, **kwargs):
         if self.rank is None or self.rank == 0:
             self.message_push(**kwargs)
+        else:
+            self.ranked_log(**kwargs)
+
+    def rank0_log(self, **kwargs):
+        if self.rank is None or self.rank == 0:
+            self.message_push(**kwargs)
+
+    def ranked_log(self, **kwargs):
+        """Log metrics on all ranks"""
+        ranked_push(**kwargs)
 
 
 class ManualTimedIterator(TimedIterator):

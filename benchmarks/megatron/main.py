@@ -11,7 +11,7 @@ config is read here:
                     DSA attention needs ``packed_seq_params``)
     placement:      node order / rank order, see placement.py (reported here, applied by benchfile.py)
 
-Throughput is reported as ``rate`` (global tokens / step time) from the first rank, through setupvoir.
+Throughput is reported as ``rate`` (global tokens / step time, items/s) by benchmate's ManualTimedIterator (CUDA events, rank 0), through setupvoir.
 """
 
 from __future__ import annotations
@@ -333,30 +333,27 @@ def patch_train_step(log):
     import megatron.training.training as training
     from megatron.training import get_args
 
+    import step_metrics
+
+    steps = step_metrics.install(log)
     original = training.train_step
     state = {"step": 0}
 
     def timed(*args, **kwargs):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
+        # rate / laps / clock: StepTimer (benchmate TimedIterator). Here only what it does not know about.
         result = original(*args, **kwargs)
-        torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
         state["step"] += 1
+        margs = get_args()
+        steps.step(margs.global_batch_size * margs.seq_length)
         if state["step"] == 1 and log is not None:
             # launch -> end of the first (warm-up) step: imports, init, model build, first step
             log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
             report_a2a(log)
         if log is not None:
-            margs = get_args()
-            tokens = margs.global_batch_size * margs.seq_length
-            now = time.time()
-            log({"rate": tokens / elapsed, "units": "tokens/s", "task": "train", "time": now})
-            log({"step_time": elapsed, "units": "s", "task": "train", "time": now})
             loss_dict = result[0] if isinstance(result, tuple) else {}
             if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
-                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": now})
+                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
         return result
 
     training.train_step = timed
