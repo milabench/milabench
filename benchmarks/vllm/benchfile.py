@@ -78,8 +78,8 @@ class VLLM(Package):
         env["XDG_CACHE_HOME"] = str(self.dirs.cache)
         env["MILABENCH_TIMELINE_DB"] = str(self.logdir / "benchmark_results.db")
 
-        env["FLASHINFER_CACHE_DIR "] = str(self.dirs.cache / "flashinfer")
-        env["FLASHINFER_CUBIN_DIR "] = str(self.dirs.cache / "flashinfer" / "cubins")
+        env["FLASHINFER_CACHE_DIR"] = str(self.dirs.cache / "flashinfer")
+        env["FLASHINFER_CUBIN_DIR"] = str(self.dirs.cache / "flashinfer" / "cubins")
 
         # flashinfer defaults its workspace to ~/.cache/flashinfer/<version>
         # which may not be writable on compute nodes; redirect to our cache dir

@@ -452,11 +452,13 @@ class WorkingDir(WrapperCommand):
         env = {}
         extras = []
 
+        # Must match Package.make_env: HF_HOME is the data dir in prepare and
+        # run, otherwise HF caches written at prepare time are not found here.
         _merge_env(
             env,
             {
                 "XDG_CACHE_HOME": str(pack.dirs.cache),
-                "HF_HOME": str(pack.dirs.cache),
+                "HF_HOME": str(pack.dirs.data),
                 "TORCH_HOME": str(pack.dirs.cache),
             },
             source="cache dirs",
