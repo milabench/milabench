@@ -83,19 +83,39 @@ def _hf_token():
     )
 
 
+_LOREM = (
+    "The quick brown fox jumps over the lazy dog while the benchmark measures "
+    "throughput across several training steps on a small synthetic corpus. "
+)
+
+
+def _generate_dataset(name: str, dst: Path) -> None:
+    """Synthetic fallback: benchmarks/torchtitan/assets is gitignored and absent on clusters."""
+    dst.mkdir(parents=True, exist_ok=True)
+    if name == "c4_test":
+        # HuggingFaceTextDataLoader reads the "text" column; the file must be named train.* (HF infers the split from the name, "test" breaks split="train")
+        with open(dst / "train.json", "w") as fp:
+            for i in range(2000):
+                fp.write(json.dumps({"text": f"Document {i}. " + _LOREM * 20}) + "\n")
+    else:
+        with open(dst / "data.json", "w") as fp:
+            for i in range(2000):
+                fp.write(json.dumps({"question": f"Question {i}: what is {i} + {i}?", "answer": f"{i} + {i} = {2 * i}. " + _LOREM}) + "\n")
+
+
 def stage_datasets(data: Path, code: Path) -> None:
     for name in ("c4_test", "sft_test"):
         src = code / "assets" / name
         dst = data / name
-        if not src.exists():
-            continue
-        dst.mkdir(parents=True, exist_ok=True)
-        for item in src.iterdir():
-            target = dst / item.name
-            if not target.exists():
-                shutil.copy2(item, target)
+        if src.exists():
+            dst.mkdir(parents=True, exist_ok=True)
+            for item in src.iterdir():
+                target = dst / item.name
+                if not target.exists():
+                    shutil.copy2(item, target)
+        elif not dst.exists() or not any(dst.iterdir()):
+            _generate_dataset(name, dst)
         print(f"Staged dataset {name} → {dst}")
-
 
 
 DEFAULT_SFT_CHAT_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'user' %}{{ message['content'] }}

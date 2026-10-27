@@ -73,3 +73,7 @@ fjobs_*.json
 
 benchmarks/dinov2/logs/
 benchmarks/dinov2/config.yaml
+
+# Runtime config added to running benchmarks
+runtime_config.yaml
+runtime_config.yaml.lock

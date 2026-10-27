@@ -9,7 +9,7 @@ from milabench.commands import (
     PackCommand,
     TorchrunAllGPU,
     TorchrunAllNodes,
-    VoirCommand,
+    WrapperCommand,
     WorkingDir,
 )
 from milabench.commands.srun import ForeachSrun
@@ -92,8 +92,9 @@ class Torchtitan(Package):
         return env
 
     def build_run_plan(self):
-        # voir main.py … so voirfile.py instruments the trainer; torchrun on top.
-        plan = VoirCommand(PackCommand(self, lazy=True))
+        # python main.py … (no voir): main.py instruments the trainer and pushes
+        # metrics on stdout; torchrun on top.
+        plan = WrapperCommand(PackCommand(self, lazy=True), "python")
         return TorchtitanSrun(plan).use_stdout()
 
 

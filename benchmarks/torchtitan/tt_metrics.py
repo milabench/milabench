@@ -1,7 +1,5 @@
-from dataclasses import dataclass
+import time
 
-from voir import configurable
-from voir.phase import StopProgram
 from benchmate.metrics import (
     LazyLossPusher,
     ManualTimedIterator,
@@ -9,8 +7,7 @@ from benchmate.metrics import (
     default_event,
     sumggle_push,
 )
-from benchmate.monitor import get_rank, voirfile_monitor
-from benchmate.benchrun import forward_voir_file
+from benchmate.monitor import get_rank
 
 from torch_compat import ensure_torchtitan_torch_compat
 
@@ -42,9 +39,13 @@ class _TrainStepMetrics:
             return
         self.timer.start = self.timer.event_fn(enable_timing=True)
         self.timer.start.record()
+        # normally set by __iter__, which this manually-stepped timer never runs
+        self.timer.last_time = time.time()
         self._started = True
 
     def reset_step(self) -> None:
+        # start the clock before the first step runs, otherwise step 1 is timed as ~0s
+        self._ensure_started()
         self._state = {"local_tokens": 0, "loss": None}
 
     def note_local_tokens(self, count: int) -> None:
@@ -69,7 +70,7 @@ class _TrainStepMetrics:
 _metrics: _TrainStepMetrics | None = None
 
 
-def _install_torchtitan_metrics() -> None:
+def install_torchtitan_metrics() -> None:
     global _metrics
     if _metrics is not None:
         return
@@ -85,6 +86,13 @@ def _install_torchtitan_metrics() -> None:
         def _wrapped_train_step(self, data_iterator):
             _metrics.reset_step()
             _orig_train_step(self, data_iterator)
+            if not _metrics._state.get("local_tokens"):
+                # structured logger did not report tokens: fall back to the nominal batch
+                try:
+                    training = self.config.training
+                    _metrics.note_local_tokens(training.local_batch_size * training.seq_len)
+                except AttributeError:
+                    pass
             _metrics.finish_step()
 
         _wrapped_train_step._milabench_timed = True  # type: ignore[attr-defined]
@@ -117,32 +125,4 @@ def _install_torchtitan_metrics() -> None:
     except ImportError:
         pass
 
-    print("[voirfile] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)
-
-
-@dataclass
-class Config:
-    """voir configuration"""
-
-    dash: bool = False
-    interval: str = "1s"
-    skip: int = 5
-    stop: int = 20
-    gpu_poll: float = 0.25
-
-
-@configurable
-def instrument_main(ov, options: Config):
-    yield ov.phases.init
-
-    voirfile_monitor(ov, options)
-
-    yield ov.phases.load_script
-
-    _install_torchtitan_metrics()
-
-    with forward_voir_file():
-        try:
-            yield ov.phases.run_script
-        except StopProgram:
-            print("early stopped", flush=True)
+    print("[tt_metrics] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)

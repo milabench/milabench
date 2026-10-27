@@ -22,6 +22,11 @@ def torchmem_enabled():
     return _get_flag("BENCHMATE_TORCHMEM", int, 1) != 0
 
 
+def wandb_enabled():
+    """Also push metrics to wandb. Opt-in with ``BENCHMATE_WANDB=1``."""
+    return _get_flag("BENCHMATE_WANDB", int, 0) != 0
+
+
 def jaxmem_enabled():
     """Whether to poll JAX device allocator stats.
 

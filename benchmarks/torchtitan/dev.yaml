@@ -22,9 +22,6 @@ _torchtitan:
   plan:
     method: njobs
     n: 1
-  voir:
-    options:
-      stop: 30
   argv:
     --module: tt_configs
     --training.steps: 40
@@ -57,10 +54,6 @@ torchtitan-qwen3-4b-pretrain-smoke:
   # Single-GPU smoke: 8-way torchrun was hanging in futex before train under the
   # glibc-2.38 python wrapper; multi-GPU covered by openinstruct/vllm smokes.
   devices: [0]
-  voir:
-    options:
-      stop: 10
-      skip: 2
   argv:
     --module: tt_configs
     --config: qwen3_4b_pretrain
@@ -87,10 +80,6 @@ torchtitan-qwen3-4b-sft-smoke:
     - sft
     - smoke
   max_duration: 1200
-  voir:
-    options:
-      stop: 8
-      skip: 2
   argv:
     --module: tt_configs
     --config: qwen3_4b_sft
@@ -345,10 +334,6 @@ _glm5_torchtitan:
     # default heartbeat monitor (480s) aborts workers mid-init.
     TORCH_NCCL_ENABLE_MONITORING: "0"
     PYTHONFAULTHANDLER: "1"
-  voir:
-    options:
-      stop: 30
-      skip: 10
 
 torchtitan-glm5-pretrain:
   inherits: _glm5_torchtitan
