@@ -83,7 +83,7 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
     srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
-CACHE_FILES_BEFORE=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
+CACHE_FILES_BEFORE=$( (find "$LOCAL_CACHE" -type f 2>/dev/null || true) | wc -l)
 
 # TT_LOCAL_VENV=1: run the bench venv (and its Python) from node-local disk
 # instead of the shared filesystem, like the window's node-local image. The
@@ -162,7 +162,7 @@ milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" 
 
 # Save (or refresh) the archive when this run compiled something new, e.g. a
 # config with new shapes: the main node's cache = restored entries + new ones.
-CACHE_FILES_AFTER=$(find "$LOCAL_CACHE" -type f 2>/dev/null | wc -l)
+CACHE_FILES_AFTER=$( (find "$LOCAL_CACHE" -type f 2>/dev/null || true) | wc -l)
 if [ -n "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ] \
         && { [ ! -f "$CACHE_ARCHIVE" ] || [ "$CACHE_FILES_AFTER" -gt "$CACHE_FILES_BEFORE" ]; }; then
     (
