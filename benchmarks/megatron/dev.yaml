@@ -239,6 +239,7 @@ megatron-glm5-frozen-smoke-1gpu:
 megatron-tiny-moe-smoke-1n:
   inherits: megatron-glm5-frozen-smoke-1n
   tags: [frozen, smoke, mila, tiny]
+  max_duration: 1800
   placement:
     nodes: as-is
     gpus_per_node: 8
@@ -268,7 +269,7 @@ megatron-tiny-moe-smoke-1n:
     --max-position-embeddings: 2048
     --expert-model-parallel-size: 2
     --global-batch-size: 8
-    --train-iters: 6
+    --train-iters: 100
 
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n
