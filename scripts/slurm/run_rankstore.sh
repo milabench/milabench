@@ -2,9 +2,11 @@
 
 
 # Test of the per-rank metric store (benchmate/rankstore.py) + wandb + fine grained timers on the Megatron pack:
-# 2 nodes x 2 L40S = 4 GPUs (megatron-glm5-frozen-smoke-2n-l40s: EP4 x DP1, global batch 4), so ranks 2-3 live on
-# the other node and the rank store is written from both.
+# 1 node x 1 A100 (megatron-glm5-frozen-smoke-1gpu: 2 layers, EP1 x DP1, global batch 1): a single rank 0 writes the rank
+# store. Multi-node variant: megatron-glm5-frozen-smoke-2n-l40s, 2 nodes x 2 L40S, ranks 2-3 on the other node:
 #   sbatch -N 2 --ntasks-per-node=1 --gres=gpu:l40s:2 --cpus-per-task=16 --mem=128G -t 1:30:00 scripts/slurm/run_rankstore.sh
+# Default (1 A100):
+#   sbatch -N 1 --ntasks-per-node=1 --gres=gpu:a100:1 --cpus-per-task=16 --mem=128G -t 1:30:00 scripts/slurm/run_rankstore.sh
 # The branch must contain rankstore.py and the megatron pack (push them first).
 export MILABENCH_BRANCH=${MILABENCH_BRANCH:-main}
 export PYTHON_VERSION=3.12
@@ -17,7 +19,7 @@ export PYTORCH_VERSION="2.13.0"
 
 # the Megatron pack lives in its own config; random weights, only GLM-5.3's config.json is downloaded
 export CONFIG_PATH=benchmarks/megatron/dev.yaml
-export MILABENCH_ARGS="--select megatron-glm5-frozen-smoke-2n-l40s"
+export MILABENCH_ARGS="--select ${MILABENCH_SELECT:-megatron-glm5-frozen-smoke-1gpu}"
 
 # --- what is under test ---
 export BENCHMATE_RECORD_FINE=1        # next / work / step timers per batch
@@ -28,7 +30,7 @@ export BENCHMATE_WANDB_PROJECT=milabench-rankstore-test
 export WANDB_API_KEY="{{ secrets.WANDB_API_KEY }}"
 # no key (or no network on the node): keep the run, sync later with `wandb sync`
 case "$WANDB_API_KEY" in *secrets.*|"") export WANDB_MODE=offline ;; esac
-# the other ranks write $MILABENCH_DIR_RUNS/metrics.<rank>.jsonl (rankstore); override the base name here if wanted
+# every rank writes <run dir>/metrics.<bench>.<host>.<rank>.jsonl (rankstore); override the base name here if wanted
 # export MILABENCH_LOCAL_METRICS=$HOME/scratch/rankstore/metrics.jsonl
 
 set -ex
@@ -99,7 +101,7 @@ srun --nodes=$SLURM_NNODES --ntasks-per-node=1 bash -c "$GATHER"
 # --- what did the test produce? ---
 set +x
 R=$OUTPUT_DIRECTORY/runs
-echo "== rank stores (expect metrics.1..3.jsonl, ranks 2-3 under the second node) =="
+echo "== rank stores (expect one metrics.<bench>.<host>.<rank>.jsonl per GPU) =="
 find $R -name 'metrics.*.jsonl' -exec sh -c 'for f; do echo "$f: $(wc -l < "$f") records"; done' sh {} +
 echo "== metric names seen in the rank stores =="
 cat $(find $R -name 'metrics.*.jsonl') 2>/dev/null \
