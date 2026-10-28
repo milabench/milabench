@@ -471,29 +471,30 @@ class TimedIterator:
                 assert self.unique_iterator == id(iterator)
 
                 try:
-                    if first_batches:
-                        while first_batches:
-                            data = first_batches.pop()
-                    else:
-                        with lazy_record_timing("next", self.event_fn) as next_time:
-                            data = next(iterator)
-
-                    # Simple one iteration = one backward
-                    # ... huggingface ... is changing the batch sometimes...
-                    bs = self.deduce_batch_size(data)
-
-                    with lazy_record_timing("work", self.event_fn) as work_time: 
-                        yield data
-
                     with lazy_record_timing("step", self.event_fn) as step_time: 
-                        if should_break := self.step(bs):
-                            self.break_count += 1
-                            break
+                        if first_batches:
+                            while first_batches:
+                                data = first_batches.pop()
+                        else:
+                            with lazy_record_timing("next", self.event_fn) as next_time:
+                                data = next(iterator)
+
+                        # Simple one iteration = one backward
+                        # ... huggingface ... is changing the batch sometimes...
+                        bs = self.deduce_batch_size(data)
+
+                        with lazy_record_timing("work", self.event_fn) as work_time: 
+                            yield data
+
+                        with lazy_record_timing("sync", self.event_fn) as sync_time: 
+                            if should_break := self.step(bs):
+                                self.break_count += 1
+                                break
                         
                     if next_time:
                         self._record_event(next_time)
-                
                     self._record_event(work_time)
+                    self._record_event(sync_time)
                     self._record_event(step_time)
                     self.batch_id += 1
                 

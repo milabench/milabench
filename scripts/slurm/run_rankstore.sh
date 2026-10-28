@@ -26,6 +26,9 @@ export MILABENCH_ARGS="--select ${MILABENCH_SELECT:-megatron-tiny-moe-smoke-1n}"
 export BENCHMATE_RECORD_FINE=1
 export BENCHMATE_RECORD_OVERHEAD=1
 export BENCHMATE_RECORD_LAPS=1
+# 1: sync the GPU and log each step's rate right when it ends (events in step order, but a sync per step);
+# 0: keep the events and push them in batches (no per-step sync, `work` lands one step late)
+export BENCHMATE_EAGER_SYNC=${BENCHMATE_EAGER_SYNC:-1}
 export BENCHMATE_WANDB=1
 export BENCHMATE_WANDB_PROJECT=milabench-rankstore-test
 export WANDB_API_KEY="{{ secrets.WANDB_API_KEY }}"
