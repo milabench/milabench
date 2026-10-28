@@ -14,6 +14,8 @@ dependencies = [
     "tensorboard",
     "wandb",
     "megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d",
+    # GLM-5's DSA indexer and sparse MLA are TileLang kernels
+    "tilelang",
     # sglang's own imports; sglang itself is installed --no-deps by benchfile.py
     "orjson",
     "psutil",
