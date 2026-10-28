@@ -483,6 +483,7 @@ class TimedIterator:
                     bs = self.deduce_batch_size(data)
 
                     with lazy_record_timing("work", self.event_fn) as work_time: 
+                        self.record_lap("work_lap")
                         yield data
 
                     with lazy_record_timing("step", self.event_fn) as step_time: 
@@ -770,6 +771,7 @@ class ManualTimedIterator(TimedIterator):
                 self.acc_batch_size += self.deduce_batch_size(data)
 
                 with lazy_record_timing("work", self.event_fn) as work_time:
+                    self.record_lap("work_lap")
                     yield data
 
                 self._record_work(work_time, batch_id)
@@ -794,6 +796,7 @@ class ManualTimedIterator(TimedIterator):
             self.acc_batch_size += self.deduce_batch_size(data)
 
             with lazy_record_timing("work", self.event_fn) as work_time:
+                self.record_lap("work_lap")
                 yield data # step will probably be called right before the control
                         # returns to this block
 
