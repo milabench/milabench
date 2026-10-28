@@ -53,4 +53,6 @@ Estimates never replace measurements; both are kept in the data.
 
 \paragraph{Data.} Everything is regenerated from raw results by one command
 (\texttt{scripts/analysis/analyze.py all}): milabench run data (one JSONL file per run, including failed
-runs), health-check outputs, and GPU telemetry (DCGM via Prometheus). Formats: \texttt{FORMAT.md}.
+runs), health-check outputs, and node telemetry (\texttt{benchmate.nodemon}: GPU clocks, throttle reasons,
+power, temperature and duty cycle, XID and ECC errors, NVLink, InfiniBand, CPU clocks, host memory and PCIe,
+sampled once a second on every node of the job). Formats: \texttt{FORMAT.md}.

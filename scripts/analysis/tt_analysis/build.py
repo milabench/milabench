@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from .health import parse_nccl_tests, parse_srygaard, parse_tt_health
+from .monitor import parse_dcgm, parse_nodemon
 from .runs import data_files, parse_run
 from .topology import load_topology
 
@@ -77,10 +78,10 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
             runs.append(row)
             steps += s
             ranks += r
+        for d in sorted((cdir / "nodemon").glob("*")):
+            monitor.append(parse_nodemon(d, cluster, synthetic=is_syn))
         for m in sorted((cdir / "dcgm").glob("*.csv")):
-            df = pd.read_csv(m)
-            df["cluster"], df["source"], df["synthetic"] = cluster, m.stem, is_syn
-            monitor.append(df)
+            monitor.append(parse_dcgm(m, cluster, synthetic=is_syn))
 
     tables = {
         "runs": pd.DataFrame(runs),
@@ -88,7 +89,8 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
         "ranks": pd.DataFrame(ranks),
         "node_health": pd.DataFrame(nodes),
         "comm": pd.DataFrame(comm),
-        "gpu_monitor": pd.concat(monitor) if monitor else pd.DataFrame(),
+        "gpu_monitor": pd.concat([m for m in monitor if not m.empty], ignore_index=True)
+                       if any(not m.empty for m in monitor) else pd.DataFrame(),
         "ep_groups": pd.DataFrame(ep),
     }
     r = tables["runs"]

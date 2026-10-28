@@ -23,12 +23,14 @@ Output: `report/main.pdf`, figures in `report/generated/figures/`, tables in `da
 | `tt_analysis/runs.py` | milabench run data → runs, steps, ranks |
 | `tt_analysis/health.py` | srygaard health checks, tt_healthcheck → node_health, comm |
 | `tt_analysis/topology.py` | `scontrol show topology` → leaf map, placement |
+| `tt_analysis/monitor.py` | nodemon TSVs, DCGM exports → gpu_monitor |
 | `tt_analysis/build.py` | all sources → CSV tables |
 | `tt_analysis/synthetic.py` | synthetic data in the target formats (experiments not run yet) |
 | `tt_analysis/style.py`, `figures.py` | seaborn style (minimal), one function per figure |
 | `tt_analysis/tables.py` | LaTeX tables and macros |
 | `report/` | LaTeX source; `sections/*.tex` hold the text |
 
-Collection is read-only on the login nodes (rsync of `$SCRATCH/tt38/{output/runs,health,logs}`
-and `scontrol show topology`), following `journals/cluster-guidelines.md`.
+Collection is read-only on the login nodes (rsync of
+`$SCRATCH/tt38/{output/runs,health,logs,nodemon}` and `scontrol show topology`), following
+`journals/cluster-guidelines.md`.
 `data/` and `report/generated/` are not versioned: everything is regenerated.

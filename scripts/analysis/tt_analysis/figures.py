@@ -736,14 +736,14 @@ def startup(t):
 
 
 def stability(t):
-    """Throughput per step over a long run, with GPU clocks (DCGM) on the same time axis."""
+    """Throughput per step over a long run, with GPU clocks (nodemon) on the same time axis."""
     steps, runs, mon = t["steps"], t["runs"], t["gpu_monitor"]
     long = runs[runs.bench.str.contains("long") | runs.run_name.str.contains("long")]
     if long.empty or mon.empty:
         return None
     run = long.iloc[0]
     s = steps[steps.run_id == run.run_id].sort_values("t_s")
-    m = mon[(mon.source == run.run_name) & (mon.metric == "DCGM_FI_DEV_SM_CLOCK")].copy()
+    m = mon[(mon.source == run.run_name) & (mon.metric == "sm_clock_mhz")].copy()
     m["t_s"] = m.time - m.time.min()
     m["gpu_id"] = m.host + ":" + m.gpu.astype(str)
     fig, axes = plt.subplots(2, 1, figsize=(TEXT_WIDTH, 2.6), sharex=True,
@@ -775,38 +775,81 @@ def stability(t):
     return fig
 
 
+def _cpu_drop(cpu: pd.DataFrame) -> pd.DataFrame:
+    """Per host, the lowest 1-minute median busy-core clock, relative to the first minute (%)."""
+    c = cpu.copy()
+    c["win"] = ((c.time - c.time.min()) // 60).astype(int)
+    per = c.groupby(["host", "win"]).value.median().reset_index().sort_values("win")
+    first = per.groupby("host").value.first()
+    low = per.groupby("host").value.min()
+    return (100 * (low / first - 1)).rename("cpu_drop_pct").reset_index()
+
+
+def _activity(mon):
+    """The sharpest GPU-activity signal the telemetry carries, and the label that names it."""
+    for metric, label in (("tensor_active", "Tensor-pipe activity"),
+                          ("util_mean", "GPU busy fraction"),
+                          ("util", "GPU busy fraction\n(point samples)")):
+        rows = mon[mon.metric == metric]
+        if not rows.empty:
+            return rows.copy(), label
+    return None, ""
+
+
 def stragglers(t):
-    """Per-GPU tensor-core activity (DCGM) by leaf: a slow GPU is busier than the rest."""
+    """Per-GPU activity and per-node CPU clock (nodemon): the slow GPU is the one that waits least."""
     mon = t["gpu_monitor"]
     if mon.empty:
         return None
-    m = mon[mon.metric.isin(["DCGM_FI_PROF_PIPE_TENSOR_ACTIVE", "DCGM_FI_DEV_SM_CLOCK"])]
+    util, activity = _activity(mon)
+    if util is None:
+        return None
     leaf_of = t["ranks"].set_index("host").leaf.to_dict() if not t["ranks"].empty else {}
-    agg = m.groupby(["source", "host", "gpu", "metric", "synthetic"]).value.median().unstack("metric").reset_index()
     nh = t["node_health"]
     leaf_of.update(nh.drop_duplicates("host").set_index("host").leaf.to_dict())
-    agg["leaf"] = agg.host.map(leaf_of).fillna("?").str.replace("ihpc", "").str.replace("u25", "")
-    agg = agg.rename(columns={"DCGM_FI_PROF_PIPE_TENSOR_ACTIVE": "tensor", "DCGM_FI_DEV_SM_CLOCK": "clock"})
     # Per GPU, the 10-minute window where it was most active (straggler episodes are short).
-    m2 = m[m.metric == "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE"].copy()
-    m2["win"] = ((m2.time - m2.time.min()) // 600).astype(int)
-    peak = m2.groupby(["host", "gpu", "win"]).value.median().groupby(["host", "gpu"]).max().rename("tensor_peak")
-    agg = agg.merge(peak.reset_index(), on=["host", "gpu"])
+    util["win"] = ((util.time - util.time.min()) // 600).astype(int)
+    peak = (util.groupby(["host", "gpu", "win"]).value.median()
+            .groupby(["host", "gpu"]).max().rename("util_peak").reset_index())
+    agg = peak.merge(util.groupby(["host", "gpu"]).synthetic.any().reset_index(), on=["host", "gpu"])
+    agg["leaf"] = agg.host.map(leaf_of).fillna("?").str.replace("ihpc", "").str.replace("u25", "")
+    cpu = mon[mon.metric == "cpu_mhz_busy_mean"]
+    drop = _cpu_drop(cpu) if not cpu.empty else None
     order = sorted(agg.leaf.unique())
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.8))
+
+    height = 3.2 if drop is not None else 1.8
+    fig, axes = plt.subplots(2 if drop is not None else 1, 1, figsize=(TEXT_WIDTH, height),
+                             sharex=True, squeeze=False)
+    ax = axes[0][0]
     start = len(ax.collections)
-    sns.stripplot(data=agg, x="leaf", y="tensor_peak", order=order, color=GRAY, size=2, jitter=0.3, ax=ax)
+    sns.stripplot(data=agg, x="leaf", y="util_peak", order=order, color=GRAY, size=2, jitter=0.3, ax=ax)
     if agg.synthetic.any():
         _hollow(ax, start)
-    out = agg.loc[agg.tensor_peak.idxmax()]
-    ax.plot(order.index(out.leaf), out.tensor_peak, "o", color=OKABE_ITO["vermillion"], ms=3.5)
-    ax.annotate(f"{out.host}:GPU{int(out.gpu)}", (order.index(out.leaf), out.tensor_peak), xytext=(5, -2),
+    out = agg.loc[agg.util_peak.idxmax()]
+    ax.plot(order.index(out.leaf), out.util_peak, "o", color=OKABE_ITO["vermillion"], ms=3.5)
+    ax.annotate(f"{out.host}:GPU{int(out.gpu)}", (order.index(out.leaf), out.util_peak), xytext=(5, -2),
                 textcoords="offset points", fontsize=6, color=OKABE_ITO["vermillion"])
-    ax.set_xlabel("leaf switch")
-    ax.set_ylabel("tensor pipe active\n(max over 10-min windows)")
-    ax.tick_params(axis="x", labelrotation=90, labelsize=6)
+    ax.set_ylabel(f"{activity}\n(max over 10-min windows)")
     style.finish(ax)
-    style.synthetic_tag(fig, agg.synthetic.any())
+
+    if drop is not None:
+        ax = axes[1][0]
+        drop["leaf"] = drop.host.map(leaf_of).fillna("?").str.replace("ihpc", "").str.replace("u25", "")
+        start = len(ax.collections)
+        sns.stripplot(data=drop, x="leaf", y="cpu_drop_pct", order=order, color=GRAY, size=2,
+                      jitter=0.3, ax=ax)
+        if cpu.synthetic.any():
+            _hollow(ax, start)
+        worst = drop.loc[drop.cpu_drop_pct.idxmin()]
+        ax.plot(order.index(worst.leaf), worst.cpu_drop_pct, "o", color=OKABE_ITO["vermillion"], ms=3.5)
+        ax.annotate(worst.host, (order.index(worst.leaf), worst.cpu_drop_pct), xytext=(5, -2),
+                    textcoords="offset points", fontsize=6, color=OKABE_ITO["vermillion"])
+        ax.axhline(-15, color=LIGHT, lw=0.8, zorder=0)
+        ax.set_ylabel("CPU busy-core clock\n(lowest minute vs. first, %)")
+        style.finish(ax)
+    axes[-1][0].set_xlabel("leaf switch")
+    axes[-1][0].tick_params(axis="x", labelrotation=90, labelsize=6)
+    style.synthetic_tag(fig, bool(agg.synthetic.any()))
     fig.tight_layout()
     return fig
 

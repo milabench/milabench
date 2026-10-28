@@ -32,9 +32,11 @@ Owner: fill in per item (`Owner:`).
 - [ ] **Dry run of the three window modes on reserved nodes** (before 10-27 04:00), to time them and check
       our adapter parses real output: `--job-per switch`, `--job-per cluster`, `--switches ihpc217u25
       ihpc316u25 --job-per cluster`. Figs. 2, 4. Owner:
-- [ ] **DCGM / Prometheus**: confirm with the admins that `DCGM_FI_PROF_*` fields are enabled, scrape
-      interval <= 15 s, host labels = Slurm node names; export one past job's range as CSV (FORMAT §3) and
-      check it parses. Stability and straggler figures. Owner:
+- [ ] **nodemon (node telemetry)**: merge `feat/nodemon` into the run branches (the GLM-5 pack starts
+      the sampler itself), export `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` from the
+      launcher, and check one dry-run job's TSVs parse (FORMAT §3). On Rorqual's H100s also check
+      whether `<host>.dcgm.tsv` fills: with it the straggler figure has tensor-pipe activity, without
+      it `util_mean`. Stability and straggler figures. Owner:
 
 ### Qwen3.8-27B (TorchTitan)
 
@@ -133,7 +135,7 @@ the window ends.
 | 2 | 9 | **9 Step decomposition** | Communication-bound step (estimated: gradient accumulation does not separate the two, measured 10-25) |
 | 3 | 10 | 6 Per-GPU batch | Answered by preliminary data |
 | 3 | 11 | 13 Startup | Every run feeds it |
-| 3 | 12 | 15 Stragglers | DCGM from regular runs |
+| 3 | 12 | 15 Stragglers | node telemetry from regular runs |
 | 3 | 13 | 14 Stability (>= 1 h) | Conditional in the brief; over 1 h of the full machine |
 | 3 | 14 | 3 Per-GPU compute by cluster | Premise already shown by preliminary data |
 | 3 | 15 | 1 Preliminary health checks | Background |
@@ -142,7 +144,8 @@ the window ends.
 
 ### Roles
 
-- **Health and monitoring**: runs the health-check blocks, watches DCGM / logs during every run, runs
+- **Health and monitoring**: runs the health-check blocks, watches the node telemetry / logs during every
+  run, runs
   `analyze.py quick` after each block and compares with expectations (preliminary numbers, synthetic
   model), and flags anything suspicious (node to exclude, throughput off, run stalled).
 - **Qwen**: prepares and launches the Qwen blocks (Q).
@@ -171,7 +174,7 @@ longest run.
 
 | # | group | block | runs | feeds | est. | cum. |
 |---|---|---|---|---|---|---|
-| 0 | H | Health `--job-per switch` on all 66 nodes; topology snapshot; DCGM check; node lists for all blocks | 1 | tier 0; Figs. 2, 3 | 10 min | 0:10 |
+| 0 | H | Health `--job-per switch` on all 66 nodes; topology snapshot; nodemon check; node lists for all blocks | 1 | tier 0; Figs. 2, 3 | 10 min | 0:10 |
 | 1 | G+Q | **GLM EP8 aligned**, 52 nodes ‖ Qwen 1-node `tt-w-smoke` on an idle node ‖ 1-node health re-checks on the other idle nodes | 1 + 1 | Figs. 11, 7, 9 | 15 min | 0:25 |
 | 2 | Q | **ALL** (every healthy node) | 1 | Fig. 7 | 12 min | 0:37 |
 | 3 | G | **EP8 crossed**, same 52 nodes ‖ 1-node re-checks on idle nodes | 1 | Fig. 11 | 15 min | 0:52 |
@@ -226,7 +229,7 @@ If block 14 differs from block 4 by more than the run-to-run spread, stop pairin
 |---|---|---|---|---|---|---|
 | 35 | G | EP16 at full scale | 1-2 | Fig. 10 | 30 min | 9:52 |
 | 36 | Q | Bridge **H12 at 2 x 8192** ‖ bridge **S12 at 2 x 8192** (ihpc316) | 2 | Fig. 6; Table 2 | 12 min | 10:04 |
-| 37 | Q | Long stability run, every healthy node, >= 1 h, with DCGM | 1 | Figs. 14, 15 | 70 min | 11:14 |
+| 37 | Q | Long stability run, every healthy node, >= 1 h, with node telemetry | 1 | Figs. 14, 15 | 70 min | 11:14 |
 | 38 | H | Final health check (`--job-per switch`) | 1 | Figs. 2, 3 | 10 min | 11:24 |
 
 Pass 1 + pass 2 + P2 + P3 is ~11.5 h of execution, leaving ~12.5 h of the 24 h for fixes, failures and
@@ -267,7 +270,7 @@ plan only. Every block below was dry-run on the 66 full nodes (10-26): all build
 | 29 | `bash $S/tt_block.sh O:6 S:9:ihpc316u25` |
 | 30 / 31 / 32 / 33 | `H:9` / `O:9` / `O:16` / `O:3` |
 | 36 | `bash $S/tt_block.sh H:12::tt-w-nodes-8k2 S:12:ihpc316u25:tt-w-nodes-8k2` |
-| 37 | `bash $S/tt_block.sh ALL:::tt-w-nodes-long` (1 h of measurement; launch with DCGM recording) |
+| 37 | `bash $S/tt_block.sh ALL:::tt-w-nodes-long` (1 h of measurement; check nodemon is sampling) |
 
 Out-of-memory fallback: same spec with bench `tt-w-nodes-lowmem` (e.g. `H:27::tt-w-nodes-lowmem`).
 
@@ -380,7 +383,7 @@ What each figure has if the window stops after a phase (phases are cumulative), 
 | 2 | 9 Step decomposition | usable (estimated split: 1-node ceiling vs multi-node step) | usable | usable | usable (no measured split: gradient accumulation does not provide one) |
 | 3 | 6 Per-GPU batch | usable (preliminary data only) | same | same | **complete** (window bridge point) |
 | 3 | 13 Startup | usable: 1, 3, 6, 12, 27 nodes, every node | usable | **complete**: 3-48 nodes | complete |
-| 3 | 15 Stragglers | usable: 5-min windows of pass-1 runs (needs DCGM profiling fields) | usable | usable | **complete** (long run) |
+| 3 | 15 Stragglers | usable: 5-min windows of pass-1 runs (nodemon `util_mean` + SM clock + CPU clock; tensor activity only where a dcgm-exporter answers) | usable | usable | **complete** (long run) |
 | 3 | 14 Stability (>= 1 h) | none | none | none | **complete** |
 | 3 | 3 Per-GPU compute by cluster | **complete** if slurm-healthcheck reports per-GPU matmul (pre-window item); otherwise preliminary data only | same | same | same |
 | 3 | 1 Preliminary health checks | complete (no window data needed) | complete | complete | complete |
@@ -400,5 +403,5 @@ What is lost if the window stops early:
 
 ## After the window
 
-- [ ] `analyze.py collect --srygaard rorqual:<path>` + DCGM export, then `analyze.py all --no-synthetic`. Owner: health
+- [ ] `analyze.py collect --srygaard rorqual:<path>` (node telemetry comes with it), then `analyze.py all --no-synthetic`. Owner: health
 - [ ] Check parsed numbers against the run logs; fill the report's placeholders. Owner:
