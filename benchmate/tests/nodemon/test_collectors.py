@@ -139,6 +139,19 @@ def test_dcgm_reads_both_profiling_series_per_gpu_and_ignores_the_rest(monkeypat
     assert second == {"gpu": 1, "sm_active": 0.004}  # the exporter published no tensor series for it
 
 
+def test_dcgm_records_the_exporters_own_gpu_numbering_whatever_the_label_order(monkeypatch):
+    collector = DcgmCollector()
+    reordered = EXPORTER_METRICS.replace(
+        'DCGM_FI_PROF_SM_ACTIVE{gpu="1",UUID="GPU-b"', 'DCGM_FI_PROF_SM_ACTIVE{UUID="GPU-b",gpu="1"'
+    )
+    monkeypatch.setattr(collector, "_scrape", lambda: reordered)
+
+    collector.sample(now_s=0.0)
+
+    # Under its own key, not "gpus": the analysis checks it against NVML's map rather than merging them.
+    assert collector.describe()["exporter_gpus"] == {"0": "GPU-a", "1": "GPU-b"}
+
+
 def test_dcgm_is_disabled_when_no_exporter_answers(monkeypatch):
     collector = DcgmCollector()
     monkeypatch.setattr(collector, "_scrape", lambda: None)

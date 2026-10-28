@@ -14,7 +14,8 @@ It records:
 | `pcie` | Link width and speed, AER error counts, for GPUs, HCAs and the bridges above them | `/sys/bus/pci` |
 | `ecc` | Uncorrected memory errors, pending and failed row remapping | NVML (`pynvml`) |
 | `edac` | Correctable and uncorrectable host memory errors per controller | `/sys/devices/system/edac/mc` |
-| `dcgm` | Tensor-pipe and SM activity, where a dcgm-exporter runs on the host | dcgm-exporter |
+| `gpm` | SM and tensor-pipe activity, warp occupancy, DRAM bandwidth, on Hopper and newer | NVML GPM (`pynvml`) |
+| `dcgm` | The same SM and tensor-pipe activity, where a dcgm-exporter runs on the host | dcgm-exporter |
 
 The `gpu` rows also carry `xid`: the critical XID errors NVML delivered since the previous row,
 empty on every other row. It is a column rather than its own file so the GPU grid stays fixed;
@@ -26,7 +27,7 @@ collector a hang costs ECC alone, not the one-second series. For the same reason
 run-scoped values are rows: the lifetime error and remapped-row totals are written once into the
 status file instead.
 
-`gpu`, `ib`, `mem` and `dcgm` sample every second, `cpu` every 2 s, `nvlink` and `pcie` every
+`gpu`, `ib`, `mem`, `gpm` and `dcgm` sample every second, `cpu` every 2 s, `nvlink` and `pcie` every
 10 s, and `ecc` and `edac` every 60 s. The periods are fixed in `default_registry()`; to sample at other periods from Python, register the collectors on a `CollectorRegistry` yourself.
 
 All values are node-wide. Nodes are assumed to be used by one job at a time, so node-wide counters are the job's counters.
@@ -39,6 +40,12 @@ All values are node-wide. Nodes are assumed to be used by one job at a time, so 
 export BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/$SLURM_JOB_ID
 python -m benchmate.nodemon --bench llama &
 ```
+
+`gpm` and `dcgm` measure the same thing two ways, and both are off where they cannot answer.
+GPM reads the SM counters through NVML, with no exporter and no host engine, but needs Hopper or
+newer; its metrics are the difference between two samples, so the first row of a run is empty.
+Where GPM is unavailable the exporter is the fallback, and where neither answers GPU activity is
+the duty cycle in the `gpu` row's `util_mean`.
 
 The `dcgm` collector only reads a `dcgm-exporter` that is already running (by default
 `http://localhost:9400/metrics`, `url=` to change it). Scraping one is a plain read of what the
@@ -85,6 +92,7 @@ $BENCHMATE_NODEMON_DIR/
     <host>.pcie.tsv
     <host>.ecc.tsv
     <host>.edac.tsv
+    <host>.gpm.tsv     # only on GPUs that support GPM (Hopper and newer)
     <host>.dcgm.tsv    # only where a dcgm-exporter answers
 ```
 
@@ -104,7 +112,7 @@ It also records:
   (`TT_CAMPAIGN`), `slurm_job_id`, `slurm_step_id` and `slurm_nodelist`. Whatever is unset is
   left out;
 - `start` and `end`: in milliseconds since the Unix epoch, like the `time_ms` column;
-- `collectors`: each collector, whether it ran, its period, and `cpu_s`, the CPU seconds its samples used (0 while running, final once stopped). A collector may add its own fields here: the NVML ones publish `gpus`, the index-to-UUID map the rows leave out; `ecc` adds each GPU's `lifetime` error totals; `dcgm` records which `source` it read;
+- `collectors`: each collector, whether it ran, its period, and `cpu_s`, the CPU seconds its samples used (0 while running, final once stopped). A collector may add its own fields here: the NVML ones publish `gpus`, the index-to-UUID map the rows leave out; `ecc` adds each GPU's `lifetime` error totals; `dcgm` records the exporter `url` it read and, as `exporter_gpus`, the exporter's own GPU numbering, which is not NVML's and is kept apart from `gpus` so the two can be compared;
 - `flush_every`;
 - `clock` and `clock_end`: whether the kernel clock was NTP-synchronized and its maximum error in µs. A node with `synced: false` has timestamps that may not line up with other nodes.
 - `stuck`, if present: a collector call hung at shutdown, typically NVML on a failing GPU. Rows collected before it were still written.

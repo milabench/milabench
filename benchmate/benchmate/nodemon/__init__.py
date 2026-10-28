@@ -6,6 +6,7 @@ from .collectors import (
     DcgmCollector,
     EccCollector,
     EdacCollector,
+    GpmCollector,
     default_registry,
 )
 from .registry import CollectorRegistry, Sink
@@ -25,6 +26,7 @@ __all__ = [
     "DcgmCollector",
     "EccCollector",
     "EdacCollector",
+    "GpmCollector",
     "NodeCollector",
     "RunState",
     "Sampler",

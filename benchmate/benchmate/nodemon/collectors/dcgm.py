@@ -21,25 +21,33 @@ class DcgmCollector(NodeCollector):
     """
 
     name = "dcgm"
-    columns = (
-        "gpu",
-        "sm_active",
-        "tensor_active",
-    )
+
+    #: Each metric column -> the exporter series behind it.
+    metric_fields = {
+        "sm_active": "DCGM_FI_PROF_SM_ACTIVE",
+        "tensor_active": "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE",
+    }
+    #: The row: the GPU, then one cell per field above, in that order.
+    columns = ("gpu", *metric_fields)
     timeout_s = 2.0
+
+    #: The labels a series carries that identify the GPU: the exporter's own number, and NVML's name for it.
+    _labels = re.compile(r'\b(gpu|UUID)="([^"]*)"')
 
     def __init__(self, url: str = "http://localhost:9400/metrics") -> None:
         self.url = url
-        #: The exporter series behind each column, compiled here because every tick scrapes.
+        #: The exporter's GPU number -> the UUID it labels that GPU with, for the status file.
+        self._uuid_of: dict[int, str] = {}
+        #: The pattern matching each column's series, compiled here because every tick scrapes.
         self._series = {
-            "sm_active": self._pattern("DCGM_FI_PROF_SM_ACTIVE"),
-            "tensor_active": self._pattern("DCGM_FI_PROF_PIPE_TENSOR_ACTIVE"),
+            column: self._pattern(field)
+            for column, field in self.metric_fields.items()
         }
 
     @staticmethod
     def _pattern(field: str) -> re.Pattern:
-        """One profiling field's exporter line: its labels, of which only the GPU matters, then the value."""
-        return re.compile(rf'^{field}\{{[^}}]*\bgpu="(\d+)"[^}}]*\}}\s+([0-9.eE+-]+)\s*$', re.MULTILINE)
+        """One profiling field's exporter line: its labels, then the value."""
+        return re.compile(rf'^{field}\{{([^}}]*)\}}\s+([0-9.eE+-]+)\s*$', re.MULTILINE)
 
     def probe(self) -> bool:
         """False when nothing answers at the exporter's address, or it publishes neither field."""
@@ -55,8 +63,10 @@ class DcgmCollector(NodeCollector):
             return []
         rows: dict[int, dict[str, Any]] = {}
         for column, pattern in self._series.items():
-            for gpu, value in self._matches(text, pattern):
+            for gpu, uuid, value in self._matches(text, pattern):
                 rows.setdefault(gpu, {"gpu": gpu})[column] = value
+                if uuid:
+                    self._uuid_of[gpu] = uuid
         return [rows[gpu] for gpu in sorted(rows)]
 
     def _scrape(self) -> str | None:
@@ -67,16 +77,23 @@ class DcgmCollector(NodeCollector):
         except (URLError, OSError, ValueError):
             return None
 
-    def _matches(self, text: str, pattern: re.Pattern) -> list[tuple[int, float]]:
-        """The (gpu, value) pairs of one series in the exporter's output."""
+    @classmethod
+    def _matches(cls, text: str, pattern: re.Pattern) -> list[tuple[int, str, float]]:
+        """The (gpu, uuid, value) triples of one series; a line without a GPU number is skipped."""
         found = []
-        for gpu, value in pattern.findall(text):
+        for labels, value in pattern.findall(text):
+            named = dict(cls._labels.findall(labels))
             try:
-                found.append((int(gpu), float(value)))
-            except ValueError:
+                found.append((int(named["gpu"]), named.get("UUID", ""), float(value)))
+            except (KeyError, ValueError):
                 continue
         return found
 
     def describe(self) -> dict[str, Any]:
         """Where the numbers came from: they are another service's, not ours."""
-        return {"url": self.url}
+        described: dict[str, Any] = {"url": self.url}
+        if self._uuid_of:
+            # Not "gpus", the key the NVML collectors publish: this is the exporter's own numbering,
+            # and the point of recording it is that the analysis can check the two agree.
+            described["exporter_gpus"] = {str(gpu): uuid for gpu, uuid in sorted(self._uuid_of.items())}
+        return described

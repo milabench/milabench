@@ -8,6 +8,7 @@ from .cpu import CpuCollector
 from .dcgm import DcgmCollector
 from .ecc import EccCollector
 from .edac import EdacCollector
+from .gpm import GpmCollector
 from .gpu import GpuCollector
 from .ib import IbCollector
 from .mem import MemCollector
@@ -19,6 +20,7 @@ __all__ = [
     "DcgmCollector",
     "EccCollector",
     "EdacCollector",
+    "GpmCollector",
     "GpuCollector",
     "IbCollector",
     "MemCollector",
@@ -46,7 +48,9 @@ def default_registry(
         "pcie": (PcieCollector, 10.0),  # link states and AER counts change rarely
         "ecc": (EccCollector, 60.0),  # counters move on the scale of hours; kept apart from gpu, see EccCollector
         "edac": (EdacCollector, 60.0),  # same, for host memory
-        "dcgm": (DcgmCollector, 1.0),  # off unless DCGM already runs here: see DcgmCollector
+        # GPM is more accurate on H100
+        #"dcgm": (DcgmCollector, 1.0),  # off unless DCGM already runs here: see DcgmCollector
+        "gpm": (GpmCollector, 1.0),  # Hopper and newer only: see GpmCollector
     }
     arguments = dict(options or {})
     unknown = set(arguments) - set(collectors)

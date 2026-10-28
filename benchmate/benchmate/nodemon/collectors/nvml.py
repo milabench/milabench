@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from types import ModuleType
 from typing import Any
 
 from ..collector import NodeCollector
@@ -25,7 +26,8 @@ class NvmlCollector(NodeCollector):
     """A collector over the GPUs NVML sees, with NVML initialized in probe() and shut down in close()."""
 
     def __init__(self) -> None:
-        self._nvml: Any = None
+        #: The pynvml module, imported in probe() so a host without the bindings still runs.
+        self._nvml: ModuleType | None = None
         self._gpus: list[Gpu] = []
         #: index -> UUID, for the status file. Survives close(), which the status file is written after.
         self._uuid_of: dict[int, str] = {}
