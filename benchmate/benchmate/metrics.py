@@ -622,7 +622,9 @@ class TimedIterator:
                 event.name: event.elapsed_time() / self.unit,
                 "units": "s",
                 "task": self.task,
-                "batch_id": event.batch_id
+                "batch_id": event.batch_id,
+                # CPU wall clock at the start of the timed block (the event is created when the block starts)
+                "start_time": event.cpu_timer,
             }
             self.message(**kwargs)
 
@@ -673,7 +675,7 @@ class TimedIterator:
 
             self._push_lap_events()
 
-        if False:
+        if True:
             self.message(sync_time=sync_time.elapsed(), units="s", task=self.task)
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 
@@ -734,7 +736,8 @@ class ManualTimedIterator(TimedIterator):
         self.epochs = 0
 
     def _record_work(self, work_time, batch_id):
-        # step() has already bumped batch_id by the time control comes back here
+        """Keep a timed block (work, next) for the next push, tagged with the batch it belongs to.
+        step() has already bumped batch_id by the time control comes back here"""
         if _flags.record_fine_grained:
             work_time.batch_id = batch_id
             self.recorded_timers.append(work_time)
@@ -774,13 +777,22 @@ class ManualTimedIterator(TimedIterator):
                 if self.should_stop:
                     break
 
-        for data in iterator:
+        while True:
+            # data loader wait; step() of the previous batch has already bumped batch_id: it is this batch's id
+            batch_id = self.batch_id
+            try:
+                with lazy_record_timing("next", self.event_fn) as next_time:
+                    data = next(iterator)
+            except StopIteration:
+                break
+
+            self._record_work(next_time, batch_id)
+
             # we have to compute the batch size now because 
             # step might be call before the execution returns to this  block
             self.accumulation_steps += 1
             self.acc_batch_size += self.deduce_batch_size(data)
-          
-            batch_id = self.batch_id
+
             with lazy_record_timing("work", self.event_fn) as work_time:
                 yield data # step will probably be called right before the control
                         # returns to this block
