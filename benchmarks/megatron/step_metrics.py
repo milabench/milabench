@@ -4,6 +4,7 @@ Megatron owns the loop, so the timer is attached from two sides:
   - the train dataloader is wrapped (``wrap_loader``): data wait, laps and the CUDA-event clock come for free;
   - one ``step(tokens)`` call per optimizer step closes the measurement (``rate``).
 """
+import os
 import time
 
 from benchmate.metrics import ManualTimedIterator, default_device, default_event
@@ -25,9 +26,13 @@ class LocalBatchTimer(ManualTimedIterator):
 
 
 class StepTimer:
-    def __init__(self, log):
+    """``push_every``: flush the queued step events every N steps (each flush waits for the GPU) and at ``flush()``."""
+
+    def __init__(self, log, push_every=None):
         self.log = log
         self.timer = None
+        self.push_every = max(int(push_every or os.getenv("BENCHMATE_PUSH_EVERY", 10)), 1)
+        self.steps = 0
 
     def _push(self, **event):
         event.setdefault("task", "train")
@@ -54,6 +59,13 @@ class StepTimer:
                 self.timer.start = self.timer.event_fn(enable_timing=True)
                 self.timer.start.record()
             self.timer.step(batch_override=global_tokens)
+            self.steps += 1
+            if self.steps % self.push_every == 0:
+                self.timer._push()
+
+    def flush(self):
+        """Push what is still queued (end of the run: the loader's own end-of-iteration flush never runs under Megatron)."""
+        if self.timer is not None and self.timer.events:
             self.timer._push()
 
     def restart_clock(self):

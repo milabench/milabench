@@ -39,7 +39,6 @@ _megatron_glm5:
     # events (rate, a2a_time, loss, ...) also go to wandb through benchmate's wandb_push (main.py). The compute nodes have
     # no internet: offline runs under $WANDB_DIR, to push afterwards from a login node with `wandb sync <dir>/wandb/offline-run-*`
     BENCHMATE_WANDB: "1"
-    WANDB_MODE: offline
   frozen:
     preset: experts
   placement:

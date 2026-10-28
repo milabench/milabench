@@ -389,6 +389,7 @@ def patch_train_step(log):
         return result
 
     training.train_step = timed
+    return steps
 
 
 # --- placement report --------------------------------------------------------------------------------------------
@@ -453,7 +454,7 @@ def main():
     model_cfg = configure_model(gpt_config_from_args(args), args, spec, hf_path)
     full_config = pretrain_cfg_container_from_args(args, model_cfg)
 
-    patch_train_step(log)
+    steps = patch_train_step(log)
     try:
         pretrain(
             full_config,
@@ -463,6 +464,7 @@ def main():
             get_embedding_ranks=get_embedding_ranks,
         )
     finally:
+        steps.flush()
         if monitor is not None:
             monitor.stop()
 
