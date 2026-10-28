@@ -652,6 +652,8 @@ class TimedIterator:
         start = self.recored_laps[0]
         for lap in self.recored_laps[1:]:
             self.message(**{lap.name: lap.time - start.time}, task=self.task, units="s", time=lap.time)
+            start = lap
+
         self.recored_laps = [start]
 
     def _push_total_time_elapsed(self):
