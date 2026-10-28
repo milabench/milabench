@@ -471,30 +471,29 @@ class TimedIterator:
                 assert self.unique_iterator == id(iterator)
 
                 try:
+                    if first_batches:
+                        while first_batches:
+                            data = first_batches.pop()
+                    else:
+                        with lazy_record_timing("next", self.event_fn) as next_time:
+                            data = next(iterator)
+
+                    # Simple one iteration = one backward
+                    # ... huggingface ... is changing the batch sometimes...
+                    bs = self.deduce_batch_size(data)
+
+                    with lazy_record_timing("work", self.event_fn) as work_time: 
+                        yield data
+
                     with lazy_record_timing("step", self.event_fn) as step_time: 
-                        if first_batches:
-                            while first_batches:
-                                data = first_batches.pop()
-                        else:
-                            with lazy_record_timing("next", self.event_fn) as next_time:
-                                data = next(iterator)
-
-                        # Simple one iteration = one backward
-                        # ... huggingface ... is changing the batch sometimes...
-                        bs = self.deduce_batch_size(data)
-
-                        with lazy_record_timing("work", self.event_fn) as work_time: 
-                            yield data
-
-                        with lazy_record_timing("sync", self.event_fn) as sync_time: 
-                            if should_break := self.step(bs):
-                                self.break_count += 1
-                                break
+                        if should_break := self.step(bs):
+                            self.break_count += 1
+                            break
                         
                     if next_time:
                         self._record_event(next_time)
+                
                     self._record_event(work_time)
-                    self._record_event(sync_time)
                     self._record_event(step_time)
                     self.batch_id += 1
                 
@@ -508,12 +507,18 @@ class TimedIterator:
             self._push_total_time_elapsed()
             self.earlystop()
 
-    def _make_rate(self, event: TimedEvent):
+    def _make_rate(self, event: TimedEvent, global_batch_size=True):
         event.end.synchronize()
         sync(self.device)
 
         elapsed = (event.elapsed_time()) / self.unit
-        rate = self.batch_size(event.batch_size) / elapsed
+
+        if global_batch_size:
+            bs = self.batch_size(event.batch_size)
+        else:
+            bs = event.batch_size
+
+        rate = bs / elapsed
 
         return rate, elapsed
 
@@ -593,10 +598,15 @@ class TimedIterator:
 
     def _push_time_steps(self):
         for event in self.events:
-            rate, elapsed = self._make_rate(event)
-            self.last_time += elapsed
-            self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
-
+            if self.rank is None or self.rank == 0:
+                rate, elapsed = self._make_rate(event)
+                self.last_time += elapsed
+                self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+            else:
+                rate, elapsed = self._make_rate(event, global_batch_size=False)
+                self.last_time += elapsed
+                self.ranked_log(rate=rate, ime=self.last_time, elapsed=elapsed, batch_id=batch_id, chedule_time=event.cpu_timer)
+           
         self.total_obs += len(self.events)
         self.events = []
 
@@ -674,9 +684,6 @@ class TimedIterator:
                 rate=rate, units="items/s", task=self.task,
                 time=time, elapsed=elapsed, batch_id=batch_id, schedule_time=schedule_time
             )
-        else:
-            # but we do have a step time from the workers
-            self.ranked_log(time=time, step_time=elapsed, batch_id=batch_id)
 
     def log_progress(self):
         if self.early_stop is not None:
