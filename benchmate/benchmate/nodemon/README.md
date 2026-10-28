@@ -12,8 +12,22 @@ It records:
 | `cpu` | CPU clocks, utilization, frequency cap, temperature, throttle count, governor | `/proc/stat`, `/proc/cpuinfo`, cpufreq, hwmon |
 | `mem` | Used and total host memory with a running peak, anonymous memory, page cache, OOM kills | `/proc/meminfo`, `/proc/vmstat` |
 | `pcie` | Link width and speed, AER error counts, for GPUs, HCAs and the bridges above them | `/sys/bus/pci` |
+| `ecc` | Uncorrected memory errors, pending and failed row remapping | NVML (`pynvml`) |
+| `edac` | Correctable and uncorrectable host memory errors per controller | `/sys/devices/system/edac/mc` |
+| `dcgm` | Tensor-pipe and SM activity, where a dcgm-exporter runs on the host | dcgm-exporter |
 
-`gpu`, `ib` and `mem` sample every second, `cpu` every 2 s, and `nvlink` and `pcie` every 10 s. The periods are fixed in `default_registry()`; to sample at other periods from Python, register the collectors on a `CollectorRegistry` yourself.
+The `gpu` rows also carry `xid`: the critical XID errors NVML delivered since the previous row,
+empty on every other row. It is a column rather than its own file so the GPU grid stays fixed;
+an event is attributed to the row that drains it, so its time is up to one period late.
+
+`ecc` is deliberately separate from `gpu`, although it is only four columns. Its queries are the
+ones that go slow on a failing GPU — exactly when their values matter — and in their own
+collector a hang costs ECC alone, not the one-second series. For the same reason only the
+run-scoped values are rows: the lifetime error and remapped-row totals are written once into the
+status file instead.
+
+`gpu`, `ib`, `mem` and `dcgm` sample every second, `cpu` every 2 s, `nvlink` and `pcie` every
+10 s, and `ecc` and `edac` every 60 s. The periods are fixed in `default_registry()`; to sample at other periods from Python, register the collectors on a `CollectorRegistry` yourself.
 
 All values are node-wide. Nodes are assumed to be used by one job at a time, so node-wide counters are the job's counters.
 
@@ -25,6 +39,13 @@ All values are node-wide. Nodes are assumed to be used by one job at a time, so 
 export BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/$SLURM_JOB_ID
 python -m benchmate.nodemon --bench llama &
 ```
+
+The `dcgm` collector only reads a `dcgm-exporter` that is already running (by default
+`http://localhost:9400/metrics`, `url=` to change it). Scraping one is a plain read of what the
+host already publishes; the sampler never runs `dcgmi`, never starts a host engine and never
+creates a watch, because the DCGM engine is shared with everything else on the node. Without an
+exporter, or when it does not publish the `DCGM_FI_PROF_*` fields, the collector switches itself
+off and GPU activity comes from NVML alone.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -48,18 +69,23 @@ python -m benchmate.nodemon --bench llama &
 
 ## Output
 
-Node metrics are written to `$BENCHMATE_NODEMON_DIR/nodes/`, named by the short host name:
+Node metrics are written under `$BENCHMATE_NODEMON_DIR`, named by the short host name. The rows
+go in `nodes/`, so each host's status and lock stay visible beside it:
 
 ```text
-nodes/
-  <host>.gpu.tsv
-  <host>.nvlink.tsv
-  <host>.ib.tsv
-  <host>.cpu.tsv
-  <host>.mem.tsv
-  <host>.pcie.tsv
+$BENCHMATE_NODEMON_DIR/
   <host>.status.json   # how the sampler started and stopped
   <host>.lock          # ensures one sampler per host
+  nodes/
+    <host>.gpu.tsv
+    <host>.nvlink.tsv
+    <host>.ib.tsv
+    <host>.cpu.tsv
+    <host>.mem.tsv
+    <host>.pcie.tsv
+    <host>.ecc.tsv
+    <host>.edac.tsv
+    <host>.dcgm.tsv    # only where a dcgm-exporter answers
 ```
 
 A collector that is unavailable on a host (no GPU, no InfiniBand) writes no file; the status file says which collectors ran.
@@ -72,9 +98,13 @@ A collector that is unavailable on a host (no GPU, no InfiniBand) writes no file
 
 It also records:
 
+- `schema`: the format of everything in the directory, currently `benchmate.nodemon.v1`;
 - `bench`: the `--bench` name;
+- the run it belongs to, from the environment: `run_name` (`MILABENCH_RUN_NAME`), `campaign`
+  (`TT_CAMPAIGN`), `slurm_job_id`, `slurm_step_id` and `slurm_nodelist`. Whatever is unset is
+  left out;
 - `start` and `end`: in milliseconds since the Unix epoch, like the `time_ms` column;
-- `collectors`: each collector, whether it ran, its period, and `cpu_s`, the CPU seconds its samples used (0 while running, final once stopped);
+- `collectors`: each collector, whether it ran, its period, and `cpu_s`, the CPU seconds its samples used (0 while running, final once stopped). A collector may add its own fields here: the NVML ones publish `gpus`, the index-to-UUID map the rows leave out; `ecc` adds each GPU's `lifetime` error totals; `dcgm` records which `source` it read;
 - `flush_every`;
 - `clock` and `clock_end`: whether the kernel clock was NTP-synchronized and its maximum error in µs. A node with `synced: false` has timestamps that may not line up with other nodes.
 - `stuck`, if present: a collector call hung at shutdown, typically NVML on a failing GPU. Rows collected before it were still written.
@@ -115,8 +145,22 @@ state = sampler.stop(
 python -m pytest benchmate/tests/nodemon
 ```
 
+## Following a run
+
+```bash
+python -m benchmate.nodemon.watch $BENCHMATE_NODEMON_DIR --follow 30
+```
+
+One block per refresh: the lowest SM clock with its throttle reasons, how busy the GPUs are,
+NVLink and IB rates with any error counter that moved, each node's CPU busy-core clock and how
+far it has fallen since the first window, host memory, anything non-zero among XID, ECC, EDAC
+and OOM kills, and any node whose sampler has died while its status still says `running`.
+`--window` sets how much history each refresh covers (60 s by default); without `--follow` it
+prints one block and exits.
+
 ## Not yet done
 
-- milabench does not start the sampler yet. A `NodeMonitor` that launches it next to each benchmark, one per node, is planned.
-- A summarizer that follows all nodes' files live.
+- milabench does not start the sampler itself yet. A pack can start it from its own code (the GLM-5 pack calls
+  `run()` from every rank, see `benchmarks/megatron/main.py`); a `NodeMonitor` that launches it next to every
+  benchmark, one per node, is planned.
 - Upstream the SM clock and throttle reasons into voir's `gpudata`.

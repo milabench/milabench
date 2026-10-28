@@ -5,13 +5,27 @@ from typing import Any
 
 from ..registry import CollectorRegistry, Sink
 from .cpu import CpuCollector
+from .dcgm import DcgmCollector
+from .ecc import EccCollector
+from .edac import EdacCollector
 from .gpu import GpuCollector
 from .ib import IbCollector
 from .mem import MemCollector
 from .nvlink import NvlinkCollector
 from .pcie import PcieCollector
 
-__all__ = ["CpuCollector", "GpuCollector", "IbCollector", "MemCollector", "NvlinkCollector", "PcieCollector", "default_registry"]
+__all__ = [
+    "CpuCollector",
+    "DcgmCollector",
+    "EccCollector",
+    "EdacCollector",
+    "GpuCollector",
+    "IbCollector",
+    "MemCollector",
+    "NvlinkCollector",
+    "PcieCollector",
+    "default_registry",
+]
 
 
 def default_registry(
@@ -30,6 +44,9 @@ def default_registry(
         "cpu": (CpuCollector, 2.0), # a 96-core node takes 2 ms per collection
         "mem": (MemCollector, 1.0),
         "pcie": (PcieCollector, 10.0),  # link states and AER counts change rarely
+        "ecc": (EccCollector, 60.0),  # counters move on the scale of hours; kept apart from gpu, see EccCollector
+        "edac": (EdacCollector, 60.0),  # same, for host memory
+        "dcgm": (DcgmCollector, 1.0),  # off unless DCGM already runs here: see DcgmCollector
     }
     arguments = dict(options or {})
     unknown = set(arguments) - set(collectors)

@@ -2,7 +2,13 @@ import time
 from pathlib import Path
 
 import pytest
-from benchmate.nodemon.collectors import CpuCollector, IbCollector, PcieCollector
+from benchmate.nodemon.collectors import (
+    CpuCollector,
+    DcgmCollector,
+    EdacCollector,
+    IbCollector,
+    PcieCollector,
+)
 
 
 def write(path: Path, text: str) -> None:
@@ -96,3 +102,46 @@ def test_pcie_walks_from_the_gpu_up_to_the_root_port(tmp_path):
     assert rows["0000:02:00.0"]["driver"] == "nvidia"
     assert (rows["0000:02:00.0"]["link_width"], rows["0000:02:00.0"]["max_link_width"]) == (8, 16)
     collector.close()
+
+
+def test_edac_reads_each_controller_and_leaves_a_missing_counter_empty(tmp_path):
+    write(tmp_path / "mc0" / "mc_name", "F17h_M30h")
+    write(tmp_path / "mc0" / "ce_count", "7")
+    write(tmp_path / "mc0" / "ue_count", "0")
+    write(tmp_path / "mc1" / "mc_name", "F17h_M30h")
+    write(tmp_path / "mc1" / "ce_count", "0")  # this controller exposes no ue_count
+    collector = EdacCollector(tmp_path)
+
+    assert collector.probe()
+    first, second = collector.sample(now_s=0.0)
+    collector.close()
+
+    assert (first["mc"], first["mc_name"], first["ce_count"], first["ue_count"]) == ("mc0", "F17h_M30h", 7, 0)
+    assert second["ue_count"] is None
+
+
+EXPORTER_METRICS = """\
+# HELP DCGM_FI_PROF_SM_ACTIVE The ratio of cycles an SM has at least 1 warp assigned.
+DCGM_FI_PROF_SM_ACTIVE{gpu="0",UUID="GPU-a",Hostname="cn-l041"} 0.812
+DCGM_FI_PROF_SM_ACTIVE{gpu="1",UUID="GPU-b",Hostname="cn-l041"} 0.004
+DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{gpu="0",UUID="GPU-a",Hostname="cn-l041"} 0.271
+DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-a",Hostname="cn-l041"} 62
+"""
+
+
+def test_dcgm_reads_both_profiling_series_per_gpu_and_ignores_the_rest(monkeypatch):
+    collector = DcgmCollector()
+    monkeypatch.setattr(collector, "_scrape", lambda: EXPORTER_METRICS)
+
+    first, second = collector.sample(now_s=0.0)
+
+    assert first == {"gpu": 0, "sm_active": 0.812, "tensor_active": 0.271}
+    assert second == {"gpu": 1, "sm_active": 0.004}  # the exporter published no tensor series for it
+
+
+def test_dcgm_is_disabled_when_no_exporter_answers(monkeypatch):
+    collector = DcgmCollector()
+    monkeypatch.setattr(collector, "_scrape", lambda: None)
+
+    assert not collector.probe()
+    assert collector.sample(now_s=0.0) == []

@@ -24,7 +24,7 @@ def status(out: Path, timeout: float = 10.0) -> dict:
     """The sampler's status file, once it exists."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        files = list((out / "nodes").glob("*.status.json"))
+        files = list(out.glob("*.status.json"))
         if files:
             return json.loads(files[0].read_text())
         time.sleep(0.05)

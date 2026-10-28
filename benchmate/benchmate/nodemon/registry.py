@@ -68,16 +68,27 @@ class CollectorRegistry:
         return collector
 
     def describe(self) -> dict[str, dict[str, Any]]:
-        """Each collector's state, period and the CPU seconds its samples have used so far."""
+        """Each collector's state, period, the CPU seconds its samples used, and what it adds itself."""
         return {
             name: {
                 "enabled": entry.collector.enabled,
                 "period_s": entry.period_s,
-                "cpu_s": round(entry.cpu_time, 3)
+                "cpu_s": round(entry.cpu_time, 3),
+                **self._described(entry.collector),
             }
             for name, entry
             in self._entries.items()
         }
+
+    def _described(self, collector: NodeCollector) -> dict[str, Any]:
+        """A collector's own status fields; a broken describe() must not cost us the status file."""
+        try:
+            return collector.describe()
+        except Exception:
+            if collector.name not in self._logged:
+                self._logged.add(collector.name)
+                log.exception(f"Collector {collector.name!r} failed to describe itself.")
+            return {}
 
     def _enabled(self) -> Iterator[_Entry]:
         for entry in list(self._entries.values()):

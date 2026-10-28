@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from .clock import ClockState, clock_state
 from .collector import NodeCollector
-from .collectors import default_registry
+from .collectors import (
+    DcgmCollector,
+    EccCollector,
+    EdacCollector,
+    default_registry,
+)
 from .registry import CollectorRegistry, Sink
 from .runner import (
     RunState,
     Sampler,
     host_lock,
     run,
+    run_identity,
     short_hostname,
 )
 from .sink import TsvSink
@@ -16,6 +22,9 @@ from .sink import TsvSink
 __all__ = [
     "ClockState",
     "CollectorRegistry",
+    "DcgmCollector",
+    "EccCollector",
+    "EdacCollector",
     "NodeCollector",
     "RunState",
     "Sampler",
@@ -25,6 +34,7 @@ __all__ = [
     "default_registry",
     "host_lock",
     "run",
+    "run_identity",
     "short_hostname",
 ]
 

@@ -40,12 +40,16 @@ class TsvSink:
     Rows still pending are lost on SIGKILL; ``close()`` writes them otherwise.
     """
 
+    #: The format of everything one sampler writes: these columns, and the status file.
+    schema = "benchmate.nodemon.v1"
+    #: The rows go one level down, leaving the run's status and lock visible beside it.
+    rows_dir = "nodes"
     #: Columns every row starts with, before the collector's own. The host is in the
     #: file name and the benchmark in the status file, so neither is repeated per row.
     prefix = ("time_ms",)
 
     def __init__(self, out_dir: Path, host: str, flush_every: float = 10.0) -> None:
-        self.directory = Path(out_dir) / "nodes"
+        self.directory = Path(out_dir)
         self.host = host
         self.flush_every = flush_every
         self._files: dict[str, IO[str]] = {}
@@ -56,8 +60,17 @@ class TsvSink:
         self.next_flush = math.inf
         self._schedule()
 
-    def path(self, name: str) -> Path:
-        return self.directory / f"{self.host}.{name}.tsv"
+    def tsv_path(self, name: str) -> Path:
+        """One collector's file: <out_dir>/nodes/<host>.<collector>.tsv."""
+        return self.directory / self.rows_dir / f"{self.host}.{name}.tsv"
+
+    def status_path(self) -> Path:
+        """Where this host's sampler records how it started and stopped."""
+        return self.directory / f"{self.host}.status.json"
+
+    def lock_path(self) -> Path:
+        """The lock that keeps one sampler per host."""
+        return self.directory / f"{self.host}.lock"
 
     def write(self, collector: NodeCollector, rows: list[dict[str, Any]], wall: float) -> None:
         """Format rows and queue them, or write them at once when flush_every is 0."""
@@ -77,8 +90,8 @@ class TsvSink:
 
     def _open(self, collector: NodeCollector) -> None:
         """Open a collector's file for appending; queue a header if it is new or empty."""
-        self.directory.mkdir(parents=True, exist_ok=True)
-        path = self.path(collector.name)
+        path = self.tsv_path(collector.name)
+        path.parent.mkdir(parents=True, exist_ok=True)
         stream = path.open("a")
         self._files[collector.name] = stream
         self._pending[collector.name] = []

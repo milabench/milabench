@@ -49,17 +49,12 @@ def short_hostname() -> str:
     return socket.gethostname().split(".")[0]
 
 
-def lock_path(out_dir: Path, host: str) -> Path:
-    return Path(out_dir) / "nodes" / f"{host}.lock"
-
-
-def host_lock(out_dir: Path, host: str) -> IO[str] | None:
-    """Take this host's sampler lock, or None when another sampler holds it.
+def host_lock(path: Path) -> IO[str] | None:
+    """Take this host's sampler lock, from TsvSink.lock_path(), or None when another sampler holds it.
 
     Keep the returned file open for as long as the sampler runs. The kernel
     releases the lock when the process exits, even on SIGKILL.
     """
-    path = lock_path(out_dir, host)
     path.parent.mkdir(parents=True, exist_ok=True)
     stream = path.open("a")
     try:
@@ -68,6 +63,22 @@ def host_lock(out_dir: Path, host: str) -> IO[str] | None:
         stream.close()
         return None
     return stream
+
+
+def run_identity() -> dict[str, str]:
+    """The run this sampler belongs to, from the environment; what is unset is left out.
+
+    The node list stays as Slurm writes it: expanding it needs scontrol, and
+    the sampler runs no commands of its own.
+    """
+    found = {
+        "run_name": os.getenv("MILABENCH_RUN_NAME"),
+        "campaign": os.getenv("TT_CAMPAIGN"),
+        "slurm_job_id": os.getenv("SLURM_JOB_ID"),
+        "slurm_step_id": os.getenv("SLURM_STEP_ID"),
+        "slurm_nodelist": os.getenv("SLURM_JOB_NODELIST"),
+    }
+    return {field: value for field, value in found.items() if value}
 
 
 def write_status(path: Path, record: dict[str, Any]) -> None:
@@ -150,12 +161,17 @@ def run(
     exits, holding the lock until then.
     """
     host = host or short_hostname()
-    lock = host_lock(out_dir, host)
+    # The sink names every file this host writes. A registry built elsewhere carries its own;
+    # one that writes somewhere else entirely still locks and reports here.
+    sink = registry.sink if registry else None
+    if not isinstance(sink, TsvSink):
+        sink = TsvSink(out_dir, host)
+    lock = host_lock(sink.lock_path())
     if not lock:
         # Expected when every task or rank starts a sampler, hence INFO.
-        log.info(f"A sampler already runs on {host} (it holds {lock_path(out_dir, host)}); not starting another.")
+        log.info(f"A sampler already runs on {host} (it holds {sink.lock_path()}); not starting another.")
         return Sampler(RunState.BUSY)
-    status = Path(out_dir) / "nodes" / f"{host}.status.json"
+    status = sink.status_path()
     # Checked once the lock is held, so a second sampler on this host is BUSY instead.
     # Every run writes its status file before any row, so this also covers its TSV files.
     if status.exists():
@@ -163,7 +179,7 @@ def run(
         log.error(f"An earlier run's output is already in {status.parent} ({status.name}); use a new directory per run.")
         return Sampler(RunState.REFUSED)
     if not registry:
-        registry = default_registry(TsvSink(out_dir, host))
+        registry = default_registry(sink)
     sampler = Sampler(RunState.RUNNING)
     sampler._start(lock, registry, status, bench, join_timeout, check_every)
     # A caller that exits without stop() still writes the last rows and a closed status. It runs
@@ -193,8 +209,10 @@ def _run(
             "this node's row times may not line up with other nodes'."
         )
     record: dict[str, Any] = {
+        "schema": getattr(registry.sink, "schema", None),
         "state": RunState.RUNNING.value,
         "bench": bench,
+        **run_identity(),
         "pid": os.getpid(),
         "start": epoch_ms(time.time()),
         "flush_every": getattr(registry.sink, "flush_every", None),

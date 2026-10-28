@@ -27,6 +27,8 @@ class NvmlCollector(NodeCollector):
     def __init__(self) -> None:
         self._nvml: Any = None
         self._gpus: list[Gpu] = []
+        #: index -> UUID, for the status file. Survives close(), which the status file is written after.
+        self._uuid_of: dict[int, str] = {}
 
     def probe(self) -> bool:
         """Initialize NVML and open every GPU _open() accepts; False without bindings, a driver or GPUs."""
@@ -62,6 +64,7 @@ class NvmlCollector(NodeCollector):
                 uuid = _text(pynvml.nvmlDeviceGetUUID(handle))
             except pynvml.NVMLError:
                 continue
+            self._uuid_of[index] = uuid
             yield Gpu(index, handle, uuid)
 
     def _init(self) -> bool:
@@ -73,6 +76,16 @@ class NvmlCollector(NodeCollector):
         """Set up one GPU; False leaves it out."""
         # The base case: keep every GPU. NvlinkCollector overrides it.
         return True
+
+    def describe(self) -> dict[str, Any]:
+        """The GPUs this collector opened, so the rows can carry an index instead of a UUID."""
+        return {
+            "gpus": {
+                str(index): uuid
+                for index, uuid
+                in sorted(self._uuid_of.items())
+            }
+        }
 
     def _query(self, gpu: Gpu, key: str, query: Any, *args: Any) -> Any:
         """One NVML query, None when it fails; never asked again once "not supported"."""

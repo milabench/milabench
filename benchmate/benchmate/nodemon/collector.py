@@ -24,6 +24,10 @@ class NodeCollector(ABC):
     def sample(self, now_s: float) -> list[dict[str, Any]]:
         """One row per entity; `now_s` is time.monotonic(), for rates."""
 
+    def describe(self) -> dict[str, Any]:
+        """What this collector adds to the status file; called before probe() and after close()."""
+        return {}
+
     def close(self) -> None:
         """Release what probe() opened."""
 
