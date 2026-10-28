@@ -357,13 +357,30 @@ def report_a2a(log):
 
 # --- metrics -----------------------------------------------------------------------------------------------------
 
+def report_peak_memory(log):
+    """Peak GPU memory of this rank after the first step. ``log`` is every rank's own sink (benchmate.monitor.metric_log):
+    rank 0 -> milabench, the other ranks -> their rankstore file (merged afterwards by ``LocalMetricStore.read``).
+
+    Per rank, with its pipeline stage: the last stage (FP32 logits) is the one most likely to run out of memory."""
+    from megatron.core import parallel_state
+
+    gib = 2**30
+    allocated = torch.cuda.max_memory_allocated() / gib
+    reserved = torch.cuda.max_memory_reserved() / gib
+    stage = parallel_state.get_pipeline_model_parallel_rank()
+    log({"peak_memory_allocated": allocated, "peak_memory_reserved": reserved, "pp_stage": stage, "units": "GiB",
+         "task": "main", "time": time.time()})
+
+
 def patch_train_step(log):
     import megatron.training.training as training
     from megatron.training import get_args
 
     import step_metrics
+    from benchmate.monitor import metric_log
 
     steps = step_metrics.install(log)
+    rank_log = metric_log()  # rank 0: milabench, other ranks: rankstore
     original = training.train_step
     state = {"step": 0}
 
@@ -376,16 +393,18 @@ def patch_train_step(log):
         if state["step"] == 1 and log is not None:
             # launch -> end of the first (warm-up) step: imports, init, model build, first step
             log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
+        if state["step"] == 1:
+            report_peak_memory(rank_log)  # every rank
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
             PLACEMENT["steps"] += 1
             if state["step"] % PLACEMENT["every"] == 0:
                 # the report syncs with the GPU and runs a collective: keep it out of the measured step time
                 report_a2a(log)
                 steps.restart_clock()
-        if log is not None:
-            loss_dict = result[0] if isinstance(result, tuple) else {}
-            if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
-                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
+        # if log is not None:
+        #     loss_dict = result[0] if isinstance(result, tuple) else {}
+        #     if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
+        #         log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
         return result
 
     training.train_step = timed
@@ -429,14 +448,17 @@ def main():
     # Megatron parses sys.argv: nothing of ours must be left in it
     argv = sys.argv[1:]
 
+    # one node monitor per node (local rank 0): rank 0's goes to milabench, the others' to their rankstore file
+    # (benchmate.monitor.metric_log). Only rank 0 reports the run itself (steps, loss, placement).
     log = monitor = None
-    if rank() == 0:
+    if int(os.environ.get("LOCAL_RANK", "0")) == 0:
         from benchmate.monitor import setupvoir
 
-        log, monitor = setupvoir(monogpu=False, interval=0.5)
-        log = with_wandb(log)
-        LOG = log
-        report_placement(cfg, argv)
+        node_log, monitor = setupvoir(monogpu=False, interval=0.5)
+        if rank() == 0:
+            log = with_wandb(node_log)
+            LOG = log
+            report_placement(cfg, argv)
 
     spec = freeze_patterns(cfg.get("frozen"))
     debug("frozen:", spec)

@@ -133,6 +133,12 @@ class MegatronGlm5(Slime):
                 f"placement.nodes={self.placement().get('nodes')} gives {len(ordered)} nodes, the entry wants {want} "
                 f"(num_machines): nodes were excluded, set num_machines to {len(ordered)} for all the runs you compare"
             )
+        if len(ordered) > want:
+            raise RuntimeError(
+                f"placement.nodes={self.placement().get('nodes')} gives {len(ordered)} nodes, the entry wants {want} "
+                f"(num_machines): the world size would not match the layout (EP x PP), use a placement that trims the "
+                f"last partial expert group (nodes: leaf) or allocate {want} nodes"
+            )
         system["nodes"] = ordered
 
     def build_run_plan(self):
