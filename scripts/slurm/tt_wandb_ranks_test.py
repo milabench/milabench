@@ -5,7 +5,7 @@ Each Slurm task is one rank. It names its run as the benchmark does
 WandBLogger and logs, every ``log_freq`` steps, the keys a real run logs
 (TorchTitan's and ours) with synthetic values, then the same config (worker
 identity, run block) and summary keys. It also writes the per-rank step files
-(metrics.<rank>.jsonl). Two anomalies to find in the dashboards:
+(metrics.<bench>.<host>.<rank>.jsonl, rows as the benchmark writes them). Two anomalies to find in the dashboards:
 
     DUMMY_SLOW_DATA_RANK   rank with data-loader stalls (default 5)
     DUMMY_HEAVY_NODE       node index using ~2 GiB more memory (default 2)
@@ -100,11 +100,11 @@ def main(steps: int = 230, pause: float = 0.2) -> None:
     mem_extra = 2.0 if node_index == heavy_node else 0.0
     rng = random.Random(100 + rank)
 
-    rank_dir = os.environ.get("TT_RANK_METRICS_DIR")
     rank_file = None
-    if rank_dir:
-        os.makedirs(rank_dir, exist_ok=True)
-        rank_file = open(os.path.join(rank_dir, f"metrics.{rank}.jsonl"), "w")
+    if os.environ.get("TT_RANK_METRICS_DIR"):
+        path = instrument.rank_metrics_path(rank, host)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        rank_file = open(path, "w")
         rank_file.write(json.dumps({"rank": rank, "kind": "worker", "time": time.time(), **worker}) + "\n")
 
     clock = t0
@@ -114,11 +114,12 @@ def main(steps: int = 230, pause: float = 0.2) -> None:
         measuring = step > SKIP
         if rank_file:
             rank_file.write(json.dumps({
-                "rank": rank, "kind": "step", "step": step, "time": clock,
-                "data_wait_s": waits[step - 1], "local_tokens": TOKENS_PER_GPU,
+                "rank": rank, "kind": "step", "batch_id": step, "task": "train", "time": clock,
+                "next": waits[step - 1], "local_tokens": TOKENS_PER_GPU,
                 "mem_allocated_gib": 32.16 + mem_extra + rng.uniform(-0.01, 0.01),
-                "measuring": measuring, "step_s": shared[step - 1],
-                "step_s_source": "cuda_events" if measuring else "wall",
+                "measuring": measuring, "elapsed": shared[step - 1],
+                "elapsed_source": "cuda_events" if measuring else "wall",
+                "rate": TOKENS_PER_GPU / shared[step - 1],
             }) + "\n")
         if not (step == 1 or step % LOG_FREQ == 0):
             continue

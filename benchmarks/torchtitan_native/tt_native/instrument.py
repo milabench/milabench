@@ -31,12 +31,18 @@ Summary
 
 Per-rank step rows (level 2, live)
     Every rank appends one JSONL row per step to its own file (no collective),
-    flushed on TorchTitan's logging steps, after the sync they already do:
-    step time (wall clock during warm-up, device events once measuring), data
-    wait, local tokens, allocated memory. The first row identifies the worker
-    (host, GPU index, UUID, PCI bus). Directory: ``TT_RANK_METRICS_DIR``, else
-    ``$MILABENCH_DIR_RUNS/rank-metrics/<job>-<tag>``; files ``metrics.<rank>.jsonl``
-    (rows carry ``rank`` and ``time``, as benchmate's rankstore).
+    flushed on TorchTitan's logging steps, after the sync they already do.
+    Files and field names follow benchmate's rankstore, so its
+    ``LocalMetricStore.read()`` merges them: ``metrics.<bench>.<host>.<rank>.jsonl``
+    in the run directory (``MILABENCH_DIR_RUN``; ``MILABENCH_LOCAL_METRICS``
+    overrides the base name, ``TT_RANK_METRICS_DIR`` the directory). Step rows:
+    ``batch_id`` (TorchTitan step, from 1), ``elapsed`` (step time: wall clock
+    during warm-up, device events once measuring), ``next`` (data wait),
+    ``rate`` (this rank's tokens/s), local tokens, allocated memory. The first
+    row identifies the worker (host, GPU index, UUID, PCI bus); ``overhead``
+    rows give the time spent writing the previous flush (``process_time``).
+    Rank 0 writes its file too (benchmate's ranks 1+ only), so every rank's
+    file has the same rows.
 
 wandb (level-1 metrics, rank 0)
     TorchTitan's MetricsProcessor logs to wandb when enabled (``wandb`` option
@@ -326,6 +332,24 @@ def _wandb_run():
     return wandb.run if wandb is not None else None
 
 
+def _host() -> str:
+    return socket.gethostname().split(".")[0]
+
+
+def rank_metrics_path(rank: int, host: str) -> str:
+    """This rank's level-2 file, named as benchmate's rankstore names it:
+    ``<dir>/metrics.<bench>.<host>.<rank>.jsonl``."""
+    bench = json.loads(os.environ.get("MILABENCH_CONFIG", "{}")).get("name")
+    name = f"metrics.{bench}.jsonl" if bench else "metrics.jsonl"
+    if os.environ.get("TT_RANK_METRICS_DIR"):
+        base = os.path.join(os.environ["TT_RANK_METRICS_DIR"], name)
+    else:
+        runs = os.environ.get("MILABENCH_DIR_RUN") or os.environ.get("MILABENCH_DIR_RUNS", ".")
+        base = os.environ.get("MILABENCH_LOCAL_METRICS") or os.path.join(runs, name)
+    stem = base[: -len(".jsonl")] if base.endswith(".jsonl") else base
+    return f"{stem}.{host}.{rank}.jsonl"
+
+
 def _local_gpu() -> tuple[int, str | None]:
     local_rank = int(os.environ.get("LOCAL_RANK", torch.cuda.current_device()))
     try:
@@ -348,7 +372,7 @@ def _worker() -> dict[str, Any]:
     return {
         "rank": _rank(),
         "local_rank": local_rank,
-        "host": socket.gethostname().split(".")[0],
+        "host": _host(),
         "cuda_device": torch.cuda.current_device(),
         "gpu_uuid": uuid,
         "gpu_pci_bus_id": pci,
@@ -475,28 +499,40 @@ class TrainerInstrument:
             index = row.pop("_end_index", None)
             if index is not None:
                 ends = self._step_ends
-                row["step_s"] = ends[index - 1].elapsed_time(ends[index]) / 1000
-                row["step_s_source"] = "cuda_events"
+                row["elapsed"] = ends[index - 1].elapsed_time(ends[index]) / 1000
+                row["elapsed_source"] = "cuda_events"
+            if row.get("elapsed"):
+                row["rate"] = row["local_tokens"] / row["elapsed"]
+        start = time.perf_counter()
         try:
             f = self._open_rank_file()
             f.write("".join(json.dumps({"rank": _rank(), **r}) + "\n" for r in rows))
             f.flush()
         except OSError as exc:  # never stop training for a metrics file
             print(f"[tt-native] rank metrics write failed: {exc!r}", flush=True)
-        waits = [r["data_wait_s"] for r in rows]
+        # Written with the next flush (benchmate's process_time).
+        self._pending_rows.append(
+            {
+                "kind": "overhead",
+                "batch_id": rows[-1]["batch_id"],
+                "time": time.time(),
+                "process_time": time.perf_counter() - start,
+                "units": "s",
+            }
+        )
+        waits = [r["next"] for r in rows if r["kind"] == "step"]
+        if not waits:
+            return {}
         return {"dataloader_wait": statistics.median(waits), "dataloader_wait_max": max(waits)}
 
     def _open_rank_file(self):
         if self._rank_file is None:
             run = run_block()
-            directory = os.environ.get("TT_RANK_METRICS_DIR") or os.path.join(
-                os.environ.get("MILABENCH_DIR_RUNS", "."),
-                "rank-metrics",
-                f"{run['slurm_job_id'] or 'local'}-{run['run_tag'] or run['variant'] or 'run'}",
-            )
-            os.makedirs(directory, exist_ok=True)
+            path = rank_metrics_path(_rank(), _host())
+            directory = os.path.dirname(path)
+            os.makedirs(directory or ".", exist_ok=True)
             self.rank_metrics_dir = directory
-            self._rank_file = open(os.path.join(directory, f"metrics.{_rank()}.jsonl"), "a")
+            self._rank_file = open(path, "a")
             header = {"rank": _rank(), "kind": "worker", "time": time.time(), **_worker(), "run": run}
             self._rank_file.write(json.dumps(header) + "\n")
         return self._rank_file
@@ -528,9 +564,10 @@ class TrainerInstrument:
             self.compile = compile_stats()
         row = {
             "kind": "step",
-            "step": step,
+            "batch_id": step,
+            "task": "train",
             "time": time.time(),
-            "data_wait_s": self._data_time_acc,
+            "next": self._data_time_acc,
             "local_tokens": self._local_tokens,
             "mem_allocated_gib": torch.cuda.memory_allocated() / 1024**3,
             "measuring": self.timer is not None,
@@ -538,7 +575,7 @@ class TrainerInstrument:
         self._pending_rows.append(row)
         if self.timer is None:
             self._warmup_walls.append(wall)
-            row["step_s"], row["step_s_source"] = wall, "wall"
+            row["elapsed"], row["elapsed_source"] = wall, "wall"
             self._data_time_acc = 0.0
             return
         end = torch.cuda.Event(enable_timing=True)
@@ -740,8 +777,9 @@ class TrainerInstrument:
             ],
             "rank_metrics": {
                 "dir": self.rank_metrics_dir,
-                "files": "metrics.<rank>.jsonl",
-                "rows": "worker header, then one row per step (step_s, data_wait_s, local_tokens, mem_allocated_gib)",
+                "files": "metrics.<bench>.<host>.<rank>.jsonl (benchmate rankstore)",
+                "rows": "worker header, then one row per step (batch_id, elapsed, next, rate, "
+                "local_tokens, mem_allocated_gib) and overhead rows (process_time)",
             },
             "deviations": deviations(),
             "estimates": [],
