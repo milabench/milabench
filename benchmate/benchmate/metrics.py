@@ -605,7 +605,7 @@ class TimedIterator:
             else:
                 rate, elapsed = self._make_rate(event, global_batch_size=False)
                 self.last_time += elapsed
-                self.ranked_log(rate=rate, ime=self.last_time, elapsed=elapsed, batch_id=batch_id, chedule_time=event.cpu_timer)
+                self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
            
         self.total_obs += len(self.events)
         self.events = []
@@ -686,7 +686,7 @@ class TimedIterator:
             )
 
     def log_progress(self):
-        if self.early_stop is not None:
+        if self.rank is None or self.rank == 0 and self.early_stop is not None:
             progress = self.progress()
             self.message(progress=(progress, self.early_stop), task="early_stop")
 
