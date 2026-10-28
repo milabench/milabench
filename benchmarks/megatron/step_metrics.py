@@ -25,6 +25,26 @@ class LocalBatchTimer(ManualTimedIterator):
         return bs
 
 
+class SlowLoader:
+    """Fake dataloading stall, to see what a starved GPU looks like in the timers: ``BENCHMATE_FAKE_DATA_LATENCY``
+    seconds of sleep before every ``BENCHMATE_FAKE_DATA_EVERY``-th batch (default 5), 0 = off."""
+
+    def __init__(self, loader, latency, every):
+        self.loader, self.latency, self.every = loader, latency, max(every, 1)
+
+    def __iter__(self):
+        for i, batch in enumerate(self.loader):
+            if i % self.every == self.every - 1:
+                time.sleep(self.latency)
+            yield batch
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __getattr__(self, item):
+        return getattr(self.loader, item)
+
+
 class StepTimer:
     """``push_every``: flush the queued step events every N steps (each flush waits for the GPU) and at ``flush()``."""
 
@@ -40,6 +60,9 @@ class StepTimer:
 
     def wrap_loader(self, loader):
         """The wrapped loader is a drop-in replacement: Megatron only iterates it."""
+        latency = float(os.getenv("BENCHMATE_FAKE_DATA_LATENCY", 0))
+        if latency > 0:  # inside the timer: the stall is part of ``next``
+            loader = SlowLoader(loader, latency, int(os.getenv("BENCHMATE_FAKE_DATA_EVERY", 5)))
         self.timer = LocalBatchTimer(
             loader,
             event_fn=default_event(),
