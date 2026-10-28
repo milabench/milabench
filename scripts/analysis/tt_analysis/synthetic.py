@@ -217,6 +217,7 @@ def write_srygaard(root, cluster, job, by_leaf, rng, bad=None, mode="switch", wh
 
 GPU_COLUMNS = ["time_ms", "gpu", "sm_clock_mhz", "clocks_event_reasons", "power_w",
                "temp_c", "util", "util_mean", "util_min", "util_samples", "xid"]
+GPM_COLUMNS = ["time_ms", "gpu", "sm_util", "sm_occupancy", "tensor_util", "dram_bw_util"]
 CPU_COLUMNS = ["time_ms", "package", "busy_cores", "cpu_mhz_busy_mean", "cpu_mhz_min", "cpu_mhz_max",
                "cpu_mhz_mean", "cpu_mhz_cap", "cpu_util", "cpu_temp_c", "thermal_throttle_count",
                "governor"]
@@ -238,7 +239,7 @@ def write_nodemon(root, cluster, run_name, bench, hosts, t0, t1, slow=None, cpu_
     out = root / cluster / "nodemon" / run_name / "nodes"
     out.mkdir(parents=True, exist_ok=True)
     for h in hosts:
-        gpu_rows, cpu_rows = [], []
+        gpu_rows, gpm_rows, cpu_rows = [], [], []
         for t in np.arange(t0, t1, 30.0):
             ms = f"{t * 1000:.0f}"
             dip = slow and slow[2] <= t - t0 < slow[3]
@@ -254,6 +255,8 @@ def write_nodemon(root, cluster, run_name, bench, hosts, t0, t1, slow=None, cpu_
                                  f"{(430 if is_slow else 560) + rng.normal(0, 15):.6g}",
                                  f"{(84 if is_slow else 62) + rng.normal(0, 1.5):.6g}", f"{util:.6g}",
                                  f"{busy:.6g}", f"{busy - 0.08:.6g}", 180, ""])
+                tensor = 0.27 if is_slow else (0.19 if dip else 0.21)
+                gpm_rows.append([ms, g, "", "", f"{tensor + rng.normal(0, 0.005):.3f}", ""])
             low = bool(cpu_slow and h == cpu_slow[0] and cpu_slow[1] <= t - t0 < cpu_slow[2])
             for package in (0, 1):
                 mhz = (2560 if low else 3700) + rng.normal(0, 25)
@@ -261,33 +264,19 @@ def write_nodemon(root, cluster, run_name, bench, hosts, t0, t1, slow=None, cpu_
                                  f"{mhz - 400:.0f}", "", f"{0.52 + rng.normal(0, 0.01):.6g}",
                                  f"{(72 if low else 58) + rng.normal(0, 1):.6g}", "", ""])
         _write_tsv(out / f"{h}.gpu.tsv", GPU_COLUMNS, gpu_rows)
+        _write_tsv(out / f"{h}.gpm.tsv", GPM_COLUMNS, gpm_rows)
         _write_tsv(out / f"{h}.cpu.tsv", CPU_COLUMNS, cpu_rows)
         # The GPU UUIDs are in the status file, not on every row: that is where the join with
         # the run summary's per_rank[].gpu_uuid starts.
         gpus = {str(g): _gpu_uuid(h, g) for g in range(4)}
-        (out / f"{h}.status.json").write_text(json.dumps({
+        (out.parent / f"{h}.status.json").write_text(json.dumps({
             "schema": "benchmate.nodemon.v1", "state": "closed", "bench": bench,
             "run_name": run_name, "pid": 1, "start": round(t0 * 1000),
             "end": round(t1 * 1000), "reason": "signal SIGTERM", "flush_every": 10.0,
             "collectors": {"gpu": {"enabled": True, "period_s": 30.0, "gpus": gpus},
+                           "gpm": {"enabled": True, "period_s": 30.0, "gpus": gpus},
                            "cpu": {"enabled": True, "period_s": 30.0}},
             "clock": {"synced": True, "maxerror_us": 53126}}))
-
-
-def write_dcgm(root, cluster, name, hosts, t0, t1, slow=None):
-    """DCGM export (Prometheus range query flattened), the fallback source of section 3."""
-    rng = np.random.default_rng(7)
-    lines = ["time,host,gpu,metric,value"]
-    for t in np.arange(t0, t1, 30.0):
-        for h in hosts:
-            for g in range(4):
-                is_slow = slow and h == slow[0] and g == slow[1] and slow[2] <= t - t0 < slow[3]
-                tensor = 0.27 if is_slow else (0.19 if slow and slow[2] <= t - t0 < slow[3] else 0.21)
-                value = tensor + rng.normal(0, 0.005)
-                lines.append(f"{t:.0f},{h},{g},DCGM_FI_PROF_PIPE_TENSOR_ACTIVE,{value:.3f}")
-    out = root / cluster / "dcgm"
-    out.mkdir(parents=True, exist_ok=True)
-    (out / f"{name}.csv").write_text("\n".join(lines) + "\n")
 
 
 def generate(raw: Path, out: Path) -> None:
@@ -333,9 +322,6 @@ def generate(raw: Path, out: Path) -> None:
     cpu_slow = "rg21701" if "rg21701" in hosts else hosts[0]
     write_nodemon(out, "rorqual", "syn-all63-long", "tt-w-n63", hosts, measure_start, t_end,
                   slow=("rg31605", 2, 2100, 2700), cpu_slow=(cpu_slow, 1800, 2400))
-    # Fallback source (FORMAT.md section 3): a DCGM export of the same run's tensor activity.
-    write_dcgm(out, "rorqual", "syn-all63-long-dcgm", hosts[:4], measure_start, t_end,
-               slow=("rg31605", 2, 2100, 2700))
 
     # Same placement families on the 4-HCA clusters, on their real topologies: Fir has 8 GPU
     # leaves of 20 nodes (C1xx), Tamia 5 leaves of 8-16. S and H cover 3-12 nodes on both; 1 per

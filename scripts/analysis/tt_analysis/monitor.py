@@ -1,11 +1,8 @@
 """Node telemetry -> ``gpu_monitor`` rows (long format).
 
-Two sources (FORMAT.md section 3):
-- benchmate.nodemon run directories (``nodemon/<run_name>/nodes/<host>.<collector>.tsv``),
-  one wide TSV per collector, melted here; the directory name is the run name, which is
-  what joins the telemetry with the run data;
-- DCGM exports (``dcgm/<name>.csv``), already long, with the DCGM field names mapped onto
-  the nodemon ones so both sources share one vocabulary.
+benchmate.nodemon run directories (``nodemon/<run_name>/nodes/<host>.<collector>.tsv``, FORMAT.md
+section 3): one wide TSV per collector, melted here; the directory name is the run name, which is
+what joins the telemetry with the run data.
 """
 
 from __future__ import annotations
@@ -29,19 +26,8 @@ ENTITY_COLUMNS = {
     "pcie": ["device", "driver"],
     "ecc": ["gpu"],
     "edac": ["mc"],
-    "dcgm": ["gpu"],
+    "gpm": ["gpu"],
 }
-
-# DCGM field -> the nodemon metric it stands for; unlisted fields keep their DCGM name.
-DCGM_METRIC = {
-    "DCGM_FI_DEV_SM_CLOCK": "sm_clock_mhz",
-    "DCGM_FI_DEV_CLOCKS_EVENT_REASONS": "clocks_event_reasons",
-    "DCGM_FI_DEV_POWER_USAGE": "power_w",
-    "DCGM_FI_DEV_GPU_TEMP": "temp_c",
-    "DCGM_FI_DEV_GPU_UTIL": "util",
-}
-# DCGM reports utilization in percent, nodemon as a fraction.
-DCGM_SCALE = {"DCGM_FI_DEV_GPU_UTIL": 0.01}
 
 COLUMNS = ["cluster", "source", "schema", "host", "entity", "gpu", "gpu_uuid", "metric",
            "value", "text", "time", "bench", "truncated", "synthetic"]
@@ -62,12 +48,12 @@ def _entity(frame: pd.DataFrame, collector: str) -> pd.Series:
     keys = [c for c in ENTITY_COLUMNS[collector] if c != "gpu_uuid" and c in frame.columns]
     if not keys:
         return pd.Series("", index=frame.index)
-    return frame[keys].astype(str).agg(":".join, axis=1)
+    return frame[keys].fillna("").astype(str).agg(lambda row: ":".join(v for v in row if v), axis=1)
 
 
-def _status(nodes: Path, host: str) -> dict:
-    """One host's sampler status file, or an empty dict when it is missing."""
-    path = nodes / f"{host}.status.json"
+def _status(run: Path, host: str) -> dict:
+    """One host's sampler status file, which sits beside ``nodes/``; empty when it is missing."""
+    path = run / f"{host}.status.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text())
@@ -101,7 +87,7 @@ def parse_nodemon(run: Path, cluster: str, synthetic: bool = False) -> pd.DataFr
         long["host"] = host
         if "gpu" not in long.columns:
             long["gpu"] = pd.NA
-        status = _status(nodes, host)
+        status = _status(run, host)
         if "gpu_uuid" not in long.columns:
             long["gpu_uuid"] = long.gpu.map(_gpu_uuids(status))
         long["schema"] = status.get("schema") or SCHEMA
@@ -117,23 +103,3 @@ def parse_nodemon(run: Path, cluster: str, synthetic: bool = False) -> pd.DataFr
     out["source"] = run.name
     out["synthetic"] = synthetic
     return out[COLUMNS]
-
-
-def parse_dcgm(export: Path, cluster: str, synthetic: bool = False) -> pd.DataFrame:
-    """One DCGM export (Prometheus range query, flattened) -> the same long rows."""
-    df = pd.read_csv(export)
-    if df.empty:
-        return pd.DataFrame(columns=COLUMNS)
-    df["value"] = df.value * df.metric.map(DCGM_SCALE).fillna(1.0)
-    df["metric"] = df.metric.map(lambda m: DCGM_METRIC.get(m, m))
-    df["entity"] = df.gpu.astype(str)
-    df["gpu"] = df.gpu.astype("Int64")
-    df["gpu_uuid"] = df.uuid if "uuid" in df.columns else None
-    df["text"] = df.value.astype(str)
-    df["bench"] = None
-    df["truncated"] = False
-    df["cluster"] = cluster
-    df["source"] = export.stem
-    df["schema"] = "dcgm"
-    df["synthetic"] = synthetic
-    return df[COLUMNS]

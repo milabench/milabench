@@ -158,16 +158,16 @@ lines; the condition is the first word of the file name when it is not a host na
 ## 3. System telemetry: nodemon TSV on `$SCRATCH`
 
 `benchmate.nodemon` samples every node of the job, one process per host, beside the benchmark
-and independent of it. It replaces the DCGM export and adds CPU clocks, IB, PCIe, XID, GPU ECC
-and host EDAC; where a `dcgm-exporter` already runs it also scrapes the two profiling fields
-NVML cannot give.
+and independent of it. It records CPU clocks, IB, PCIe, XID, GPU ECC
+and host EDAC; on Hopper it also reads the SM and tensor-pipe counters (GPM) NVML's ordinary
+calls cannot give.
 
 ### Layout
 
 ```
-$SCRATCH/tt38/nodemon/<run_name>/nodes/<host>.<collector>.tsv
-                                       <host>.status.json
-                                       <host>.lock
+$SCRATCH/tt38/nodemon/<run_name>/<host>.status.json
+                                 <host>.lock
+                                 nodes/<host>.<collector>.tsv
 ```
 
 `BENCHMATE_NODEMON_DIR` points at that directory; unset, the sampler is disabled. **Its name
@@ -194,7 +194,7 @@ run writes no file, and `status.json` says which.
 | `<host>.pcie.tsv` | 10 s | device | `device driver link_width max_link_width link_speed max_link_speed aer_fatal aer_nonfatal aer_correctable` |
 | `<host>.ecc.tsv` | 60 s | GPU | `gpu ecc_uncorrected remap_pending remap_failure` |
 | `<host>.edac.tsv` | 60 s | memory controller | `mc mc_name ce_count ue_count` |
-| `<host>.dcgm.tsv` | 1 s | GPU | `gpu sm_active tensor_active` — only where a `dcgm-exporter` already runs on the node |
+| `<host>.gpm.tsv` | 1 s | GPU | `gpu sm_util sm_occupancy tensor_util dram_bw_util` — Hopper and newer only |
 
 ```
 time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util_min	util_samples	xid
@@ -216,8 +216,8 @@ Three columns need their definition read before they are compared:
   **`util_mean` is the duty cycle over the interval, and the column to compare GPUs with.**
 - `xid` is empty on almost every row; a critical XID carries its code, or several `;`-joined,
   stamped with the tick that drained the event queue — up to one period late.
-- `sm_active` and `tensor_active` are DCGM profiling fractions in 0–1, from the node's exporter
-  rather than from nodemon's own reads.
+- `gpm` columns are fractions in 0–1 over the interval since the previous tick, so the first row
+  of a run is empty.
 
 ### What the analysis uses
 
@@ -225,21 +225,16 @@ Three columns need their definition read before they are compared:
 |---|---|---|
 | SM clock, clock-event reasons | `gpu.sm_clock_mhz`, `gpu.clocks_event_reasons` | throttling (stability, Fig. 9) |
 | power, temperature | `gpu.power_w`, `gpu.temp_c` | cause of throttling |
-| GPU activity, SM clock, CPU busy-core clock | `dcgm.tensor_active` else `gpu.util_mean` else `gpu.util`, `gpu.sm_clock_mhz`, `cpu.cpu_mhz_busy_mean` | stragglers (Fig. 10) |
+| GPU activity, SM clock, CPU busy-core clock | `gpm.tensor_util` else `gpu.util_mean` else `gpu.util`, `gpu.sm_clock_mhz`, `cpu.cpu_mhz_busy_mean` | stragglers (Fig. 10) |
 | NVLink and IB rates, IB errors | `nvlink.*_per_s`, `ib.*_per_s`, `ib.xmit_wait`, `ib.symbol_error`, `ib.link_downed` | traffic, link faults |
 | memory, OOM kills, AER counts | `mem.*`, `pcie.aer_*` | failures and node triage |
 | XID, GPU ECC, host ECC | `gpu.xid`, `ecc.*`, `edac.ce_count`, `edac.ue_count` | hardware faults during the run |
 
-**The straggler signal depends on what the node offers.** The figure takes the sharpest of
-three, in order: `tensor_active` (tensor-pipe occupancy, only where the node runs a
-`dcgm-exporter` that publishes the profiling fields), then `util_mean` (the GPU's duty cycle
-over the whole interval, always available), then `util` (one reading per tick, the weakest).
-All three are read the same way — per GPU, the median of its busiest 10-minute window — so the
-figure is comparable across runs, but its y-axis names which one it used. Alongside it, the SM
-clock and, per node, the CPU busy-core clock: the rg21701 case, where the CPU fell from ~3,700
-to ~2,560 MHz and the run lost ~25 % of its throughput, is visible in `cpu_mhz_busy_mean`
-alone. Only `tensor_active` measures tensor-pipe occupancy, so where no exporter answers,
-GPUs that are all busy are still ranked less sharply.
+**The straggler figure takes the sharpest signal the node offers**: `gpm.tensor_util` (tensor-pipe
+occupancy, Hopper only), else `util_mean` (duty cycle, always there), else `util`; per GPU, the
+median of its busiest 10-minute window, with the y-axis naming which. Alongside it, the SM clock
+and, per node, the CPU busy-core clock: the rg21701 case, where the CPU fell from ~3,700 to
+~2,560 MHz and the run lost ~25 % of its throughput, is visible in `cpu_mhz_busy_mean` alone.
 
 ### Joining with the run
 
@@ -251,7 +246,7 @@ GPUs that are all busy are still ranked less sharply.
 
 ### Status file
 
-`nodes/<host>.status.json`, written at start and rewritten at exit:
+`<host>.status.json`, written at start and rewritten at exit:
 
 ```jsonc
 {"schema": "benchmate.nodemon.v1", "state": "closed",    // running | closed | failed
@@ -264,14 +259,14 @@ GPUs that are all busy are still ranked less sharply.
                 "ecc": {"...": null,
                         "lifetime": {"0": {"ecc_aggregate_uncorrected": 0,
                                            "remapped_corrected": 0, "remapped_uncorrected": 0}}},
-                "dcgm": {"enabled": false, "url": "http://localhost:9400/metrics"}},
+                "gpm": {"enabled": false}},
  "clock": {"synced": true, "maxerror_us": 53126}, "clock_end": {"...": null}}
 ```
 
 Reader rules: `state: "running"` with a last row older than ~2 × `flush_every` means the
 sampler was killed, so the series is truncated; a final line without a newline is dropped.
-`enabled: false` means the collector probed false and wrote no file (`dcgm` without an
-exporter, `ib` without an HCA). `clock.synced: false` or a large `maxerror_us` means this
+`enabled: false` means the collector probed false and wrote no file (`gpm` before
+Hopper, `ib` without an HCA). `clock.synced: false` or a large `maxerror_us` means this
 node's timestamps cannot be lined up with the others. The run-identity fields appear only when
 the launcher exported them, so the directory name stays the join of record. `gpus` and
 `lifetime` are inventory, not a series: read once.
@@ -386,7 +381,7 @@ Reader rules:
   version; renaming or removing a field bumps it.
 - The analysis has one adapter per schema version. Current adapters:
   `milabench.torchtitan_native.v2` (mapping in `tt_analysis/runs.py:_v2_fields`) and
-  `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v1` and the DCGM export
+  `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v1`
   (`tt_analysis/monitor.py`); `benchmate.rankmetrics.v1` (section 4) has no reader yet.
 - Runs before the v2 measurement path (2026-10-21) are excluded.
 
@@ -408,10 +403,9 @@ Reader rules:
 | 7 | same events from Megatron (voirfile or converter) | GLM-5 pipeline | MoE section | medium |
 | 8 | `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` exported by the launcher, and nodemon merged into the run branches (the GLM-5 pack starts it already) | `tt_variants.sh`, `feat/nodemon` | stability, stragglers, CPU-clock stragglers | small |
 | 8c | `NodeMonitor` sidecar so milabench starts the sampler on every node of every bench | `milabench/commands/`, `multi.py` | today each pack starts it itself, or the sbatch wrapper does | medium |
-| 8d | DCGM export (fields, interval, access), **optional**: only for nodes with no local `dcgm-exporter`, and only for tensor-pipe activity | admins / whoever runs Prometheus | sharper straggler ranking (Fig. 10) | to discuss |
 | 9 | per-rank step TSV (`benchmate.rankmetrics.v1`, section 4) on the data-parallel leaders, with `ranks.json` | benchmate (`rankmetrics.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
 
 Still open: per-rank compute vs. NCCL time. The section 4 columns give its coarse form
 (step time minus the timed stages), on the instrumented ranks only; `util_mean` is a duty
-cycle, not tensor-pipe occupancy, so if Fig. 10 does not separate the GPUs on nodes without an
-exporter, the kernel-level measurement comes back (or a DCGM export, item 8d). Not requested: fixing voir's empty `gpudata` (nodemon covers it; still a bug).
+cycle, not tensor-pipe occupancy, so if Fig. 10 does not separate the GPUs on nodes without GPM,
+the kernel-level measurement comes back. Not requested: fixing voir's empty `gpudata` (nodemon covers it; still a bug).

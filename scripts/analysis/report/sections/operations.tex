@@ -33,7 +33,7 @@ telemetry on the same time axis, so that a throughput drop can be traced to a GP
 (measured: 24 ranks within 0.2\,ms) and cannot identify a slow GPU. The slow GPU is instead the one that
 \emph{waits least}: it is busy for a larger share of each step while the others idle at the collective
 (\cref{fig:stragglers}, top). The measure is the GPU's duty cycle over each sampling interval, from the
-utilization samples the driver buffers; where the node runs a DCGM exporter, tensor-pipe occupancy replaces
+utilization samples the driver buffers; on Hopper, GPM tensor-pipe occupancy replaces
 it and ranks equally busy GPUs more sharply. A duty cycle separates a GPU that waits from one that does
 not, but it is not a profiling counter. The second, independent cause
 is the host: a node whose CPU busy-core clock falls holds back every rank on it (\cref{fig:stragglers},

@@ -35,7 +35,7 @@ Owner: fill in per item (`Owner:`).
 - [ ] **nodemon (node telemetry)**: merge `feat/nodemon` into the run branches (the GLM-5 pack starts
       the sampler itself), export `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` from the
       launcher, and check one dry-run job's TSVs parse (FORMAT §3). On Rorqual's H100s also check
-      whether `<host>.dcgm.tsv` fills: with it the straggler figure has tensor-pipe activity, without
+      that `<host>.gpm.tsv` fills: with it the straggler figure has tensor-pipe activity, without
       it `util_mean`. Stability and straggler figures. Owner:
 
 ### Qwen3.8-27B (TorchTitan)
@@ -383,7 +383,7 @@ What each figure has if the window stops after a phase (phases are cumulative), 
 | 2 | 9 Step decomposition | usable (estimated split: 1-node ceiling vs multi-node step) | usable | usable | usable (no measured split: gradient accumulation does not provide one) |
 | 3 | 6 Per-GPU batch | usable (preliminary data only) | same | same | **complete** (window bridge point) |
 | 3 | 13 Startup | usable: 1, 3, 6, 12, 27 nodes, every node | usable | **complete**: 3-48 nodes | complete |
-| 3 | 15 Stragglers | usable: 5-min windows of pass-1 runs (nodemon `util_mean` + SM clock + CPU clock; tensor activity only where a dcgm-exporter answers) | usable | usable | **complete** (long run) |
+| 3 | 15 Stragglers | usable: 5-min windows of pass-1 runs (nodemon `util_mean` + SM clock + CPU clock; tensor activity on Hopper) | usable | usable | **complete** (long run) |
 | 3 | 14 Stability (>= 1 h) | none | none | none | **complete** |
 | 3 | 3 Per-GPU compute by cluster | **complete** if slurm-healthcheck reports per-GPU matmul (pre-window item); otherwise preliminary data only | same | same | same |
 | 3 | 1 Preliminary health checks | complete (no window data needed) | complete | complete | complete |

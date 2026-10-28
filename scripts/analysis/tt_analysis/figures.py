@@ -787,7 +787,7 @@ def _cpu_drop(cpu: pd.DataFrame) -> pd.DataFrame:
 
 def _activity(mon):
     """The sharpest GPU-activity signal the telemetry carries, and the label that names it."""
-    for metric, label in (("tensor_active", "Tensor-pipe activity"),
+    for metric, label in (("tensor_util", "Tensor-pipe activity"),
                           ("util_mean", "GPU busy fraction"),
                           ("util", "GPU busy fraction\n(point samples)")):
         rows = mon[mon.metric == metric]

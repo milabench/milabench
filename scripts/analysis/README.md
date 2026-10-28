@@ -23,7 +23,7 @@ Output: `report/main.pdf`, figures in `report/generated/figures/`, tables in `da
 | `tt_analysis/runs.py` | milabench run data → runs, steps, ranks |
 | `tt_analysis/health.py` | srygaard health checks, tt_healthcheck → node_health, comm |
 | `tt_analysis/topology.py` | `scontrol show topology` → leaf map, placement |
-| `tt_analysis/monitor.py` | nodemon TSVs, DCGM exports → gpu_monitor |
+| `tt_analysis/monitor.py` | nodemon TSVs → gpu_monitor |
 | `tt_analysis/build.py` | all sources → CSV tables |
 | `tt_analysis/synthetic.py` | synthetic data in the target formats (experiments not run yet) |
 | `tt_analysis/style.py`, `figures.py` | seaborn style (minimal), one function per figure |

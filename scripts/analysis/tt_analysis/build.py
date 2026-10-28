@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from .health import parse_nccl_tests, parse_srygaard, parse_tt_health
-from .monitor import parse_dcgm, parse_nodemon
+from .monitor import parse_nodemon
 from .runs import data_files, parse_run
 from .topology import load_topology
 
@@ -80,8 +80,6 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
             ranks += r
         for d in sorted((cdir / "nodemon").glob("*")):
             monitor.append(parse_nodemon(d, cluster, synthetic=is_syn))
-        for m in sorted((cdir / "dcgm").glob("*.csv")):
-            monitor.append(parse_dcgm(m, cluster, synthetic=is_syn))
 
     tables = {
         "runs": pd.DataFrame(runs),
