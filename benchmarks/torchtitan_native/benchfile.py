@@ -22,8 +22,15 @@ from milabench.commands.srun import (
     TorchrunSrun,
     _node_hostlist_token,
 )
+from milabench.dependencies.requirements import load_benchmark_requirements
 from milabench.utils import select_nodes
 from milabench.pack import Package, install_benchmate
+
+
+# TorchTitan has no torch pin and tracks the PyTorch nightly: the nightly from
+# the same day as the TorchTitan commit (2026-10-05, requirements.toml).
+TORCH_NIGHTLY = "torch==2.15.0.dev20261005+cu130"
+TORCH_NIGHTLY_INDEX = "https://download.pytorch.org/whl/nightly/cu130"
 
 
 def default_cache_dir() -> str:
@@ -80,17 +87,18 @@ class NativeTorchrunSrun(TorchrunSrun):
 
 
 class TorchtitanNative(Package):
-    base_requirements = "requirements.in"
     prepare_script = "prepare.py"
     main_script = "main.py"
 
     async def install(self):
-        # The torch nightly index is declared inside requirements.in, which the
-        # TOML/legacy install paths do not handle; install it directly.
+        # Dependencies from requirements.toml ([common] + [cuda]), installed
+        # with the torch nightly and its index, which milabench's TOML install
+        # path does not handle (no nightly index, no torch 2.15 pin file).
         # milabench installs without build isolation, so seed build backends
         # first (torchtitan's git build needs setuptools).
+        deps = load_benchmark_requirements(self.dirs.code).get_dependencies("cuda")
         await self.pip_install("setuptools", "wheel", build_isolation=True)
-        await self.pip_install("-r", self.dirs.code / "requirements.in")
+        await self.pip_install("--extra-index-url", TORCH_NIGHTLY_INDEX, TORCH_NIGHTLY, *deps)
         await install_benchmate(self)
 
     def make_env(self):

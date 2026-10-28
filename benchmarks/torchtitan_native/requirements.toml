@@ -1,0 +1,49 @@
+# Native TorchTitan (Qwen3.8) pack. CUDA only: Qwen3.5/3.8 Gated DeltaNet kernels
+# come from attn-gym, which imports CuTe/cuDNN kernels unconditionally.
+#
+# torch: TorchTitan has no torch pin and tracks the PyTorch nightly. The exact
+# nightly (same day as the TorchTitan commit) and its index are set by
+# benchfile.py (TORCH_NIGHTLY): milabench's TOML install has no nightly index
+# and no torch 2.15 pin file.
+
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "psutil",
+    "torch",
+    # torchtitan 51b37c2 (2026-10-05): native qwen3_8, Qwen3.5 local compile regions,
+    # attn-gym 0.0.16 (GDN backward fix for Triton 3.9). Before the 10-05 attention
+    # metadata refactor (76fbd6d) and the 10-11 repo restructure (6f22255).
+    # Its dependencies are listed below (copied from its pyproject.toml) to make the pin explicit.
+    "torchtitan @ git+https://github.com/pytorch/torchtitan.git@51b37c2c98ea52aa6218ab77a5c8fa019b305350",
+    "grain==0.2.18",
+    "torch_checkpointing>=0.1.0",
+    "datasets>=3.6.0,<4.8.0",
+    "tokenizers>=0.15.0",
+    "renderers==0.1.11",
+    "safetensors",
+    "tensorboard",
+    "wandb",
+    "einops",
+    "pillow",
+    "spmd_types==0.2.5",
+    "torch_remat @ git+https://github.com/meta-pytorch/remat.git@d302699b1c58f83fa2c7b03bc2593967e9530335",
+]
+
+[cuda]
+dependencies = [
+    "attn-gym[linear]==0.0.16",
+]
+
+# No Gated DeltaNet kernels outside CUDA: the model does not build.
+[rocm]
+enabled = false
+
+[xpu]
+enabled = false
+
+[hpu]
+enabled = false
+
+[cpu]
+enabled = false
