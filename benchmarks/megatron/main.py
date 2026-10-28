@@ -100,6 +100,7 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
 
         collect_ep_groups(config())
         PLACEMENT["timing"] = bool((config().get("placement") or {}).get("a2a_timing", True))
+        PLACEMENT["every"] = max(int((config().get("placement") or {}).get("a2a_report_every", 10)), 1)
         if PLACEMENT["timing"]:
             install_a2a_timer()
         counts = [0, 0]
@@ -217,11 +218,20 @@ def with_wandb(log):
 LOG = None          # milabench event sink on rank 0 (setupvoir), None elsewhere
 STARTED = time.time()
 
-PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False}
+PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False,
+             "every": 10, "steps": 0}
 
 
 def short(host: str) -> str:
     return host.split(".")[0]
+
+
+def gpu_uuid():
+    """UUID of this rank's GPU (what the node monitor identifies GPUs by), None if unavailable."""
+    try:
+        return str(torch.cuda.get_device_properties(torch.cuda.current_device()).uuid)
+    except Exception:
+        return None
 
 
 def collect_ep_groups(cfg: dict):
@@ -235,17 +245,17 @@ def collect_ep_groups(cfg: dict):
 
     group = parallel_state.get_expert_model_parallel_group()
     PLACEMENT["ep_group"] = group
-    info = (dist.get_rank(), socket.gethostname(), tuple(dist.get_process_group_ranks(group)))
+    info = (dist.get_rank(), socket.gethostname(), tuple(dist.get_process_group_ranks(group)), gpu_uuid())
     infos = [None] * dist.get_world_size()
     dist.all_gather_object(infos, info)
 
-    groups = sorted({ranks for _, _, ranks in infos})
+    groups = sorted({ranks for _, _, ranks, _ in infos})
     PLACEMENT["groups"] = groups
     PLACEMENT["group_of_rank"] = {r: i for i, ranks in enumerate(groups) for r in ranks}
     if dist.get_rank() != 0:
         return
 
-    host_of_rank = {r: short(h) for r, h, _ in infos}
+    host_of_rank = {r: short(h) for r, h, _, _ in infos}
     nodes = (cfg.get("system") or {}).get("nodes") or []
     switch_of = {short(n): s for n, s in placement.switch_map(nodes, cfg.get("placement") or {}).items()} if nodes else {}
     node_hosts = list(dict.fromkeys(host_of_rank[r] for r in sorted(host_of_rank)))  # hosts in rank order
@@ -263,6 +273,17 @@ def collect_ep_groups(cfg: dict):
               f"{'  CROSSES' if len(sw) > 1 else ''}")
     PLACEMENT["crosses"] = crosses
     debug(f"expert groups crossing a switch: {sum(crosses)} / {len(groups)}")
+
+    if LOG is not None:
+        # recorded in the run data: the crossing count must not depend on a2a_timing being on
+        LOG({"placement": {
+                "hosts": node_hosts,
+                "ep_groups": [list(dict.fromkeys(host_of_rank[r] for r in ranks)) for ranks in groups],
+                "crossing": sum(crosses),
+                "groups": len(groups),
+                "gpu_uuids": {r: u for r, _, _, u in sorted(infos)},
+             },
+             "task": "main", "time": time.time()})
 
 
 def install_a2a_timer():
@@ -305,11 +326,14 @@ def install_a2a_timer():
 
 
 def report_a2a(log):
-    """After a step: every rank's all-to-all time, averaged per expert group (a collective: all ranks call it)."""
+    """Every rank's all-to-all time per step, averaged per expert group (a collective: all ranks call it).
+
+    Covers the steps since the last report (the events accumulate), so the figure is a per-step mean."""
     import torch.distributed as dist
 
     events, PLACEMENT["events"] = PLACEMENT["events"], []
-    ms = sum(s.elapsed_time(e) for s, e in events) if events else 0.0
+    steps, PLACEMENT["steps"] = max(PLACEMENT["steps"], 1), 0
+    ms = sum(s.elapsed_time(e) for s, e in events) / steps if events else 0.0
     mine = torch.tensor([ms], device="cuda")
     gathered = [torch.empty_like(mine) for _ in range(dist.get_world_size())]
     dist.all_gather(gathered, mine)
@@ -349,7 +373,11 @@ def patch_train_step(log):
             # launch -> end of the first (warm-up) step: imports, init, model build, first step
             log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
-            report_a2a(log)
+            PLACEMENT["steps"] += 1
+            if state["step"] % PLACEMENT["every"] == 0:
+                # the report syncs with the GPU and runs a collective: keep it out of the measured step time
+                report_a2a(log)
+                steps.restart_clock()
         if log is not None:
             loss_dict = result[0] if isinstance(result, tuple) else {}
             if isinstance(loss_dict, dict) and "lm loss" in loss_dict:

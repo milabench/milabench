@@ -203,6 +203,16 @@ megatron-glm5-frozen-smoke-1n:
     --global-batch-size: 4
     --train-iters: 4
 
+# Mila cluster, 2 nodes x 2 L40S (48 GB) = 4 GPUs: same model as the 1-node smoke (4 layers, EP4 x DP1, experts frozen,
+# about 15 GB of expert weights per GPU), but the expert all-to-all now crosses the node boundary. The point is a
+# multi-node run for the rank store (one metrics.<rank>.jsonl per rank). L40S is sm89: the DSA indexer / sparse MLA
+# kernels (tilelang, deep-gemm) may only support Hopper, in which case the model build or first step fails.
+megatron-glm5-frozen-smoke-2n-l40s:
+  inherits: megatron-glm5-frozen-smoke-1n
+  tags: [frozen, smoke, mila]
+  num_machines: 2
+  max_duration: 1800
+
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n
   tags: [frozen, smoke, topology]

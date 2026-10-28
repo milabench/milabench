@@ -56,6 +56,12 @@ class StepTimer:
             self.timer.step(batch_override=global_tokens)
             self.timer._push()
 
+    def restart_clock(self):
+        """Restart the step clock now: whatever ran since the last ``step`` (e.g. a metrics report) is not counted."""
+        if self.timer is not None and self.timer.start is not None:
+            self.timer.start = self.timer.event_fn(enable_timing=True)
+            self.timer.start.record()
+
 
 def install(log):
     """Wrap the train dataloader Megatron builds and return the StepTimer."""
