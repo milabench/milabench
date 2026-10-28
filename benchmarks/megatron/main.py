@@ -87,10 +87,13 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
     With a config container Megatron builds the model through ``model_cfg.get_builder_cls()`` and ignores a
     ``model_provider``: the layer spec is a callable on the config, and the freezing is a pre-wrap hook (it has
     to run before the DDP wrapper, which only allocates gradient buffers for the parameters that require grad)."""
-    from slime_plugins.models.glm5.glm5 import get_glm5_spec
+    # model.spec: default -> Megatron's own TE layer spec (small stand-in models for smoke tests, no GLM-5 plugin)
+    glm5 = (config().get("model") or {}).get("spec", "glm5") == "glm5"
+    if glm5:
+        from slime_plugins.models.glm5.glm5 import get_glm5_spec
 
-    # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
-    args.hf_checkpoint = hf_path
+        # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
+        args.hf_checkpoint = hf_path
 
     def layer_spec(cfg, vp_stage=None):
         return get_glm5_spec(args, cfg.transformer, vp_stage)
@@ -120,7 +123,8 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
             LOG({"params_trainable_fraction": fraction, "units": "ratio", "task": "main", "time": time.time()})
         return models
 
-    model_cfg.transformer_layer_spec = layer_spec
+    if glm5:
+        model_cfg.transformer_layer_spec = layer_spec
     model_cfg.pre_wrap_hooks.append(freeze_hook)
     return model_cfg
 

@@ -2,13 +2,14 @@
 
 
 # Test of the per-rank metric store (benchmate/rankstore.py) + wandb + fine grained timers on the Megatron pack:
-# 1 node x 1 A100 (megatron-glm5-frozen-smoke-1gpu: 2 layers, EP1 x DP1, global batch 1): a single rank 0 writes the rank
-# store. Multi-node variant: megatron-glm5-frozen-smoke-2n-l40s, 2 nodes x 2 L40S, ranks 2-3 on the other node:
+# 1 node x 2 A100 with a tiny stand-in model (megatron-tiny-moe-smoke-1n: 2-layer MoE GPT, EP2, plain attention): same
+# Megatron pack, not GLM-5. Rank 0 does not write to the rank store, so 2 ranks are the minimum to get a file (rank 1).
+# GLM-5 on one A100 (EP1, no rank-store file): MILABENCH_SELECT=megatron-glm5-frozen-smoke-1gpu. Multi-node variant: megatron-glm5-frozen-smoke-2n-l40s, 2 nodes x 2 L40S, ranks 2-3 on the other node:
 #   sbatch -N 2 --ntasks-per-node=1 --gres=gpu:l40s:2 --cpus-per-task=16 --mem=128G -t 1:30:00 scripts/slurm/run_rankstore.sh
-# Default (1 A100):
-#   sbatch -N 1 --ntasks-per-node=1 --gres=gpu:a100:1 --cpus-per-task=16 --mem=128G -t 1:30:00 scripts/slurm/run_rankstore.sh
+# Default (2 A100):
+#   sbatch -N 1 --ntasks-per-node=1 --gres=gpu:a100:2 --cpus-per-task=16 --mem=128G -t 1:30:00 scripts/slurm/run_rankstore.sh
 # The branch must contain rankstore.py and the megatron pack (push them first).
-export MILABENCH_BRANCH=${MILABENCH_BRANCH:-main}
+export MILABENCH_BRANCH=metrics_mega
 export PYTHON_VERSION=3.12
 export MILABENCH_GPU_ARCH=cuda
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -19,17 +20,16 @@ export PYTORCH_VERSION="2.13.0"
 
 # the Megatron pack lives in its own config; random weights, only GLM-5.3's config.json is downloaded
 export CONFIG_PATH=benchmarks/megatron/dev.yaml
-export MILABENCH_ARGS="--select ${MILABENCH_SELECT:-megatron-glm5-frozen-smoke-1gpu}"
+export MILABENCH_ARGS="--select ${MILABENCH_SELECT:-megatron-tiny-moe-smoke-1n}"
 
 # --- what is under test ---
-export BENCHMATE_RECORD_FINE=1        # next / work / step timers per batch
-export BENCHMATE_RECORD_OVERHEAD=1    # CPU overhead of the timer itself
+export BENCHMATE_RECORD_FINE=1
+export BENCHMATE_RECORD_OVERHEAD=1
 export BENCHMATE_RECORD_LAPS=1
-export BENCHMATE_WANDB=1              # rank 0 pushes to wandb (benchmate.metrics.wandb_push)
+export BENCHMATE_WANDB=1
 export BENCHMATE_WANDB_PROJECT=milabench-rankstore-test
 export WANDB_API_KEY="{{ secrets.WANDB_API_KEY }}"
 # no key (or no network on the node): keep the run, sync later with `wandb sync`
-case "$WANDB_API_KEY" in *secrets.*|"") export WANDB_MODE=offline ;; esac
 # every rank writes <run dir>/metrics.<bench>.<host>.<rank>.jsonl (rankstore); override the base name here if wanted
 # export MILABENCH_LOCAL_METRICS=$HOME/scratch/rankstore/metrics.jsonl
 

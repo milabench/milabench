@@ -232,6 +232,44 @@ megatron-glm5-frozen-smoke-1gpu:
     --global-batch-size: 1
     --train-iters: 4
 
+# Stand-in for when the GLM-5 build does not work (DSA kernels, plugin, ...): a tiny MoE GPT (Megatron's default TE layer
+# spec, plain attention, 8 experts, top-2) on one node, up to 8 GPUs (placement.gpus_per_node; any even GPU count works: EP2, global batch 8), the rest data
+# parallel. Rank 0 only goes to the .data file, ranks 1+ write the rank store. Same pack, same hooks (freezing, placement event, a2a timers, rank store); the
+# GLM tokenizer / FineWeb data are unchanged. With fewer GPUs allocated it just uses those.
+megatron-tiny-moe-smoke-1n:
+  inherits: megatron-glm5-frozen-smoke-1n
+  tags: [frozen, smoke, mila, tiny]
+  placement:
+    nodes: as-is
+    gpus_per_node: 8
+  model:
+    spec: default
+    argv:
+      --multi-latent-attention: null
+      --q-lora-rank: null
+      --kv-lora-rank: null
+      --qk-head-dim: null
+      --v-head-dim: null
+      --kv-channels: null
+      --qk-pos-emb-head-dim: null
+      --qk-layernorm: null
+      --enable-experimental: null
+      --moe-shared-expert-intermediate-size: null
+      --num-layers: 2
+      --moe-layer-freq: "[0]*1+[1]*1"
+      --hidden-size: 512
+      --ffn-hidden-size: 2048
+      --num-attention-heads: 8
+      --num-experts: 8
+      --moe-router-topk: 2
+      --moe-ffn-hidden-size: 1024
+  argv:
+    --seq-length: 2048
+    --max-position-embeddings: 2048
+    --expert-model-parallel-size: 2
+    --global-batch-size: 8
+    --train-iters: 6
+
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n
   tags: [frozen, smoke, topology]

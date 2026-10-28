@@ -102,6 +102,11 @@ class MegatronGlm5(Slime):
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
         placement = self.config.get("placement") or {}
+        # single node: use placement.gpus_per_node GPUs, not every GPU of the machine (torchrun --nproc-per-node=gpu
+        # counts the visible ones); otherwise data parallel grows with the node and the global batch no longer divides
+        gpus = int(placement.get("gpus_per_node", 4))
+        if self.num_machines == 1 and len(self.config.get("devices") or []) > gpus and "CUDA_VISIBLE_DEVICES" not in os.environ:
+            env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(gpus))
         # NCCL / network knobs of the cluster (NCCL_TOPO_FILE, NCCL_CROSS_NIC, NCCL_IB_HCA, ...)
         for key, value in (placement.get("nccl") or {}).items():
             env[str(key)] = str(value)
