@@ -445,7 +445,7 @@ class TimedIterator:
             first_batches = [next(iterator) for i in range(_flags.force_batch_fetch)]
 
         self.unique_iterator = id(iterator)
-        self.loader_init_time.append(ct.elapsed())
+        self.loader_init_time.append((ct.elapsed(), -ct._start))  # (duration, wall clock start)
 
         # with BENCHMATE_BATCH_FETCH this will ignore the dataloader setuptime
         self.last_time = time.time()
@@ -615,8 +615,8 @@ class TimedIterator:
         for ov in self.overhead:
             self.message(overhead=ov, units="s", task=self.task)
 
-        for iterinit in self.loader_init_time:
-            self.message(__iter__=iterinit, units="s", task=self.task)
+        for iterinit, started in self.loader_init_time:
+            self.message(__iter__=iterinit, units="s", task=self.task, start_time=started)
         
         for event in self.recorded_timers:
             kwargs = {
