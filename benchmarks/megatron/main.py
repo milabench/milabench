@@ -401,10 +401,10 @@ def patch_train_step(log):
                 # the report syncs with the GPU and runs a collective: keep it out of the measured step time
                 report_a2a(log)
                 steps.restart_clock()
-        # if log is not None:
-        #     loss_dict = result[0] if isinstance(result, tuple) else {}
-        #     if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
-        #         log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
+        if log is not None:
+            loss_dict = result[0] if isinstance(result, tuple) else {}
+            if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
+                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
         return result
 
     training.train_step = timed
