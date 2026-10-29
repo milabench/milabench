@@ -46,7 +46,13 @@ fi
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 
+# benchmate.nodemon (node telemetry): main.py starts the sampler from every rank when this is set. One run per
+# directory, and a job can hold several steps (tt_variants.sh, tt_parallel.sh), so the default is per job step.
+# Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
+export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-$MILABENCH_BASE/nodemon/$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}}
+
 echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST"
+echo "[tt-native] nodemon=${BENCHMATE_NODEMON_DIR:-off}"
 squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
