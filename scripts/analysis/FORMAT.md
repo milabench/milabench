@@ -305,8 +305,8 @@ leaders); `fwd_ms`, `bwd_ms` and `step_time_ms` exist on all. The group's `confi
 every rank) says what to expect, so a rank with no run is a missing rank:
 
 ```jsonc
-{"schema": "benchmate.rankmetrics.v1", "run_name": "glm5-ep8-n52", "world_size": 208,
- "parallelism": {"dp": 26, "tp": 1, "pp": 2, "cp": 1, "ep": 8}}
+{"schema": "benchmate.rankmetrics.v1", "run_name": "glm5-g1-ep8-aligned", "world_size": 200,
+ "parallelism": {"dp": 8, "tp": 1, "pp": 25, "cp": 1, "ep": 8}}
 ```
 
 - Statistics (spread, slowest rank, p90 across ranks) are computed when reading, per `step`, over the
