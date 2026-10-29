@@ -36,6 +36,8 @@ export BENCHMATE_FAKE_DATA_LATENCY=${BENCHMATE_FAKE_DATA_LATENCY:-0}
 export BENCHMATE_FAKE_DATA_EVERY=${BENCHMATE_FAKE_DATA_EVERY:-5}
 export BENCHMATE_WANDB=1
 export BENCHMATE_WANDB_PROJECT=milabench-rankstore-test
+# 1: one wandb run per rank (<bench>-<host>-gpu<local_rank>, same group), 0: rank 0 only
+export BENCHMATE_WANDB_ALL_RANKS=${BENCHMATE_WANDB_ALL_RANKS:-1}
 export WANDB_API_KEY="{{ secrets.WANDB_API_KEY }}"
 # no key (or no network on the node): keep the run, sync later with `wandb sync`
 # every rank writes <run dir>/metrics.<bench>.<host>.<rank>.jsonl (rankstore); override the base name here if wanted

@@ -118,5 +118,19 @@ def get_store():
     return store
 
 
+_sinks = []
+
+
+def add_sink(sink):
+    """Also hand every ranked metric to ``sink(**metrics)`` (e.g. a per-rank wandb run). A failing sink is ignored."""
+    if sink not in _sinks:
+        _sinks.append(sink)
+
+
 def ranked_push(**metrics):
     get_store().push(**metrics)
+    for sink in _sinks:
+        try:
+            sink(**metrics)
+        except Exception:
+            pass

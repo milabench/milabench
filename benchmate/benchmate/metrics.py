@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import json
 import os
+import socket
 import sys
 import time
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ except ImportError as err:
     TORCH_ERROR = err
 
 
-from .toggles import get_observation_count, _get_flag
+from .toggles import get_observation_count, _get_flag, wandb_all_ranks
 from .config import tag_metric
 from .rankstore import ranked_push
 
@@ -27,37 +28,67 @@ def _noop_push(**kwargs):
     pass
 
 
+def _wandb_config():
+    try:
+        return json.loads(_get_flag("MILABENCH_CONFIG", str, "{}"))
+    except ValueError:
+        return {}
+
+
+def set_wandb_env() -> None:
+    """Name the wandb run through WANDB_* (read by wandb.init, and by frameworks that start their own run).
+
+    Values already set in the environment win. With ``BENCHMATE_WANDB_ALL_RANKS`` every rank gets a run of its own,
+    named after its worker; only local rank 0 samples the node's system metrics (every run would otherwise sample
+    all the GPUs of the node).
+    """
+    config = _wandb_config()
+    defaults = {
+        "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
+        "WANDB_RUN_GROUP": config.get("run_name"),
+        "WANDB_RUN_JOB_TYPE": config.get("name"),
+    }
+    if wandb_all_ranks():
+        local_rank = os.environ.get("LOCAL_RANK", "0")
+
+        host = socket.gethostname().split(".")[0]
+        defaults["WANDB_RUN_NAME"] = f"{config.get('name') or 'run'}-{host}-gpu{local_rank}"
+        defaults["WANDB_RUN_TAGS"] = host
+
+        if local_rank != "0":
+            defaults["WANDB__DISABLE_STATS"] = "true"
+
+    for name, value in defaults.items():
+        if value:
+            os.environ.setdefault(name, str(value))
+
+_wandb_message = None
+
+
 def wandb_push():
-    """Push metrics to wandb from rank 0 only. Never raises, falls back to a no-op."""
+    """Push metrics to wandb: from rank 0 only, or from every rank (own run each) with BENCHMATE_WANDB_ALL_RANKS=1.
+    Never raises, falls back to a no-op. One run per process: later calls return the same push function."""
+    global _wandb_message
     import traceback
 
-    if int(os.getenv("RANK", 0)) != 0:
+    if int(os.getenv("RANK", 0)) != 0 and not wandb_all_ranks():
         return _noop_push
+
+    if _wandb_message is not None:
+        return _wandb_message
 
     try:
         import wandb
 
         wandb.login()
-
-        config = json.loads(_get_flag("MILABENCH_CONFIG", str, "{}"))
-
-        benchname = "<missing>"
-        runname = "<missing>"
-
-        if config:
-            benchname = config["name"]
-            runname = config["run_name"]
-
-        project = _get_flag("BENCHMATE_WANDB_PROJECT", str, "milabench")
-
-        run = wandb.init(
-            project=project, group=runname, job_type=benchname, config=config
-        )
+        set_wandb_env()
+        run = wandb.init(config=_wandb_config())
 
         def message(**kwargs):
             kwargs.pop("task", None)
             run.log(kwargs)
 
+        _wandb_message = message
         return message
 
     except ImportError:

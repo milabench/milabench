@@ -23,6 +23,7 @@ from .toggles import (
     torchmem_enabled,
     jaxmem_enabled,
     wandb_enabled,
+    wandb_all_ranks,
 )
 from .torchmem import torchmem_fetcher
 from .jaxmem import jaxmem_fetcher
@@ -182,7 +183,10 @@ def metric_log():
     """Event sink for this rank: rank 0 (or no rank) smuggles through stdout to milabench, the other ranks append to
     their own rankstore file (their stdout is not read as metrics)."""
     if get_rank() > 0:
-        from .rankstore import ranked_push
+        from .rankstore import ranked_push, add_sink
+
+        if wandb_enabled() and wandb_all_ranks():
+            add_sink(wandb_push())  # this rank's own wandb run
 
         def rank_log(data):
             ranked_push(**data)
