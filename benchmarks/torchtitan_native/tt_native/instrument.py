@@ -303,11 +303,14 @@ def set_wandb_env() -> None:
         "WANDB_RUN_TAGS": ",".join(t for t in tags if t),
     }
     if wandb_all_ranks():
-        # One run per rank: name it after its worker. Only local rank 0 samples the
-        # node's system metrics (every run would otherwise sample all its GPUs).
+        # One run per rank: name it after its worker (rank zero-padded so names sort
+        # by rank). Names are labels, not keys: a rank is group + config worker.rank.
+        # Only local rank 0 samples the node's system metrics (every run would
+        # otherwise sample all its GPUs).
+        rank = int(os.environ.get("RANK", "0"))
         local_rank = os.environ.get("LOCAL_RANK", "0")
         host = socket.gethostname().split(".")[0]
-        defaults["WANDB_RUN_NAME"] = f"{name or 'run'}-{host}-gpu{local_rank}"
+        defaults["WANDB_RUN_NAME"] = f"{name or 'run'}-r{rank:05d}-{host}-gpu{local_rank}"
         defaults["WANDB_RUN_TAGS"] += f",{host}"
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
