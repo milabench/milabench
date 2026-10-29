@@ -55,6 +55,20 @@ def _patch_fsdp_uniform_dtype() -> None:
     par.apply_fsdp = apply_fsdp
 
 
+def _use_eager_flex() -> bool:
+    """Eager flex attention is a ROCm workaround (Triton compile failures).
+
+    It is much slower, so only apply it on ROCm unless forced with
+    ``MILABENCH_TT_EAGER_FLEX=1`` (or disabled with ``=0``).
+    """
+    forced = os.environ.get("MILABENCH_TT_EAGER_FLEX")
+    if forced is not None:
+        return forced == "1"
+    import torch
+
+    return torch.version.hip is not None
+
+
 def _patch_create_block_mask() -> None:
     """Strip kwargs torchtitan passes that older ROCm torch flex_attention lacks."""
     from torch.nn.attention import flex_attention
@@ -393,8 +407,9 @@ def ensure_torchtitan_torch_compat() -> None:
         fsdp_mod.fully_shard = fully_shard_compat
 
     _patch_create_block_mask()
-    _patch_transformers_flex_attention()
-    _patch_torchtitan_create_attention_mask()
+    if _use_eager_flex():
+        _patch_transformers_flex_attention()
+        _patch_torchtitan_create_attention_mask()
     _patch_fsdp_uniform_dtype()
     _patch_module_parallelize_idempotent()
     _patch_moe_build_device()

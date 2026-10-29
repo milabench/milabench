@@ -1,0 +1,213 @@
+# Native TorchTitan Qwen3.8-27B pre-training throughput benchmark.
+#
+#   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
+#   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
+#
+# Per-GPU settings (seq 4096, 3 sequences = 12,288 tokens per GPU per step, full
+# AC, compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
+# entry: weak scaling. Seq 4096 = Qwen3 main pretraining stages; 3 x 4096 tokens
+# per GPU = assumed original per-GPU load (reference batch 25.17M tokens from
+# Qwen3.8's scaling law / assumed 2,048 GPUs). Global batch at 264 GPUs (all full
+# Rorqual GPU nodes): 3.24M tokens. See journals/2026-10-23.md ("Hyperparameter
+# selection"). History: 1 x 8192 until 10-23, then 2 x 8192 (Rorqual 2-node 954 ->
+# 1722 tok/s/GPU, FSDP collectives being the bottleneck).
+# Full AC: selective AC + compile OOMs on 4 nodes. No CUDA graphs: no gain at
+# 4 nodes (1755 vs 1734 tok/s/GPU), extra startup and memory (Fir, 2026-10-19). Entries only differ in
+# node count, model depth (1-node runs use a truncated model), measurement
+# length and the explicit variants (eager, CUDA graphs, AC, layout, -lowmem).
+#
+# Data: the first 500k documents of FineWeb sample-10BT (benchmate.fineweb),
+# downloaded with the Qwen3.8 tokenizer by `milabench prepare` (needs internet:
+# run it on a login node). Documents are packed with document masking, at most
+# 64 per microbatch. `--dataset random` gives the previous random-token runs.
+#
+# Results: one JSON record per run in {milabench_extra}/results.
+
+include:
+  - _defaults.yaml
+
+_tt_native:
+  inherits: _defaults
+  definition: ../benchmarks/torchtitan_native
+  enabled: true
+  install_group: torchtitan_native
+  install_variant: unpinned
+  weight: 0.0
+  max_duration: 3600
+  num_machines: 1
+  tags:
+    - nlp
+    - llm
+    - torchtitan
+    - multigpu
+  plan:
+    method: njobs
+    n: 1
+  # Measurement window (tt_native/instrument.py): `skip` warm-up steps, then
+  # `stop` measured steps, or `stop_seconds` of measurement when > 0.
+  voir:
+    options:
+      skip: 40
+      stop: 100
+      stop_seconds: 0
+  argv: &tt_native_argv
+    --flavor: 27B
+    --seq-len: 4096
+    --microbatch-sequences: 3
+    --compile: regions
+    --ac: full
+    --dataset: fineweb
+    --samples: 500000
+    --max-documents: 64
+
+# --- 1 node (4 GPUs): truncated model (full 27B training state does not fit) ---
+
+tt-qwen38-smoke:
+  inherits: _tt_native
+  max_duration: 1800
+  voir:
+    options:
+      skip: 5
+      stop: 10
+  argv:
+    <<: *tt_native_argv
+    --n-layers: 8
+
+tt-qwen38-1node:
+  inherits: _tt_native
+  argv:
+    <<: *tt_native_argv
+    --n-layers: 16
+
+# --- Full 27B, multi-node ---
+
+tt-qwen38-n2:
+  inherits: _tt_native
+  num_machines: 2
+  argv:
+    <<: *tt_native_argv
+
+tt-qwen38-n3:
+  inherits: _tt_native
+  num_machines: 3
+  argv:
+    <<: *tt_native_argv
+
+tt-qwen38-n4:
+  inherits: _tt_native
+  num_machines: 4
+  argv:
+    <<: *tt_native_argv
+
+# --- Variants (same per-GPU batch; one knob changed). Several can run in one
+#     allocation: --select a,b,c (multi-node entries use the first N nodes). ---
+
+tt-qwen38-1node-eager:
+  inherits: tt-qwen38-1node
+  argv:
+    --compile: eager
+
+tt-qwen38-1node-graphs:
+  inherits: tt-qwen38-1node
+  argv:
+    --compile: regions+graphs
+
+tt-qwen38-1node-selective:
+  inherits: tt-qwen38-1node
+  argv:
+    --ac: selective
+
+tt-qwen38-1node-noac:
+  inherits: tt-qwen38-1node
+  argv:
+    --ac: none
+
+tt-qwen38-n4-eager:
+  inherits: tt-qwen38-n4
+  argv:
+    --compile: eager
+
+tt-qwen38-n4-graphs:
+  inherits: tt-qwen38-n4
+  argv:
+    --compile: regions+graphs
+
+tt-qwen38-n4-selective:
+  inherits: tt-qwen38-n4
+  argv:
+    --ac: selective
+
+# Upstream stacked layout ([2, F, D], FSDP shards dim 1): A/B for the default
+# row layout. Only valid when the GPU count divides 17408 (4, 8, 16, ...).
+tt-qwen38-n4-ttlayout:
+  inherits: tt-qwen38-n4
+  argv:
+    --stacked-layout: torchtitan
+
+# HSDP: shard within 2 nodes (8 GPUs), replicate across the 2 pairs.
+tt-qwen38-n4-hsdp:
+  inherits: tt-qwen38-n4
+  argv:
+    --dp-replicate: 2
+
+# TP=2 inside a node: 6 sequences per DP rank keeps 12,288 tokens per GPU.
+tt-qwen38-n4-tp2:
+  inherits: tt-qwen38-n4
+  argv:
+    --tp: 2
+    --stacked-layout: torchtitan
+    --microbatch-sequences: 6
+
+# Low-memory fallback: bf16 AdamW moments (-4 B/param of optimizer state).
+tt-qwen38-n2-lowmem:
+  inherits: tt-qwen38-n2
+  argv:
+    --adam-moments: bf16
+
+tt-qwen38-n3-lowmem:
+  inherits: tt-qwen38-n3
+  argv:
+    --adam-moments: bf16
+
+# Topology / contention tests (scripts/slurm/tt_native_topology.sh): same as n4,
+# shorter measurement so several node layouts fit in one allocation.
+tt-qwen38-n4-topo:
+  inherits: tt-qwen38-n4
+  voir:
+    options:
+      skip: 30
+      stop: 60
+
+# Short 2-node network diagnostic (run with NCCL_DEBUG=INFO): same per-GPU
+# settings as n2-lowmem, few steps.
+tt-qwen38-n2-diag:
+  inherits: tt-qwen38-n2-lowmem
+  voir:
+    options:
+      skip: 5
+      stop: 20
+
+# Previous per-GPU settings, kept to bridge new numbers to the 10-19..10-23 runs:
+# 1 x 8192 (Rorqual 2 nodes: 954 tok/s/GPU) and 2 x 8192 (1722).
+tt-qwen38-n2-diag-mb1:
+  inherits: tt-qwen38-n2-diag
+  argv:
+    --seq-len: 8192
+    --microbatch-sequences: 1
+
+tt-qwen38-n2-diag-8k2:
+  inherits: tt-qwen38-n2-diag
+  argv:
+    --seq-len: 8192
+    --microbatch-sequences: 2
+
+# Strong-scaling functional check: gradient accumulation (4 micro-steps of 3 x
+# 4096 per optimizer step). Rate = tokens per optimizer step / step time.
+tt-qwen38-1node-accum:
+  inherits: tt-qwen38-1node
+  voir:
+    options:
+      skip: 5
+      stop: 10
+  argv:
+    --grad-accum: 4
