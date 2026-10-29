@@ -332,7 +332,8 @@ def install_a2a_timer():
 def report_a2a(log):
     """Every rank's all-to-all time per step, averaged per expert group (a collective: all ranks call it).
 
-    Covers the steps since the last report (the events accumulate), so the figure is a per-step mean."""
+    Covers the steps since the last report (the events accumulate), so the figure is a per-step mean. The warm-up step is
+    dropped by the caller: it includes NCCL's lazy setup of the expert communicator."""
     import torch.distributed as dist
 
     events, PLACEMENT["events"] = PLACEMENT["events"], []
@@ -441,8 +442,12 @@ def patch_train_step(log):
         if state["step"] == 1:
             report_peak_memory(rank_log)  # every rank
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
-            PLACEMENT["steps"] += 1
-            if state["step"] % PLACEMENT["every"] == 0:
+            if state["step"] == 1:
+                PLACEMENT["events"] = []  # warm-up: NCCL creates the expert communicator at its first collective
+            else:
+                PLACEMENT["steps"] += 1
+            # every N steps, and at the last step so the end of the run is counted too
+            if state["step"] > 1 and (state["step"] % PLACEMENT["every"] == 0 or state["step"] == margs.train_iters):
                 # the report syncs with the GPU and runs a collective: keep it out of the measured step time
                 report_a2a(log)
                 steps.restart_clock()

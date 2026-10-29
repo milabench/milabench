@@ -320,10 +320,14 @@ megatron-glm5-frozen-16n-fp8:
 # = EP8 = 2 consecutive nodes; main.py prints the real groups, their hosts and how many cross a switch, records them in the
 # run data (`placement` event) and logs `a2a_time` per expert group.
 # Layout constraint: world % (EP x PP) == 0 (TP1). 200 GPUs, EP8: PP in {1, 5, 25}; 256 GPUs, EP8: PP in {1, 2, 4, 8, 16, 32}.
-# Memory per GPU before activations (estimate): PP25 ~13 GB frozen / ~47 GB full; PP16 ~25 GB frozen / ~51 GB full. Full
-# training uses Megatron's precision-aware optimizer (FP32 master weights, BF16 gradients and Adam moments): with FP32
-# gradients and moments PP25 would need ~71 GB. Run `deviations`: "experts frozen" or "BF16 gradients and Adam moments".
-# Every rank writes its peak memory after step 1 to the rankstore (`peak_memory_*`). Fallbacks for the window: end of this section.
+# Memory: what has to fit is the heaviest pipeline stage, the last one (layers + output layer + FP32 logits), not the average.
+# At PP25 (4, 23 x 3, 5) it holds 5 layers against 3 in the middle stages. Rough per-stage estimates put full training at
+# PP25 around or above 80 GB even with 25 % offload; G4 (PP16) looks fine. The estimates are pessimistic: the same method
+# puts the tested megatron-glm5-frozen-16n (PP8, 14 / 8 x 6 / 16) close to the limit, and it ran. Every frozen window layout
+# has fewer layers per stage than that tested config at the same EP8, so frozen should fit. Full training has no measurement:
+# see the fallback ladder at the end of this section. Full training uses Megatron's precision-aware optimizer (FP32 master
+# weights, BF16 gradients and Adam moments). Run `deviations`: "experts frozen" or "BF16 gradients and Adam moments".
+# Every rank writes its peak memory after step 1 to the rankstore (`peak_memory_*`, with its pipeline stage).
 _megatron_glm5_g:
   inherits: _megatron_glm5
   tags: [placement, moe]
@@ -339,6 +343,9 @@ _megatron_glm5_g:
     --decoder-last-pipeline-num-layers: 5
     --global-batch-size: 256
     --train-iters: 12
+    # Megatron's straggler detector (per-rank forward time, logged with the pipeline stage by main.py): fires within the 12 steps
+    --log-straggler: true
+    --log-interval: 5
 
 # full training: FP32 master weights, BF16 gradients and Adam moments (Megatron's precision-aware optimizer)
 _full: &full_argv
@@ -441,17 +448,91 @@ megatron-glm5-g5-fp8-full:
   argv: {<<: *full_argv}
 
 # --- fallbacks, for the window (G1 = the 50-node set, G4 = the 64-node set; G2, G3, G5 take the same overrides) ----------
-# 1. full training does not fit at PP25 / PP16: part of the optimizer state on the CPU (same in all the full runs)
-megatron-glm5-g1-ep8-aligned-full-offload:
+# Frozen runs rely on the tested megatron-glm5-frozen-16n (see above): G1-G5 frozen should fit, the PP5 / PP8 frozen fallbacks
+# are close to its load. Full training is a ladder, each step lowering memory more than the previous one, down to a sure fit:
+#   0. as configured: G4 likely fits, G1-G3 are doubtful
+#   1. --optimizer-offload-fraction 0.25, then 0.5, then 1.0: the optimizer state is the largest term. At 1.0 a GPU keeps only
+#      BF16 weights and gradients plus activations: a wide margin at PP25 and PP16. Costs: the optimizer step runs on the CPU
+#      (slower step: add a `deviations` entry), and each node holds the optimizer state of its 4 ranks in host RAM, roughly
+#      200-400 GB per node at PP25 depending on the CPU precision: CHECK against the nodes' memory. Only 0.25 has run
+#      elsewhere; the offload path has not run with GLM-5 yet.
+#   2. balanced stages (--pipeline-model-parallel-layout), if 1. makes the step too slow: no heavy last stage. In Megatron
+#      4b4acac, not yet run with the GLM-5 spec.
+#   3. seq 4096 (below): only activations, not the model state: the least useful step.
+# If none works, full training is G4 alone.
+megatron-glm5-g1-ep8-aligned-full-offload025:
   inherits: megatron-glm5-g1-ep8-aligned-full
-  argv: &offload_argv
+  argv: &offload025_argv
     --optimizer-cpu-offload: true
     --optimizer-offload-fraction: 0.25
-megatron-glm5-g4-ep8-all-nodes-full-offload:
+megatron-glm5-g1-ep8-aligned-full-offload05:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &offload05_argv
+    --optimizer-cpu-offload: true
+    --optimizer-offload-fraction: 0.5
+megatron-glm5-g1-ep8-aligned-full-offload1:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &offload1_argv
+    --optimizer-cpu-offload: true
+    --optimizer-offload-fraction: 1.0
+megatron-glm5-g4-ep8-all-nodes-full-offload025:
   inherits: megatron-glm5-g4-ep8-all-nodes-full
-  argv: *offload_argv
+  argv: *offload025_argv
+megatron-glm5-g4-ep8-all-nodes-full-offload05:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *offload05_argv
+megatron-glm5-g4-ep8-all-nodes-full-offload1:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *offload1_argv
 
-# 2. still does not fit: seq 4096, frozen AND full (they stay comparable). With offload too if 1. was needed.
+# balanced stages at PP25, no offload (instead of it, when the CPU optimizer step is too slow): E first stage 3 layers,
+# 3 stages of 4, 20 of 3, last stage 3 layers + loss (L): 78 layers, no heavy last stage. Replaces the first / last flags.
+megatron-glm5-g1-ep8-aligned-full-balanced:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &balanced25_argv
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --pipeline-model-parallel-layout: "Et*3|t*4|t*4|t*4|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3L"
+
+# the same rungs for G2, G3, G5 (50-node set, PP25): the full G runs use the rung 01_check_full.sh found
+megatron-glm5-g2-ep8-crossed-full-offload025:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload025_argv
+megatron-glm5-g2-ep8-crossed-full-offload05:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload05_argv
+megatron-glm5-g2-ep8-crossed-full-offload1:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload1_argv
+megatron-glm5-g2-ep8-crossed-full-balanced:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *balanced25_argv
+megatron-glm5-g3-ep8-mixed-full-offload025:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload025_argv
+megatron-glm5-g3-ep8-mixed-full-offload05:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload05_argv
+megatron-glm5-g3-ep8-mixed-full-offload1:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload1_argv
+megatron-glm5-g3-ep8-mixed-full-balanced:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *balanced25_argv
+megatron-glm5-g5-fp8-full-offload025:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload025_argv
+megatron-glm5-g5-fp8-full-offload05:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload05_argv
+megatron-glm5-g5-fp8-full-offload1:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload1_argv
+megatron-glm5-g5-fp8-full-balanced:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *balanced25_argv
+
+# 3. (ladder) still does not fit: seq 4096, frozen AND full (they stay comparable). With offload too if 1. was needed.
 megatron-glm5-g1-ep8-aligned-seq4096:
   inherits: megatron-glm5-g1-ep8-aligned
   argv: &seq4096_argv
@@ -482,7 +563,14 @@ megatron-glm5-g4-ep8-all-nodes-pp8:
     --decoder-first-pipeline-num-layers: 14
     --decoder-last-pipeline-num-layers: 16
 
-# 5. the aligned set shrinks to 48 / 46 nodes
+# 5. the aligned set shrinks to 52 / 48 / 46 nodes (the 50-node entries fail at launch in place_nodes() on any other count)
+megatron-glm5-g1-ep8-aligned-52n:       # EP8 x PP26: 3 layers per stage, 3 + 24 x 3 + 3
+  inherits: megatron-glm5-g1-ep8-aligned
+  num_machines: 52
+  argv:
+    --pipeline-model-parallel-size: 26
+    --decoder-first-pipeline-num-layers: 3
+    --decoder-last-pipeline-num-layers: 3
 megatron-glm5-g1-ep8-aligned-48n:       # EP8 x PP24: 6, 22 x 3, 6
   inherits: megatron-glm5-g1-ep8-aligned
   num_machines: 48
@@ -601,3 +689,36 @@ megatron-glm5-check-fit-full-50n:
   max_duration: 2400
   argv:
     --train-iters: 4
+
+# Full-training fit ladder (scripts/rorqual/01_check_full.sh runs it in this order and stops at the first entry that
+# completes): each step lowers the memory of the heaviest stage more than the previous one. 4 steps each.
+megatron-glm5-check-fit-full-offload025-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload025_argv
+megatron-glm5-check-fit-full-offload05-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload05_argv
+megatron-glm5-check-fit-full-offload1-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload1_argv
+# balanced PP25 stages, no offload (no CPU optimizer step): not in the default ladder, the layout has not run with GLM-5
+megatron-glm5-check-fit-full-balanced-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *balanced25_argv
+
+# G4's set (64 nodes, PP16): the same ladder
+megatron-glm5-check-fit-full-64n:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  tags: [check, placement]
+  max_duration: 2400
+  argv:
+    --train-iters: 4
+megatron-glm5-check-fit-full-offload025-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload025_argv
+megatron-glm5-check-fit-full-offload05-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload05_argv
+megatron-glm5-check-fit-full-offload1-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload1_argv

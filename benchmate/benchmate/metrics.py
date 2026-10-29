@@ -39,7 +39,7 @@ def set_wandb_env() -> None:
     """Name the wandb run through WANDB_* (read by wandb.init, and by frameworks that start their own run).
 
     Values already set in the environment win. With ``BENCHMATE_WANDB_ALL_RANKS`` every rank gets a run of its own,
-    tagged with the benchmark, its host, rank and GPU; only local rank 0 samples the node's system metrics (every run would otherwise sample
+    tagged with the benchmark, the run name, its host, rank and GPU; only local rank 0 samples the node's system metrics (every run would otherwise sample
     all the GPUs of the node).
     """
     config = _wandb_config()
@@ -57,7 +57,7 @@ def set_wandb_env() -> None:
         "WANDB_NAME": f"{config.get('name') or 'run'}-rank{rank}-{host}",
     }
     if wandb_all_ranks():
-        tags = [config.get("name"), host, f"rank{rank}", f"gpu{local_rank}"]
+        tags = [config.get("name"), config.get("run_name"), host, f"rank{rank}", f"gpu{local_rank}"]
         defaults["WANDB_TAGS"] = ",".join(t for t in tags if t)
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
