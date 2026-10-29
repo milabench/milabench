@@ -744,7 +744,8 @@ class TimedIterator:
 
             self._push_lap_events()
 
-        if True:
+        # What this push itself cost, under the flag that gates the other self-timings
+        if _flags.record_overhead:
             self.message(sync_time=sync_time.elapsed(), units="s", task=self.task)
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 

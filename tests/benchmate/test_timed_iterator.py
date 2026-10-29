@@ -1,4 +1,5 @@
 import time
+from collections import Counter
 
 import pytest
 
@@ -40,7 +41,21 @@ def test_wrapper():
             for i in loader:
                 time.sleep(process_time)
 
-    assert len(messages) == 130
+    # 5 passes over the 10 batches reach the early stop of 50.
+    # Every message carries these; the keys left name what it reports.
+    common = {"units", "task", "time", "elapsed", "batch_id", "schedule_time", "start_time"}
+    pushed = Counter()
+    for msg in messages:
+        for key in msg:
+            if key not in common:
+                pushed[key] += 1
+    assert pushed["rate"] == 50, "one per measured step"
+    assert pushed["work_lap"] == 50, "one lap per batch"
+    assert pushed["progress"] == 55
+    for name in ("__iter__", "iter_create", "iter_start", "iter_end", "total_elapsed"):
+        assert pushed[name] == 5, f"one {name} per pass"
+    # The push's own sync_time / process_time are left unasserted: they depend on
+    # BENCHMATE_RECORD_OVERHEAD, which is off by default.
 
     rate_acc = 0
     rate_count = 0
@@ -69,10 +84,10 @@ def fake_run(dataset_size, accumulation_steps = 32, loss_backward = 0.01, optimi
 
     min_steps = 50
     loader = ManualTimedIterator(
-        iterable, 
-        event_fn=CPUEvent, 
-        earlystop=min_steps, 
-        raise_stop_program=True, 
+        iterable,
+        event_fn=CPUEvent,
+        earlystop=min_steps,
+        raise_stop_program=True,
         push=push,
         batch_size_fn=lambda x: len(x[0])
     )
@@ -83,7 +98,7 @@ def fake_run(dataset_size, accumulation_steps = 32, loss_backward = 0.01, optimi
     normal_batch_count = len(iterable) // accumulation_steps - 1
     bigger_batch = 1
 
-    normal_batch_size = len(batch) * accumulation_steps 
+    normal_batch_size = len(batch) * accumulation_steps
     bigger_batch_size = (normal_batch_size + len(batch) * len(iterable) % accumulation_steps)
 
     normal_step_time = loss_backward * accumulation_steps + optimizer_step
@@ -93,7 +108,7 @@ def fake_run(dataset_size, accumulation_steps = 32, loss_backward = 0.01, optimi
     step_batch_time = (normal_step_time * normal_batch_count +  bigger_step_time * bigger_batch)/ (normal_batch_count + bigger_batch)
 
     expected_rate = step_batch_size / step_batch_time
-    
+
     with pytest.raises(StopProgram):
         for e in range(epochs):
             for j, _ in enumerate(loader):
@@ -122,7 +137,7 @@ def fake_run(dataset_size, accumulation_steps = 32, loss_backward = 0.01, optimi
 
 def test_accumulation_steps_perfect():
     fake_run(dataset_size=128, accumulation_steps=32, eps=20)
-    
+
     # all steps have the same amount of batches
     # expected_rate : 193.93939393939394
     # empirical_rate: 192.66509115668907
