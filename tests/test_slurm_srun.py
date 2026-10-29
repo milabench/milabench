@@ -124,6 +124,21 @@ class TestShrinkAllocation:
         assert _exclude_host_count(["--exclude", "tri0001"]) == 1
         assert _exclude_host_count(["--", "cmd"]) == 0
 
+    def test_nodelist_one_task_per_listed_node(self, monkeypatch):
+        # A subset of a larger allocation: one task per listed node, not the
+        # job's task count.
+        monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
+        out = _shrink_srun_allocation_for_exclude(
+            ["-w", "tri[0002-0003]", "--", "cmd"]
+        )
+        assert out[:3] == ["--nodes=2", "--ntasks=2", "--ntasks-per-node=1"]
+        assert out[3:] == ["-w", "tri[0002-0003]", "--", "cmd"]
+
+    def test_nodelist_respects_explicit_nodes_override(self, monkeypatch):
+        monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
+        args = ["--nodes=1", "-w", "tri0002", "--", "cmd"]
+        assert _shrink_srun_allocation_for_exclude(args) == args
+
 
 class TestFilterNodes:
     def test_exclude_main(self):

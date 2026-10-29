@@ -581,6 +581,8 @@ class Package(BasePackage):
 
         env["OMP_NUM_THREADS"] = resolve_placeholder(self, "{cpu_per_gpu}")
         env["MILABENCH_CONFIG"] = json.dumps(self.config)
+        # directory of this run (runs/<run_name>), next to the voir .data file
+        env["MILABENCH_DIR_RUN"] = str(self.logdir)
 
         # Extra env vars from the system config (already resolved at load time).
         for k, v in (self.config.get("system") or {}).get("env", {}).items():
