@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from .collector import CollectorMetric, MetricKind
 from .collectors import (
@@ -403,6 +403,10 @@ class Tail:
     starts near the end rather than at the beginning, so watching a run that
     started hours ago does not pull its whole history into memory to throw all
     but the last window away.
+
+    The file stays open between reads, which only seek and read: on a network
+    file system every open is a round trip to the metadata server, and a follow
+    would otherwise make one per file per refresh. close() releases it.
     """
 
     def __init__(self, path: Path, tail_bytes: int) -> None:
@@ -412,16 +416,26 @@ class Tail:
         self.offset = 0
         #: The rows of the file's first sample, when the first read skipped ahead past them.
         self.first: list[dict[str, str]] = []
+        self._stream: BinaryIO | None = None
 
     def rows(self) -> list[dict[str, str]]:
         """The rows appended since the last call; a last line still being written is left for next time."""
         try:
-            with self.path.open("rb") as stream:
-                if not self.columns and not self._start(stream):
+            if self._stream is None:
+                self._stream = self.path.open("rb")
+            stream = self._stream
+            if not self.columns:
+                stream.seek(0)  # a header still incomplete last time is read again from the top
+                if not self._start(stream):
                     return []
-                stream.seek(self.offset)
-                chunk = stream.read()
+            # SEEK_END asks the file system for the size now rather than the one cached at open:
+            # Lustre and BeeGFS refresh it there, and SEEK_SET alone does not. Nothing new, no read.
+            if stream.seek(0, os.SEEK_END) <= self.offset:
+                return []
+            stream.seek(self.offset)
+            chunk = stream.read()
         except OSError:
+            self.close()  # the handle may have gone bad; the next read opens the file afresh
             return []
         text = chunk.decode(errors="replace")
         complete, newline, _ = text.rpartition("\n")
@@ -433,6 +447,12 @@ class Tail:
             for line in complete.split("\n")
             if line
         ]
+
+    def close(self) -> None:
+        """Release the file; a later rows() opens it again. Safe to call twice."""
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
 
     def _start(self, stream) -> bool:
         """Take the header, then skip to the last `tail_bytes` of what is already there.
@@ -927,29 +947,33 @@ def watch(directory: Path, window_s: float, follow: float | None, color: bool, f
     waiting = False
     in_place = bool(follow) and sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
     drawn = False
-    while True:
-        status = statuses(directory)
-        if not status:
+    try:
+        while True:
+            status = statuses(directory)
+            if not status:
+                if not follow:
+                    print(f"No sampler has started in {directory} yet", file=sys.stderr)
+                    return 1
+                if not waiting:
+                    print(f"Waiting for a sampler to start in {directory} ...", file=sys.stderr, flush=True)
+                    waiting = True
+                time.sleep(follow)
+                continue
+            read(directory, tails, window)
+            window.refresh(status, time.time())
+            text = block(window, color, flagged_hosts, stamp=not in_place)
+            print(redraw(text, first=not drawn) if in_place else text, flush=True)
+            drawn = True
             if not follow:
-                print(f"No sampler has started in {directory} yet", file=sys.stderr)
-                return 1
-            if not waiting:
-                print(f"Waiting for a sampler to start in {directory} ...", file=sys.stderr, flush=True)
-                waiting = True
+                return 0
+            end = finished(window)
+            if end:
+                print(paint([end], color), flush=True)
+                return 0
             time.sleep(follow)
-            continue
-        read(directory, tails, window)
-        window.refresh(status, time.time())
-        text = block(window, color, flagged_hosts, stamp=not in_place)
-        print(redraw(text, first=not drawn) if in_place else text, flush=True)
-        drawn = True
-        if not follow:
-            return 0
-        end = finished(window)
-        if end:
-            print(paint([end], color), flush=True)
-            return 0
-        time.sleep(follow)
+    finally:
+        for tail in tails.values():
+            tail.close()
 
 
 if __name__ == "__main__":

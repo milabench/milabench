@@ -189,6 +189,23 @@ def test_a_file_read_before_its_header_is_written_is_read_once_it_is(tmp_path):
     assert tail.rows() == [{"time_ms": "1000", "gpu": "0", "sm_clock_mhz": "1410"}]
 
 
+def test_a_file_is_opened_once_and_later_reads_only_seek_to_what_was_appended(tmp_path, monkeypatch):
+    path = tmp_path / "nodes" / "cn-a.gpu.tsv"
+    tsv(path, ["time_ms", "gpu", "sm_clock_mhz"], [[1000, 0, 1410]])
+    opened = []
+    original = Path.open
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: opened.append(self) or original(self, *a, **k))
+    tail = Tail(path, tail_bytes=1 << 16)
+
+    assert len(tail.rows()) == 1
+    with open(path, "a") as stream:  # the sampler's side, not counted
+        stream.write("2000\t0\t1755\n")
+    assert tail.rows() == [{"time_ms": "2000", "gpu": "0", "sm_clock_mhz": "1755"}]
+    tail.close()
+
+    assert opened.count(path) == 1
+
+
 def test_a_stale_sampler_is_reported_but_does_not_end_the_follow(tmp_path):
     from benchmate.nodemon.watch import finished
 
