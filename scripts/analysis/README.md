@@ -18,6 +18,7 @@ Output: `report/main.pdf`, figures in `report/generated/figures/`, tables in `da
 |---|---|
 | `FORMAT.md` | result formats the benchmarks must produce (prescriptive) |
 | `EXPERIMENTS.md` | checklist of experiments to run (before Oct 30 / window), by group |
+| `WINDOW.md` | window runbook: blocks in order, the command of each, chaining, exclusions |
 | `GLM_RUNS.md` | GLM-5 runs for the GLM owner: fixed settings, node orders, runs, prep checklist |
 | `analyze.py` | CLI |
 | `tt_analysis/runs.py` | milabench run data → runs, steps, ranks |
