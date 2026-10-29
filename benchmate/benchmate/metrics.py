@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import json
 import os
+import socket
 import sys
 import time
 from contextlib import contextmanager
@@ -18,42 +19,89 @@ except ImportError as err:
     TORCH_ERROR = err
 
 
-from .toggles import get_observation_count, _get_flag
+from .toggles import get_observation_count, _get_flag, wandb_all_ranks
 from .config import tag_metric
+from .rankstore import ranked_push
 
 
 def _noop_push(**kwargs):
     pass
 
 
+def _wandb_config():
+    try:
+        return json.loads(_get_flag("MILABENCH_CONFIG", str, "{}"))
+    except ValueError:
+        return {}
+
+
+def set_wandb_env() -> None:
+    """Name the wandb run through WANDB_* (read by wandb.init, and by frameworks that start their own run).
+
+    Values already set in the environment win. With ``BENCHMATE_WANDB_ALL_RANKS`` every rank gets a run of its own,
+    tagged with the benchmark, the run name, its host, rank and GPU; only local rank 0 samples the node's system metrics (every run would otherwise sample
+    all the GPUs of the node).
+    """
+    config = _wandb_config()
+    if not config.get("run_name") or not config.get("name"):
+        print(f"wandb: no name / run_name in MILABENCH_CONFIG (keys: {sorted(config)[:12]}): group and job type unset",
+              file=sys.stderr)
+    rank = os.environ.get("RANK", "0")
+    local_rank = os.environ.get("LOCAL_RANK", "0")
+    host = socket.gethostname().split(".")[0]
+    defaults = {
+        "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
+        "WANDB_RUN_GROUP": config.get("run_name"),
+        "WANDB_JOB_TYPE": config.get("name"),
+        # a readable name instead of wandb's random one: <bench>-rank<global rank>-<host>
+        "WANDB_NAME": f"{config.get('name') or 'run'}-rank{rank}-{host}",
+    }
+    if wandb_all_ranks():
+        tags = [config.get("name"), config.get("run_name"), host, f"rank{rank}", f"gpu{local_rank}"]
+        defaults["WANDB_TAGS"] = ",".join(t for t in tags if t)
+        if local_rank != "0":
+            defaults["WANDB__DISABLE_STATS"] = "true"
+    for name, value in defaults.items():
+        if value:
+            os.environ.setdefault(name, str(value))
+    return defaults
+
+_wandb_message = None
+
+
 def wandb_push():
-    """Push metrics to wandb. Never raises, falls back to a no-op."""
+    """Push metrics to wandb: from rank 0 only, or from every rank (own run each) with BENCHMATE_WANDB_ALL_RANKS=1.
+    Never raises, falls back to a no-op. One run per process: later calls return the same push function."""
+    global _wandb_message
     import traceback
 
+    if int(os.getenv("RANK", 0)) != 0 and not wandb_all_ranks():
+        return _noop_push
+
+    if _wandb_message is not None:
+        return _wandb_message
+
     try:
+        # before ``import wandb`` / login: once the wandb session has started it ignores later changes of WANDB_*
+        config = set_wandb_env()
         import wandb
 
         wandb.login()
-
-        config = json.loads(_get_flag("MILABENCH_CONFIG", str, "{}"))
-
-        benchname = "<missing>"
-        runname = "<missing>"
-
-        if config:
-            benchname = config["name"]
-            runname = config["run_name"]
-
-        project = _get_flag("BENCHMATE_WANDB_PROJECT", str, "milabench")
-
         run = wandb.init(
-            project=project, group=runname, job_type=benchname, config=config
+            # explicit as well: the environment alone was not enough (the run showed up unnamed, in the default project)
+            project=config.get("WANDB_PROJECT"),
+            group=config.get("WANDB_RUN_GROUP"),
+            job_type=config.get("WANDB_JOB_TYPE"),
+            name=config.get("WANDB_NAME"),
+            tags=[t for t in config.get("WANDB_TAGS", "").split(",") if t] or None,
+            config=_wandb_config(),
         )
 
         def message(**kwargs):
             kwargs.pop("task", None)
             run.log(kwargs)
 
+        _wandb_message = message
         return message
 
     except ImportError:
@@ -463,7 +511,7 @@ class TimedIterator:
             first_batches = [next(iterator) for i in range(_flags.force_batch_fetch)]
 
         self.unique_iterator = id(iterator)
-        self.loader_init_time.append(ct.elapsed())
+        self.loader_init_time.append((ct.elapsed(), -ct._start))  # (duration, wall clock start)
 
         # with BENCHMATE_BATCH_FETCH this will ignore the dataloader setuptime
         self.last_time = time.time()
@@ -501,6 +549,7 @@ class TimedIterator:
                     bs = self.deduce_batch_size(data)
 
                     with lazy_record_timing("work", self.event_fn) as work_time: 
+                        self.record_lap("work_lap")
                         yield data
 
                     with lazy_record_timing("step", self.event_fn) as step_time: 
@@ -525,12 +574,18 @@ class TimedIterator:
             self._push_total_time_elapsed()
             self.earlystop()
 
-    def _make_rate(self, event: TimedEvent):
+    def _make_rate(self, event: TimedEvent, global_batch_size=True):
         event.end.synchronize()
         sync(self.device)
 
         elapsed = (event.elapsed_time()) / self.unit
-        rate = self.batch_size(event.batch_size) / elapsed
+
+        if global_batch_size:
+            bs = self.batch_size(event.batch_size)
+        else:
+            bs = event.batch_size
+
+        rate = bs / elapsed
 
         return rate, elapsed
 
@@ -610,10 +665,15 @@ class TimedIterator:
 
     def _push_time_steps(self):
         for event in self.events:
-            rate, elapsed = self._make_rate(event)
-            self.last_time += elapsed
-            self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
-
+            if self.rank is None or self.rank == 0:
+                rate, elapsed = self._make_rate(event)
+                self.last_time += elapsed
+                self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+            else:
+                rate, elapsed = self._make_rate(event, global_batch_size=False)
+                self.last_time += elapsed
+                self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+           
         self.total_obs += len(self.events)
         self.events = []
 
@@ -621,15 +681,17 @@ class TimedIterator:
         for ov in self.overhead:
             self.message(overhead=ov, units="s", task=self.task)
 
-        for iterinit in self.loader_init_time:
-            self.message(__iter__=iterinit, units="s", task=self.task)
+        for iterinit, started in self.loader_init_time:
+            self.message(__iter__=iterinit, units="s", task=self.task, start_time=started)
         
         for event in self.recorded_timers:
             kwargs = {
                 event.name: event.elapsed_time() / self.unit,
                 "units": "s",
                 "task": self.task,
-                "batch_id": event.batch_id
+                "batch_id": event.batch_id,
+                # CPU wall clock at the start of the timed block (the event is created when the block starts)
+                "start_time": event.cpu_timer,
             }
             self.message(**kwargs)
 
@@ -656,6 +718,8 @@ class TimedIterator:
         start = self.recored_laps[0]
         for lap in self.recored_laps[1:]:
             self.message(**{lap.name: lap.time - start.time}, task=self.task, units="s", time=lap.time)
+            start = lap
+
         self.recored_laps = [start]
 
     def _push_total_time_elapsed(self):
@@ -680,24 +744,36 @@ class TimedIterator:
 
             self._push_lap_events()
 
-        if False:
+        if True:
             self.message(sync_time=sync_time.elapsed(), units="s", task=self.task)
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 
     def log_rate(self, rate, time=None, elapsed=None, batch_id=None, schedule_time=None):
-        self.message(
-            rate=rate, units="items/s", task=self.task,
-            time=time, elapsed=elapsed, batch_id=batch_id, schedule_time=schedule_time
-        )
+        if self.rank is None or self.rank == 0:
+            # Rate only makes sense on rank0
+            self.rank0_log(
+                rate=rate, units="items/s", task=self.task,
+                time=time, elapsed=elapsed, batch_id=batch_id, schedule_time=schedule_time
+            )
 
     def log_progress(self):
-        if self.early_stop is not None:
+        if self.rank is None or self.rank == 0 and self.early_stop is not None:
             progress = self.progress()
             self.message(progress=(progress, self.early_stop), task="early_stop")
 
     def message(self, **kwargs):
         if self.rank is None or self.rank == 0:
             self.message_push(**kwargs)
+        else:
+            self.ranked_log(**kwargs)
+
+    def rank0_log(self, **kwargs):
+        if self.rank is None or self.rank == 0:
+            self.message_push(**kwargs)
+
+    def ranked_log(self, **kwargs):
+        """Log metrics on all ranks"""
+        ranked_push(**kwargs)
 
 
 class ManualTimedIterator(TimedIterator):
@@ -728,11 +804,22 @@ class ManualTimedIterator(TimedIterator):
         self.accumulation_steps = 0
         self.epochs = 0
 
+    def _record_work(self, work_time, batch_id):
+        """Keep a timed block (work, next) for the next push, tagged with the batch it belongs to.
+        step() has already bumped batch_id by the time control comes back here"""
+        if _flags.record_fine_grained:
+            work_time.batch_id = batch_id
+            self.recorded_timers.append(work_time)
+
     def step(self, batch_override=None):
         if batch_override is None:
             batch_override = self.acc_batch_size
 
-        self.should_stop = super().step(batch_override)
+        with lazy_record_timing("step", self.event_fn) as step_time:
+            self.should_stop = super().step(batch_override)
+
+        self._record_event(step_time)  # before the bump, same batch_id as the rate
+        self.batch_id += 1
         self.acc_batch_size = 0
         self.accumulation_steps = 0
         return self.should_stop
@@ -747,24 +834,41 @@ class ManualTimedIterator(TimedIterator):
         if first_batches:
             while first_batches:
                 data = first_batches.pop()
+                batch_id = self.batch_id
                 self.accumulation_steps += 1
                 self.acc_batch_size += self.deduce_batch_size(data)
 
-                with lazy_record_timing("work", self.event_fn):
+                with lazy_record_timing("work", self.event_fn) as work_time:
+                    self.record_lap("work_lap")
                     yield data
+
+                self._record_work(work_time, batch_id)
 
                 if self.should_stop:
                     break
 
-        for data in iterator:
+        while True:
+            # data loader wait; step() of the previous batch has already bumped batch_id: it is this batch's id
+            batch_id = self.batch_id
+            try:
+                with lazy_record_timing("next", self.event_fn) as next_time:
+                    data = next(iterator)
+            except StopIteration:
+                break
+
+            self._record_work(next_time, batch_id)
+
             # we have to compute the batch size now because 
             # step might be call before the execution returns to this  block
             self.accumulation_steps += 1
             self.acc_batch_size += self.deduce_batch_size(data)
-          
+
             with lazy_record_timing("work", self.event_fn) as work_time:
+                self.record_lap("work_lap")
                 yield data # step will probably be called right before the control
                         # returns to this block
+
+            self._record_work(work_time, batch_id)
 
             # step was called, should we stop ?
             if self.should_stop:

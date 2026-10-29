@@ -11,7 +11,7 @@ config is read here:
                     DSA attention needs ``packed_seq_params``)
     placement:      node order / rank order, see placement.py (reported here, applied by benchfile.py)
 
-Throughput is reported as ``rate`` (global tokens / step time) from the first rank, through setupvoir.
+Throughput is reported as ``rate`` (global tokens / step time, items/s) by benchmate's ManualTimedIterator (CUDA events, rank 0), through setupvoir.
 """
 
 from __future__ import annotations
@@ -87,10 +87,13 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
     With a config container Megatron builds the model through ``model_cfg.get_builder_cls()`` and ignores a
     ``model_provider``: the layer spec is a callable on the config, and the freezing is a pre-wrap hook (it has
     to run before the DDP wrapper, which only allocates gradient buffers for the parameters that require grad)."""
-    from slime_plugins.models.glm5.glm5 import get_glm5_spec
+    # model.spec: default -> Megatron's own TE layer spec (small stand-in models for smoke tests, no GLM-5 plugin)
+    glm5 = (config().get("model") or {}).get("spec", "glm5") == "glm5"
+    if glm5:
+        from slime_plugins.models.glm5.glm5 import get_glm5_spec
 
-    # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
-    args.hf_checkpoint = hf_path
+        # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
+        args.hf_checkpoint = hf_path
 
     def layer_spec(cfg, vp_stage=None):
         return get_glm5_spec(args, cfg.transformer, vp_stage)
@@ -100,6 +103,7 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
 
         collect_ep_groups(config())
         PLACEMENT["timing"] = bool((config().get("placement") or {}).get("a2a_timing", True))
+        PLACEMENT["every"] = max(int((config().get("placement") or {}).get("a2a_report_every", 10)), 1)
         if PLACEMENT["timing"]:
             install_a2a_timer()
         counts = [0, 0]
@@ -113,13 +117,16 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
         gathered = [None] * dist.get_world_size()
         dist.all_gather_object(gathered, tuple(counts))
         trainable, total = (sum(c[k] for c in gathered) for k in (0, 1))
+        fraction = trainable / total if total else None
         if LOG is not None and total:
-            fraction = trainable / total
             debug(f"params_trainable_fraction: {fraction:.4f}")
             LOG({"params_trainable_fraction": fraction, "units": "ratio", "task": "main", "time": time.time()})
+        if LOG is not None:
+            LOG({"run_start": run_start(args, fraction), "task": "main", "time": time.time()})
         return models
 
-    model_cfg.transformer_layer_spec = layer_spec
+    if glm5:
+        model_cfg.transformer_layer_spec = layer_spec
     model_cfg.pre_wrap_hooks.append(freeze_hook)
     return model_cfg
 
@@ -234,11 +241,20 @@ def start_nodemon(cfg: dict):
 LOG = None          # milabench event sink on rank 0 (setupvoir), None elsewhere
 STARTED = time.time()
 
-PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False}
+PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False,
+             "every": 10, "steps": 0}
 
 
 def short(host: str) -> str:
     return host.split(".")[0]
+
+
+def gpu_uuid():
+    """UUID of this rank's GPU (what the node monitor identifies GPUs by), None if unavailable."""
+    try:
+        return str(torch.cuda.get_device_properties(torch.cuda.current_device()).uuid)
+    except Exception:
+        return None
 
 
 def collect_ep_groups(cfg: dict):
@@ -252,17 +268,17 @@ def collect_ep_groups(cfg: dict):
 
     group = parallel_state.get_expert_model_parallel_group()
     PLACEMENT["ep_group"] = group
-    info = (dist.get_rank(), socket.gethostname(), tuple(dist.get_process_group_ranks(group)))
+    info = (dist.get_rank(), socket.gethostname(), tuple(dist.get_process_group_ranks(group)), gpu_uuid())
     infos = [None] * dist.get_world_size()
     dist.all_gather_object(infos, info)
 
-    groups = sorted({ranks for _, _, ranks in infos})
+    groups = sorted({ranks for _, _, ranks, _ in infos})
     PLACEMENT["groups"] = groups
     PLACEMENT["group_of_rank"] = {r: i for i, ranks in enumerate(groups) for r in ranks}
     if dist.get_rank() != 0:
         return
 
-    host_of_rank = {r: short(h) for r, h, _ in infos}
+    host_of_rank = {r: short(h) for r, h, _, _ in infos}
     nodes = (cfg.get("system") or {}).get("nodes") or []
     switch_of = {short(n): s for n, s in placement.switch_map(nodes, cfg.get("placement") or {}).items()} if nodes else {}
     node_hosts = list(dict.fromkeys(host_of_rank[r] for r in sorted(host_of_rank)))  # hosts in rank order
@@ -280,6 +296,102 @@ def collect_ep_groups(cfg: dict):
               f"{'  CROSSES' if len(sw) > 1 else ''}")
     PLACEMENT["crosses"] = crosses
     debug(f"expert groups crossing a switch: {sum(crosses)} / {len(groups)}")
+
+    # recorded in the run data with run_start (scripts/analysis/FORMAT.md, `placement`): the crossing count must not depend
+    # on a2a_timing being on. crossing / groups / gpu_uuids / mode are additions to the spec's fields.
+    place = cfg.get("placement") or {}
+    mode = place.get("nodes", "as-is") if isinstance(place.get("nodes", "as-is"), str) else "list"
+    leaves = {}
+    for h in node_hosts:
+        leaves.setdefault(switch_of.get(h, "unknown"), []).append(h)
+    snapshot = os.environ.get("TT_TOPOLOGY")
+    PLACEMENT["record"] = {
+        "hosts": node_hosts,
+        "family": os.environ.get("TT_FAMILY") or FAMILY.get(mode),
+        "ep_groups": [list(dict.fromkeys(host_of_rank[r] for r in ranks)) for ranks in groups],
+        "leaves": leaves,
+        "excluded_nodes": json.loads(os.environ.get("TT_EXCLUDED") or "{}"),
+        "health_check": os.environ.get("TT_HEALTH_DIR") or None,
+        "topology_snapshot_epoch": int(os.path.getmtime(snapshot)) if snapshot and os.path.isfile(snapshot) else None,
+        "crossing": sum(crosses),
+        "groups": len(groups),
+        "gpu_uuids": {r: u for r, _, _, u in sorted(infos)},
+        "mode": mode,
+    }
+
+
+# placement.nodes -> FORMAT.md's placement.family, when the launcher does not set TT_FAMILY
+FAMILY = {"aligned": "EP", "crossed": "EP", "mixed": "EP", "leaf": "ALL", "topology": "ALL", "as-is": "slurm"}
+
+
+def run_start(args, trainable_fraction):
+    """``data: {run_start: {run, placement, workload}}`` (scripts/analysis/FORMAT.md, section 1): once, after init, so a
+    run that fails later keeps its identity. The launcher's TT_* variables fill run.* and placement.family."""
+    env = os.environ.get
+    run = {
+        "cluster": env("CC_CLUSTER"),
+        "campaign": env("TT_CAMPAIGN"),
+        "variant": env("TT_VARIANT"),
+        "repetition": int(env("TT_REPETITION")) if env("TT_REPETITION") else None,
+        "slurm_job_id": env("SLURM_JOB_ID"),
+        "slurm_step_id": env("SLURM_STEP_ID"),
+        "slurm_reservation": env("SLURM_JOB_RESERVATION"),
+        "exclusive_cluster": env("TT_EXCLUSIVE") == "1",
+    }
+
+    def dtype(name):
+        value = getattr(args, name, None)
+        return str(value).replace("torch.", "") if value is not None else None
+
+    workload = {}
+    try:
+        cfg = config()
+        hf_path = str(cfg["model"]["hf_path"]).replace("{milabench_data}", os.environ["MILABENCH_DIR_DATA"])
+        try:
+            with open(Path(hf_path) / "config.json") as f:
+                layers_full = json.load(f).get("num_hidden_layers")
+        except OSError:
+            layers_full = None
+        try:
+            import subprocess
+
+            megatron = Path(__file__).parent / "Megatron-LM"
+            commit = subprocess.run(["git", "-C", str(megatron), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                    timeout=10).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            commit = None
+        dp = getattr(args, "data_parallel_size", 1) or 1
+        grad_accum = args.global_batch_size // (args.micro_batch_size * dp)
+        precise = getattr(args, "use_precision_aware_optimizer", False)
+        workload = {
+            "model": Path(cfg["model"].get("hf", "GLM-5")).name, "framework": "megatron", "framework_commit": commit,
+            "torch_version": torch.__version__,
+            "nccl_version": ".".join(map(str, torch.cuda.nccl.version())) if torch.cuda.is_available() else None,
+            "n_layers": args.num_layers, "n_layers_full": layers_full,
+            "params_trainable_fraction": trainable_fraction,
+            "params_total": None, "params_active": None,
+            "seq_len": args.seq_length, "microbatch_sequences": args.micro_batch_size, "grad_accum": grad_accum,
+            "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
+            "global_batch_tokens": args.global_batch_size * args.seq_length,
+            "precision": "fp8" if getattr(args, "fp8", None) else "bf16",
+            "optimizer": "AdamW" if args.optimizer == "adam" and args.weight_decay > 0 else args.optimizer,
+            "optimizer_state_dtype": dtype("exp_avg_dtype") if precise else "fp32",
+            "optimizer_offload_fraction": getattr(args, "optimizer_offload_fraction", 0.0)
+                                          if getattr(args, "optimizer_cpu_offload", False) else 0.0,
+            "activation_checkpointing": args.recompute_granularity or "none", "compile": "none",
+            "moe": {
+                "n_experts": args.num_experts, "top_k": args.moe_router_topk,
+                "n_shared_experts": 1 if getattr(args, "moe_shared_expert_intermediate_size", None) else 0,
+                "ep": args.expert_model_parallel_size,
+                "routing": "aux-loss-free" if getattr(args, "moe_router_enable_expert_bias", False)
+                           else args.moe_router_load_balancing_type,
+                "capacity_factor": getattr(args, "moe_expert_capacity_factor", None),
+                "dispatcher": args.moe_token_dispatcher_type,
+            } if getattr(args, "num_experts", None) else None,
+        }
+    except Exception as exc:  # the record is informative, never fatal
+        debug("run_start workload failed:", exc)
+    return {"run": run, "placement": PLACEMENT.get("record"), "workload": workload}
 
 
 def install_a2a_timer():
@@ -322,11 +434,15 @@ def install_a2a_timer():
 
 
 def report_a2a(log):
-    """After a step: every rank's all-to-all time, averaged per expert group (a collective: all ranks call it)."""
+    """Every rank's all-to-all time per step, averaged per expert group (a collective: all ranks call it).
+
+    Covers the steps since the last report (the events accumulate), so the figure is a per-step mean. The warm-up step is
+    dropped by the caller: it includes NCCL's lazy setup of the expert communicator."""
     import torch.distributed as dist
 
     events, PLACEMENT["events"] = PLACEMENT["events"], []
-    ms = sum(s.elapsed_time(e) for s, e in events) if events else 0.0
+    steps, PLACEMENT["steps"] = max(PLACEMENT["steps"], 1), 0
+    ms = sum(s.elapsed_time(e) for s, e in events) / steps if events else 0.0
     mine = torch.tensor([ms], device="cuda")
     gathered = [torch.empty_like(mine) for _ in range(dist.get_world_size())]
     dist.all_gather(gathered, mine)
@@ -346,37 +462,107 @@ def report_a2a(log):
 
 # --- metrics -----------------------------------------------------------------------------------------------------
 
+def report_peak_memory(log):
+    """Peak GPU memory of this rank after the first step. ``log`` is every rank's own sink (benchmate.monitor.metric_log):
+    rank 0 -> milabench, the other ranks -> their rankstore file (merged afterwards by ``LocalMetricStore.read``).
+
+    Per rank, with its pipeline stage: the last stage (FP32 logits) is the one most likely to run out of memory."""
+    from megatron.core import parallel_state
+
+    gib = 2**30
+    allocated = torch.cuda.max_memory_allocated() / gib
+    reserved = torch.cuda.max_memory_reserved() / gib
+    stage = parallel_state.get_pipeline_model_parallel_rank()
+    log({"peak_memory_allocated": allocated, "peak_memory_reserved": reserved, "pp_stage": stage, "units": "GiB",
+         "task": "main", "time": time.time()})
+
+
+def patch_straggler(rank_log, state, steps):
+    """Per-rank straggler data, with ``--log-straggler``. Megatron's detector gathers the ranks' numbers on rank 0 and only
+    prints the min / max rank; every rank computes its own in ``elapsed()`` (GPU time of the model's GEMM kernels, the
+    slowest ``get_batch``, GPU temperature / power / utilization / clock), so each rank logs them there: no extra
+    collective, and the rank files keep all the ranks instead of only the extremes."""
+    from megatron.core.utils import StragglerDetector
+    from megatron.training import get_args
+
+    original = StragglerDetector.elapsed
+
+    def elapsed(self):
+        result = original(self)
+        if not self._off:
+            gemm, data, temp, power, util, clock = result
+            interval = max(get_args().log_interval, 1)
+            rtt = gemm / interval
+            flops = getattr(self, "_mb_flops", 0.0)  # of the interval, given to report()
+            # Etpt, as the detector computes it: TFLOP/s of this rank, from the forward only, hence / amp
+            etpt = flops / interval / (rtt * 10**9 * self.world) / self.amp if rtt > 0 else 0.0
+            rank_log({
+                "straggler_gemm_ms": rtt,  # Rtt: per step, over the steps since the last report
+                "straggler_etpt": etpt,
+                "straggler_data_ms": data,  # slowest get_batch of the interval
+                "straggler_temp": temp, 
+                "straggler_power": power, 
+                "straggler_util": util, 
+                "straggler_clock": clock,
+                "step": state["step"], "task": "train", "time": time.time(),
+            })
+        return result
+
+    report = StragglerDetector.report
+
+    def timed_report(self, total_flops=0.0, *args, **kwargs):
+        self._mb_flops = total_flops
+        # the report syncs with the GPU and gathers on rank 0, after the step: keep it out of the next step's time
+        result = report(self, total_flops, *args, **kwargs)
+        steps.restart_clock()
+        return result
+
+    StragglerDetector.elapsed = elapsed
+    StragglerDetector.report = timed_report
+
+
 def patch_train_step(log):
     import megatron.training.training as training
     from megatron.training import get_args
 
+    import step_metrics
+    from benchmate.monitor import metric_log
+
+    steps = step_metrics.install(log)
+    rank_log = log if log is not None else metric_log()  # rank 0: milabench (+ wandb), other ranks: rankstore (+ wandb)
     original = training.train_step
     state = {"step": 0}
+    patch_straggler(rank_log, state, steps)
 
     def timed(*args, **kwargs):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
+        # rate / laps / clock: StepTimer (benchmate TimedIterator). Here only what it does not know about.
         result = original(*args, **kwargs)
-        torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
         state["step"] += 1
+        margs = get_args()
+        steps.step(margs.global_batch_size * margs.seq_length)
         if state["step"] == 1 and log is not None:
             # launch -> end of the first (warm-up) step: imports, init, model build, first step
             log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
+        if state["step"] == 1:
+            report_peak_memory(rank_log)  # every rank
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
-            report_a2a(log)
+            if state["step"] == 1:
+                PLACEMENT["events"] = []  # warm-up: NCCL creates the expert communicator at its first collective
+            else:
+                PLACEMENT["steps"] += 1
+            # every N steps, and at the last step so the end of the run is counted too
+            if state["step"] > 1 and (state["step"] % PLACEMENT["every"] == 0 or state["step"] == margs.train_iters):
+                # the report syncs with the GPU and runs a collective: keep it out of the measured step time
+                report_a2a(log)
+                steps.restart_clock()
         if log is not None:
-            margs = get_args()
-            tokens = margs.global_batch_size * margs.seq_length
-            now = time.time()
-            log({"rate": tokens / elapsed, "units": "tokens/s", "task": "train", "time": now})
-            log({"step_time": elapsed, "units": "s", "task": "train", "time": now})
             loss_dict = result[0] if isinstance(result, tuple) else {}
             if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
-                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": now})
+                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
         return result
 
     training.train_step = timed
+    return steps
 
 
 # --- placement report --------------------------------------------------------------------------------------------
@@ -417,14 +603,17 @@ def main():
     # Megatron parses sys.argv: nothing of ours must be left in it
     argv = sys.argv[1:]
 
+    # one node monitor per node (local rank 0): rank 0's goes to milabench, the others' to their rankstore file
+    # (benchmate.monitor.metric_log). Only rank 0 reports the run itself (steps, loss, placement).
     log = monitor = None
-    if rank() == 0:
+    if int(os.environ.get("LOCAL_RANK", "0")) == 0:
         from benchmate.monitor import setupvoir
 
-        log, monitor = setupvoir(monogpu=False, interval=0.5)
-        log = with_wandb(log)
-        LOG = log
-        report_placement(cfg, argv)
+        node_log, monitor = setupvoir(monogpu=False, interval=0.5)
+        if rank() == 0:
+            log = with_wandb(node_log)
+            LOG = log
+            report_placement(cfg, argv)
 
     spec = freeze_patterns(cfg.get("frozen"))
     debug("frozen:", spec)
@@ -442,7 +631,7 @@ def main():
     model_cfg = configure_model(gpt_config_from_args(args), args, spec, hf_path)
     full_config = pretrain_cfg_container_from_args(args, model_cfg)
 
-    patch_train_step(log)
+    steps = patch_train_step(log)
     try:
         pretrain(
             full_config,
@@ -452,6 +641,7 @@ def main():
             get_embedding_ranks=get_embedding_ranks,
         )
     finally:
+        steps.flush()
         if sampler is not None:
             sampler.stop("bench done")
         if monitor is not None:

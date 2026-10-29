@@ -30,6 +30,11 @@ def wandb_enabled():
     return _get_flag("BENCHMATE_WANDB", int, 0) != 0
 
 
+def wandb_all_ranks():
+    """One wandb run per rank instead of rank 0 only. Opt-in with ``BENCHMATE_WANDB_ALL_RANKS=1`` (needs BENCHMATE_WANDB)."""
+    return _get_flag("BENCHMATE_WANDB_ALL_RANKS", int, 0) != 0
+
+
 def jaxmem_enabled():
     """Whether to poll JAX device allocator stats.
 

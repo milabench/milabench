@@ -22,6 +22,7 @@ Config (``placement:`` in the bench entry)::
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from collections import OrderedDict, defaultdict
@@ -61,6 +62,12 @@ def parse_scontrol_topology(text: str) -> dict[str, str]:
 
 
 def slurm_topology() -> dict[str, str]:
+    """From the snapshot the job saved at allocation time (``TT_TOPOLOGY``) if there is one, so the node order at launch
+    and the run's record use the same topology; else ``scontrol show topology`` now."""
+    snapshot = os.environ.get("TT_TOPOLOGY")
+    if snapshot and os.path.isfile(snapshot):
+        with open(snapshot) as f:
+            return parse_scontrol_topology(f.read())
     try:
         out = subprocess.run(["scontrol", "show", "topology"], capture_output=True, text=True, timeout=30, check=True)
     except (OSError, subprocess.SubprocessError):
