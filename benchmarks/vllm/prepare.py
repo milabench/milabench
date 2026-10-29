@@ -69,7 +69,7 @@ def main():
         raise SystemExit("prepare: no model found in server positional or --model")
     download_hf_model(model)
 
-    setup_flashinfer()
+    # setup_flashinfer()
 
     print("=" * 60)
     print("Prepare script completed successfully")
