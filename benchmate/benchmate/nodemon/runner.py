@@ -176,7 +176,7 @@ def run(
     # Every run writes its status file before any row, so this also covers its TSV files.
     if status.exists():
         lock.close()
-        log.error(f"An earlier run's output is already in {status.parent} ({status.name}); use a new directory per run.")
+        log.error(f"An earlier run's output is already in {status.parent} ({status.name}); name the directory after the run, and give every attempt its own run name.")
         return Sampler(RunState.REFUSED)
     if not registry:
         registry = default_registry(sink)
