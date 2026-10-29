@@ -163,15 +163,16 @@ python -m pytest benchmate/tests/nodemon
 python -m benchmate.nodemon.watch $BENCHMATE_NODEMON_DIR --follow 30
 ```
 
-One block per refresh: the lowest SM clock with its throttle reasons, how busy the GPUs are,
-NVLink and IB rates, IB link errors and congestion (`xmit_wait`), the median CPU busy-core clock
+One block per refresh: the lowest SM clock with its throttle reasons (a Note column names the GPU or node behind a reading), how busy the GPUs are, their power and temperature,
+NVLink and IB rates, IB link errors and congestion (a port whose `xmit_wait` rises far faster than the other ports'), the median CPU busy-core clock, how busy the CPUs are
 and any CPU package or GPU whose clock is well below its peers' (the stragglers), host memory, XIDs and pending or failed row remaps,
-ECC, EDAC and OOM kills, and any node whose sampler has died while its status still says
+uncorrected ECC and EDAC errors, OOM kills, and any node whose sampler has died while its status still says
 `running`.
 
 Nodes ranked by score, worst first: the nodes to look at, or drain, before the others.
 
-`--window` sets how much history each refresh covers (60 s by default). Without `--follow` it
+`--flagged-hosts` (8) is how many hosts or devices a line names before counting the rest. `--window` sets how much history each refresh covers (60 s by default). With `--follow` on a terminal the block is redrawn in place, below a blank line instead of its time header; piped or
+redirected, each refresh is appended. Without `--follow` it
 prints one block and exits.
 
 ## Not yet done
