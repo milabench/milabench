@@ -1,0 +1,62 @@
+\section{Scaling}
+\label{sec:scaling}
+
+\begin{question}
+  \textbf{How does throughput per GPU change from one switch up to 264 GPUs, and where does efficiency
+  drop?} The work per GPU is fixed (weak scaling), so perfect scaling is a flat line.
+\end{question}
+
+\Cref{fig:scaling} shows tokens/s per GPU against the number of GPUs, one line per cluster, with the
+change from the smallest to the largest run written at the end of each line. There is no ``efficiency''
+axis: the only runs without inter-node traffic are single-node runs, which use a 16-layer model, so no
+full-model run can serve as a 100\,\% reference. The dashed lines are a \emph{no-network ceiling}
+instead: the single-node MFU converted to full-model tokens/s. It is an estimate: it assumes MFU carries
+over from 16 to 64 layers, and the 16-layer model also gathers 4$\times$ fewer parameters per step.
+
+\begin{figure}[h]
+  \centering\fig{weak_scaling}
+  \caption{Weak scaling of Qwen3.8-27B ($3\times4096$ tokens per GPU, FP32 moments). One point per run
+    (all placements), lines through the medians. Dashed: no inter-node traffic (est.).
+    \syntheticnote{weak_scaling}}
+  \label{fig:scaling}
+\end{figure}
+
+\placeholder{throughput at 12, 24, 48 GPUs (measured) and at full scale; where the curve bends.}
+
+\paragraph{More nodes vs.\ crossing switches.} Throughput per GPU drops as a job grows (\cref{fig:scaling}).
+\Cref{fig:placement-scaling} separates two causes up to 12 nodes, the largest job one Rorqual switch holds.
+The one-switch line (S) is the cost of more nodes alone, with no traffic through the spine; its band is the
+run-to-run spread. The spread placements on the same axis, 3 per switch (H) and 1 per switch (O), show what
+crossing switches adds. At 3 nodes, 3 per switch is a single 3-node leaf, so it is not shown as spreading.
+Instead, a leaf-to-leaf control (two one-switch runs on different leaves) shows how much leaves differ by
+themselves. All clusters share one axis: each is relative to its own one-switch run at 3 nodes. 1 per
+switch is limited by the number of leaves (16 on Rorqual, 8 GPU leaves on Fir, 5 on Tamia). Beyond 12
+nodes, the two causes cannot be separated on Rorqual (no one-switch reference); the allocation choice at
+that scale is in \cref{fig:placement-at-scale}.
+
+\begin{figure}[h]
+  \centering\fig{placement_scaling}
+  \caption{Throughput per GPU by number of nodes for each placement (marker) and cluster (color), relative to
+    the cluster's one-switch run at 3 nodes; one campaign per cluster. Band: run-to-run spread around one
+    switch. Shaded (Rorqual): what crossing switches adds. Gray X: leaf-to-leaf control.
+    \syntheticnote{placement_scaling}}
+  \label{fig:placement-scaling}
+\end{figure}
+
+\placeholder{share of the drop at 12 nodes due to node count vs.\ crossing switches, per cluster.}
+
+\paragraph{Where the step time goes.} \Cref{fig:decomposition} splits the step time into compute and exposed
+communication. The compute part is the single-node step time at the same per-GPU batch, scaled by the
+ratio of FLOPs per token between the full and the 16-layer model. It is an estimate, and so is the
+communication part derived from it.
+
+\begin{figure}[h]
+  \centering\fig[0.85\linewidth]{step_decomposition}
+  \caption{Step time decomposition by cluster and scale. Hatched: compute (est.); shaded: exposed
+    communication (est.), the remainder of the measured step time. \syntheticnote{step_decomposition}}
+  \label{fig:decomposition}
+\end{figure}
+
+\placeholder{share of exposed communication on Rorqual vs.\ Fir at equal scale; a measured split would
+need gradient-accumulation runs at multi-node scale ($t_\text{step} = k\,t_\text{micro} +
+t_\text{overhead}$).}
