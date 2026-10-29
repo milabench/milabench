@@ -28,8 +28,11 @@ export WORKDIR=${WORKDIR:-$MILABENCH_BASE/src}
 export CONFIG=${CONFIG:-$WORKDIR/benchmarks/megatron/dev.yaml}
 RESERVATION=${RESERVATION:-MILABENCH2026}
 ACCOUNT=${ACCOUNT:-def-bengioy_gpu}
-GPUS=${GPUS:-4}
-NODES=${NODES:-66}
+GPUS=${GPUS:-h100:4}   # typed: the MIG nodes of the reservation would match a plain count
+# the reservation's 66 full-GPU nodes minus the EXCLUDE ones (asking for more nodes than remain never starts)
+excluded=0
+[ -n "${EXCLUDE:-}" ] && excluded=$(scontrol show hostnames "$EXCLUDE" | wc -l)
+NODES=${NODES:-$((66 - excluded))}
 BRANCH=${BRANCH:-megatron}
 UPDATE=${UPDATE:-1}
 
