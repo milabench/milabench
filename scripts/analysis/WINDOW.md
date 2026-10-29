@@ -62,14 +62,28 @@ export HEALTH_DIR=<health results dir> EXCLUDE_REASONS='{"rg21701": "CPU clock d
 GLM jobs take every healthy node (`NODELIST=H`): each entry picks its own 50 or 64 nodes inside.
 
 **`H`, the healthy nodes.** Before the window, nobody knows which nodes the health check will fail, so the night
-queue assumes every reserved node is healthy except **rg21701** (its CPU clock drops under training load and no
-health check catches it reliably, journal 10-26):
+queue leaves out only **rg21701** (its CPU clock drops under training load and no health check catches it
+reliably, journal 10-26) and the reserved nodes Slurm already marks as failed or drained for another reason than
+the maintenance. A job whose node list holds a node that never comes back would wait forever and block the queue
+behind it. Compute `H` right before submitting the night queue:
 
 ```bash
-H=$(scontrol show reservation MILABENCH2026 | sed -n 's/.* Nodes=\([^ ]*\) .*/\1/p')
-H=$(scontrol show hostnames "$H" | grep -vx rg21701 | paste -sd,)
-scontrol show hostnames "$H" | wc -l     # 65
+N=$(scontrol show reservation MILABENCH2026 | sed -n 's/.* Nodes=\([^ ]*\) .*/\1/p')
+BAD=$( { echo rg21701; sinfo -h -N -n "$N" -o '%n|%t|%E' | sort -u |
+         awk -F'|' '$2 ~ /drain|fail|down/ && $3 != "Not responding" {print $1}'; } | sort -u | paste -sd,)
+H=$(scontrol show hostnames "$N" | grep -vxF -f <(tr , '\n' <<<"$BAD") | paste -sd,)
+echo "$BAD"; scontrol show hostnames "$H" | wc -l
 ```
+
+On 10-29 at 15:55 this gave `BAD=rg13601,rg21701,rg32101,rg32603` (rg13601 "having problems after reboot",
+rg32101 NHC timeout on /localscratch, rg32603 GPU ECC errors) and 62 nodes. Consequences of those three, all on
+3-node leaves (ihpc136, ihpc321, ihpc326):
+
+- Qwen: H48 / P48 (blocks 16, 17, 26, 27) cannot be built: use the largest H can build (`H:30` / `P:30` with 10
+  complete 3-node leaves; check with `TT_DRY_RUN=1`). ALL is 62 nodes. Everything else is unchanged.
+- GLM-5: the aligned set stays 50 nodes (each 3-node leaf still gives 2). The every-node set is 62 nodes: 248
+  GPUs, no usable EP8 layout, so the 64-node entries (G4, its fit ladder) fail at launch. G4 needs the 60-node
+  entry (`megatron-glm5-g4-ep8-all-nodes-60n`, PP15) or the nodes back.
 
 In the morning, `H` is replaced by block 1's result (below) for the day queue.
 
