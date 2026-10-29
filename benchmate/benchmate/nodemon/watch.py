@@ -54,7 +54,7 @@ def by_device(
         value = number(row, metric.name)
         if value is not None and (counts is None or counts(row)):
             samples.setdefault((host, device_of(metric.collector, row)), []).append(value)
-    return {key: percentile(values, 0.5) for key, values in samples.items()}
+    return {key: median for key, values in samples.items() if (median := percentile(values, 0.5)) is not None}
 
 
 @dataclass(frozen=True)
@@ -134,9 +134,9 @@ class AbovePeers(CounterRule):
 
     def check(self, window: Window) -> Iterator[Finding]:
         found = rates(window, self.metric)
-        if not found:
-            return
         median = percentile(list(found.values()), 0.5)
+        if median is None:
+            return
         for (host, device), rate in found.items():
             if rate > self.floor and rate >= self.factor * median:
                 yield Finding(host, self, device, f"{self.metric.name} {rate:,.0f}/s, median {median:,.0f}/s")
@@ -513,6 +513,11 @@ def human(value: float | None, digits: int = 2) -> str:
     return "-" if value is None else f"{value:.{digits}f}"
 
 
+def percent(fraction: float) -> str:
+    """A 0 to 1 fraction as a whole percent: 0.94 as "94"."""
+    return f"{fraction * 100:.0f}"
+
+
 def rate(value: float | None) -> str:
     """Bytes per second as GB/s, the unit the links are specified in."""
     return "-" if value is None else f"{value / 1e9:.2f} GB/s"
@@ -591,8 +596,15 @@ class Window:
                     self.counters.update((collector, column, host, device), value)
 
     def refresh(self, status: dict[str, dict[str, Any]], now_s: float) -> None:
-        """Take the samplers' status as of `now_s`, and drop what fell out of the window."""
+        """Take the samplers' status as of `now_s`, and drop what fell out of the window.
+
+        Once every sampler has written its end, the window closes at the last of them: a finished
+        run is reported as it was, not as the empty stretch between its end and now.
+        """
         self.status = status
+        ends = [record.get("end") or 0 for record in status.values()]
+        if status and all(ends):
+            now_s = max(ends) / 1000
         self.now_s = now_s
         cutoff = (now_s - self.window_s) * 1000
         for collector, rows in self.rows.items():
@@ -706,7 +718,7 @@ def busiest(window: Window, metric: CollectorMetric) -> str:
     busy = peaks(window, metric)
     if not busy:
         return "no samples"
-    top = ", ".join(f"{name} {value:.2f}" for name, value in sorted(busy.items(), key=lambda item: -item[1])[:3])
+    top = ", ".join(f"{name} {percent(value)}%" for name, value in sorted(busy.items(), key=lambda item: -item[1])[:3])
     return f"busiest {top} ({metric.name})"
 
 
@@ -723,7 +735,7 @@ def readings(window: Window) -> list[Line]:
     """A table of the readings: p50, p90 and max of each over the window, and a note where one helps.
 
     The GPU rows are always there, so that no GPU samples is seen; the others only with samples.
-    GPU busy is the duty cycle; the SM rows are what GPM and DCGM measure, when either answers.
+    GPU busy is the duty cycle; the tensor and SM rows are what GPM and DCGM measure, when either answers.
     """
     duty, point = GpuCollector.metric("util_mean"), GpuCollector.metric("util")
     busy = duty if window.values(duty.collector, duty.name) else point
@@ -733,8 +745,8 @@ def readings(window: Window) -> list[Line]:
     #: Per row: its label, the metrics pooled for it, how a value is written, its severity, and its note.
     rows = (
         ("GPU clock", (SM_CLOCK,), lambda value: f"{value:.0f} {SM_CLOCK.unit}", clock_level, clock_note),
-        ("GPU busy", (busy,), lambda value: f"{value:.2f}", 0, busiest(window, busy)),
-        ("GPU SM util", (GpmCollector.metric("sm_util"),), lambda value: f"{value:.2f}", 0, ""),
+        ("GPU busy %", (busy,), percent, 0, busiest(window, busy)),
+        ("GPU tensor %", (GpmCollector.metric("tensor_util"),), percent, 0, ""),
         ("GPU SM active", (DcgmCollector.metric("sm_active"),), lambda value: f"{value:.2f}", 0, ""),
         ("GPU power", (power,), lambda value: f"{value:.0f} {power.unit}", 0, ""),
         ("GPU temp", (temp,), lambda value: f"{value:.0f} {temp.unit}", 0, hottest(window, temp)),

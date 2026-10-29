@@ -72,6 +72,21 @@ def test_a_killed_sampler_is_reported_stale_while_a_closed_one_is_not(tmp_path):
     assert "min 1410 MHz on cn-a:0" in text
 
 
+def test_a_finished_run_is_reported_as_it_ended_not_as_an_empty_window_now(tmp_path):
+    ended = time.time() - 3600
+    stamp = int(ended * 1000)
+    tsv(tmp_path / "nodes" / "cn-a.gpu.tsv", ["time_ms", "gpu", "sm_clock_mhz", "util_mean"], [[stamp - 5000, 0, 1410, 0.9]])
+    (tmp_path / "cn-a.status.json").write_text(json.dumps({"state": "closed", "end": stamp}))
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh(statuses(tmp_path), time.time())
+    text = block(window)
+
+    assert "min 1410 MHz on cn-a:0" in text
+    assert "no samples" not in text
+
+
 def test_a_counter_an_earlier_job_left_is_quiet_and_only_a_rise_is_red(tmp_path):
     now = time.time()
     start = int((now - 400) * 1000)
@@ -384,7 +399,7 @@ def test_the_readings_are_a_table_of_p50_p90_and_max(tmp_path):
         [(1980, 0.5), (1980, 0.7), (1980, 0.9), (1800, 1.0)])]
     tsv(tmp_path / "nodes" / "cn-a.gpu.tsv", columns, rows)
     tsv(tmp_path / "nodes" / "cn-a.mem.tsv", ["time_ms", "mem_used_gib"], [[rows[0][0], 20.0], [rows[1][0], 30.0]])
-    tsv(tmp_path / "nodes" / "cn-a.gpm.tsv", ["time_ms", "gpu", "sm_util"], [[rows[0][0], 0, 0.4]])
+    tsv(tmp_path / "nodes" / "cn-a.gpm.tsv", ["time_ms", "gpu", "tensor_util"], [[rows[0][0], 0, 0.4]])
     tsv(tmp_path / "nodes" / "cn-a.cpu.tsv", ["time_ms", "package", "cpu_util"], [[rows[0][0], 0, 0.25]])
 
     window = Window(window_s=60.0)
@@ -396,8 +411,8 @@ def test_the_readings_are_a_table_of_p50_p90_and_max(tmp_path):
     assert table[""] == ["p50", "p90", "max", "Note"]
     assert table["GPU clock"][:6] == ["1980", "MHz", "1980", "MHz", "1980", "MHz"]
     assert "min 1800 MHz on cn-a:0" in next(line for line in lines if line.startswith("GPU clock"))
-    assert table["GPU busy"][:3] == ["0.90", "1.00", "1.00"]
-    assert table["GPU SM util"][:3] == ["0.40", "0.40", "0.40"]
+    assert table["GPU busy %"][:3] == ["90", "100", "100"]
+    assert table["GPU tensor %"][:3] == ["40", "40", "40"]
     assert "GPU SM active" not in table  # no dcgm samples
     assert table["GPU power"][:2] == ["300", "W"] and table["GPU temp"][:2] == ["65", "C"]
     assert table["GPU temp"][-4:] == ["hottest", "cn-a:0", "65", "C"]
