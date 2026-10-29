@@ -157,9 +157,8 @@ lines; the condition is the first word of the file name when it is not a host na
 
 ## 3. System telemetry: nodemon TSV on `$SCRATCH`
 
-`benchmate.nodemon` samples every node of the job, one process per host, beside the benchmark
-and independent of it. It records CPU clocks, IB, PCIe, XID, GPU ECC
-and host EDAC; on Hopper it also reads the SM and tensor-pipe counters (GPM) NVML's ordinary
+`benchmate.nodemon` samples every node of the job, one sampler per host, started from inside the
+benchmark. It records CPU clocks, IB, PCIe, XID, GPU ECC and host EDAC; on Hopper it also reads the SM and tensor-pipe counters (GPM) NVML's ordinary
 calls cannot give.
 
 ### Layout
@@ -201,40 +200,35 @@ time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util
 1793134142000	1	1410	0x0	106.832	42	0.97	0.93	0.71	71	
 ```
 
-Units: `time_ms` is wall-clock epoch milliseconds (the same clock as the run data's `time`);
-clocks in MHz, power in W, temperature in °C, memory in GiB, PCIe speed in GT/s; `util`,
-`cpu_util` and `*_utilization` are fractions in 0–1; `clocks_event_reasons` is the NVML
-clock-event bitmask as hex. `*_bytes`, `xmit_wait`, `symbol_error`, `link_downed`, `oom_kill`,
-`aer_*`, `ce_count` and `ue_count` are cumulative — the analysis takes deltas — and IB bytes
-are already converted from the sysfs 4-byte lanes.
+### Metric details
 
-Three columns need their definition read before they are compared:
+Units: `time_ms` is wall-clock epoch milliseconds (the run data's clock); clocks in MHz, power in
+W, temperature in °C, memory in GiB, PCIe speed in GT/s; `util`, `cpu_util`, `*_utilization` and
+the `gpm` columns are fractions in 0–1; `clocks_event_reasons` is the NVML bitmask as hex.
+`*_bytes`, `xmit_wait`, `symbol_error`, `link_downed`, `oom_kill`, `aer_*`, `ce_count` and
+`ue_count` are cumulative (the analysis takes deltas); IB bytes are already converted from the
+sysfs 4-byte lanes.
 
-- `util` is one NVML reading at the tick, so a GPU alternating between busy and idle within the
-  second can land anywhere. `util_mean` and `util_min` are over the samples the driver buffered
-  since the previous tick, `util_samples` says how many (empty when there were none).
-  **`util_mean` is the duty cycle over the interval, and the column to compare GPUs with.**
-- `xid` is empty on almost every row; a critical XID carries its code, or several `;`-joined,
-  stamped with the tick that drained the event queue — up to one period late.
-- `gpm` columns are fractions in 0–1 over the interval since the previous tick, so the first row
-  of a run is empty.
-
-### What the analysis uses
+- `util` is one NVML reading at the tick; `util_mean` and `util_min` cover the samples the driver
+  buffered since the previous tick (`util_samples` says how many, empty when none).
+  **`util_mean` is the duty cycle, and the column to compare GPUs with.**
+- `gpm` columns cover the interval since the previous tick, so the first row of a run is empty.
+  `tensor_util` is tensor-pipe occupancy, near 0 on fp32 work.
+- `xid` is empty on almost every row; a critical XID carries its code (several `;`-joined),
+  stamped with the tick that drained the event queue, up to one period late.
 
 | signal | columns | used for |
 |---|---|---|
-| SM clock, clock-event reasons | `gpu.sm_clock_mhz`, `gpu.clocks_event_reasons` | throttling (stability, Fig. 9) |
-| power, temperature | `gpu.power_w`, `gpu.temp_c` | cause of throttling |
+| SM clock, clock-event reasons, power, temperature | `gpu.sm_clock_mhz`, `gpu.clocks_event_reasons`, `gpu.power_w`, `gpu.temp_c` | throttling and its cause (stability, Fig. 9) |
 | GPU activity, SM clock, CPU busy-core clock | `gpm.tensor_util` else `gpu.util_mean` else `gpu.util`, `gpu.sm_clock_mhz`, `cpu.cpu_mhz_busy_mean` | stragglers (Fig. 10) |
 | NVLink and IB rates, IB errors | `nvlink.*_per_s`, `ib.*_per_s`, `ib.xmit_wait`, `ib.symbol_error`, `ib.link_downed` | traffic, link faults |
 | memory, OOM kills, AER counts | `mem.*`, `pcie.aer_*` | failures and node triage |
 | XID, GPU ECC, host ECC | `gpu.xid`, `ecc.*`, `edac.ce_count`, `edac.ue_count` | hardware faults during the run |
 
-**The straggler figure takes the sharpest signal the node offers**: `gpm.tensor_util` (tensor-pipe
-occupancy, Hopper only), else `util_mean` (duty cycle, always there), else `util`; per GPU, the
-median of its busiest 10-minute window, with the y-axis naming which. Alongside it, the SM clock
-and, per node, the CPU busy-core clock: the rg21701 case, where the CPU fell from ~3,700 to
-~2,560 MHz and the run lost ~25 % of its throughput, is visible in `cpu_mhz_busy_mean` alone.
+The straggler figure takes the sharpest activity signal the node offers, per GPU the median of
+its busiest 10-minute window, and its y-axis names which. Beside it, per node, the CPU busy-core
+clock: the rg21701 case, where the CPU fell from ~3,700 to ~2,560 MHz and the run lost ~25 % of
+its throughput, is visible in `cpu_mhz_busy_mean` alone.
 
 ### Joining with the run
 
@@ -396,7 +390,6 @@ Reader rules:
 | 4 | `gpu_uuid`, `local_rank` in `per_rank`; `CUDA_DEVICE_ORDER=PCI_BUS_ID` | `instrument.py`, `benchfile.py` | join with the node telemetry | small |
 | 5 | `step` in `rate` events | benchmate `ManualTimedIterator` | explicit step index | small, optional |
 | 6 | per-size rows in group JSON | srygaard/slurm-healthcheck | busbw vs. message size | small (their tool) |
-| 6b | per-GPU compute number (e.g. bf16 matmul TFLOPS, as `tt_health.py matmul`) in `nodes/<host>.json`; the DCGM `diagnostic` gives pass/fail only | srygaard/slurm-healthcheck | per-GPU baseline in the window (Figs. 1, 3) | small (their tool) |
 | 6c | run both `--job-per switch` and `--job-per cluster` in the window (one leaf and whole machine); optionally `--switches A B --job-per cluster` for 2-leaf scopes (e.g. 217+316) | window plan | communication scopes (Fig. 4) | none (operational) |
 | 3b | family **O** (1 node per switch, one node on each of N leaves) in the node picker | `tt_pick_nodes.py` | nodes-per-switch figure (S / H / O at 3, 6, 9, 12 nodes; O up to 16) | small |
 | 7b | GLM-5 expert-group layouts on Rorqual: EP8 aligned / mixed (~1 group in 4 crossing) / crossed on the **same 52 nodes** (even number per leaf: 13 x 2 + 12 + 8 + 6; fall back to 50 / 48), only the node order differs; plus mixed on every healthy node (largest achievable, Megatron's default order, even count); full model if it fits on 208 GPUs (to confirm); record `placement.ep_groups`; per-group all-to-all time if Megatron's MoE timers allow. Picker: "even per leaf" selection + the three orders | GLM-5 pipeline, `tt_pick_nodes.py` | expert-placement figure | medium |

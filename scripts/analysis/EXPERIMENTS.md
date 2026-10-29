@@ -27,8 +27,6 @@ Owner: fill in per item (`Owner:`).
 
 - [ ] **Access to srygaard results.** The window health check writes to the colleague's `$SCRATCH`, not
       readable by us. Get read access or an agreed copy location (`analyze.py collect --srygaard`). Owner:
-- [ ] **Per-GPU compute number in slurm-healthcheck** (bf16 matmul TFLOPS per GPU, as `tt_health.py matmul`):
-      without it the window has no per-GPU baseline (Figs. 1, 3). FORMAT item 6b. Owner:
 - [ ] **Dry run of the three window modes on reserved nodes** (before 10-27 04:00), to time them and check
       our adapter parses real output: `--job-per switch`, `--job-per cluster`, `--switches ihpc217u25
       ihpc316u25 --job-per cluster`. Figs. 2, 4. Owner:
@@ -385,7 +383,7 @@ What each figure has if the window stops after a phase (phases are cumulative), 
 | 3 | 13 Startup | usable: 1, 3, 6, 12, 27 nodes, every node | usable | **complete**: 3-48 nodes | complete |
 | 3 | 15 Stragglers | usable: 5-min windows of pass-1 runs (nodemon `util_mean` + SM clock + CPU clock; tensor activity on Hopper) | usable | usable | **complete** (long run) |
 | 3 | 14 Stability (>= 1 h) | none | none | none | **complete** |
-| 3 | 3 Per-GPU compute by cluster | **complete** if slurm-healthcheck reports per-GPU matmul (pre-window item); otherwise preliminary data only | same | same | same |
+| 3 | 3 Per-GPU compute by cluster | **complete** (slurm-healthcheck reports per-GPU fp16 TFLOPS) | same | same | same |
 | 3 | 1 Preliminary health checks | complete (no window data needed) | complete | complete | complete |
 | - | Tables 2, 3 (results, ledger) | grow with every run | | | |
 
@@ -398,8 +396,8 @@ What is lost if the window stops early:
   node counts (with the leaf-to-leaf controls). Fig. 10 has no FP8.
 - **Before P3**: no stability figure (Fig. 14), no GLM-5 EP-size comparison at full
   scale (Fig. 10), no window bridge point (Fig. 6).
-- **Independent of the window**: Figs. 3 and 12 depend on pre-window tool changes (per-GPU matmul in
-  slurm-healthcheck, per-group all-to-all timers in Megatron).
+- **Independent of the window**: Fig. 12 depends on a pre-window tool change (per-group all-to-all
+  timers in Megatron).
 
 ## After the window
 

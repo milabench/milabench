@@ -48,4 +48,4 @@ cluster. \Cref{fig:health-gpus} compares the per-GPU matmul throughput of the he
 
 \placeholder{medians per cluster. The same holds for training: single-node runs (16 layers) on Rorqual
 and Fir are within 0.6\,\% at $2\times8192$ tokens per GPU (\cref{tab:results}). The Rorqual single-node run at $3\times4096$ was noisy (p90/median 1.31) and is to be repeated: it sets Rorqual's ceiling in \cref{fig:scaling}. The window health check
-(srygaard) has no per-GPU throughput number yet (DCGM gives pass/fail): see \texttt{FORMAT.md}.}
+(srygaard) reports each GPU's fp16 TFLOPS from the DCGM diagnostic, a coarse estimate.}
