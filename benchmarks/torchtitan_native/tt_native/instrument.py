@@ -298,9 +298,9 @@ def set_wandb_env() -> None:
     defaults = {
         "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
         "WANDB_RUN_GROUP": config.get("run_name"),
-        "WANDB_RUN_JOB_TYPE": config.get("name"),
-        "WANDB_RUN_NAME": name,
-        "WANDB_RUN_TAGS": ",".join(t for t in tags if t),
+        "WANDB_JOB_TYPE": config.get("name"),
+        "WANDB_NAME": name,
+        "WANDB_TAGS": ",".join(t for t in tags if t),
     }
     if wandb_all_ranks():
         # One run per rank: name it after its worker (rank zero-padded so names sort
@@ -310,8 +310,8 @@ def set_wandb_env() -> None:
         rank = int(os.environ.get("RANK", "0"))
         local_rank = os.environ.get("LOCAL_RANK", "0")
         host = socket.gethostname().split(".")[0]
-        defaults["WANDB_RUN_NAME"] = f"{name or 'run'}-r{rank:05d}-{host}-gpu{local_rank}"
-        defaults["WANDB_RUN_TAGS"] += f",{host}"
+        defaults["WANDB_NAME"] = f"{name or 'run'}-r{rank:05d}-{host}-gpu{local_rank}"
+        defaults["WANDB_TAGS"] += f",{host}"
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
     for name, value in defaults.items():
@@ -341,7 +341,14 @@ def _host() -> str:
 
 def rank_metrics_path(rank: int, host: str) -> str:
     """This rank's level-2 file, named as benchmate's rankstore names it:
-    ``<dir>/metrics.<bench>.<host>.<rank>.jsonl``."""
+    ``<dir>/metrics.<bench>.<host>.<rank>.jsonl``.
+
+    TODO: benchmate now has ``benchmate.rankstore`` and routes the metrics of
+    ranks 1+ to this very path, so two handles append to the same file.
+
+    Write these rows through ``rankstore.get_store()`` instead of opening it
+    here, keeping the batching of ``flush_rank_rows``.
+    """
     bench = json.loads(os.environ.get("MILABENCH_CONFIG", "{}")).get("name")
     name = f"metrics.{bench}.jsonl" if bench else "metrics.jsonl"
     if os.environ.get("TT_RANK_METRICS_DIR"):
@@ -588,6 +595,9 @@ class TrainerInstrument:
         self._data_times.append(self._data_time_acc)
         self._data_time_acc = 0.0
         # benchmate sums this over all ranks at push time.
+        # TODO: since PR #46 only rank 0 reduces in _push_time_steps, so it waits
+        # in a collective no one else joins. Fix there, or override batch_size
+        # here as Megatron's step_metrics.LocalBatchTimer does.
         self.timer.step(batch_override=self._local_tokens // self.dp_divisor)
         # Push (and sync) on TorchTitan's logging steps only, which already
         # synchronize; every rank pushes at the same step (collective reduce).
@@ -625,6 +635,10 @@ class TrainerInstrument:
         )
         # Manual stepping: set what TimedIterator.__iter__ would have set.
         self.timer.last_time = time.time()
+        # The step index of the rate events is TorchTitan's step, not the index of
+        # the measured step (benchmate counts from 0 and step() bumps it after the
+        # event is made, so the first measured step keeps this value).
+        self.timer.batch_id = self.skip + 1
         self.timer.start = torch.cuda.Event(enable_timing=True)
         self.timer.start.record()
         self._step_ends = [self.timer.start]
