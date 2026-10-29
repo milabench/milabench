@@ -311,7 +311,8 @@ def set_wandb_env() -> None:
         local_rank = os.environ.get("LOCAL_RANK", "0")
         host = socket.gethostname().split(".")[0]
         defaults["WANDB_NAME"] = f"{name or 'run'}-r{rank:05d}-{host}-gpu{local_rank}"
-        defaults["WANDB_TAGS"] += f",{host}"
+        tags.append(host)
+        defaults["WANDB_TAGS"] = ",".join(t for t in tags if t)
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
     for name, value in defaults.items():

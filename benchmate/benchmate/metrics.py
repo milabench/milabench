@@ -757,9 +757,9 @@ class TimedIterator:
             )
 
     def log_progress(self):
-        if self.rank is None or self.rank == 0 and self.early_stop is not None:
-            progress = self.progress()
-            self.message(progress=(progress, self.early_stop), task="early_stop")
+        if self.early_stop is not None:
+            # Progress is against the early stop count: rank 0 only, as the rate is
+            self.rank0_log(progress=(self.progress(), self.early_stop), task="early_stop")
 
     def message(self, **kwargs):
         if self.rank is None or self.rank == 0:
