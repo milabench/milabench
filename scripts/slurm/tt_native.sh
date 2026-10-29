@@ -46,7 +46,15 @@ fi
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 
+
+export MILABENCH_RUN_NAME=${MILABENCH_RUN_NAME:-${TT_RUN_TAG:-$BENCH}.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}}
+
+# benchmate.nodemon (node telemetry): main.py starts the sampler from every rank when this is set.
+# Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
+export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-$MILABENCH_BASE/nodemon/$MILABENCH_RUN_NAME}
+
 echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST"
+echo "[tt-native] run_name=$MILABENCH_RUN_NAME nodemon=${BENCHMATE_NODEMON_DIR:-off}"
 squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
@@ -158,7 +166,7 @@ SLURM_JOB_NODELIST=${TT_NODES:-$SLURM_JOB_NODELIST} milabench slurm system > "$S
 echo "[tt-native] system_ready_epoch=$(date +%s.%N)"
 
 rc=0
-milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" "$@" || rc=$?
+milabench run --config "$MILABENCH_CONFIG" --system "$SYSTEM" --select "$BENCH" --run-name "$MILABENCH_RUN_NAME" "$@" || rc=$?
 
 # Save (or refresh) the archive when this run compiled something new, e.g. a
 # config with new shapes: the main node's cache = restored entries + new ones.

@@ -25,6 +25,14 @@ Frozen parameters are set before Megatron wraps the model, so they get no gradie
   and TP under one switch; `nodes: topology` does that with the default order, `tp-cp-ep-pp-dp` makes the pipeline
   local instead and pushes the data-parallel reduce across switches.
 
+## Node telemetry
+
+With `BENCHMATE_NODEMON_DIR` set, `main.py` starts `benchmate.nodemon` from every rank before Megatron is imported,
+so GPU clocks, NVLink, InfiniBand, CPU clocks and host memory are sampled through model init and training. Only the
+first rank on each host collects (`nodes/<host>.*.tsv` plus `<host>.status.json` under that directory), and the
+sampler is stopped when the bench ends. Unset, nothing is sampled. One run per directory: a second bench pointed at
+the same one refuses rather than mixing its rows in.
+
 ## Status
 Config only, **not run**: written against Megatron-LM `4b4acac` (the pinned slime commit) without a GPU. Unverified
 points: that `slime_plugins.models.glm5.get_glm5_spec` works outside slime's training actor (it reads `args.hf_checkpoint`,

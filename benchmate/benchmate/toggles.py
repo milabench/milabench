@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import os
+from pathlib import Path
 
 
 def _get_flag(name, type, default):
@@ -63,6 +66,12 @@ def vllm_request_metrics_enabled(default: bool = True) -> bool:
             return bool(cfg["push_request_metrics"])
 
     return default
+
+
+def nodemon_dir() -> Path | None:
+    """Where the node sampler writes, from BENCHMATE_NODEMON_DIR; None when unset, which disables it."""
+    value = os.getenv("BENCHMATE_NODEMON_DIR")
+    return Path(value) if value else None
 
 
 poll_interval_default = get_poll_interval(0.25)

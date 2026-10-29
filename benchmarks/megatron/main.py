@@ -210,6 +210,23 @@ def with_wandb(log):
     return both
 
 
+def start_nodemon(cfg: dict):
+    """Start the node sampler beside the training processes, when ``BENCHMATE_NODEMON_DIR`` is set.
+
+    Every rank calls this: the first on each host takes the lock and samples, the
+    others return at once. It runs before Megatron is imported, so model init and
+    the first steps are covered too."""
+    from benchmate.nodemon import run
+    from benchmate.toggles import nodemon_dir
+
+    out = nodemon_dir()
+    if out is None:
+        return None
+    sampler = run(out, bench=cfg.get("name", "megatron"))
+    debug("nodemon:", sampler.state().value, out)
+    return sampler
+
+
 # --- placement at run time -----------------------------------------------------------------------------------------
 # The node order only means something if Megatron's expert groups are the consecutive hosts we think they are:
 # read the real groups and the real hostnames once the process groups exist, and time the expert all-to-all per group.
@@ -396,6 +413,7 @@ def report_placement(cfg: dict, argv: list[str]):
 def main():
     global LOG
     cfg = config()
+    sampler = start_nodemon(cfg)
     # Megatron parses sys.argv: nothing of ours must be left in it
     argv = sys.argv[1:]
 
@@ -434,6 +452,8 @@ def main():
             get_embedding_ranks=get_embedding_ranks,
         )
     finally:
+        if sampler is not None:
+            sampler.stop("bench done")
         if monitor is not None:
             monitor.stop()
 
