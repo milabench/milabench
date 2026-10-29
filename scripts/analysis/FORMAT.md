@@ -265,109 +265,68 @@ node's timestamps cannot be lined up with the others. The run-identity fields ap
 the launcher exported them, so the directory name stays the join of record. `gpus` and
 `lifetime` are inventory, not a series: read once.
 
-## 4. Per-rank step metrics: rank TSV on `$SCRATCH`
+## 4. Per-rank step metrics: WandB group per run
 
-The run data (section 1) reports each rank's median, p90 and max step: enough to say *that*
-ranks differ, not *when*, and nothing about where a slow step went. This section is the
-per-step series behind that aggregate, written by the benchmark on the instrumented ranks in
-the same shape as the node telemetry — one wide TSV per writer, melted by the analysis.
+The run data (section 1) gives each rank's median, p90 and max step: *that* ranks differ, not
+*when*. This is the per-step series behind it, logged to WandB by every rank, not added
+to the JSONL (voir writes that from one process, and gathering every rank's step time into it is
+the measurement being made). Status: **new** — specified here first, as section 3 was.
 
-It is a side series rather than more JSONL events because voir writes that file from one
-process; getting another rank's step time into it needs a gather on every step, which is the
-measurement being made. Status: **new** — specified here first, as section 3 was.
-
-### Layout
-
-```
-$SCRATCH/tt38/ranks/<run_name>/rank00000.tsv
-                               rank00008.tsv
-                               ranks.json
-```
-
-The launcher sets `BENCHMATE_RANK_DIR=$SCRATCH/tt38/ranks/<run_name>`; unset, nothing is
-written. **The directory name must be the milabench run name**, exactly as in section 3: it is
-what joins these rows to the run. One file per instrumented rank, named `rank<rank:05d>.tsv`,
-appended a line at a time, so a crash loses at most the last partial line and a reader drops a
-final line without a newline.
-
-### Columns
-
-One row per step per instrumented rank. The required columns are the measurement; the rest are
-filled when the benchmark can produce them without adding a synchronization.
+Every rank calls `wandb.init(group=<run_name>, name=rank<rank:05d>)` and logs one row per
+step, the keys being the columns below. **The group is the milabench run name**, the join to
+`runs.run_name`. Project and entity: *to fill in*. Without WandB nothing is logged; offline runs are
+`wandb sync`ed afterwards.
 
 | column | required | meaning |
 |---|---|---|
-| `time_ms` | yes | wall-clock epoch ms at the end of the step — the same clock as the `rate` events and the node telemetry, so the three join directly |
-| `rank`, `step` | yes | global rank, and the step index the `rate` events carry |
-| `tokens` | yes | tokens this rank consumed in this step: micro-batch x sequence length x gradient-accumulation steps |
-| `data_wait_ms` | yes | dataloader latency: host time this rank spent blocked waiting for its batch |
-| `step_time_ms` | yes | the whole step, host wall time, end of the previous step to the end of this one |
-| `fwd_ms`, `bwd_ms` | yes | forward and backward, device time |
-| `fwd_bwd_ms` | — | the two together, for schedules that interleave them (see below); then `fwd_ms` and `bwd_ms` are empty |
-| `optimizer_ms` | — | optimizer step, device time |
-| `local_rank`, `host`, `gpu_uuid` | — | written once per row; `gpu_uuid` is the join to the node telemetry and to `per_rank[]` |
-| `mem_alloc_peak_gib`, `mem_reserved_peak_gib` | — | torch allocator peaks for the step |
+| `time_ms` | yes | epoch ms at the end of the step, the clock of the `rate` events and section 3. **Not WandB's `_timestamp`** (upload time) |
+| `rank`, `step` | yes | global rank; the step index of the `rate` events (not WandB's `_step`) |
+| `tokens` | yes | tokens this rank consumed in the step: micro-batch x sequence x gradient accumulation |
+| `data_wait_ms` | yes | host time blocked waiting for the batch |
+| `step_time_ms` | yes | host wall time, end of the previous step to the end of this one |
+| `fwd_ms`, `bwd_ms` | yes | forward and backward, device time; `fwd_bwd_ms` instead when the schedule interleaves them; `optimizer_ms` optional |
+| `local_rank`, `host`, `gpu_uuid`, `mem_alloc_peak_gib`, `mem_reserved_peak_gib` | — | `gpu_uuid` joins to section 3 and `per_rank[]` |
 
-```
-time_ms	rank	local_rank	host	gpu_uuid	step	tokens	data_wait_ms	step_time_ms	fwd_ms	bwd_ms	optimizer_ms
-1793134142000	8	0	rg21702	GPU-ee57a905-...	412	2097152	3.1	10131.4	2744.8	5610.2	188.5
-```
+- **`step_time_ms` is host time, the others are device time** (CUDA events read at the step's
+  existing synchronization). They do not add up: the remainder is collective wait and launch gaps,
+  which is the point of the columns, not error.
+- **`bwd_ms` is the collective-sensitive column.** The gradient collectives run during backward, so a
+  slow network stretches `bwd_ms` while `fwd_ms` stays mostly compute: **`bwd_ms` against `fwd_ms`
+  over time is the clearest per-rank view of a collective slowdown**, beside the IB counters of
+  section 3. It shifts rather than isolates under FSDP, tensor or expert parallelism (forward
+  collectives), only compares at the same recompute setting (backward includes it), and is
+  unavailable with pipeline parallelism: use `fwd_bwd_ms` when present, else `fwd_ms + bwd_ms`.
+- An empty cell means **unavailable, never zero**.
 
-Conventions, which decide what may be compared with what:
-
-- **`step_time_ms` is host wall time; `fwd_ms`, `bwd_ms` and `optimizer_ms` are device time**,
-  from CUDA events resolved after the step's existing synchronization — no synchronization is
-  added for the measurement. They do not add up to the step: the remainder is the collective
-  wait, the launch gap and anything not timed. That remainder is the point of the columns, so
-  do not present it as overhead or error.
-- **Backward includes recomputation** where activation checkpointing is on, so `bwd_ms/fwd_ms`
-  is not a model property and is only comparable between runs with the same recompute setting.
-- **With pipeline parallelism the schedule interleaves forward and backward micro-batches**, so
-  a rank cannot attribute device time to one or the other; it writes `fwd_bwd_ms` instead and
-  leaves `fwd_ms` and `bwd_ms` empty. A reader that needs one number uses
-  `fwd_bwd_ms` when it is present and `fwd_ms + bwd_ms` when it is not.
-- An empty cell means **unavailable, never zero**, as in section 3.
-
-### Coverage: fewer writers than GPUs
-
-**Not every rank writes, and a missing rank is not a failed rank.** For GLM-5 the data-parallel
-width is a few replicas — tensor, expert and pipeline parallelism take the rest of the device
-mesh — and the dataloader runs only on the ranks that own a data slice. `tokens` and
-`data_wait_ms` exist nowhere else, and instrumenting the other ranks would multiply rows
-without adding a measurement. `ranks.json` states who wrote, so the analysis never infers
-coverage from the files present:
+**Every rank logs its own rows; nothing is aggregated before it is logged**, so the spread, the
+slowest rank and a straggling host come from the data rather than from a summary. `tokens` and
+`data_wait_ms` are empty on ranks without a dataloader (for GLM-5, all but the data-parallel
+leaders); `fwd_ms`, `bwd_ms` and `step_time_ms` exist on all. The group's `config` (the same on
+every rank) says what to expect, so a rank with no run is a missing rank:
 
 ```jsonc
-{"schema": "benchmate.rankmetrics.v1",
- "run_name": "glm5-ep8-n52", "bench": "glm5",
- "world_size": 208,
- "parallelism": {"dp": 26, "tp": 1, "pp": 2, "cp": 1, "ep": 8},   // as in the run summary
- "instrumented": {"rule": "data-parallel leaders: first pipeline stage, tensor rank 0",
-                  "ranks": [0, 8, 16, 24],                        // the ranks that write a file
-                  "hosts": ["rg21701", "rg21702"]},
- "columns": ["time_ms", "rank", "step", "tokens", "data_wait_ms", "step_time_ms",
-             "fwd_ms", "bwd_ms"]}
+{"schema": "benchmate.rankmetrics.v1", "run_name": "glm5-ep8-n52", "world_size": 208,
+ "parallelism": {"dp": 26, "tp": 1, "pp": 2, "cp": 1, "ep": 8}}
 ```
 
-Reader rules:
-
-- Aggregate over the ranks in `instrumented.ranks`, never over `world_size`. A per-rank spread
-  from this source is the spread **over the instrumented ranks**, and the figure says so.
-- The run's official throughput stays the `rate` events of section 1. Scaling `tokens` from the
-  instrumented ranks to the job is an extrapolation and belongs in `estimates` with its method
-  (principle 4), not in a column here.
-- A rank that writes no row after `start` is a rank that died, *only* if `ranks.json` lists it.
-- Volume is not a concern at this shape: one row per step per writer is ~0.1 rows/s/rank at
-  10-second steps, a few hundred kilobytes for a 24-hour run.
-
-### What the analysis uses
+- Statistics (spread, slowest rank, p90 across ranks) are computed when reading, per `step`, over the
+  runs in the group; the run count should equal `world_size`.
+- Read with `wandb.Api().runs(<project>, filters={"group": run_name})` and `scan_history()` (not the
+  sampled `history()`).
+- Throughput stays the `rate` events of section 1; scaling `tokens` to the job is an `estimates`
+  entry with its method (principle 4), not a column.
+- **MFU is derived, never logged**: `flops_per_token x tokens / step_time_ms / peak_flops_per_gpu`,
+  with `mfu_inputs` from the run summary. Two limits, to state wherever a per-rank MFU is shown:
+  it is only defined where `tokens` is (a rank without a dataloader takes its data-parallel
+  group's value, so it is an `estimates` entry), and under pipeline parallelism a stage runs part
+  of the model, so a stage's MFU needs that stage's FLOPs, not the model total.
 
 | signal | columns | used for |
 |---|---|---|
-| per-rank step spread over time | `step_time_ms` by `rank`, `step` | stragglers (Fig. 10), as the rank-side companion to the node telemetry |
-| compute vs. everything else | `step_time_ms - (fwd_ms + bwd_ms + optimizer_ms)` | the collective-wait share of a step, per rank |
-| dataloader stalls | `data_wait_ms` | `data_loading` in the summary, now with the step it happened on |
-| tokens per rank | `tokens` | sanity check of the global rate against the parallelism, and MoE per-replica accounting |
+| per-rank step spread | `step_time_ms` by `rank`, `step` | stragglers (Fig. 10), beside section 3 |
+| collective-wait share and drift | `step_time_ms - (fwd_ms + bwd_ms + optimizer_ms)`, `bwd_ms / fwd_ms` | per rank, over time |
+| dataloader stalls | `data_wait_ms` | `data_loading` in the summary, with the step |
+| tokens per rank | `tokens` | rate vs. parallelism check, MoE per-replica accounting, per-rank MFU (estimate, see above) |
 
 ## 5. Versioning
 
@@ -376,7 +335,7 @@ Reader rules:
 - The analysis has one adapter per schema version. Current adapters:
   `milabench.torchtitan_native.v2` (mapping in `tt_analysis/runs.py:_v2_fields`) and
   `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v1`
-  (`tt_analysis/monitor.py`); `benchmate.rankmetrics.v1` (section 4) has no reader yet.
+  (`tt_analysis/monitor.py`); `benchmate.rankmetrics.v1` (section 4, WandB) has no reader yet.
 - Runs before the v2 measurement path (2026-10-21) are excluded.
 
 ## Changes requested from the benchmark code (to route)
@@ -396,9 +355,9 @@ Reader rules:
 | 7 | same events from Megatron (voirfile or converter) | GLM-5 pipeline | MoE section | medium |
 | 8 | `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` exported by the launcher, and nodemon merged into the run branches (the GLM-5 pack starts it already) | `tt_variants.sh`, `feat/nodemon` | stability, stragglers, CPU-clock stragglers | small |
 | 8c | `NodeMonitor` sidecar so milabench starts the sampler on every node of every bench | `milabench/commands/`, `multi.py` | today each pack starts it itself, or the sbatch wrapper does | medium |
-| 9 | per-rank step TSV (`benchmate.rankmetrics.v1`, section 4) on the data-parallel leaders, with `ranks.json` | benchmate (`rankmetrics.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
+| 9 | per-rank step metrics in WandB (`benchmate.rankmetrics.v1`, group = run name, section 4) on every rank, with the coverage config | benchmate (`rankmetrics.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
 
 Still open: per-rank compute vs. NCCL time. The section 4 columns give its coarse form
-(step time minus the timed stages), on the instrumented ranks only; `util_mean` is a duty
+(step time minus the timed stages); `util_mean` is a duty
 cycle, not tensor-pipe occupancy, so if Fig. 10 does not separate the GPUs on nodes without GPM,
 the kernel-level measurement comes back. Not requested: fixing voir's empty `gpudata` (nodemon covers it; still a bug).
