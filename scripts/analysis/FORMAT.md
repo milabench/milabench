@@ -2,20 +2,22 @@
 
 Prescriptive spec: what the benchmarks (TorchTitan Qwen, Megatron GLM-5) and the
 window tooling must produce so that `analyze.py` can turn it into the report with no
-manual step. Status: **draft, for review** (2026-10-25).
+manual step. Status: **draft, for review** (2026-10-28).
 
 Worked examples, written by `analyze.py synth`:
 `data/synthetic/rorqual/runs/syn-h6-1/tt-w-n6.0.data` (run data),
 `data/synthetic/rorqual/srygaard/1030001/` (health check),
-`data/synthetic/rorqual/dcgm/syn-all63-long.csv` (GPU telemetry).
+`data/synthetic/rorqual/nodemon/syn-all63-long/` (node telemetry).
 
 ## Principles
 
-1. **Milabench run data is the container** for everything a benchmark run produces:
-   one JSONL file per run (`<run>/<bench>.<n>.data`), written by voir. No side files.
+1. **Milabench run data is the container** for everything a benchmark run reports as a whole:
+   one JSONL file per run (`<run>/<bench>.<n>.data`), written by voir. The only side series are
+   the per-node and per-rank ones that cannot go through it (sections 3 and 4), and both are
+   keyed by the run name.
 2. **Every attempt leaves a record**, including runs that fail before measuring.
-3. **The analysis reads raw sources only**: run data, health-check directories, GPU
-   telemetry exports. Journals and summary tables are outputs, never inputs.
+3. **The analysis reads raw sources only**: run data, health-check directories, node
+   telemetry. Journals and summary tables are outputs, never inputs.
 4. **Measured values are never overwritten.** Corrections and extrapolations go in
    `estimates`, with their method.
 5. **Metadata is recorded when the run happens**, not reconstructed afterwards.
@@ -97,9 +99,9 @@ not read from the summary.
 }
 ```
 
-`gpu_uuid` per rank joins the run with DCGM telemetry (section 3). Without it, the join
-relies on `local_rank` equal to the DCGM GPU index, which holds only with
-`CUDA_DEVICE_ORDER=PCI_BUS_ID`.
+`gpu_uuid` per rank joins the run with the node telemetry (section 3), which records the
+same UUID. Without it, the join relies on `local_rank` equal to the sampler's GPU index, which
+holds only with `CUDA_DEVICE_ORDER=PCI_BUS_ID`.
 
 ### MoE (GLM-5) additions
 
@@ -136,15 +138,14 @@ Format: the tool's results directory, unchanged
 The window's run directory must be copied with the run data (`analyze.py collect --srygaard rorqual:<path>`):
 it is under the colleague's `$SCRATCH` (not readable by us today).
 
-Requested addition (for bandwidth vs. message size): in each `groups/<job>.json` test, the
-per-size table that `nccl.parse()` already computes:
+Each `groups/<job>.json` test carries the per-size table (for bandwidth vs. message size):
 
 ```jsonc
 {"kind": "group", "nodes": [...], "status": "ok", "peak_busbw": 24.6, "avg_busbw": 12.1,
  "rows": [{"size": 8, "busbw": 0.0}, {"size": 1073741824, "busbw": 24.6}]}
 ```
 
-Until then, the adapter can parse the raw logs in `groups/<job>/`.
+Runs from before that change have no `rows`; the adapter then parses the raw logs in `groups/<job>/`.
 
 ### Other NCCL tests
 
@@ -153,35 +154,202 @@ Plain nccl-tests stdout (any `*_perf` binary), one file per test, under
 tests: `alone-rg21701-rg31601.txt`, `concurrent-...`). Hosts come from the `Rank ... on <host>`
 lines; the condition is the first word of the file name when it is not a host name.
 
-## 3. GPU telemetry: DCGM via Prometheus
+## 3. System telemetry: nodemon TSV on `$SCRATCH`
 
-Export of a Prometheus range query over the window, flattened to CSV, one file per
-export (`dcgm/<name>.csv`):
+`benchmate.nodemon` samples every node of the job, one sampler per host, started from inside the
+benchmark. It records CPU clocks, IB, PCIe, XID, GPU ECC and host EDAC; on Hopper it also reads the SM and tensor-pipe counters (GPM) NVML's ordinary
+calls cannot give.
+
+### Layout
 
 ```
-time,host,gpu,uuid,metric,value
-1793368170,rg21701,0,GPU-...,DCGM_FI_DEV_SM_CLOCK,1755
+$SCRATCH/tt38/nodemon/<run_name>/<host>.status.json
+                                 <host>.lock
+                                 nodes/<host>.<collector>.tsv
 ```
 
-| metric | used for |
-|---|---|
-| `DCGM_FI_DEV_SM_CLOCK`, `DCGM_FI_DEV_CLOCKS_EVENT_REASONS` | throttling (stability, Fig. 9) |
-| `DCGM_FI_DEV_POWER_USAGE`, `DCGM_FI_DEV_GPU_TEMP` | cause of throttling |
-| `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE`, `DCGM_FI_PROF_SM_ACTIVE` | stragglers (Fig. 10): the slow GPU is the busiest |
-| `DCGM_FI_DEV_XID_ERRORS`, ECC counters | failures |
-| `DCGM_FI_PROF_NVLINK_TX_BYTES`, `DCGM_FI_PROF_PCIE_TX_BYTES` | traffic (optional) |
+`BENCHMATE_NODEMON_DIR` points at that directory; unset, the sampler is disabled. **Its name
+must be the milabench run name** — the whole join to the run data
+(`gpu_monitor.source == runs.run_name`). One run per directory (nodemon refuses to start on an
+existing `status.json`), one sampler per host (`<host>.lock`): every rank may start it, only
+the first collects.
 
-Requirements to check with the admins: the `DCGM_FI_PROF_*` fields are enabled in the
-exporter (they are not in every default config); scrape interval ≤ 15 s (a 5-minute run
-must have ≥ 20 samples); host labels match Slurm node names.
+Identity is in the paths, not the rows: a row carries `time_ms` alone, the host is in the file
+name, the benchmark in the status file. One wide file per collector, melted to
+`time, host, gpu, metric, value`, timestamps aligned to whole multiples of the period so hosts
+join without binning. An empty cell means **unavailable, never zero**; a collector that cannot
+run writes no file, and `status.json` says which.
 
-## 4. Versioning
+### Collectors
+
+| file | period | one row per | columns after `time_ms` |
+|---|---|---|---|
+| `<host>.gpu.tsv` | 1 s | GPU | `gpu sm_clock_mhz clocks_event_reasons power_w temp_c util util_mean util_min util_samples xid` |
+| `<host>.nvlink.tsv` | 10 s | GPU | `gpu nvlink_tx_bytes nvlink_rx_bytes nvlink_tx_bytes_per_s nvlink_rx_bytes_per_s nvlink_utilization` |
+| `<host>.ib.tsv` | 1 s | HCA port | `hca port rate_gbps tx_bytes rx_bytes ib_tx_bytes_per_s ib_rx_bytes_per_s ib_utilization xmit_wait symbol_error link_downed` |
+| `<host>.cpu.tsv` | 2 s | package | `package busy_cores cpu_mhz_busy_mean cpu_mhz_min cpu_mhz_max cpu_mhz_mean cpu_mhz_cap cpu_util cpu_temp_c thermal_throttle_count governor` |
+| `<host>.mem.tsv` | 1 s | node | `mem_used_gib mem_total_gib mem_used_peak_gib anon_gib file_gib oom_kill` |
+| `<host>.pcie.tsv` | 10 s | device | `device driver link_width max_link_width link_speed max_link_speed aer_fatal aer_nonfatal aer_correctable` |
+| `<host>.ecc.tsv` | 60 s | GPU | `gpu ecc_uncorrected remap_pending remap_failure` |
+| `<host>.edac.tsv` | 60 s | memory controller | `mc mc_name ce_count ue_count` |
+| `<host>.gpm.tsv` | 1 s | GPU | `gpu sm_util sm_occupancy tensor_util dram_bw_util` — Hopper and newer only |
+
+```
+time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util_min	util_samples	xid
+1793134142000	1	1410	0x0	106.832	42	0.97	0.93	0.71	71	
+```
+
+### Metric details
+
+Units: `time_ms` is wall-clock epoch milliseconds (the run data's clock); clocks in MHz, power in
+W, temperature in °C, memory in GiB, PCIe speed in GT/s; `util`, `cpu_util`, `*_utilization` and
+the `gpm` columns are fractions in 0–1; `clocks_event_reasons` is the NVML bitmask as hex.
+`*_bytes`, `xmit_wait`, `symbol_error`, `link_downed`, `oom_kill`, `aer_*`, `ce_count` and
+`ue_count` are cumulative (the analysis takes deltas); IB bytes are already converted from the
+sysfs 4-byte lanes.
+
+- `util` is one NVML reading at the tick; `util_mean` and `util_min` cover the samples the driver
+  buffered since the previous tick (`util_samples` says how many, empty when none).
+  **`util_mean` is the duty cycle, and the column to compare GPUs with.**
+- `gpm` columns cover the interval since the previous tick, so the first row of a run is empty.
+  `tensor_util` is tensor-pipe occupancy, near 0 on fp32 work.
+- `xid` is empty on almost every row; a critical XID carries its code (several `;`-joined),
+  stamped with the tick that drained the event queue, up to one period late.
+
+| signal | columns | used for |
+|---|---|---|
+| SM clock, clock-event reasons, power, temperature | `gpu.sm_clock_mhz`, `gpu.clocks_event_reasons`, `gpu.power_w`, `gpu.temp_c` | throttling and its cause (stability, Fig. 9) |
+| GPU activity, SM clock, CPU busy-core clock | `gpm.tensor_util` else `gpu.util_mean` else `gpu.util`, `gpu.sm_clock_mhz`, `cpu.cpu_mhz_busy_mean` | stragglers (Fig. 10) |
+| NVLink and IB rates, IB errors | `nvlink.*_per_s`, `ib.*_per_s`, `ib.xmit_wait`, `ib.symbol_error`, `ib.link_downed` | traffic, link faults |
+| memory, OOM kills, AER counts | `mem.*`, `pcie.aer_*` | failures and node triage |
+| XID, GPU ECC, host ECC | `gpu.xid`, `ecc.*`, `edac.ce_count`, `edac.ue_count` | hardware faults during the run |
+
+The straggler figure takes the sharpest activity signal the node offers, per GPU the median of
+its busiest 10-minute window, and its y-axis names which. Beside it, per node, the CPU busy-core
+clock: the rg21701 case, where the CPU fell from ~3,700 to ~2,560 MHz and the run lost ~25 % of
+its throughput, is visible in `cpu_mhz_busy_mean` alone.
+
+### Joining with the run
+
+- telemetry → run: the directory name, which is `runs.run_name`;
+- row → host: the TSV file name; the node-level collectors need nothing but that and `time_ms`;
+- GPU index → UUID: `status.json`, `collectors.<name>.gpus` — every NVML collector publishes it;
+- UUID → rank, host, local rank: `per_rank[].gpu_uuid` in the run summary (section 1), so no
+  assumption about device order.
+
+### Status file
+
+`<host>.status.json`, written at start and rewritten at exit:
+
+```jsonc
+{"schema": "benchmate.nodemon.v1", "state": "closed",    // running | closed | failed
+ "bench": "glm5", "run_name": "tt-w-n63-long", "campaign": "tt38",
+ "slurm_job_id": "11431300", "slurm_step_id": "0", "slurm_nodelist": "rg[21701-21763]",
+ "pid": 1692897, "start": 1793133997863, "end": 1793134142545, "reason": "signal SIGTERM",
+ "flush_every": 10.0,
+ "collectors": {"gpu": {"enabled": true, "period_s": 1.0, "cpu_s": 0.026,
+                        "gpus": {"0": "GPU-ee57a905-...", "1": "GPU-..."}},
+                "ecc": {"...": null,
+                        "lifetime": {"0": {"ecc_aggregate_uncorrected": 0,
+                                           "remapped_corrected": 0, "remapped_uncorrected": 0}}},
+                "gpm": {"enabled": false}},
+ "clock": {"synced": true, "maxerror_us": 53126}, "clock_end": {"...": null}}
+```
+
+Reader rules: `state: "running"` with a last row older than ~2 × `flush_every` means the
+sampler was killed, so the series is truncated; a final line without a newline is dropped.
+`enabled: false` means the collector probed false and wrote no file (`gpm` before
+Hopper, `ib` without an HCA). `clock.synced: false` or a large `maxerror_us` means this
+node's timestamps cannot be lined up with the others. The run-identity fields appear only when
+the launcher exported them, so the directory name stays the join of record. `gpus` and
+`lifetime` are inventory, not a series: read once.
+
+## 4. Per-rank step metrics: JSONL per rank, mirrored to WandB
+
+The run data (section 1) gives each rank's median, p90 and max step: *that* ranks differ, not
+*when*. This is the per-step series behind it, one file per rank rather than more events in the run
+JSONL (voir writes that from one process, and gathering every rank's step time into it is the
+measurement being made). Status: **new** — specified here first, as section 3 was.
+
+**The record is the JSONL; WandB is for monitoring.** Each rank appends its own rows to
+`<run>/metrics.<bench>.<host>.<rank>.jsonl` in the run directory (benchmate's rankstore: no
+collective, flushed on the logging steps), so the join to the run is the directory itself and the
+analysis reads these raw files (principle 3), never WandB. The same rows are logged to WandB for
+live views: `wandb.init(group=<run_name>, name=rank<rank:05d>)`, group = `runs.run_name`, project
+and entity *to fill in*, offline runs `wandb sync`ed afterwards. The two may differ if a sync is
+late or lost; the files win. The files use rankstore's field names (`batch_id`, `elapsed`, `next`,
+`rate`, ...), which the adapter maps to the columns below, and their first row names the worker
+(host, GPU index, UUID).
+
+| column | required | meaning |
+|---|---|---|
+| `time_ms` | yes | epoch ms at the end of the step, the clock of the `rate` events and section 3. In WandB, **not `_timestamp`** (upload time) |
+| `rank`, `step` | yes | global rank; the step index of the `rate` events (not WandB's `_step`) |
+| `tokens` | yes | tokens this rank consumed in the step: micro-batch x sequence x gradient accumulation |
+| `data_wait_ms` | yes | host time blocked waiting for the batch |
+| `step_time_ms` | yes | host wall time, end of the previous step to the end of this one |
+| `fwd_ms`, `bwd_ms` | yes | forward and backward, device time on the compute stream (includes exposed waits, see below); `fwd_bwd_ms` instead when the schedule interleaves them; `optimizer_ms` optional |
+| `local_rank`, `host`, `gpu_uuid`, `mem_alloc_peak_gib`, `mem_reserved_peak_gib` | — | `gpu_uuid` joins to section 3 and `per_rank[]` |
+
+- **`fwd_ms` and `bwd_ms` do not separate compute from waiting, and nothing here will.** CUDA events on the compute
+  stream include the exposed collective waits (all-gather in forward, reduce-scatter in backward
+  under FSDP), so `step_time_ms - (fwd_ms + bwd_ms + optimizer_ms)` is mostly host-side gaps, not
+  collective wait. And every rank waits for the slowest, so a slow rank computes longer and waits
+  less: the columns differ little across ranks (24 FSDP ranks' step times within 0.2 ms on
+  Rorqual). Splitting them per rank would need kernel- or collective-level timing, and profiler-level
+  timing is not available. So the columns are recorded, not interpreted: the straggler figure rests
+  on section 3 (SM clock, throttle reasons, CPU busy-core clock, GPM tensor activity), and for
+  GLM-5 on Megatron's per-rank straggler detector (forward time, leaving out the waits between
+  pipeline stages, including the expert all-to-all; off in the G entries, `--log-straggler`).
+  A figure that needs compute and waiting apart is out of scope.
+- `bwd_ms` is only comparable at the same recompute setting (backward includes it), and is
+  unavailable with pipeline parallelism: use `fwd_bwd_ms` when present, else `fwd_ms + bwd_ms`.
+- An empty cell means **unavailable, never zero**.
+
+**Every rank that has the timer logs its own rows; nothing is aggregated before it is logged**, so
+the spread, the slowest rank and a straggling host come from the data. **That is not every rank
+yet:** the step timer is attached to the data loader, which Megatron builds only on the first and
+last pipeline stages, so at PP 25 only 2 of 25 stages (about 8 % of the GLM-5 ranks) have rows, and
+`tokens` and `data_wait_ms` exist only there. Until the timer moves off the loader, a rank with no
+run is a rank without a timer, not necessarily a failed one. The group's `config` (the same on
+every rank) says what to expect:
+
+```jsonc
+{"schema": "benchmate.rankmetrics.v1", "run_name": "glm5-g1-ep8-aligned", "world_size": 200,
+ "parallelism": {"dp": 8, "expert_dp": 25, "tp": 1, "pp": 25, "cp": 1, "ep": 8}}
+```
+
+For MoE, Megatron has two data-parallel sizes: `dp` = world / (TP x PP x CP) for the dense layers, and
+`expert_dp` = world / (EP x TP x PP) for the experts. Both are recorded, so no reader has to guess.
+
+- Statistics (spread, slowest rank, p90 across ranks) are computed when reading, per `step`, over the
+  runs in the group, and say how many ranks they cover.
+- Read the run directory's `metrics.*.jsonl` (benchmate's `LocalMetricStore.read()` merges them). WandB
+  is only a fallback when the files are gone: `wandb.Api().runs(<project>, filters={"group": run_name})`
+  with `scan_history()`, not the sampled `history()`.
+- Throughput stays the `rate` events of section 1; scaling `tokens` to the job is an `estimates`
+  entry with its method (principle 4), not a column.
+- **MFU is derived, never logged**: `flops_per_token x tokens / step_time_ms / peak_flops_per_gpu`,
+  with `mfu_inputs` from the run summary. Two limits, to state wherever a per-rank MFU is shown:
+  it is only defined where `tokens` is (a rank without a dataloader takes its data-parallel
+  group's value, so it is an `estimates` entry), and under pipeline parallelism a stage runs part
+  of the model, so a stage's MFU needs that stage's FLOPs, not the model total.
+
+| signal | columns | used for |
+|---|---|---|
+| per-rank step spread | `step_time_ms` by `rank`, `step` | stragglers (Fig. 10), beside section 3 |
+| compute vs. waiting | `fwd_ms`, `bwd_ms`, `optimizer_ms` | recorded only: they do not separate them, see above |
+| dataloader stalls | `data_wait_ms` | `data_loading` in the summary, with the step |
+| tokens per rank | `tokens` | rate vs. parallelism check, MoE per-replica accounting, per-rank MFU (estimate, see above) |
+
+## 5. Versioning
 
 - `schema` names the format and version. Additive changes (new optional fields) keep the
   version; renaming or removing a field bumps it.
 - The analysis has one adapter per schema version. Current adapters:
   `milabench.torchtitan_native.v2` (mapping in `tt_analysis/runs.py:_v2_fields`) and
-  `milabench.pretrain.v1`.
+  `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v1`
+  (`tt_analysis/monitor.py`); `benchmate.rankmetrics.v1` (section 4, per-rank JSONL) has no reader yet.
 - Runs before the v2 measurement path (2026-10-21) are excluded.
 
 ## Changes requested from the benchmark code (to route)
@@ -192,15 +360,17 @@ must have ≥ 20 samples); host labels match Slurm node names.
 | 2 | `run_start` event after init | `tt_native/instrument.py` | failed runs keep their identity | small |
 | 3 | launcher variables above + topology snapshot | `tt_variants.sh` | placement recorded at run time; real repetition index | small |
 | 3c | `run.slurm_reservation` ($SLURM_JOB_RESERVATION) and `run.exclusive_cluster` (launcher flag in the window) | `instrument.py`, `tt_variants.sh` | traffic isolation of each run (placement comparisons only within one level); today inferred from the reservation tracker and the campaign | small |
-| 4 | `gpu_uuid`, `local_rank` in `per_rank`; `CUDA_DEVICE_ORDER=PCI_BUS_ID` | `instrument.py`, `benchfile.py` | join with DCGM | small |
+| 4 | `gpu_uuid`, `local_rank` in `per_rank`; `CUDA_DEVICE_ORDER=PCI_BUS_ID` | `instrument.py`, `benchfile.py` | join with the node telemetry | small |
 | 5 | `step` in `rate` events | benchmate `ManualTimedIterator` | explicit step index | small, optional |
-| 6 | per-size rows in group JSON | srygaard/slurm-healthcheck | busbw vs. message size | small (their tool) |
-| 6b | per-GPU compute number (e.g. bf16 matmul TFLOPS, as `tt_health.py matmul`) in `nodes/<host>.json`; DCGM `diagnostic` gives pass/fail only | srygaard/slurm-healthcheck | per-GPU baseline in the window (Figs. 1, 3) | small (their tool) |
 | 6c | run both `--job-per switch` and `--job-per cluster` in the window (one leaf and whole machine); optionally `--switches A B --job-per cluster` for 2-leaf scopes (e.g. 217+316) | window plan | communication scopes (Fig. 4) | none (operational) |
 | 3b | family **O** (1 node per switch, one node on each of N leaves) in the node picker | `tt_pick_nodes.py` | nodes-per-switch figure (S / H / O at 3, 6, 9, 12 nodes; O up to 16) | small |
 | 7b | GLM-5 expert-group layouts on Rorqual: EP8 aligned / mixed (~1 group in 4 crossing) / crossed on the **same 52 nodes** (even number per leaf: 13 x 2 + 12 + 8 + 6; fall back to 50 / 48), only the node order differs; plus mixed on every healthy node (largest achievable, Megatron's default order, even count); full model if it fits on 208 GPUs (to confirm); record `placement.ep_groups`; per-group all-to-all time if Megatron's MoE timers allow. Picker: "even per leaf" selection + the three orders | GLM-5 pipeline, `tt_pick_nodes.py` | expert-placement figure | medium |
 | 7 | same events from Megatron (voirfile or converter) | GLM-5 pipeline | MoE section | medium |
-| 8 | DCGM export (fields, interval, access) | admins / whoever runs Prometheus | stability, stragglers | to discuss |
+| 8 | `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` exported by the launcher, and nodemon merged into the run branches (the GLM-5 pack starts it already) | `tt_variants.sh`, `feat/nodemon` | stability, stragglers, CPU-clock stragglers | small |
+| 8c | `NodeMonitor` sidecar so milabench starts the sampler on every node of every bench | `milabench/commands/`, `multi.py` | today each pack starts it itself, or the sbatch wrapper does | medium |
+| 9 | per-rank step metrics as JSONL in the run directory, mirrored to WandB (`benchmate.rankmetrics.v1`, section 4) on every rank, with the timer off the data loader so middle pipeline stages write too, and the coverage config | benchmate (`rankmetrics.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
 
-Not requested anymore: per-rank compute vs. NCCL time (DCGM tensor activity covers
-stragglers), fixing voir's empty `gpudata` (DCGM covers it; still a bug).
+Not available: per-rank compute vs. NCCL time. The section 4 columns do not give it (they include the
+exposed waits) and profiler-level timing is not on offer. `util_mean` is a duty cycle, not
+tensor-pipe occupancy, so on nodes without GPM Fig. 10 may not separate the GPUs, and that is a
+limit of the figure. Not requested: fixing voir's empty `gpudata` (nodemon covers it; still a bug).

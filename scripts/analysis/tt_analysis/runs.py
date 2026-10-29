@@ -241,6 +241,8 @@ def parse_run(path: Path, cluster: str, leaf_of: dict[str, str], synthetic: bool
             "rank": pr["rank"],
             "host": pr["host"],
             "leaf": leaf_of.get(pr["host"], "?"),
+            "local_rank": pr.get("local_rank"),
+            "gpu_uuid": pr.get("gpu_uuid"),
             "step_median": pr["step_median"],
             "step_p90": pr["step_p90"],
             "step_max": pr["step_max"],

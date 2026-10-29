@@ -46,7 +46,7 @@ healthy node. Two rules refine the ranking:
     \midrule
     3 & \Cref{fig:batch} Per-GPU batch & answered by preliminary data \\
     3 & \Cref{fig:startup} Startup & fed by every run \\
-    3 & \Cref{fig:stragglers} Stragglers & DCGM from regular runs \\
+    3 & \Cref{fig:stragglers} Stragglers & node telemetry from regular runs \\
     3 & \Cref{fig:stability} Stability & conditional on window length \\
     3 & \Cref{fig:health-gpus} Per-GPU compute by cluster & premise shown by preliminary data \\
     3 & \Cref{fig:health-tt} Preliminary health checks & background \\
@@ -133,5 +133,4 @@ window stopped after each phase.
 be told from run-to-run noise with one run each. Before P2 ends, the tier-1 curves stay sparse and GLM-5 has
 no FP8 result. Before P3, there is no stability figure, the step decomposition stays estimated, GLM-5 has no
 EP-size comparison at full scale, and the batch figure has no window point. Independently of the window,
-\cref{fig:health-gpus,fig:expert-groups} depend on tool changes made before it (per-GPU matmul in the health
-check, per-group all-to-all timers in Megatron).
+\cref{fig:expert-groups} depends on a tool change made before it (per-group all-to-all timers in Megatron).
