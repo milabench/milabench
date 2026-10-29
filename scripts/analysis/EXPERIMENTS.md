@@ -26,7 +26,9 @@ Owner: fill in per item (`Owner:`).
 ### Health checks
 
 - [ ] **Access to srygaard results.** The window health check writes to the colleague's `$SCRATCH`, not
-      readable by us. Get read access or an agreed copy location (`analyze.py collect --srygaard`). Owner:
+      readable by us. Get read access or an agreed copy location (`analyze.py collect --srygaard`). Copy the
+      full results directories, not only `report.json`: the per-GPU TFLOPS (Fig. 3) are only in each node's
+      output. Owner:
 - [ ] **Dry run of the three window modes on reserved nodes** (before 10-27 04:00), to time them and check
       our adapter parses real output: `--job-per switch`, `--job-per cluster`, `--switches ihpc217u25
       ihpc316u25 --job-per cluster`. Figs. 2, 4. Owner:
