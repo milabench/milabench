@@ -140,6 +140,10 @@ the window ends.
 
 ## Window: 10-29 17:00 -> 10-30 17:00 (Rorqual, alone on the cluster)
 
+**To run the window, follow `WINDOW.md`**: the queue below with the command of every block, the GLM-5 blocks
+as run by PR #46's scripts (fit ladder first, G1-G5), and how blocks are chained. This section keeps the
+reasoning behind the order.
+
 ### Roles
 
 - **Health and monitoring**: runs the health-check blocks, watches DCGM / logs during every run, runs
