@@ -67,3 +67,4 @@ Metrics
 
 We walk a fine line of making the benchmark run fast, we generate enough sample to have a stable metric and stop.
 We need enough sample to also have a good view of the energy usage.
+
