@@ -269,6 +269,9 @@ megatron-tiny-moe-smoke-1n:
     --expert-model-parallel-size: 2
     --global-batch-size: 8
     --train-iters: 100
+    # Megatron's straggler detector: reports (and syncs the GPU) every log-interval steps, so not every step
+    --log-straggler: true
+    --log-interval: 10
 
 megatron-glm5-frozen-smoke-2n-topo:
   inherits: megatron-glm5-frozen-smoke-2n

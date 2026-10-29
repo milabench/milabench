@@ -372,6 +372,50 @@ def report_peak_memory(log):
          "task": "main", "time": time.time()})
 
 
+def patch_straggler(rank_log, state, steps):
+    """Per-rank straggler data, with ``--log-straggler``. Megatron's detector gathers the ranks' numbers on rank 0 and only
+    prints the min / max rank; every rank computes its own in ``elapsed()`` (GPU time of the model's GEMM kernels, the
+    slowest ``get_batch``, GPU temperature / power / utilization / clock), so each rank logs them there: no extra
+    collective, and the rank files keep all the ranks instead of only the extremes."""
+    from megatron.core.utils import StragglerDetector
+    from megatron.training import get_args
+
+    original = StragglerDetector.elapsed
+
+    def elapsed(self):
+        result = original(self)
+        if not self._off:
+            gemm, data, temp, power, util, clock = result
+            interval = max(get_args().log_interval, 1)
+            rtt = gemm / interval
+            flops = getattr(self, "_mb_flops", 0.0)  # of the interval, given to report()
+            # Etpt, as the detector computes it: TFLOP/s of this rank, from the forward only, hence / amp
+            etpt = flops / interval / (rtt * 10**9 * self.world) / self.amp if rtt > 0 else 0.0
+            rank_log({
+                "straggler_gemm_ms": rtt,  # Rtt: per step, over the steps since the last report
+                "straggler_etpt": etpt,
+                "straggler_data_ms": data,  # slowest get_batch of the interval
+                "straggler_temp": temp, 
+                "straggler_power": power, 
+                "straggler_util": util, 
+                "straggler_clock": clock,
+                "step": state["step"], "task": "train", "time": time.time(),
+            })
+        return result
+
+    report = StragglerDetector.report
+
+    def timed_report(self, total_flops=0.0, *args, **kwargs):
+        self._mb_flops = total_flops
+        # the report syncs with the GPU and gathers on rank 0, after the step: keep it out of the next step's time
+        result = report(self, total_flops, *args, **kwargs)
+        steps.restart_clock()
+        return result
+
+    StragglerDetector.elapsed = elapsed
+    StragglerDetector.report = timed_report
+
+
 def patch_train_step(log):
     import megatron.training.training as training
     from megatron.training import get_args
@@ -383,6 +427,7 @@ def patch_train_step(log):
     rank_log = metric_log()  # rank 0: milabench, other ranks: rankstore
     original = training.train_step
     state = {"step": 0}
+    patch_straggler(rank_log, state, steps)
 
     def timed(*args, **kwargs):
         # rate / laps / clock: StepTimer (benchmate TimedIterator). Here only what it does not know about.
