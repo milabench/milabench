@@ -300,8 +300,8 @@ step, the keys being the columns below. **The group is the milabench run name**,
 
 **Every rank logs its own rows; nothing is aggregated before it is logged**, so the spread, the
 slowest rank and a straggling host come from the data rather than from a summary. `tokens` and
-`data_wait_ms` are empty on ranks without a dataloader (for GLM-5, all but the data-parallel
-leaders); `fwd_ms`, `bwd_ms` and `step_time_ms` exist on all. The group's `config` (the same on
+`data_wait_ms` are empty on ranks without a dataloader (for GLM-5, all but the first and last
+pipeline stages); `fwd_ms`, `bwd_ms` and `step_time_ms` exist on all. The group's `config` (the same on
 every rank) says what to expect, so a rank with no run is a missing rank:
 
 ```jsonc
