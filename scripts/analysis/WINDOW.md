@@ -46,7 +46,7 @@ source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_
 ```bash
 cd $SCRATCH/tt38/milabench && source scripts/slurm/window.sh
 export TT_CAMPAIGN=window-1030 TT_EXCLUSIVE_CLUSTER=1 TT_CONFIG=window TT_LOCAL_VENV=1
-export TT_HEALTHY=<H from the log>       # after block 0
+export TT_HEALTHY=<H from the log>       # after block 1
 ```
 
 **GLM**, in the `megatron` checkout, `scripts/rorqual/` (see its README):
@@ -54,13 +54,16 @@ export TT_HEALTHY=<H from the log>       # after block 0
 ```bash
 source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_after, window_status
 export CAMPAIGN=window-1030 EXCLUSIVE_CLUSTER=1 NO_TAIL=1
-export NODELIST=<H from the log> NODES=<number of nodes in H>     # after block 0: whole healthy machine, no MIG node
+export NODELIST=<H from the log> NODES=<number of nodes in H>     # after block 1: whole healthy machine, no MIG node
 export HEALTH_DIR=<health results dir> EXCLUDE_REASONS='{"rg21701": "CPU clock drops ~30% under training load"}'
 ```
 
 GLM jobs take every healthy node (`NODELIST=H`): each entry picks its own 50 or 64 nodes inside.
 
-## Block 0: health check and node lists (health, ~10 min)
+Blocks are numbered in the order they run, one at a time. The "exp." column is the block's number in
+`EXPERIMENTS.md`, where the reasoning behind each block is.
+
+## Block 1: health check and node lists (health, ~10 min)
 
 ```bash
 uv run healthcheck.py run --job-per switch --switches $LEAVES --no-wait
@@ -81,13 +84,15 @@ anything (`./00_plan.sh "$H"`): 50 nodes for G1-G3 / G5, 64 for G4, crossing cou
 in 4. A 52-node aligned set means rg21701 is back in `H`. Exclusions change other blocks too: see "If nodes are
 excluded after the health check" in `EXPERIMENTS.md`.
 
-## Block 0b: GLM-5 full-training fit ladder (GLM, ~35 min to ~2 h)
+## Block 2: GLM-5 full-training fit ladder (GLM, ~35 min to ~2 h)
+
+Starts after block 1, alone on the machine.
 
 ```bash
 AFTER=$(window_after) ./01_check_full.sh both
 ```
 
-One job per node set (the 64-node job waits for the 50-node one). Each tries as configured, then optimizer
+Two jobs, one after the other: the 50-node set, then the 64-node set. Each tries as configured, then optimizer
 offload 0.25, 0.5, 1.0, and stops at the first that completes; the result is saved where the G scripts read it.
 4 steps per attempt; an attempt costs ~7-20 min whether it passes or fails (start-up dominates; estimate, not
 measured). Best case ~35 min (both pass as configured), typical ~1 h, worst ~2 h.
@@ -97,7 +102,7 @@ Outcome, posted in the log: the rung of each set. It decides what every GLM bloc
 | 50-node set | 64-node set | G1-G3, G5 | G4 |
 |---|---|---|---|
 | passes at X | passes at Y | full at X | full at Y |
-| nothing fits | passes at Y | frozen | full at Y, **plus G4 frozen** (blocks 7b, 17b) to compare with G1-G3 |
+| nothing fits | passes at Y | frozen | full at Y, **plus G4 frozen** (blocks 10 and 21) to compare with G1-G3 |
 | nothing fits | nothing fits | frozen | frozen |
 
 Each set runs at its own best rung, as it runs its own pipeline depth; the workload (frozen or full) must match
@@ -105,14 +110,14 @@ between runs that are compared.
 
 ## The queue
 
-Block numbers follow `EXPERIMENTS.md`. Times: Qwen ~12 min per run (measured), GLM ~20 min per G run (12 steps
-plus start-up, **assumed**), fit ladder ~1 h (typical). Cumulative times exclude failures and waiting; the
-window starts at 17:00.
+Times: Qwen ~12 min per run (measured), GLM ~20 min per G run (12 steps plus start-up, **assumed**), fit ladder
+~1 h (typical). Cumulative times exclude failures and waiting; the window starts at 17:00. "‖" = runs launched
+together **inside one block** (one job, no shared interconnect).
 
 **Qwen block** (one job on exactly the nodes its specs pick, after everything before it):
 
 ```bash
-qblock <block> <time limit> <tt_block.sh specs>      # e.g. qblock 04 00:30:00 H:27 S:12:ihpc316u25
+qblock <block> <time limit> <tt_block.sh specs>      # e.g. qblock 06 00:30:00 H:27 S:12:ihpc316u25
 ```
 
 `qblock` dry-runs `tt_block.sh` on the login node to get the nodes, then submits the block on those nodes; in
@@ -126,23 +131,23 @@ AFTER=$(window_after) ./02_g1_aligned.sh pass1       # 03_g2_crossed.sh, 04_g3_m
 
 ### Pass 1: one run of every tier-0 and tier-1 comparison (~3.8 h, ends ~20:50)
 
-| # | group | block | command | est. | cum. |
-|---|---|---|---|---|---|
-| 0 | H | Health `--job-per switch`, node lists | above | 10 min | 0:10 |
-| 0b | G | Full-training fit ladder, 50 and 64 nodes | above | ~1 h | 1:10 |
-| 1 | G | **G1 EP8 aligned** | `./02_g1_aligned.sh pass1` | 20 min | 1:30 |
-| 2 | Q | **ALL** | `qblock 02 00:30:00 ALL` | 12 min | 1:42 |
-| 3 | G | **G2 EP8 crossed** | `./03_g2_crossed.sh pass1` | 20 min | 2:02 |
-| 4 | Q | **H27** ‖ **S12** (ihpc316) | `qblock 04 00:30:00 H:27 S:12:ihpc316u25` | 12 min | 2:14 |
-| 5 | G | **G3 EP8 mixed** | `./04_g3_mixed.sh pass1` | 20 min | 2:34 |
-| 6 | Q | **P27** ‖ **H3** | `qblock 06 00:30:00 P:27 H:3` | 12 min | 2:46 |
-| 7 | G | **G4 every node** | `./05_g4_all_nodes.sh pass1` | 20 min | 3:06 |
-| 7b | G | G4 frozen, **only if nothing fits on 50 nodes** | `FULL=none ./05_g4_all_nodes.sh pass1` | 20 min | |
-| 8 | Q | **O12** ‖ **S3** (ihpc316) | `qblock 08 00:30:00 O:12 S:3:ihpc316u25` | 12 min | 3:18 |
-| 9 | Q | **H12** ‖ **S6** (ihpc218) | `qblock 09 00:30:00 H:12 S:6:ihpc218u25` | 12 min | 3:30 |
-| 10 | H | Health `--job-per cluster`, then `--switches ihpc217u25,ihpc316u25 --job-per cluster` | below | 20 min | 3:50 |
+| # | exp. | group | block | command | est. | cum. |
+|---|---|---|---|---|---|---|
+| 1 | 0 | H | Health `--job-per switch`, node lists | above | 10 min | 0:10 |
+| 2 | – | G | Full-training fit ladder, 50 then 64 nodes | above | ~1 h | 1:10 |
+| 3 | 1 | G | **G1 EP8 aligned** | `./02_g1_aligned.sh pass1` | 20 min | 1:30 |
+| 4 | 2 | Q | **ALL** | `qblock 04 00:30:00 ALL` | 12 min | 1:42 |
+| 5 | 3 | G | **G2 EP8 crossed** | `./03_g2_crossed.sh pass1` | 20 min | 2:02 |
+| 6 | 4 | Q | **H27** ‖ **S12** (ihpc316) | `qblock 06 00:30:00 H:27 S:12:ihpc316u25` | 12 min | 2:14 |
+| 7 | 5 | G | **G3 EP8 mixed** | `./04_g3_mixed.sh pass1` | 20 min | 2:34 |
+| 8 | 6 | Q | **P27** ‖ **H3** | `qblock 08 00:30:00 P:27 H:3` | 12 min | 2:46 |
+| 9 | 7 | G | **G4 every node** | `./05_g4_all_nodes.sh pass1` | 20 min | 3:06 |
+| 10 | – | G | G4 frozen, **only if nothing fits on 50 nodes** (else skip) | `FULL=none ./05_g4_all_nodes.sh pass1` | +20 min | |
+| 11 | 8 | Q | **O12** ‖ **S3** (ihpc316) | `qblock 11 00:30:00 O:12 S:3:ihpc316u25` | 12 min | 3:18 |
+| 12 | 9 | Q | **H12** ‖ **S6** (ihpc218) | `qblock 12 00:30:00 H:12 S:6:ihpc218u25` | 12 min | 3:30 |
+| 13 | 10 | H | Health `--job-per cluster`, then `--switches ihpc217u25,ihpc316u25 --job-per cluster` | below | 20 min | 3:50 |
 
-Block 10 (two spine-crossing runs: the second waits for the first):
+Block 13 is two spine-crossing jobs; the second waits for the first:
 
 ```bash
 uv run healthcheck.py run --job-per cluster --nodes "$H" --no-wait --dependency "$(window_dep)"
@@ -151,51 +156,54 @@ uv run healthcheck.py run --job-per cluster --switches ihpc217u25,ihpc316u25 --n
 
 ### Pass 2: second repetition (~2.7 h, ends ~23:30)
 
-| # | group | block | command | est. | cum. |
-|---|---|---|---|---|---|
-| 11 | G | G1 (rep 2) | `./02_g1_aligned.sh pass2` | 20 min | 4:10 |
-| 12 | Q | ALL (rep 2) | `qblock 12 00:30:00 ALL` | 12 min | 4:22 |
-| 13 | G | G2 (rep 2) | `./03_g2_crossed.sh pass2` | 20 min | 4:42 |
-| 14 | Q | **S12 alone** (leaf-assumption check: compare with block 4) | `qblock 14 00:30:00 S:12:ihpc316u25` | 12 min | 4:54 |
-| 15 | G | G3 (rep 2) | `./04_g3_mixed.sh pass2` | 20 min | 5:14 |
-| 16 | Q | H27 (rep 2) ‖ S6 (ihpc316) | `qblock 16 00:30:00 H:27 S:6:ihpc316u25` | 12 min | 5:26 |
-| 17 | G | G4 (rep 2) | `./05_g4_all_nodes.sh pass2` | 20 min | 5:46 |
-| 17b | G | G4 frozen (rep 2), only with 7b | `FULL=none ./05_g4_all_nodes.sh pass2` | 20 min | |
-| 18 | Q | P27 ‖ H3 (rep 2) | `qblock 18 00:30:00 P:27 H:3` | 12 min | 5:58 |
-| 19 | Q | O12 ‖ S3 (rep 2) | `qblock 19 00:30:00 O:12 S:3:ihpc316u25` | 12 min | 6:10 |
-| 20 | Q | H12 ‖ S6 ihpc218 (rep 2) | `qblock 20 00:30:00 H:12 S:6:ihpc218u25` | 12 min | 6:22 |
-| 21 | H | Health re-check `--job-per switch` | as block 0, with `--dependency "$(window_dep)"` | 10 min | 6:32 |
+| # | exp. | group | block | command | est. | cum. |
+|---|---|---|---|---|---|---|
+| 14 | 11 | G | G1 (rep 2) | `./02_g1_aligned.sh pass2` | 20 min | 4:10 |
+| 15 | 12 | Q | ALL (rep 2) | `qblock 15 00:30:00 ALL` | 12 min | 4:22 |
+| 16 | 13 | G | G2 (rep 2) | `./03_g2_crossed.sh pass2` | 20 min | 4:42 |
+| 17 | 14 | Q | **S12 alone** (leaf-assumption check: compare with block 6) | `qblock 17 00:30:00 S:12:ihpc316u25` | 12 min | 4:54 |
+| 18 | 15 | G | G3 (rep 2) | `./04_g3_mixed.sh pass2` | 20 min | 5:14 |
+| 19 | 16 | Q | H27 (rep 2) ‖ S6 (ihpc316) | `qblock 19 00:30:00 H:27 S:6:ihpc316u25` | 12 min | 5:26 |
+| 20 | 17 | G | G4 (rep 2) | `./05_g4_all_nodes.sh pass2` | 20 min | 5:46 |
+| 21 | – | G | G4 frozen (rep 2), only if block 10 ran | `FULL=none ./05_g4_all_nodes.sh pass2` | +20 min | |
+| 22 | 18 | Q | P27 ‖ H3 (rep 2) | `qblock 22 00:30:00 P:27 H:3` | 12 min | 5:58 |
+| 23 | 19 | Q | O12 ‖ S3 (rep 2) | `qblock 23 00:30:00 O:12 S:3:ihpc316u25` | 12 min | 6:10 |
+| 24 | 20 | Q | H12 ‖ S6 ihpc218 (rep 2) | `qblock 24 00:30:00 H:12 S:6:ihpc218u25` | 12 min | 6:22 |
+| 25 | 21 | H | Health re-check `--job-per switch` | as block 1, with `--dependency "$(window_dep)"` | 10 min | 6:32 |
 
-If block 14 differs from block 4 by more than the run-to-run spread, stop pairing: from block 22 on, submit
+If block 17 differs from block 6 by more than the run-to-run spread, stop pairing: from block 26 on, submit
 each "‖" spec as its own `qblock`.
 
 ### P2: the rest of the tier-1 curves and GLM-5 FP8 (~6.2 h, overnight, ends ~05:45)
 
 Submit the whole phase before the night.
 
-| # | group | block | command | est. | cum. |
-|---|---|---|---|---|---|
-| 22 | G | G5 FP8 | `./06_g5_fp8.sh pass1` | 20 min | 6:52 |
-| 23 | Q | H15 ‖ S9 (ihpc316) | `qblock 23 00:30:00 H:15 S:9:ihpc316u25` | 12 min | 7:04 |
-| 24 | G | G5 FP8 (rep 2) | `./06_g5_fp8.sh pass2` | 20 min | 7:24 |
-| 25 | Q | P15 (12 + 3) | `qblock 25 00:30:00 P:15` | 12 min | 7:36 |
-| 26 | Q | H48 (or the largest H can build: H45, H42) | `qblock 26 00:30:00 H:48` | 12 min | 7:48 |
-| 27 | Q | P48 (same size as 26) | `qblock 27 00:30:00 P:48` | 12 min | 8:00 |
-| 28 | Q | H6 ‖ S6 (ihpc316, rep 2) | `qblock 28 00:30:00 H:6 S:6:ihpc316u25` | 12 min | 8:12 |
-| 29 | Q | O6 ‖ S9 (ihpc316, rep 2) | `qblock 29 00:30:00 O:6 S:9:ihpc316u25` | 12 min | 8:24 |
-| 30-33 | Q | H9, O9, O16, O3 | `qblock 30 00:30:00 H:9`, then `O:9`, `O:16`, `O:3` (blocks 31-33) | 4 x 12 min | 9:12 |
-| 34 | Q | Second repetition of 23, 25-27, 30-33 | the same `qblock` commands | ~2 h | 11:12 |
+| # | exp. | group | block | command | est. | cum. |
+|---|---|---|---|---|---|---|
+| 26 | 22 | G | G5 FP8 | `./06_g5_fp8.sh pass1` | 20 min | 6:52 |
+| 27 | 23 | Q | H15 ‖ S9 (ihpc316) | `qblock 27 00:30:00 H:15 S:9:ihpc316u25` | 12 min | 7:04 |
+| 28 | 24 | G | G5 FP8 (rep 2) | `./06_g5_fp8.sh pass2` | 20 min | 7:24 |
+| 29 | 25 | Q | P15 (12 + 3) | `qblock 29 00:30:00 P:15` | 12 min | 7:36 |
+| 30 | 26 | Q | H48 (or the largest H can build: H45, H42) | `qblock 30 00:30:00 H:48` | 12 min | 7:48 |
+| 31 | 27 | Q | P48 (same size as block 30) | `qblock 31 00:30:00 P:48` | 12 min | 8:00 |
+| 32 | 28 | Q | H6 ‖ S6 (ihpc316, rep 2) | `qblock 32 00:30:00 H:6 S:6:ihpc316u25` | 12 min | 8:12 |
+| 33 | 29 | Q | O6 ‖ S9 (ihpc316, rep 2) | `qblock 33 00:30:00 O:6 S:9:ihpc316u25` | 12 min | 8:24 |
+| 34 | 30 | Q | H9 | `qblock 34 00:30:00 H:9` | 12 min | 8:36 |
+| 35 | 31 | Q | O9 | `qblock 35 00:30:00 O:9` | 12 min | 8:48 |
+| 36 | 32 | Q | O16 | `qblock 36 00:30:00 O:16` | 12 min | 9:00 |
+| 37 | 33 | Q | O3 | `qblock 37 00:30:00 O:3` | 12 min | 9:12 |
+| 38 | 34 | Q | Second repetition of blocks 27, 29-31, 34-37 | the same `qblock` commands, one block each | ~2 h | 11:12 |
 
 ### P3: if time remains (~1.5 h)
 
-| # | group | block | command | est. | cum. |
-|---|---|---|---|---|---|
-| 36 | Q | Bridge H12 ‖ S12 at 2 x 8192 | `qblock 36 00:30:00 H:12::tt-w-nodes-8k2 S:12:ihpc316u25:tt-w-nodes-8k2` | 12 min | 11:24 |
-| 37 | Q | Long stability run, every healthy node, >= 1 h | `qblock 37 01:30:00 ALL:::tt-w-nodes-long` | 70 min | 12:34 |
-| 38 | H | Final health check `--job-per switch` | as block 21 | 10 min | 12:44 |
+| # | exp. | group | block | command | est. | cum. |
+|---|---|---|---|---|---|---|
+| 39 | 36 | Q | Bridge H12 ‖ S12 at 2 x 8192 | `qblock 39 00:30:00 H:12::tt-w-nodes-8k2 S:12:ihpc316u25:tt-w-nodes-8k2` | 12 min | 11:24 |
+| 40 | 37 | Q | Long stability run, every healthy node, >= 1 h | `qblock 40 01:30:00 ALL:::tt-w-nodes-long` | 70 min | 12:34 |
+| 41 | 38 | H | Final health check `--job-per switch` | as block 25 | 10 min | 12:44 |
 
-EP16 (old block 35) is not in the window: it needs its own 48-node set. Out-of-memory fallback for any Qwen
-block: the same spec with bench `tt-w-nodes-lowmem` (e.g. `H:27::tt-w-nodes-lowmem`).
+EP16 (`EXPERIMENTS.md` block 35) is not in the window: it needs its own 48-node set. Out-of-memory fallback
+for any Qwen block: the same spec with bench `tt-w-nodes-lowmem` (e.g. `H:27::tt-w-nodes-lowmem`).
 
 About 12.7 h of execution in the typical case, leaving ~11 h of the 24 for failures, fixes and waiting. After
 a failure, keep the order but go to the next block of the other workload; the failed block comes back after it.
