@@ -1,25 +1,62 @@
 from __future__ import annotations
 
+from enum import IntFlag
 from typing import Any
 
+from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
 
 # TODO: Upstream SM clock and throttle reasons to voir gpudata.
 
 
+class ClockReason(IntFlag):
+    """Why a GPU's SM clock is below its maximum: NVML's nvmlClocksEventReason* bits.
+
+    The `clocks_event_reasons` column holds them as hex; readers decode it with parse().
+    """
+
+    GPU_IDLE = 0x1
+    APPLICATIONS_CLOCKS_SETTING = 0x2
+    SW_POWER_CAP = 0x4
+    HW_SLOWDOWN = 0x8
+    SYNC_BOOST = 0x10
+    SW_THERMAL_SLOWDOWN = 0x20
+    HW_THERMAL_SLOWDOWN = 0x40
+    HW_POWER_BRAKE_SLOWDOWN = 0x80
+    DISPLAY_CLOCK_SETTING = 0x100
+
+    @classmethod
+    def parse(cls, text: str | None) -> ClockReason:
+        """The reasons from gpu.tsv's hex cell; none when the cell is empty or not a number."""
+        try:
+            return cls(int(text or "0", 16))
+        except ValueError:
+            return cls(0)
+
+    def names(self) -> str:
+        """The reasons set, by name: a combined flag has no name of its own before Python 3.11."""
+        return "|".join(name for name, reason in ClockReason.__members__.items() if reason & self) or "-"
+
+
 class GpuCollector(NvmlCollector):
     name = "gpu"
-    columns = (
-        "gpu",
-        "sm_clock_mhz",
-        "clocks_event_reasons",
-        "power_w",
-        "temp_c",
-        "util",
-        "util_mean",
-        "util_min",
-        "util_samples",
-        "xid",
+    metrics = (
+        CollectorMetric("gpu", MetricKind.DEVICE, "", "NVML index of the GPU"),
+        CollectorMetric("sm_clock_mhz", MetricKind.SAMPLE, "MHz", "SM clock at the tick; below its maximum when the GPU is slowed"),
+        CollectorMetric(
+            "clocks_event_reasons", MetricKind.SAMPLE, "",
+            "Why the SM clock is below its maximum, as hex NVML clock event reason bits (see ClockReason)",
+        ),
+        CollectorMetric("power_w", MetricKind.SAMPLE, "W", "Board power draw"),
+        CollectorMetric("temp_c", MetricKind.SAMPLE, "C", "GPU temperature"),
+        CollectorMetric("util", MetricKind.SAMPLE, "fraction", "Utilization at the tick: one reading of a coarse counter"),
+        CollectorMetric(
+            "util_mean", MetricKind.SAMPLE, "fraction",
+            "Mean utilization over the interval, from the samples the driver buffered: the duty cycle",
+        ),
+        CollectorMetric("util_min", MetricKind.SAMPLE, "fraction", "Lowest buffered utilization sample over the interval"),
+        CollectorMetric("util_samples", MetricKind.SAMPLE, "count", "How many buffered samples util_mean and util_min cover"),
+        CollectorMetric("xid", MetricKind.SAMPLE, "", "XID error codes the driver delivered since the last row, separated by ';'"),
     )
 
     def __init__(self) -> None:

@@ -17,6 +17,10 @@ It records:
 | `gpm` | SM and tensor-pipe activity, warp occupancy, DRAM bandwidth, on Hopper and newer | NVML GPM (`pynvml`) |
 | `dcgm` | The same SM and tensor-pipe activity, where a dcgm-exporter runs on the host | dcgm-exporter |
 
+Each collector's `metrics` documents its columns, in file order: the name, the unit, a description,
+and whether the column names the device a row is for (`device`), is a reading at the tick (`sample`)
+or counts since boot or driver load (`counter`). `watch` reads the same objects for its rules.
+
 The `gpu` rows also carry `xid`: the critical XID errors NVML delivered since the previous row,
 empty on every other row. It is a column rather than its own file so the GPU grid stays fixed;
 an event is attributed to the row that drains it, so its time is up to one period late.
@@ -160,10 +164,14 @@ python -m benchmate.nodemon.watch $BENCHMATE_NODEMON_DIR --follow 30
 ```
 
 One block per refresh: the lowest SM clock with its throttle reasons, how busy the GPUs are,
-NVLink and IB rates with any error counter that moved, each node's CPU busy-core clock and how
-far it has fallen since the first window, host memory, anything non-zero among XID, ECC, EDAC
-and OOM kills, and any node whose sampler has died while its status still says `running`.
-`--window` sets how much history each refresh covers (60 s by default); without `--follow` it
+NVLink and IB rates, IB link errors and congestion (`xmit_wait`), the median CPU busy-core clock
+and any CPU package or GPU whose clock is well below its peers' (the stragglers), host memory, XIDs and pending or failed row remaps,
+ECC, EDAC and OOM kills, and any node whose sampler has died while its status still says
+`running`.
+
+Nodes ranked by score, worst first: the nodes to look at, or drain, before the others.
+
+`--window` sets how much history each refresh covers (60 s by default). Without `--follow` it
 prints one block and exits.
 
 ## Not yet done

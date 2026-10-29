@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..collector import NodeCollector, PolledFile, Rate, read_attr
+from ..collector import (
+    CollectorMetric,
+    MetricKind,
+    NodeCollector,
+    PolledFile,
+    Rate,
+    read_attr,
+)
 
 
 def _carries_traffic(port: Path) -> bool:
@@ -55,18 +62,21 @@ class _Port:
 
 class IbCollector(NodeCollector):
     name = "ib"
-    columns = (
-        "hca",
-        "port",
-        "rate_gbps",
-        "tx_bytes",
-        "rx_bytes",
-        "ib_tx_bytes_per_s",
-        "ib_rx_bytes_per_s",
-        "ib_utilization",
-        "xmit_wait",
-        "symbol_error",
-        "link_downed",
+    metrics = (
+        CollectorMetric("hca", MetricKind.DEVICE, "", "Host channel adapter, as sysfs names it (mlx5_0)"),
+        CollectorMetric("port", MetricKind.DEVICE, "", "Port number on the adapter"),
+        CollectorMetric("rate_gbps", MetricKind.SAMPLE, "Gb/s", "The link's rate in each direction"),
+        CollectorMetric("tx_bytes", MetricKind.COUNTER, "B", "Bytes sent since the counter was last reset"),
+        CollectorMetric("rx_bytes", MetricKind.COUNTER, "B", "Bytes received since the counter was last reset"),
+        CollectorMetric("ib_tx_bytes_per_s", MetricKind.SAMPLE, "B/s", "Send rate over the interval"),
+        CollectorMetric("ib_rx_bytes_per_s", MetricKind.SAMPLE, "B/s", "Receive rate over the interval"),
+        CollectorMetric("ib_utilization", MetricKind.SAMPLE, "fraction", "The busier direction's share of the link rate"),
+        CollectorMetric(
+            "xmit_wait", MetricKind.COUNTER, "ticks",
+            "Ticks the port had data to send but the fabric would not take it: back-pressure",
+        ),
+        CollectorMetric("symbol_error", MetricKind.COUNTER, "errors", "Symbol errors on the link"),
+        CollectorMetric("link_downed", MetricKind.COUNTER, "count", "Times the link went down"),
     )
     #: port_{xmit,rcv}_data count 4-byte lanes, not bytes: missing this understates traffic 4x.
     lane_bytes = 4

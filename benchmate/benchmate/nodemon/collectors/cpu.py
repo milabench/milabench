@@ -5,7 +5,13 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
-from ..collector import NodeCollector, PolledFile, read_attr
+from ..collector import (
+    CollectorMetric,
+    MetricKind,
+    NodeCollector,
+    PolledFile,
+    read_attr,
+)
 
 
 def parse_stat(text: str) -> dict[int, tuple[int, int]]:
@@ -85,21 +91,26 @@ class _Package:
 
 class CpuCollector(NodeCollector):
     name = "cpu"
-    columns = (
-        "package",
-        "busy_cores",
-        # Usually the column to watch: the mean over all cores hides a busy core that slowed
-        # down, since idle cores report their nominal clock. cpu_mhz_cap, cpu_temp_c and
-        # thermal_throttle_count give the cause.
-        "cpu_mhz_busy_mean",
-        "cpu_mhz_min",
-        "cpu_mhz_max",
-        "cpu_mhz_mean",
-        "cpu_mhz_cap",
-        "cpu_util",
-        "cpu_temp_c",
-        "thermal_throttle_count",
-        "governor",
+    metrics = (
+        CollectorMetric("package", MetricKind.DEVICE, "", "Physical package (socket) id"),
+        CollectorMetric("busy_cores", MetricKind.SAMPLE, "count", "Cores at or above the busy utilization over the last tick"),
+        CollectorMetric(
+            "cpu_mhz_busy_mean", MetricKind.SAMPLE, "MHz",
+            "Mean clock of the busy cores. Usually the column to watch: the mean over all cores hides a busy core "
+            "that slowed down, since idle cores report their nominal clock. cpu_mhz_cap, cpu_temp_c and "
+            "thermal_throttle_count give the cause.",
+        ),
+        CollectorMetric("cpu_mhz_min", MetricKind.SAMPLE, "MHz", "Lowest core clock in the package"),
+        CollectorMetric("cpu_mhz_max", MetricKind.SAMPLE, "MHz", "Highest core clock in the package"),
+        CollectorMetric("cpu_mhz_mean", MetricKind.SAMPLE, "MHz", "Mean clock over every core, idle ones included"),
+        CollectorMetric("cpu_mhz_cap", MetricKind.SAMPLE, "MHz", "The tightest cpufreq cap (scaling_max_freq) on any of the package's cores"),
+        CollectorMetric("cpu_util", MetricKind.SAMPLE, "fraction", "Mean core utilization over the last tick"),
+        CollectorMetric("cpu_temp_c", MetricKind.SAMPLE, "C", "Package temperature; empty without a sensor"),
+        CollectorMetric(
+            "thermal_throttle_count", MetricKind.COUNTER, "count",
+            "Times the package hit its thermal limit and throttled since boot",
+        ),
+        CollectorMetric("governor", MetricKind.SAMPLE, "", "The cpufreq scaling governor"),
     )
     #: A core at or above this utilization over the last tick counts as busy.
     busy = 0.5

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .clock import ClockState, clock_state
-from .collector import NodeCollector
+from .collector import CollectorMetric, MetricKind, NodeCollector
 from .collectors import (
     DcgmCollector,
     EccCollector,
@@ -22,11 +22,13 @@ from .sink import TsvSink
 
 __all__ = [
     "ClockState",
+    "CollectorMetric",
     "CollectorRegistry",
     "DcgmCollector",
     "EccCollector",
     "EdacCollector",
     "GpmCollector",
+    "MetricKind",
     "NodeCollector",
     "RunState",
     "Sampler",

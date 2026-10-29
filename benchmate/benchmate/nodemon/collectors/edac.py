@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..collector import NodeCollector, PolledFile, read_attr
+from ..collector import (
+    CollectorMetric,
+    MetricKind,
+    NodeCollector,
+    PolledFile,
+    read_attr,
+)
 
 
 class _Controller:
@@ -19,11 +25,11 @@ class EdacCollector(NodeCollector):
     """Host memory errors per controller, from EDAC: correctable counts rise before a DIMM fails."""
 
     name = "edac"
-    columns = (
-        "mc",
-        "mc_name",
-        "ce_count",
-        "ue_count",
+    metrics = (
+        CollectorMetric("mc", MetricKind.DEVICE, "", "Memory controller, as the kernel names it (mc0)"),
+        CollectorMetric("mc_name", MetricKind.SAMPLE, "", "The controller's model"),
+        CollectorMetric("ce_count", MetricKind.COUNTER, "errors", "Corrected memory errors since boot"),
+        CollectorMetric("ue_count", MetricKind.COUNTER, "errors", "Uncorrected memory errors since boot"),
     )
 
     def __init__(self, root: Path = Path("/sys/devices/system/edac/mc")) -> None:

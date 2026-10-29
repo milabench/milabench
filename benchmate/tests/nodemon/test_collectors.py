@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 import pytest
+
 from benchmate.nodemon.collectors import (
     CpuCollector,
     DcgmCollector,
@@ -25,6 +26,13 @@ def ib_port(root: Path, hca: str, port: int, state: str, link_layer: str, xmit_l
         write(directory / "counters" / name, "0")
     write(directory / "counters" / "port_xmit_data", str(xmit_lanes))
     return directory
+
+
+def test_the_column_lists_follow_from_the_metrics_in_wire_order():
+    assert IbCollector.columns == tuple(metric.name for metric in IbCollector.metrics)
+    assert IbCollector.device_columns == ("hca", "port")
+    assert IbCollector.counters == ("tx_bytes", "rx_bytes", "xmit_wait", "symbol_error", "link_downed")
+    assert {metric.collector for metric in IbCollector.metrics} == {"ib"}
 
 
 def test_ib_counts_bytes_from_lanes_on_active_infiniband_ports_only(tmp_path):

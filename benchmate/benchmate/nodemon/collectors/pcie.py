@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..collector import NodeCollector, PolledFile
+from ..collector import CollectorMetric, MetricKind, NodeCollector, PolledFile
 
 
 def parse_speed(text: str | None) -> float | None:
@@ -49,16 +49,16 @@ class _PciDevice:
 
 class PcieCollector(NodeCollector):
     name = "pcie"
-    columns = (
-        "device",
-        "driver",
-        "link_width",
-        "max_link_width",
-        "link_speed",
-        "max_link_speed",
-        "aer_fatal",
-        "aer_nonfatal",
-        "aer_correctable",
+    metrics = (
+        CollectorMetric("device", MetricKind.DEVICE, "", "PCI address (0000:3b:00.0)"),
+        CollectorMetric("driver", MetricKind.SAMPLE, "", "The driver bound to the device; empty for a bridge"),
+        CollectorMetric("link_width", MetricKind.SAMPLE, "lanes", "Current link width"),
+        CollectorMetric("max_link_width", MetricKind.SAMPLE, "lanes", "Widest link the device and its slot support"),
+        CollectorMetric("link_speed", MetricKind.SAMPLE, "GT/s", "Current link speed per lane"),
+        CollectorMetric("max_link_speed", MetricKind.SAMPLE, "GT/s", "Fastest link speed the device and its slot support"),
+        CollectorMetric("aer_fatal", MetricKind.COUNTER, "errors", "Fatal uncorrectable AER errors since boot"),
+        CollectorMetric("aer_nonfatal", MetricKind.COUNTER, "errors", "Non-fatal uncorrectable AER errors since boot"),
+        CollectorMetric("aer_correctable", MetricKind.COUNTER, "errors", "Correctable AER errors since boot"),
     )
     #: The devices whose links matter for training: GPUs and InfiniBand HCAs.
     drivers = ("nvidia", "mlx5_core")

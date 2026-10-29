@@ -2,8 +2,34 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any, NamedTuple
+
+
+class MetricKind(Enum):
+    """How a reader treats a column."""
+
+    #: Names the entity a row is for (a GPU, an HCA and its port).
+    DEVICE = "device"
+    #: A reading at the tick: a gauge, a rate, a flag or text.
+    SAMPLE = "sample"
+    #: Counts since boot or driver load rather than over the tick: a reader takes the deltas.
+    COUNTER = "counter"
+
+
+@dataclass(frozen=True)
+class CollectorMetric:
+    """One column a collector writes: what it is, in what unit, and how to read it."""
+
+    name: str
+    kind: MetricKind
+    #: "MHz", "B/s", "GiB", a "fraction" of 1; empty for an id, a flag or text.
+    unit: str
+    description: str
+    #: The collector writing it, the middle of nodes/<host>.<collector>.tsv; bound by NodeCollector.
+    collector: str = ""
 
 
 class NodeCollector(ABC):
@@ -11,10 +37,38 @@ class NodeCollector(ABC):
 
     #: Unique key within a registry, and the file suffix: nodes/<host>.<name>.tsv
     name: str = ""
-    #: Columns in wire order, after `time_ms`. Fixed whatever the hardware.
+    #: Every column in wire order, after `time_ms`. Fixed whatever the hardware.
+    metrics: tuple[CollectorMetric, ...] = ()
+    #: The names of `metrics`, in order; derived from it.
     columns: tuple[str, ...] = ()
+    #: Columns naming the entity a row is for (a GPU, an HCA and its port); empty when a row is the whole node.
+    device_columns: tuple[str, ...] = ()
+    #: Columns that count since boot or driver load rather than over the tick: a reader takes their deltas.
+    counters: tuple[str, ...] = ()
     #: The single gate: a disabled collector is never sampled and writes no file.
     enabled: bool = True
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Bind each metric to the collector's name and derive the column lists from them."""
+        super().__init_subclass__(**kwargs)
+        cls.metrics = tuple(replace(metric, collector=cls.name) for metric in cls.metrics)
+        cls.columns = tuple(metric.name for metric in cls.metrics)
+        if len(set(cls.columns)) != len(cls.columns):
+            raise ValueError(f"Collector {cls.name!r} declares a metric twice: {cls.columns}")
+        cls.device_columns = cls._named(MetricKind.DEVICE)
+        cls.counters = cls._named(MetricKind.COUNTER)
+
+    @classmethod
+    def _named(cls, kind: MetricKind) -> tuple[str, ...]:
+        return tuple(metric.name for metric in cls.metrics if metric.kind is kind)
+
+    @classmethod
+    def metric(cls, name: str) -> CollectorMetric:
+        """One of this collector's metrics; a misspelt name fails where it is written, not in a rule that never fires."""
+        for metric in cls.metrics:
+            if metric.name == name:
+                return metric
+        raise KeyError(f"Collector {cls.name!r} has no metric {name!r}; it has {cls.columns}")
 
     def probe(self) -> bool:
         """Open handles and resolve files once; False when unavailable on this host."""

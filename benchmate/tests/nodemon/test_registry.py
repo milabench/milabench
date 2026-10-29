@@ -1,10 +1,15 @@
 import math
 
-from benchmate.nodemon import CollectorRegistry, NodeCollector
+from benchmate.nodemon import (
+    CollectorMetric,
+    CollectorRegistry,
+    MetricKind,
+    NodeCollector,
+)
 
 
 class FakeCollector(NodeCollector):
-    columns = ("value",)
+    metrics = (CollectorMetric("value", MetricKind.SAMPLE, "", "calls so far"),)
 
     def __init__(self, name, fail=False):
         self.name = name
@@ -66,3 +71,11 @@ def test_first_sample_lands_on_a_multiple_of_the_period():
     assert collector.samples == 0
     registry.tick(now=102.5, wall=1005.0)
     assert collector.samples == 1
+
+
+def test_every_collector_the_default_registry_samples_can_be_read_back_by_watch():
+    from benchmate.nodemon import default_registry
+    from benchmate.nodemon.collectors import COLLECTORS
+
+    # watch finds a collector's device columns and counters in COLLECTORS, and ignores a file it does not list.
+    assert set(default_registry().describe()) <= set(COLLECTORS)

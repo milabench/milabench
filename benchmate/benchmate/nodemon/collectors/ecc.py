@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
 
 
@@ -14,11 +15,14 @@ class EccCollector(NvmlCollector):
     """
 
     name = "ecc"
-    columns = (
-        "gpu",
-        "ecc_uncorrected",
-        "remap_pending",
-        "remap_failure",
+    metrics = (
+        CollectorMetric("gpu", MetricKind.DEVICE, "", "NVML index of the GPU"),
+        CollectorMetric(
+            "ecc_uncorrected", MetricKind.COUNTER, "errors",
+            "Uncorrected memory errors since driver load (the volatile count)",
+        ),
+        CollectorMetric("remap_pending", MetricKind.SAMPLE, "", "Nonzero when a row remap waits for a GPU reset to take effect"),
+        CollectorMetric("remap_failure", MetricKind.SAMPLE, "", "Nonzero when a row remap failed: the GPU has no spare rows left"),
     )
 
     def __init__(self) -> None:

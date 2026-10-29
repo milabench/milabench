@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, ClassVar
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from ..collector import NodeCollector
+from ..collector import CollectorMetric, MetricKind, NodeCollector
 
 log = logging.getLogger(__name__)
 
@@ -23,12 +23,16 @@ class DcgmCollector(NodeCollector):
     name = "dcgm"
 
     #: Each metric column -> the exporter series behind it.
-    metric_fields = {
+    metric_fields: ClassVar[dict[str, str]] = {
         "sm_active": "DCGM_FI_PROF_SM_ACTIVE",
         "tensor_active": "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE",
     }
     #: The row: the GPU, then one cell per field above, in that order.
-    columns = ("gpu", *metric_fields)
+    metrics = (
+        CollectorMetric("gpu", MetricKind.DEVICE, "", "The exporter's GPU number"),
+        CollectorMetric("sm_active", MetricKind.SAMPLE, "fraction", "Share of time an SM had at least one warp active, averaged over the SMs (DCGM_FI_PROF_SM_ACTIVE)"),
+        CollectorMetric("tensor_active", MetricKind.SAMPLE, "fraction", "Share of time the tensor pipe was active (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE)"),
+    )
     timeout_s = 2.0
 
     #: The labels a series carries that identify the GPU: the exporter's own number, and NVML's name for it.

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..collector import NodeCollector, PolledFile
+from ..collector import CollectorMetric, MetricKind, NodeCollector, PolledFile
 
 
 def parse_keyed(text: str) -> dict[str, int]:
@@ -25,7 +25,14 @@ def parse_keyed(text: str) -> dict[str, int]:
 
 class MemCollector(NodeCollector):
     name = "mem"
-    columns = ("mem_used_gib", "mem_total_gib", "mem_used_peak_gib", "anon_gib", "file_gib", "oom_kill")
+    metrics = (
+        CollectorMetric("mem_used_gib", MetricKind.SAMPLE, "GiB", "Memory in use: total less available"),
+        CollectorMetric("mem_total_gib", MetricKind.SAMPLE, "GiB", "Total host memory"),
+        CollectorMetric("mem_used_peak_gib", MetricKind.SAMPLE, "GiB", "Highest mem_used_gib since the sampler started"),
+        CollectorMetric("anon_gib", MetricKind.SAMPLE, "GiB", "Anonymous memory (AnonPages)"),
+        CollectorMetric("file_gib", MetricKind.SAMPLE, "GiB", "Page cache (Cached)"),
+        CollectorMetric("oom_kill", MetricKind.COUNTER, "count", "Processes the kernel killed for memory since boot"),
+    )
     #: Bytes per GiB, the unit of the memory columns.
     gib = 1 << 30
 

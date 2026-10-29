@@ -89,14 +89,19 @@ class TsvSink:
                 self._write(collector.name)
 
     def _open(self, collector: NodeCollector) -> None:
-        """Open a collector's file for appending; queue a header if it is new or empty."""
+        """Open a collector's file for appending, writing its header at once if it is new or empty.
+
+        At once rather than with the first flush: a reader that finds the file
+        must find its columns too, not an empty file for the first period.
+        """
         path = self.tsv_path(collector.name)
         path.parent.mkdir(parents=True, exist_ok=True)
         stream = path.open("a")
         self._files[collector.name] = stream
         self._pending[collector.name] = []
         if path.stat().st_size == 0:
-            self._pending[collector.name].append(tsv_line([*self.prefix, *collector.columns]))
+            stream.write(tsv_line([*self.prefix, *collector.columns]))
+            stream.flush()
 
     def _write(self, name: str) -> None:
         """One write and flush of a file's pending lines."""

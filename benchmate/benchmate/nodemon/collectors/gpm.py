@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from types import ModuleType
-from typing import Any, NamedTuple
+from typing import Any, ClassVar, NamedTuple
 
+from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
 
 log = logging.getLogger(__name__)
@@ -75,14 +76,20 @@ class GpmCollector(NvmlCollector):
     name = "gpm"
 
     #: Each metric column -> the NVML constant naming the GPM metric behind it.
-    metric_names = {
+    metric_names: ClassVar[dict[str, str]] = {
         "sm_util": "NVML_GPM_METRIC_SM_UTIL",
         "sm_occupancy": "NVML_GPM_METRIC_SM_OCCUPANCY",
         "tensor_util": "NVML_GPM_METRIC_ANY_TENSOR_UTIL",
         "dram_bw_util": "NVML_GPM_METRIC_DRAM_BW_UTIL",
     }
     #: The row: the GPU, then one cell per metric above, in that order.
-    columns = ("gpu", *metric_names)
+    metrics = (
+        CollectorMetric("gpu", MetricKind.DEVICE, "", "NVML index of the GPU"),
+        CollectorMetric("sm_util", MetricKind.SAMPLE, "fraction", "Share of SMs in use over the interval"),
+        CollectorMetric("sm_occupancy", MetricKind.SAMPLE, "fraction", "Resident warps as a share of the most the SMs can hold"),
+        CollectorMetric("tensor_util", MetricKind.SAMPLE, "fraction", "Share of time any tensor pipe was active"),
+        CollectorMetric("dram_bw_util", MetricKind.SAMPLE, "fraction", "Device memory bandwidth in use as a share of its peak"),
+    )
 
     def __init__(self) -> None:
         super().__init__()

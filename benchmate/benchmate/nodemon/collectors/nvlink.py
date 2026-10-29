@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, NamedTuple
 
-from ..collector import Rate
+from ..collector import CollectorMetric, MetricKind, Rate
 from .nvml import Gpu, NvmlCollector
 
 
@@ -35,13 +35,16 @@ class NvlinkCollector(NvmlCollector):
     """
 
     name = "nvlink"
-    columns = (
-        "gpu",
-        "nvlink_tx_bytes",
-        "nvlink_rx_bytes",
-        "nvlink_tx_bytes_per_s",
-        "nvlink_rx_bytes_per_s",
-        "nvlink_utilization",
+    metrics = (
+        CollectorMetric("gpu", MetricKind.DEVICE, "", "NVML index of the GPU"),
+        CollectorMetric("nvlink_tx_bytes", MetricKind.COUNTER, "B", "Bytes sent over every NVLink since driver load"),
+        CollectorMetric("nvlink_rx_bytes", MetricKind.COUNTER, "B", "Bytes received over every NVLink since driver load"),
+        CollectorMetric("nvlink_tx_bytes_per_s", MetricKind.SAMPLE, "B/s", "Send rate over the interval, summed over the links"),
+        CollectorMetric("nvlink_rx_bytes_per_s", MetricKind.SAMPLE, "B/s", "Receive rate over the interval, summed over the links"),
+        CollectorMetric(
+            "nvlink_utilization", MetricKind.SAMPLE, "fraction",
+            "The busier direction's share of the active links' peak rate in one direction",
+        ),
     )
     #: Entries in each field-value buffer; only a few are used. Under training, an NVML record
     #: was seen written one block past pynvml's own result array, onto a live object. The
@@ -90,6 +93,9 @@ class NvlinkCollector(NvmlCollector):
     def _read_fields(self, gpu: Gpu, fields: list[tuple[int, int]]) -> list[float] | None:
         """NVML field values for (field id, scope) pairs, or None if any is unreadable."""
         values = self._links[gpu.index].values
+        # Cleared on every call: on H100 (driver 580) an entry that once answered NOT_SUPPORTED,
+        # as the link speed does, kept answering it for every field read into it afterwards.
+        ctypes.memset(values, 0, ctypes.sizeof(values))
         for i, (field_id, scope) in enumerate(fields):
             values[i].fieldId = field_id
             values[i].scopeId = scope

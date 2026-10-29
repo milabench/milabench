@@ -16,6 +16,7 @@ from .nvlink import NvlinkCollector
 from .pcie import PcieCollector
 
 __all__ = [
+    "COLLECTORS",
     "CpuCollector",
     "DcgmCollector",
     "EccCollector",
@@ -28,6 +29,15 @@ __all__ = [
     "PcieCollector",
     "default_registry",
 ]
+
+#: Every collector class by name, the suffix of its file: what a reader of the files needs to know about each.
+COLLECTORS = {
+    cls.name: cls
+    for cls in (
+        CpuCollector, DcgmCollector, EccCollector, EdacCollector, GpmCollector,
+        GpuCollector, IbCollector, MemCollector, NvlinkCollector, PcieCollector,
+    )
+}
 
 
 def default_registry(
