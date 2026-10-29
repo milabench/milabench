@@ -64,7 +64,7 @@ def set_wandb_env() -> None:
     for name, value in defaults.items():
         if value:
             os.environ.setdefault(name, str(value))
-
+    return defaults
 
 _wandb_message = None
 
@@ -82,11 +82,20 @@ def wandb_push():
         return _wandb_message
 
     try:
+        # before ``import wandb`` / login: once the wandb session has started it ignores later changes of WANDB_*
+        config = set_wandb_env()
         import wandb
 
         wandb.login()
-        set_wandb_env()
-        run = wandb.init(config=_wandb_config())
+        run = wandb.init(
+            # explicit as well: the environment alone was not enough (the run showed up unnamed, in the default project)
+            project=config.get("WANDB_PROJECT"),
+            group=config.get("WANDB_RUN_GROUP"),
+            job_type=config.get("WANDB_JOB_TYPE"),
+            name=config.get("WANDB_NAME"),
+            tags=[t for t in config.get("WANDB_TAGS", "").split(",") if t] or None,
+            config=_wandb_config(),
+        )
 
         def message(**kwargs):
             kwargs.pop("task", None)
