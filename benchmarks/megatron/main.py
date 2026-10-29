@@ -424,7 +424,7 @@ def patch_train_step(log):
     from benchmate.monitor import metric_log
 
     steps = step_metrics.install(log)
-    rank_log = metric_log()  # rank 0: milabench, other ranks: rankstore
+    rank_log = log if log is not None else metric_log()  # rank 0: milabench (+ wandb), other ranks: rankstore (+ wandb)
     original = training.train_step
     state = {"step": 0}
     patch_straggler(rank_log, state, steps)
