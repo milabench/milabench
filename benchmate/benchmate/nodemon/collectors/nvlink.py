@@ -78,17 +78,39 @@ class NvlinkCollector(NvmlCollector):
         if self._bytes(gpu).tx is None:
             del self._links[gpu.index]
             return False
-        active = 0
+        active = []
         for link in range(pynvml.NVML_NVLINK_MAX_LINKS):
             try:
                 if pynvml.nvmlDeviceGetNvLinkState(gpu.handle, link) == pynvml.NVML_FEATURE_ENABLED:
-                    active += 1
+                    active.append(link)
             except pynvml.NVMLError:
                 continue
-        speed = self._read_fields(gpu, [(pynvml.NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON, 0)])
-        if active and speed and speed[0]:
-            links.peak = active * speed[0] * 1e6
+        links.peak = self._peak(gpu, active)
         return True
+
+    def _peak(self, gpu: Gpu, active: list[int]) -> float | None:
+        """Bytes/s per direction over the active links, None when NVML gives no speed.
+
+        The common speed where NVML has it; otherwise each link's own, which is all
+        H100 (driver 580) answers: it refuses the common speed as not supported.
+        """
+        if not active:
+            return None
+        pynvml = self._nvml
+        common = self._read_fields(gpu, [(pynvml.NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON, 0)])
+        if common and common[0]:
+            return len(active) * common[0] * 1e6
+        field = getattr(pynvml, "NVML_FI_DEV_NVLINK_GET_SPEED", None)  # absent from older bindings
+        if field is None:
+            return None
+        total = 0.0
+        # One link per read: 18 links on H100 would overflow the 16-entry buffer.
+        for link in active:
+            speed = self._read_fields(gpu, [(field, link)])
+            if not speed or not speed[0]:
+                return None
+            total += speed[0]
+        return total * 1e6
 
     def _read_fields(self, gpu: Gpu, fields: list[tuple[int, int]]) -> list[float] | None:
         """NVML field values for (field id, scope) pairs, or None if any is unreadable."""
