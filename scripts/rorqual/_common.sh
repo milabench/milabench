@@ -15,6 +15,10 @@
 #   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default megatron); UPDATE=1
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
 #   PREPARE=0        skip `milabench prepare` in the job (data already staged)
+#   metrics: BENCHMATE_RECORD_FINE / _OVERHEAD / _LAPS (default 1), BENCHMATE_PUSH_EVERY (10),
+#            BENCHMATE_WANDB / _ALL_RANKS (1), BENCHMATE_WANDB_PROJECT (milabench-glm), WANDB_DIR ($MILABENCH_BASE/wandb)
+#   run record: CAMPAIGN (default glm5-MMDD), HEALTH_DIR (health-check results), EXCLUSIVE_CLUSTER (1 in the window),
+#            EXCLUDE_REASONS (JSON {host: reason} for the EXCLUDE nodes)
 #   NO_TAIL=1        do not follow the log      TEST_ONLY=1   sbatch --test-only, nothing submitted
 set -euo pipefail
 
@@ -28,6 +32,26 @@ GPUS=${GPUS:-4}
 NODES=${NODES:-66}
 BRANCH=${BRANCH:-megatron}
 UPDATE=${UPDATE:-1}
+
+# metrics, handed to the job (--export=ALL) and from there to every rank
+#   fine-grained step timings (work / next per batch, overhead, laps), flushed every BENCHMATE_PUSH_EVERY steps (one GPU sync)
+export BENCHMATE_RECORD_FINE=${BENCHMATE_RECORD_FINE:-1}
+export BENCHMATE_RECORD_OVERHEAD=${BENCHMATE_RECORD_OVERHEAD:-1}
+export BENCHMATE_RECORD_LAPS=${BENCHMATE_RECORD_LAPS:-1}
+export BENCHMATE_PUSH_EVERY=${BENCHMATE_PUSH_EVERY:-10}
+#   wandb: one run per rank (same group = the milabench run), online through the cluster's proxy (job.sbatch loads the
+#   httpproxy module). The API key is not set here: it comes from your environment / ~/.netrc (`wandb login`).
+#   Each job keeps its local wandb files under $WANDB_DIR/<job-name>.<jobid> (job.sbatch).
+export BENCHMATE_WANDB=${BENCHMATE_WANDB:-1}
+export BENCHMATE_WANDB_ALL_RANKS=${BENCHMATE_WANDB_ALL_RANKS:-1}
+export BENCHMATE_WANDB_PROJECT=${BENCHMATE_WANDB_PROJECT:-milabench-glm}
+export WANDB_DIR=${WANDB_DIR:-$MILABENCH_BASE/wandb}
+
+# run identity for the run_start record (scripts/analysis/FORMAT.md, "What the launcher sets"). job.sbatch adds
+# TT_TOPOLOGY (topology snapshot), TT_EXCLUDED (from EXCLUDE) and TT_VARIANT per entry; _g.sh sets VARIANT / REPETITION / FAMILY
+export TT_CAMPAIGN=${CAMPAIGN:-${TT_CAMPAIGN:-glm5-$(date +%m%d)}}             # groups the runs of one session
+export TT_HEALTH_DIR=${HEALTH_DIR:-${TT_HEALTH_DIR:-}}                          # e.g. srygaard:/scratch/.../results/25045100
+export TT_EXCLUSIVE=${EXCLUSIVE_CLUSTER:-${TT_EXCLUSIVE:-0}}                    # 1 in the window, when the cluster is ours
 
 # login node (internet): the checkout must be the branch's latest, the venv, data and Megatron-LM must be there
 preflight() {
@@ -47,6 +71,9 @@ preflight() {
     [ -x "$WORKDIR/.venv/bin/milabench" ] || { echo "no milabench in $WORKDIR/.venv: run slurm/download_megatron_data.sh" >&2; exit 1; }
     [ -d "$MILABENCH_BASE/data/megatron" ] || { echo "no $MILABENCH_BASE/data/megatron: run slurm/download_megatron_data.sh" >&2; exit 1; }
     [ -d "$WORKDIR/benchmarks/megatron/Megatron-LM" ] || { echo "no Megatron-LM in $WORKDIR/benchmarks/megatron: run slurm/download_megatron_data.sh" >&2; exit 1; }
+    if [ "$BENCHMATE_WANDB" = 1 ] && [ -z "${WANDB_API_KEY:-}" ] && ! grep -qs api.wandb.ai ~/.netrc; then
+        echo "WARNING: no WANDB_API_KEY and no api.wandb.ai in ~/.netrc: the wandb runs may not log in (wandb login)" >&2
+    fi
 }
 
 # job id from submit's output ("submitted job N")

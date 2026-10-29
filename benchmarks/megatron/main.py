@@ -117,10 +117,12 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
         gathered = [None] * dist.get_world_size()
         dist.all_gather_object(gathered, tuple(counts))
         trainable, total = (sum(c[k] for c in gathered) for k in (0, 1))
+        fraction = trainable / total if total else None
         if LOG is not None and total:
-            fraction = trainable / total
             debug(f"params_trainable_fraction: {fraction:.4f}")
             LOG({"params_trainable_fraction": fraction, "units": "ratio", "task": "main", "time": time.time()})
+        if LOG is not None:
+            LOG({"run_start": run_start(args, fraction), "task": "main", "time": time.time()})
         return models
 
     if glm5:
@@ -278,16 +280,101 @@ def collect_ep_groups(cfg: dict):
     PLACEMENT["crosses"] = crosses
     debug(f"expert groups crossing a switch: {sum(crosses)} / {len(groups)}")
 
-    if LOG is not None:
-        # recorded in the run data: the crossing count must not depend on a2a_timing being on
-        LOG({"placement": {
-                "hosts": node_hosts,
-                "ep_groups": [list(dict.fromkeys(host_of_rank[r] for r in ranks)) for ranks in groups],
-                "crossing": sum(crosses),
-                "groups": len(groups),
-                "gpu_uuids": {r: u for r, _, _, u in sorted(infos)},
-             },
-             "task": "main", "time": time.time()})
+    # recorded in the run data with run_start (scripts/analysis/FORMAT.md, `placement`): the crossing count must not depend
+    # on a2a_timing being on. crossing / groups / gpu_uuids / mode are additions to the spec's fields.
+    place = cfg.get("placement") or {}
+    mode = place.get("nodes", "as-is") if isinstance(place.get("nodes", "as-is"), str) else "list"
+    leaves = {}
+    for h in node_hosts:
+        leaves.setdefault(switch_of.get(h, "unknown"), []).append(h)
+    snapshot = os.environ.get("TT_TOPOLOGY")
+    PLACEMENT["record"] = {
+        "hosts": node_hosts,
+        "family": os.environ.get("TT_FAMILY") or FAMILY.get(mode),
+        "ep_groups": [list(dict.fromkeys(host_of_rank[r] for r in ranks)) for ranks in groups],
+        "leaves": leaves,
+        "excluded_nodes": json.loads(os.environ.get("TT_EXCLUDED") or "{}"),
+        "health_check": os.environ.get("TT_HEALTH_DIR") or None,
+        "topology_snapshot_epoch": int(os.path.getmtime(snapshot)) if snapshot and os.path.isfile(snapshot) else None,
+        "crossing": sum(crosses),
+        "groups": len(groups),
+        "gpu_uuids": {r: u for r, _, _, u in sorted(infos)},
+        "mode": mode,
+    }
+
+
+# placement.nodes -> FORMAT.md's placement.family, when the launcher does not set TT_FAMILY
+FAMILY = {"aligned": "EP", "crossed": "EP", "mixed": "EP", "leaf": "ALL", "topology": "ALL", "as-is": "slurm"}
+
+
+def run_start(args, trainable_fraction):
+    """``data: {run_start: {run, placement, workload}}`` (scripts/analysis/FORMAT.md, section 1): once, after init, so a
+    run that fails later keeps its identity. The launcher's TT_* variables fill run.* and placement.family."""
+    env = os.environ.get
+    run = {
+        "cluster": env("CC_CLUSTER"),
+        "campaign": env("TT_CAMPAIGN"),
+        "variant": env("TT_VARIANT"),
+        "repetition": int(env("TT_REPETITION")) if env("TT_REPETITION") else None,
+        "slurm_job_id": env("SLURM_JOB_ID"),
+        "slurm_step_id": env("SLURM_STEP_ID"),
+        "slurm_reservation": env("SLURM_JOB_RESERVATION"),
+        "exclusive_cluster": env("TT_EXCLUSIVE") == "1",
+    }
+
+    def dtype(name):
+        value = getattr(args, name, None)
+        return str(value).replace("torch.", "") if value is not None else None
+
+    workload = {}
+    try:
+        cfg = config()
+        hf_path = str(cfg["model"]["hf_path"]).replace("{milabench_data}", os.environ["MILABENCH_DIR_DATA"])
+        try:
+            with open(Path(hf_path) / "config.json") as f:
+                layers_full = json.load(f).get("num_hidden_layers")
+        except OSError:
+            layers_full = None
+        try:
+            import subprocess
+
+            megatron = Path(__file__).parent / "Megatron-LM"
+            commit = subprocess.run(["git", "-C", str(megatron), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                    timeout=10).stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            commit = None
+        dp = getattr(args, "data_parallel_size", 1) or 1
+        grad_accum = args.global_batch_size // (args.micro_batch_size * dp)
+        precise = getattr(args, "use_precision_aware_optimizer", False)
+        workload = {
+            "model": Path(cfg["model"].get("hf", "GLM-5")).name, "framework": "megatron", "framework_commit": commit,
+            "torch_version": torch.__version__,
+            "nccl_version": ".".join(map(str, torch.cuda.nccl.version())) if torch.cuda.is_available() else None,
+            "n_layers": args.num_layers, "n_layers_full": layers_full,
+            "params_trainable_fraction": trainable_fraction,
+            "params_total": None, "params_active": None,
+            "seq_len": args.seq_length, "microbatch_sequences": args.micro_batch_size, "grad_accum": grad_accum,
+            "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
+            "global_batch_tokens": args.global_batch_size * args.seq_length,
+            "precision": "fp8" if getattr(args, "fp8", None) else "bf16",
+            "optimizer": "AdamW" if args.optimizer == "adam" and args.weight_decay > 0 else args.optimizer,
+            "optimizer_state_dtype": dtype("exp_avg_dtype") if precise else "fp32",
+            "optimizer_offload_fraction": getattr(args, "optimizer_offload_fraction", 0.0)
+                                          if getattr(args, "optimizer_cpu_offload", False) else 0.0,
+            "activation_checkpointing": args.recompute_granularity or "none", "compile": "none",
+            "moe": {
+                "n_experts": args.num_experts, "top_k": args.moe_router_topk,
+                "n_shared_experts": 1 if getattr(args, "moe_shared_expert_intermediate_size", None) else 0,
+                "ep": args.expert_model_parallel_size,
+                "routing": "aux-loss-free" if getattr(args, "moe_router_enable_expert_bias", False)
+                           else args.moe_router_load_balancing_type,
+                "capacity_factor": getattr(args, "moe_expert_capacity_factor", None),
+                "dispatcher": args.moe_token_dispatcher_type,
+            } if getattr(args, "num_experts", None) else None,
+        }
+    except Exception as exc:  # the record is informative, never fatal
+        debug("run_start workload failed:", exc)
+    return {"run": run, "placement": PLACEMENT.get("record"), "workload": workload}
 
 
 def install_a2a_timer():

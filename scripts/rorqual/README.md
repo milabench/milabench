@@ -106,6 +106,45 @@ All optional, as environment variables:
 
 Extra `sbatch` arguments go after `--`, e.g. `./02_g1_aligned.sh pass1 -- --qos=normal`.
 
+### Metrics and wandb
+
+On by default for every step:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `BENCHMATE_RECORD_FINE` | 1 | Fine-grained step timings (work / data wait per batch). |
+| `BENCHMATE_RECORD_OVERHEAD` | 1 | Timing overhead of the instrumentation itself. |
+| `BENCHMATE_RECORD_LAPS` | 1 | Lap timings. |
+| `BENCHMATE_PUSH_EVERY` | 10 | Flush the queued step events every N steps (one GPU sync each time). |
+| `BENCHMATE_WANDB` | 1 | Push the metrics to wandb. |
+| `BENCHMATE_WANDB_ALL_RANKS` | 1 | One wandb run per rank (200 or 256 per benchmark), grouped by milabench run. 0: rank 0 only. |
+| `BENCHMATE_WANDB_PROJECT` | `milabench-glm` | wandb project. |
+| `WANDB_DIR` | `$MILABENCH_BASE/wandb` | Each job keeps its local wandb files under `$WANDB_DIR/<job-name>.<jobid>/`. |
+
+wandb logs online. The compute nodes have no direct internet, so the job runs `module load httpproxy` and the runs go
+through the cluster's proxy. The API key is not set by these scripts: it comes from your environment or `~/.netrc`
+(run `wandb login` once on a login node). Submitting warns if neither has one.
+
+To log without the network, set `WANDB_MODE=offline`. The job log then ends with the `wandb sync` command to run
+from a login node.
+
+### Run record (`run_start`)
+
+Each run writes one `run_start` event right after start-up, in the format of `scripts/analysis/FORMAT.md`
+(`run`, `placement`, `workload`), so a run that fails later still says what it was. The scripts fill it:
+
+| Variable | Default | Goes to |
+|----------|---------|---------|
+| `CAMPAIGN` | `glm5-<MMDD>` | `run.campaign`: groups the runs of one session. Set the same value for the whole window. |
+| `EXCLUSIVE_CLUSTER` | 0 | `run.exclusive_cluster`: set 1 in the window, when the cluster is ours. |
+| `HEALTH_DIR` | | `placement.health_check`: where the health-check results are (e.g. `srygaard:/scratch/.../results/25045100`). |
+| `EXCLUDE_REASONS` | | `placement.excluded_nodes`, as JSON `{"rg32101": "intra-node all-reduce 281 < 90% of 336 GB/s"}`. Without it, the `EXCLUDE` nodes are listed with "no reason given". |
+
+Set by the scripts themselves: `run.variant` (G1-G5, or the benchmark name for step 1), `run.repetition` (pass1 = 1,
+pass2 = 2), `placement.family` (EP for G1-G3 / G5, ALL for G4). The job saves `scontrol show topology` when it starts
+(`$MILABENCH_BASE/slurm/topology.<jobid>.txt`): the node placement uses that snapshot, and the record gets
+`placement.leaves` and `topology_snapshot_epoch` from it.
+
 ## Where things are
 
 - Job logs: `$MILABENCH_BASE/slurm/<job-name>-<jobid>.out` (e.g. `glm5-g1-pass1-1234.out`, `glm5-check-full-g1-1234.out`)

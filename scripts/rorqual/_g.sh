@@ -19,13 +19,16 @@ if [ $# -gt 0 ] && [ "$1" != -- ]; then pass=$1; shift; fi
 [ $# -gt 0 ] && [ "$1" = -- ] && shift
 
 case $run in
-    G1) entry=megatron-glm5-g1-ep8-aligned   set=50 ;;
-    G2) entry=megatron-glm5-g2-ep8-crossed   set=50 ;;
-    G3) entry=megatron-glm5-g3-ep8-mixed     set=50 ;;
-    G4) entry=megatron-glm5-g4-ep8-all-nodes set=64 ;;
-    G5) entry=megatron-glm5-g5-fp8           set=50 ;;
+    G1) entry=megatron-glm5-g1-ep8-aligned   set=50 family=EP ;;
+    G2) entry=megatron-glm5-g2-ep8-crossed   set=50 family=EP ;;
+    G3) entry=megatron-glm5-g3-ep8-mixed     set=50 family=EP ;;
+    G4) entry=megatron-glm5-g4-ep8-all-nodes set=64 family=ALL ;;
+    G5) entry=megatron-glm5-g5-fp8           set=50 family=EP ;;
     *) echo "unknown run $run (G1-G5)" >&2; exit 2 ;;
 esac
+# run_start record (FORMAT.md): run.variant, run.repetition (pass1 -> 1, pass2 -> 2), placement.family
+export VARIANT=$run TT_FAMILY=${TT_FAMILY:-$family}
+case $pass in pass[0-9]*) export REPETITION=${pass#pass} ;; *) export REPETITION=${REPETITION:-1} ;; esac
 
 rung=$(full_rung "$set")
 if [ "$rung" = none ]; then
