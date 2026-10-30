@@ -99,7 +99,7 @@ All optional, as environment variables:
 | `RESERVATION` / `ACCOUNT` | `MILABENCH2026` / `def-bengioy_gpu` | |
 | `MILABENCH_BASE` | `/home/delaunay/links/scratch/shared` | Venv, data, runs and logs. |
 | `WORKDIR` | `$MILABENCH_BASE/src` | The milabench checkout the job runs. |
-| `BRANCH` / `UPDATE` | `megatron` / 1 | The checkout is fast-forwarded to `origin/$BRANCH` before submitting (`UPDATE=0`: fail instead). |
+| `BRANCH` / `UPDATE` | `large_scale` / 1 | The checkout is fast-forwarded to `origin/$BRANCH` before submitting (`UPDATE=0`: fail instead). |
 | `PREPARE` | 1 | 0 skips `milabench prepare` in the job. |
 | `NO_TAIL` | | 1: do not follow the log. |
 | `TEST_ONLY` | | 1: `sbatch --test-only`, shows where and when the job would start, submits nothing. |
