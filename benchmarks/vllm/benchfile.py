@@ -78,14 +78,20 @@ class VLLM(Package):
         env["XDG_CACHE_HOME"] = str(self.dirs.cache)
         env["MILABENCH_TIMELINE_DB"] = str(self.logdir / "benchmark_results.db")
 
-        env["FLASHINFER_CACHE_DIR "] = str(self.dirs.cache / "flashinfer")
-        env["FLASHINFER_CUBIN_DIR "] = str(self.dirs.cache / "flashinfer" / "cubins")
+        if self._arch() == "cuda":
+            env["FLASHINFER_CACHE_DIR"] = str(self.dirs.cache / "flashinfer")
+            env["FLASHINFER_CUBIN_DIR"] = str(self.dirs.cache / "flashinfer" / "cubins")
+            # flashinfer defaults its workspace to ~/.cache/flashinfer/<version>
+            # which may not be writable on compute nodes; redirect to our cache dir
+            # env["FLASHINFER_WORKSPACE_DIR"] = os.path.join(
+            #     str(self.dirs.cache), "flashinfer", "workspace"
+            # )
 
-        # flashinfer defaults its workspace to ~/.cache/flashinfer/<version>
-        # which may not be writable on compute nodes; redirect to our cache dir
-        env["FLASHINFER_WORKSPACE_DIR"] = os.path.join(
-            str(self.dirs.cache), "flashinfer", "workspace"
-        )
+        if self._arch() == "rocm":
+            env["VLLM_TARGET_DEVICE"] = "rocm"
+            env["VLLM_DISABLE_FLASHINFER"] = "1"
+            env["FLASH_ATTENTION_TRITON_AMD_ENABLE"] = "TRUE"
+
         return env
 
     async def install(self):

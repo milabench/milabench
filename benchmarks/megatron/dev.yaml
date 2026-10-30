@@ -1,0 +1,724 @@
+# GLM-5 training on plain Megatron-LM (torchrun over srun, FineWeb packed data, random init), frozen parameters.
+# Usage:
+#   milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#   milabench prepare --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#   milabench run     --config benchmarks/megatron/dev.yaml --select megatron-glm5-frozen-16n
+#
+# Config sections read by the pack (the rest is the Megatron command line: model.argv + argv):
+#   frozen:     preset none | experts | attention-only, plus freeze / only_train (regex on parameter names), indexer
+#   placement:  nodes (as-is | sorted | topology | [list]), order (tp-cp-ep-dp-pp | tp-cp-ep-pp-dp),
+#               topology {node: switch} (else node.switch, else `scontrol show topology`), gpus_per_node,
+#               nccl {NCCL_TOPO_FILE: ..., NCCL_CROSS_NIC: ...}
+#   data:       docs_per_sample, samples (FineWeb docs to stage), subset
+# main.py prints the node order and, per parallel group, how many nodes / switches it spans (stderr, rank 0).
+
+include:
+  - ../../config/_defaults.yaml
+
+_megatron_glm5:
+  inherits: _defaults
+  definition: .
+  enabled: true
+  install_variant: unpinned
+  install_group: torch
+  weight: 0.0
+  url: https://huggingface.co/zai-org/GLM-5.3
+  num_machines: 16
+  max_duration: 7200
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [nlp, llm, megatron, multinode, moe, pretrain]
+  plan:
+    method: njobs
+    n: 1
+  env:
+    NCCL_NVLS_ENABLE: "0"
+    NCCL_CUMEM_ENABLE: "0"
+    # the glm5 plugin's RoPE needs NVIDIA apex (not installed): SGLang's kernels instead (plugin needs TP=1, CP=1)
+    MEGATRON_USE_SGLANG_ROPE: "1"
+    # events (rate, a2a_time, loss, ...) also go to wandb through benchmate's wandb_push (main.py). The compute nodes have
+    # no direct internet: `module load httpproxy` in the job (scripts/rorqual/job.sbatch), or WANDB_MODE=offline + `wandb sync`
+    BENCHMATE_WANDB: "1"
+  frozen:
+    preset: experts
+  placement:
+    nodes: as-is
+    order: tp-cp-ep-dp-pp
+    gpus_per_node: 4
+  data:
+    docs_per_sample: 8
+    # FineWeb docs staged by prepare (~660 tokens each): 10 steps x 64 x 8192 tokens needs ~8k, docs wrap around beyond
+    samples: 20000
+    subset: sample-10BT
+  model:
+    hf: zai-org/GLM-5.3
+    hf_path: "{milabench_data}/megatron/hf"
+    argv:
+      --no-gradient-accumulation-fusion: true
+      --moe-layer-freq: "[0]*3+[1]*75"
+      --num-experts: 256
+      --moe-shared-expert-intermediate-size: 2048
+      --moe-router-topk: 8
+      --moe-grouped-gemm: true
+      --moe-permute-fusion: true
+      --moe-ffn-hidden-size: 2048
+      --moe-router-score-function: sigmoid
+      --moe-router-pre-softmax: true
+      --moe-router-enable-expert-bias: true
+      --moe-router-bias-update-rate: 0
+      --moe-router-load-balancing-type: seq_aux_loss
+      --moe-router-topk-scaling-factor: 2.5
+      --moe-aux-loss-coeff: 0
+      --moe-router-dtype: fp32
+      --moe-token-dispatcher-type: alltoall
+      --make-vocab-size-divisible-by: 16
+      --num-layers: 78
+      --hidden-size: 6144
+      --ffn-hidden-size: 12288
+      --num-attention-heads: 64
+      --disable-bias-linear: true
+      --swiglu: true
+      --untie-embeddings-and-output-weights: true
+      --position-embedding-type: rope
+      --no-position-embedding: true
+      --normalization: RMSNorm
+      --qk-layernorm: true
+      --multi-latent-attention: true
+      --q-lora-rank: 2048
+      --kv-lora-rank: 512
+      --qk-head-dim: 192
+      --v-head-dim: 256
+      --kv-channels: 192
+      --qk-pos-emb-head-dim: 64
+      --rotary-base: 8000000
+      --enable-experimental: true
+  argv:
+    --tokenizer-type: NullTokenizer
+    --vocab-size: 154880
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --micro-batch-size: 1
+    --global-batch-size: 64
+    --train-iters: 10
+    --eval-iters: 0
+    # Megatron divides train-iters by it even with eval-iters 0 (None by default)
+    --eval-interval: 1000
+    --log-interval: 1
+    --bf16: true
+    --attention-backend: auto
+    --transformer-impl: transformer_engine
+    --dataloader-inter-document-masking: true
+    --tensor-model-parallel-size: 1
+    --pipeline-model-parallel-size: 8
+    --decoder-first-pipeline-num-layers: 14
+    --decoder-last-pipeline-num-layers: 16
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --use-distributed-optimizer: true
+    --optimizer: adam
+    --lr: 1e-6
+    --lr-decay-style: constant
+    --weight-decay: 0.1
+    --adam-beta1: 0.9
+    --adam-beta2: 0.98
+    --attention-dropout: 0.0
+    --hidden-dropout: 0.0
+    --recompute-granularity: full
+    --recompute-method: uniform
+    --recompute-num-layers: 1
+    --no-save-optim: true
+    --no-save-rng: true
+
+# Reference: experts frozen (as slime-glm5-sft-frozen-16n-gbs64), nodes in the scheduler's order.
+megatron-glm5-frozen-16n:
+  inherits: _megatron_glm5
+  tags: [frozen]
+
+# What freezing costs / saves: everything trains.
+megatron-glm5-unfrozen-16n:
+  inherits: _megatron_glm5
+  frozen:
+    preset: none
+  argv:
+    # all 744B parameters train: the optimizer state does not fit on the GPUs (not validated)
+    --optimizer-cpu-offload: true
+    --use-precision-aware-optimizer: true
+
+# Only the attention (MLA + DSA indexer) trains.
+megatron-glm5-attn-only-16n:
+  inherits: _megatron_glm5
+  tags: [frozen]
+  frozen:
+    preset: attention-only
+
+# Same layout, nodes packed per leaf switch: expert / data parallel groups stay under one switch,
+# pipeline hops cross switches (default tp-cp-ep-dp-pp order puts the stages far apart).
+megatron-glm5-frozen-16n-topo:
+  inherits: _megatron_glm5
+  tags: [frozen, topology]
+  placement:
+    nodes: topology
+
+# Consecutive ranks hold consecutive pipeline stages (--use-tp-pp-dp-mapping): pipeline hops stay under a switch,
+# data-parallel groups (gradient reduce of the trainable weights) span switches.
+megatron-glm5-frozen-16n-topo-pp:
+  inherits: _megatron_glm5
+  tags: [frozen, topology]
+  placement:
+    nodes: topology
+    order: tp-cp-ep-pp-dp
+
+# Rorqual test (2 nodes, 8 GPUs): 4 layers (1 dense + 3 MoE), PP2 x EP4 x DP4, experts frozen. Random init: no weights to
+# load, only config.json. Submit with slurm/schedule_megatron.sh.
+megatron-glm5-frozen-smoke-2n:
+  inherits: _megatron_glm5
+  tags: [frozen, smoke]
+  num_machines: 2
+  max_duration: 1800
+  model:
+    argv:
+      --num-layers: 4
+      --moe-layer-freq: "[0]*1+[1]*3"
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --global-batch-size: 8
+    --train-iters: 6
+    --pipeline-model-parallel-size: 2
+    --expert-model-parallel-size: 4
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+
+# One node (4 GPUs), 4 layers, EP4 x DP4, PP1: the quickest check of the model build, freezing, data and metrics. No
+# multi-node launch (no srun). Same model as the 2-node entry.
+megatron-glm5-frozen-smoke-1n:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke]
+  num_machines: 1
+  max_duration: 900
+  argv:
+    --pipeline-model-parallel-size: 1
+    --expert-model-parallel-size: 4
+    --global-batch-size: 4
+    --train-iters: 4
+
+# Mila cluster, 2 nodes x 2 L40S (48 GB) = 4 GPUs: same model as the 1-node smoke (4 layers, EP4 x DP1, experts frozen,
+# about 15 GB of expert weights per GPU), but the expert all-to-all now crosses the node boundary. The point is a
+# multi-node run for the rank store (one metrics.<rank>.jsonl per rank). L40S is sm89: the DSA indexer / sparse MLA
+# kernels (tilelang, deep-gemm) may only support Hopper, in which case the model build or first step fails.
+megatron-glm5-frozen-smoke-2n-l40s:
+  inherits: megatron-glm5-frozen-smoke-1n
+  tags: [frozen, smoke, mila]
+  num_machines: 2
+  max_duration: 1800
+
+# One A100 (40 GB or 80 GB): 2 layers (1 dense + 1 MoE), EP1 x DP1, experts frozen, about 20 GB of expert weights. Same
+# code path as the other smokes (rank store, placement event, a2a timers with a single-rank group), nothing multi-GPU.
+# A100 is sm80: the DSA indexer / sparse MLA kernels (tilelang, deep-gemm) may only support Hopper, in which case the
+# model build or first step fails.
+megatron-glm5-frozen-smoke-1gpu:
+  inherits: megatron-glm5-frozen-smoke-1n
+  tags: [frozen, smoke, mila]
+  placement:
+    nodes: as-is
+    gpus_per_node: 1
+  model:
+    argv:
+      --num-layers: 2
+      --moe-layer-freq: "[0]*1+[1]*1"
+  argv:
+    --expert-model-parallel-size: 1
+    --global-batch-size: 1
+    --train-iters: 4
+
+# Stand-in for when the GLM-5 build does not work (DSA kernels, plugin, ...): a tiny MoE GPT (Megatron's default TE layer
+# spec, plain attention, 8 experts, top-2) on one node, up to 8 GPUs (placement.gpus_per_node; any even GPU count works: EP2, global batch 8), the rest data
+# parallel. Rank 0 only goes to the .data file, ranks 1+ write the rank store. Same pack, same hooks (freezing, placement event, a2a timers, rank store); the
+# GLM tokenizer / FineWeb data are unchanged. With fewer GPUs allocated it just uses those.
+megatron-tiny-moe-smoke-1n:
+  inherits: megatron-glm5-frozen-smoke-1n
+  tags: [frozen, smoke, mila, tiny]
+  max_duration: 1800
+  placement:
+    nodes: as-is
+    gpus_per_node: 8
+  model:
+    spec: default
+    argv:
+      --multi-latent-attention: null
+      --q-lora-rank: null
+      --kv-lora-rank: null
+      --qk-head-dim: null
+      --v-head-dim: null
+      --kv-channels: null
+      --qk-pos-emb-head-dim: null
+      --qk-layernorm: null
+      --enable-experimental: null
+      --moe-shared-expert-intermediate-size: null
+      --num-layers: 2
+      --moe-layer-freq: "[0]*1+[1]*1"
+      --hidden-size: 512
+      --ffn-hidden-size: 2048
+      --num-attention-heads: 8
+      --num-experts: 8
+      --moe-router-topk: 2
+      --moe-ffn-hidden-size: 1024
+  argv:
+    --seq-length: 2048
+    --max-position-embeddings: 2048
+    --expert-model-parallel-size: 2
+    --global-batch-size: 8
+    --train-iters: 100
+    # Megatron's straggler detector: reports (and syncs the GPU) every log-interval steps, so not every step
+    --log-straggler: true
+    --log-interval: 10
+
+megatron-glm5-frozen-smoke-2n-topo:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke, topology]
+  placement:
+    nodes: topology
+
+# --- FP8 (TransformerEngine block scaling), same layouts as the bf16 twins to compare against ---
+# Slime's recipe (scripts/low_precision/run-qwen3-30b-a3b-fp8.sh): bf16 master weights, TE autocast with
+# --fp8-format e4m3 --fp8-recipe blockwise, NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1.
+# - --moe-router-padding-for-quantization: every expert gets a token count the FP8 grouped GEMM accepts.
+# - no --fp8-param-gather: the weights stay bf16 and TE keeps quantized copies per step.
+# - only TransformerEngine modules run in FP8: the GLM-5 plugin's own attention ops (DSA indexer, sparse MLA) stay bf16.
+# NOT validated: compare `rate` and peak memory against the bf16 twin.
+_fp8: &fp8_argv
+  --fp8-format: e4m3
+  --fp8-recipe: blockwise
+  --moe-router-padding-for-quantization: true
+
+megatron-glm5-frozen-smoke-2n-fp8:
+  inherits: megatron-glm5-frozen-smoke-2n
+  tags: [frozen, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-frozen-16n-fp8:
+  inherits: megatron-glm5-frozen-16n
+  tags: [frozen, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# --- GLM-5 expert placement (scripts/analysis/GLM_RUNS.md: G1-G5) ----------------------------------------------------
+# One question: is using every node worth it compared with the largest set where no expert group crosses a switch?
+# Held fixed in G1-G3, G5 (TO CONFIRM, then frozen): full depth, TP1 / CP1, EP8 x PP25 x DP1 on 50 nodes (200 GPUs; stages
+# 4, 23 x 3, 5 layers), micro-batch 1, seq 8192, recompute full, 12 steps. G4: EP8 x PP16 on 64 nodes (256 GPUs; stages 4,
+# 14 x 5, 4 layers). Each node set has one layout, the same for the frozen-experts runs and the full-training (-full) runs.
+# Global batch: 256 or 512 sequences, TO DECIDE, then the same in every run. The compute share of a step is
+# m / (m + PP - 1), m = micro-batches per pipeline: PP25 57 % (256) / 73 % (512), PP16 52 % / 67 %. 512 shows the
+# all-to-all better, at about twice the step time.
+# The node list is generated at run time from the allocation and `scontrol show topology` (placement.py): allocate every
+# healthy full-GPU node (rg21701 is expected to be excluded), the 50-node even-per-leaf set is picked from it. Expert groups
+# = EP8 = 2 consecutive nodes; main.py prints the real groups, their hosts and how many cross a switch, records them in the
+# run data (`placement` event) and logs `a2a_time` per expert group.
+# Layout constraint: world % (EP x PP) == 0 (TP1). 200 GPUs, EP8: PP in {1, 5, 25}; 256 GPUs, EP8: PP in {1, 2, 4, 8, 16, 32}.
+# Memory: what has to fit is the heaviest pipeline stage, the last one (layers + output layer + FP32 logits), not the average.
+# At PP25 (4, 23 x 3, 5) it holds 5 layers against 3 in the middle stages. Rough per-stage estimates put full training at
+# PP25 around or above 80 GB even with 25 % offload; G4 (PP16) looks fine. The estimates are pessimistic: the same method
+# puts the tested megatron-glm5-frozen-16n (PP8, 14 / 8 x 6 / 16) close to the limit, and it ran. Every frozen window layout
+# has fewer layers per stage than that tested config at the same EP8, so frozen should fit. Full training has no measurement:
+# see the fallback ladder at the end of this section. Full training uses Megatron's precision-aware optimizer (FP32 master
+# weights, BF16 gradients and Adam moments). Run `deviations`: "experts frozen" or "BF16 gradients and Adam moments".
+# Every rank writes its peak memory after step 1 to the rankstore (`peak_memory_*`, with its pipeline stage).
+_megatron_glm5_g:
+  inherits: _megatron_glm5
+  tags: [placement, moe]
+  num_machines: 50
+  max_duration: 3600
+  placement:
+    nodes: aligned
+    gpus_per_node: 4
+    a2a_timing: true
+  argv:
+    --pipeline-model-parallel-size: 25
+    --decoder-first-pipeline-num-layers: 4
+    --decoder-last-pipeline-num-layers: 5
+    --global-batch-size: 256
+    --train-iters: 12
+    # Megatron's straggler detector (per-rank forward time, logged with the pipeline stage by main.py): fires within the 12 steps
+    --log-straggler: true
+    --log-interval: 5
+
+# full training: FP32 master weights, BF16 gradients and Adam moments (Megatron's precision-aware optimizer)
+_full: &full_argv
+  --use-precision-aware-optimizer: true
+  --main-grads-dtype: bf16
+  --exp-avg-dtype: bf16
+  --exp-avg-sq-dtype: bf16
+
+# The node sets. Each holds the layout shared by the frozen and the full entry.
+# G1: EP8 aligned, both nodes of every expert group on one leaf (0 / 25 groups cross)
+_megatron_glm5_g1:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: aligned
+
+# G2: EP8 crossed, every group takes one node from two different leaves (25 / 25)
+_megatron_glm5_g2:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: crossed
+
+# G3: EP8 mixed, aligned except 3 pairs of one-group leaves swap partners (6 / 25, about 1 in 4)
+_megatron_glm5_g3:
+  inherits: _megatron_glm5_g
+  placement:
+    nodes: mixed
+    mixed_swaps: 3
+
+# G4: EP8 x PP16 on 64 nodes: every healthy node, minus the last partial expert group (65 healthy nodes -> 64; `leaf` drops
+# it, `as-is` would keep all 65 = 260 GPUs, not a multiple of EP x PP). Record the node set and the crossing count.
+_megatron_glm5_g4:
+  inherits: _megatron_glm5_g
+  num_machines: 64
+  placement:
+    nodes: leaf
+  argv:
+    --pipeline-model-parallel-size: 16
+    --decoder-first-pipeline-num-layers: 4
+    --decoder-last-pipeline-num-layers: 4
+
+# G5 is G1 in FP8 (frozen: megatron-glm5-g5-fp8, full: megatron-glm5-g5-fp8-full; it runs only if there is time and it fits)
+_megatron_glm5_g5:
+  inherits: _megatron_glm5_g1
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# G6 (EP16) is not in the window: its 4-node expert groups cannot share G1's 50-node set (200 GPUs is not a multiple of
+# 16 x PP). It needs its own 48-node set and layout if it is wanted.
+
+megatron-glm5-g1-ep8-aligned:
+  inherits: _megatron_glm5_g1
+  tags: [frozen]
+  frozen: {preset: experts}
+megatron-glm5-g1-ep8-aligned-full:
+  inherits: _megatron_glm5_g1
+  tags: [full]
+  frozen: {preset: none}
+  argv: {<<: *full_argv}
+
+megatron-glm5-g2-ep8-crossed:
+  inherits: _megatron_glm5_g2
+  tags: [frozen]
+  frozen: {preset: experts}
+megatron-glm5-g2-ep8-crossed-full:
+  inherits: _megatron_glm5_g2
+  tags: [full]
+  frozen: {preset: none}
+  argv: {<<: *full_argv}
+
+megatron-glm5-g3-ep8-mixed:
+  inherits: _megatron_glm5_g3
+  tags: [frozen]
+  frozen: {preset: experts}
+megatron-glm5-g3-ep8-mixed-full:
+  inherits: _megatron_glm5_g3
+  tags: [full]
+  frozen: {preset: none}
+  argv: {<<: *full_argv}
+
+megatron-glm5-g4-ep8-all-nodes:
+  inherits: _megatron_glm5_g4
+  tags: [frozen]
+  frozen: {preset: experts}
+megatron-glm5-g4-ep8-all-nodes-full:
+  inherits: _megatron_glm5_g4
+  tags: [full]
+  frozen: {preset: none}
+  argv: {<<: *full_argv}
+
+megatron-glm5-g5-fp8:
+  inherits: _megatron_glm5_g5
+  tags: [frozen, fp8]
+  frozen: {preset: experts}
+megatron-glm5-g5-fp8-full:
+  inherits: _megatron_glm5_g5
+  tags: [full, fp8]
+  frozen: {preset: none}
+  argv: {<<: *full_argv}
+
+# --- fallbacks, for the window (G1 = the 50-node set, G4 = the 64-node set; G2, G3, G5 take the same overrides) ----------
+# Frozen runs rely on the tested megatron-glm5-frozen-16n (see above): G1-G5 frozen should fit, the PP5 / PP8 frozen fallbacks
+# are close to its load. Full training is a ladder, each step lowering memory more than the previous one, down to a sure fit:
+#   0. as configured: G4 likely fits, G1-G3 are doubtful
+#   1. --optimizer-offload-fraction 0.25, then 0.5, then 1.0: the optimizer state is the largest term. At 1.0 a GPU keeps only
+#      BF16 weights and gradients plus activations: a wide margin at PP25 and PP16. Costs: the optimizer step runs on the CPU
+#      (slower step: add a `deviations` entry), and each node holds the optimizer state of its 4 ranks in host RAM, roughly
+#      200-400 GB per node at PP25 depending on the CPU precision: CHECK against the nodes' memory. Only 0.25 has run
+#      elsewhere; the offload path has not run with GLM-5 yet.
+#   2. balanced stages (--pipeline-model-parallel-layout), if 1. makes the step too slow: no heavy last stage. In Megatron
+#      4b4acac, not yet run with the GLM-5 spec.
+#   3. seq 4096 (below): only activations, not the model state: the least useful step.
+# If none works, full training is G4 alone.
+megatron-glm5-g1-ep8-aligned-full-offload025:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &offload025_argv
+    --optimizer-cpu-offload: true
+    --optimizer-offload-fraction: 0.25
+megatron-glm5-g1-ep8-aligned-full-offload05:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &offload05_argv
+    --optimizer-cpu-offload: true
+    --optimizer-offload-fraction: 0.5
+megatron-glm5-g1-ep8-aligned-full-offload1:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &offload1_argv
+    --optimizer-cpu-offload: true
+    --optimizer-offload-fraction: 1.0
+megatron-glm5-g4-ep8-all-nodes-full-offload025:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *offload025_argv
+megatron-glm5-g4-ep8-all-nodes-full-offload05:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *offload05_argv
+megatron-glm5-g4-ep8-all-nodes-full-offload1:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *offload1_argv
+
+# balanced stages at PP25, no offload (instead of it, when the CPU optimizer step is too slow): E first stage 3 layers,
+# 3 stages of 4, 20 of 3, last stage 3 layers + loss (L): 78 layers, no heavy last stage. Replaces the first / last flags.
+megatron-glm5-g1-ep8-aligned-full-balanced:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: &balanced25_argv
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --pipeline-model-parallel-layout: "Et*3|t*4|t*4|t*4|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3L"
+
+# the same rungs for G2, G3, G5 (50-node set, PP25): the full G runs use the rung 01_check_full.sh found
+megatron-glm5-g2-ep8-crossed-full-offload025:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload025_argv
+megatron-glm5-g2-ep8-crossed-full-offload05:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload05_argv
+megatron-glm5-g2-ep8-crossed-full-offload1:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *offload1_argv
+megatron-glm5-g2-ep8-crossed-full-balanced:
+  inherits: megatron-glm5-g2-ep8-crossed-full
+  argv: *balanced25_argv
+megatron-glm5-g3-ep8-mixed-full-offload025:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload025_argv
+megatron-glm5-g3-ep8-mixed-full-offload05:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload05_argv
+megatron-glm5-g3-ep8-mixed-full-offload1:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *offload1_argv
+megatron-glm5-g3-ep8-mixed-full-balanced:
+  inherits: megatron-glm5-g3-ep8-mixed-full
+  argv: *balanced25_argv
+megatron-glm5-g5-fp8-full-offload025:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload025_argv
+megatron-glm5-g5-fp8-full-offload05:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload05_argv
+megatron-glm5-g5-fp8-full-offload1:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *offload1_argv
+megatron-glm5-g5-fp8-full-balanced:
+  inherits: megatron-glm5-g5-fp8-full
+  argv: *balanced25_argv
+
+# 3. (ladder) still does not fit: seq 4096, frozen AND full (they stay comparable). With offload too if 1. was needed.
+megatron-glm5-g1-ep8-aligned-seq4096:
+  inherits: megatron-glm5-g1-ep8-aligned
+  argv: &seq4096_argv
+    --seq-length: 4096
+megatron-glm5-g1-ep8-aligned-full-seq4096:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  argv: *seq4096_argv
+megatron-glm5-g4-ep8-all-nodes-seq4096:
+  inherits: megatron-glm5-g4-ep8-all-nodes
+  argv: *seq4096_argv
+megatron-glm5-g4-ep8-all-nodes-full-seq4096:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  argv: *seq4096_argv
+
+# 3. PP25 fails for another reason: frozen, EP8 x PP5 (15, 16, 16, 16, 15), 50 nodes (~60 GB frozen: full does not fit)
+megatron-glm5-g1-ep8-aligned-pp5:
+  inherits: megatron-glm5-g1-ep8-aligned
+  argv:
+    --pipeline-model-parallel-size: 5
+    --decoder-first-pipeline-num-layers: 15
+    --decoder-last-pipeline-num-layers: 15
+
+# 4. PP16 fails: frozen, EP8 x PP8 (first 14, last 16: the tested split), 64 nodes
+megatron-glm5-g4-ep8-all-nodes-pp8:
+  inherits: megatron-glm5-g4-ep8-all-nodes
+  argv:
+    --pipeline-model-parallel-size: 8
+    --decoder-first-pipeline-num-layers: 14
+    --decoder-last-pipeline-num-layers: 16
+
+# 5. the aligned set shrinks to 52 / 48 / 46 nodes (the 50-node entries fail at launch in place_nodes() on any other count)
+megatron-glm5-g1-ep8-aligned-52n:       # EP8 x PP26: 3 layers per stage, 3 + 24 x 3 + 3
+  inherits: megatron-glm5-g1-ep8-aligned
+  num_machines: 52
+  argv:
+    --pipeline-model-parallel-size: 26
+    --decoder-first-pipeline-num-layers: 3
+    --decoder-last-pipeline-num-layers: 3
+megatron-glm5-g1-ep8-aligned-48n:       # EP8 x PP24: 6, 22 x 3, 6
+  inherits: megatron-glm5-g1-ep8-aligned
+  num_machines: 48
+  argv:
+    --pipeline-model-parallel-size: 24
+    --decoder-first-pipeline-num-layers: 6
+    --decoder-last-pipeline-num-layers: 6
+megatron-glm5-g1-ep8-aligned-46n:       # EP8 x PP23: 7, 21 x 3, 8
+  inherits: megatron-glm5-g1-ep8-aligned
+  num_machines: 46
+  argv:
+    --pipeline-model-parallel-size: 23
+    --decoder-first-pipeline-num-layers: 7
+    --decoder-last-pipeline-num-layers: 8
+
+# 6. the every-node set shrinks to 60 nodes: EP8 x PP15 (6, 13 x 5, 7). 62 nodes has no good layout.
+megatron-glm5-g4-ep8-all-nodes-60n:
+  inherits: megatron-glm5-g4-ep8-all-nodes
+  num_machines: 60
+  argv:
+    --pipeline-model-parallel-size: 15
+    --decoder-first-pipeline-num-layers: 6
+    --decoder-last-pipeline-num-layers: 7
+
+# --- checks to run before the G runs (scripts/analysis/GLM_RUNS.md, "Before the window") ---------------------------
+# Small truncated runs on 4 nodes (16 GPUs), 4 layers (1 dense + 3 MoE), PP1: only the expert-parallel size and the
+# precision change. They test the whole pipeline end to end (placement report, expert-group hosts, a2a timers, events),
+# give Fig. 10's small-scale points and the run length (`time_to_first_step`). The experts are frozen, so
+# params_trainable_fraction < 1: these runs are not the same model as the G runs. Submit with
+# slurm/schedule_megatron_glm_checks.sh.
+_megatron_glm5_check:
+  inherits: _megatron_glm5
+  tags: [frozen, check, smoke]
+  num_machines: 4
+  max_duration: 1500
+  frozen:
+    preset: experts
+  placement:
+    nodes: as-is
+    gpus_per_node: 4
+    a2a_timing: true
+  model:
+    argv:
+      --num-layers: 4
+      --moe-layer-freq: "[0]*1+[1]*3"
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --micro-batch-size: 1
+    --global-batch-size: 16
+    --train-iters: 8
+    --pipeline-model-parallel-size: 1
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --expert-model-parallel-size: 8
+
+# Expert-group-to-host mapping: groups made of crossed pairs when the 4 nodes span two leaves; compare the logged groups
+# (`ep group N: hosts [...] switches [...]`) with the node list.
+megatron-glm5-check-mapping-4n:
+  inherits: _megatron_glm5_check
+  tags: [frozen, check, smoke, topology]
+  placement:
+    nodes: crossed
+    set: even
+
+megatron-glm5-check-ep4-bf16-4n:
+  inherits: _megatron_glm5_check
+  argv:
+    --expert-model-parallel-size: 4
+
+megatron-glm5-check-ep8-bf16-4n:
+  inherits: _megatron_glm5_check
+
+megatron-glm5-check-ep16-bf16-4n:
+  inherits: _megatron_glm5_check
+  argv:
+    --expert-model-parallel-size: 16
+
+megatron-glm5-check-ep4-fp8-4n:
+  inherits: megatron-glm5-check-ep4-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-check-ep8-fp8-4n:
+  inherits: megatron-glm5-check-ep8-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+megatron-glm5-check-ep16-fp8-4n:
+  inherits: megatron-glm5-check-ep16-bf16-4n
+  tags: [frozen, check, smoke, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    <<: *fp8_argv
+
+# Does the full model fit on 200 GPUs at EP8 (memory at the chosen micro-batch), and how long does a run take?
+# G1's configuration, 4 steps. The per-rank peak memory (rankstore, after step 1) is in the run data; if it does
+# not fit, use the fallbacks above. The first full G1 run (-full-50n) decides whether the other full runs go ahead.
+megatron-glm5-check-fit-50n:
+  inherits: megatron-glm5-g1-ep8-aligned
+  tags: [frozen, check, placement]
+  max_duration: 2400
+  argv:
+    --train-iters: 4
+
+megatron-glm5-check-fit-full-50n:
+  inherits: megatron-glm5-g1-ep8-aligned-full
+  tags: [check, placement]
+  max_duration: 2400
+  argv:
+    --train-iters: 4
+
+# Full-training fit ladder (scripts/rorqual/01_check_full.sh runs it in this order and stops at the first entry that
+# completes): each step lowers the memory of the heaviest stage more than the previous one. 4 steps each.
+megatron-glm5-check-fit-full-offload025-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload025_argv
+megatron-glm5-check-fit-full-offload05-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload05_argv
+megatron-glm5-check-fit-full-offload1-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *offload1_argv
+# balanced PP25 stages, no offload (no CPU optimizer step): not in the default ladder, the layout has not run with GLM-5
+megatron-glm5-check-fit-full-balanced-50n:
+  inherits: megatron-glm5-check-fit-full-50n
+  argv: *balanced25_argv
+
+# G4's set (64 nodes, PP16): the same ladder
+megatron-glm5-check-fit-full-64n:
+  inherits: megatron-glm5-g4-ep8-all-nodes-full
+  tags: [check, placement]
+  max_duration: 2400
+  argv:
+    --train-iters: 4
+megatron-glm5-check-fit-full-offload025-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload025_argv
+megatron-glm5-check-fit-full-offload05-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload05_argv
+megatron-glm5-check-fit-full-offload1-64n:
+  inherits: megatron-glm5-check-fit-full-64n
+  argv: *offload1_argv

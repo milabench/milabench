@@ -1,0 +1,7 @@
+.venv/
+data/
+report/generated/
+report/*.aux
+report/*.log
+report/*.out
+report/main.pdf

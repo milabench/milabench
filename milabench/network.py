@@ -145,9 +145,15 @@ def resolve_addresses(nodes):
     # we also try to find the node we are currently running code on
     # we do that by simply checking all the available IP on this node
     # and check which node has that IP
+    # DNS lookups can take >1 s each on some clusters: resolve concurrently.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(32, max(1, len(nodes)))) as pool:
+        is_local = list(pool.map(resolve_node_address, nodes))
+
     self = None
-    for node in nodes:
-        if resolve_node_address(node):
+    for node, local in zip(nodes, is_local):
+        if local:
             self = node
 
     return self

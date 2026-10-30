@@ -7,6 +7,8 @@ Paths resolve from MILABENCH_DIR_* at parse time.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 
 from torchtitan.components.checkpoint import CheckpointManager
@@ -42,12 +44,16 @@ from .state_dict_adapter import MilabenchMoeStateDictAdapter
 from torchtitan.experiments.transformers_modeling_backend.tokenizer import (
     HFBackendTokenizer,
 )
+from torchtitan.hf_datasets import DatasetConfig
 from torchtitan.hf_datasets.text_datasets import (
+    DATASETS,
     ChatDataLoader,
     HuggingFaceTextDataLoader,
 )
 from torchtitan.protocols.model_spec import ModelSpec
 from torchtitan.tools.profiler import Profiler
+
+from benchmate.fineweb import load_fineweb
 
 
 def _data_dir() -> Path:
@@ -84,6 +90,43 @@ def _c4_path() -> str:
     bundled = _code_dir() / "assets" / "c4_test"
     staged = _data_dir() / "c4_test"
     return str(staged if staged.exists() else bundled)
+
+
+def _fineweb_path() -> Path:
+    """FineWeb subset written by prepare.py (see benchmate.fineweb)."""
+    return _data_dir() / "fineweb" / "sample-10BT"
+
+
+def _read_text(sample) -> str:
+    return sample["text"]
+
+
+# Pretrain dataset is chosen per bench with ``--dataloader.dataset <name>``;
+# each entry carries its own path, so ``dataset_path`` stays unset.
+DATASETS["c4_test"] = replace(DATASETS["c4_test"], path=_c4_path())
+DATASETS["fineweb"] = DatasetConfig(
+    path=str(_fineweb_path()),
+    loader=load_fineweb,
+    sample_processor=_read_text,
+)
+
+
+class MilabenchTextDataLoader(HuggingFaceTextDataLoader):
+    """Text dataloader whose config also sizes datasets fetched by prepare.py."""
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(HuggingFaceTextDataLoader.Config):
+        samples: int | None = None
+        """Documents prepare.py downloads and the loader reads for ``fineweb``."""
+
+    def __init__(self, config: Config, **kwargs):
+        if config.dataset == "fineweb":
+            # Read exactly the first `samples` docs, even from a larger subset
+            # prepared for another bench.
+            DATASETS["fineweb"] = replace(
+                DATASETS["fineweb"], loader=partial(load_fineweb, samples=config.samples)
+            )
+        super().__init__(config, **kwargs)
 
 
 def _sft_json() -> str:
@@ -157,10 +200,7 @@ def _base_pretrain(
             dtype="bfloat16",
             mixed_precision_param="bfloat16",
         ),
-        dataloader=HuggingFaceTextDataLoader.Config(
-            dataset="c4_test",
-            dataset_path=_c4_path(),
-        ),
+        dataloader=MilabenchTextDataLoader.Config(dataset="c4_test"),
         metrics=MetricsProcessor.Config(log_freq=1),
         parallelism=ParallelismConfig(pipeline_parallel_schedule="1F1B"),
         checkpoint=CheckpointManager.Config(enable=False),

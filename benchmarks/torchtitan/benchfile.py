@@ -9,8 +9,9 @@ from milabench.commands import (
     PackCommand,
     TorchrunAllGPU,
     TorchrunAllNodes,
-    VoirCommand,
+    WrapperCommand,
     WorkingDir,
+    max_node_count,
 )
 from milabench.commands.srun import ForeachSrun
 from milabench.pack import Package
@@ -77,10 +78,14 @@ class Torchtitan(Package):
         prev = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = code if not prev else f"{code}{os.pathsep}{prev}"
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-        # Host has no A/AAAA for hostname; c10d getaddrinfo hangs without this.
-        env.setdefault("MASTER_ADDR", "127.0.0.1")
-        env.setdefault("GLOO_SOCKET_IFNAME", "lo")
-        env.setdefault("NCCL_SOCKET_IFNAME", "lo")
+        if max_node_count(self.config) <= 1:
+            # Single node only: some dev hosts have no A/AAAA record for their
+            # hostname and c10d getaddrinfo hangs. Loopback would break
+            # cross-node Gloo/NCCL, so multi-node runs keep the real
+            # interface (auto-detected, or set *_SOCKET_IFNAME explicitly).
+            env.setdefault("MASTER_ADDR", "127.0.0.1")
+            env.setdefault("GLOO_SOCKET_IFNAME", "lo")
+            env.setdefault("NCCL_SOCKET_IFNAME", "lo")
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
         # Pin smoke to 1 GPU (benchrun uses --nproc-per-node=gpu).
         tags = list(self.config.get("tags") or [])
@@ -92,8 +97,9 @@ class Torchtitan(Package):
         return env
 
     def build_run_plan(self):
-        # voir main.py … so voirfile.py instruments the trainer; torchrun on top.
-        plan = VoirCommand(PackCommand(self, lazy=True))
+        # python main.py … (no voir): main.py instruments the trainer and pushes
+        # metrics on stdout; torchrun on top.
+        plan = WrapperCommand(PackCommand(self, lazy=True), "python")
         return TorchtitanSrun(plan).use_stdout()
 
 

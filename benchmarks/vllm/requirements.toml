@@ -24,10 +24,14 @@ dependencies = [
     "vllm[bench]",
     "vllm[audio]",
 
+    # vLLM detects the ROCm platform through amdsmi; without it `vllm serve`
+    # fails with "Failed to infer device type"
+    "amdsmi",
+
     # ATOM serving (serving-* benchmarks): install atom + amd-aiter wheels from the
     # milabench ROCm release (build with `make GPU_BACKEND=rocm atom`).
     # MoE EP may also need amd_mori.
-    "atom",
+    # "atom" is disabled until that wheel exists: PyPI's `atom` is an unrelated package
     "amd-aiter",
 
     # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu

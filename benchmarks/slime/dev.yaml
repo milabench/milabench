@@ -1,0 +1,902 @@
+# Local bring-up config for slime (Megatron-LM training driven by THUDM/slime).
+# Usage:
+#   milabench install --config benchmarks/slime/dev.yaml --select slime-qwen2.5-0.5b-sft-smoke
+#   milabench prepare --config benchmarks/slime/dev.yaml --select slime-qwen2.5-0.5b-sft-smoke
+#   milabench run     --config benchmarks/slime/dev.yaml --select slime-qwen2.5-0.5b-sft-smoke
+#
+# The slime command line is built from the config:
+#   model.argv  Megatron architecture flags (also used for the HF -> torch_dist conversion)
+#   argv        everything else given to slime's train.py (parallelism, batch size, steps, ...)
+# so any of them can be overridden per bench or from the command line.
+#
+# Two flavours per model:
+#   *-sft   Megatron training only (--debug-train-only), no SGLang
+#   *-grpo  full RL loop: SGLang rollout + Megatron train + weight sync
+#
+# Multi-node (num_machines > 1) brings Ray up through RayCluster (srun), the
+# driver runs on the main node. Shared FS needed for {milabench_data} and runs.
+
+include:
+  - ../../config/_defaults.yaml
+
+# --- reusable argv fragments (merged with <<) ---
+
+_sft_argv: &sft_argv
+  --rollout-function-path: slime.rollout.sft_rollout.generate_rollout
+  --input-key: messages
+  --rollout-shuffle: true
+  --loss-type: sft_loss
+  --calculate-per-token-loss: true
+  --disable-compute-advantages-and-returns: true
+  --debug-train-only: true
+
+_grpo_argv: &grpo_argv
+  --input-key: prompt
+  --label-key: label
+  --apply-chat-template: true
+  --rollout-shuffle: true
+  --rm-type: deepscaler
+  --advantage-estimator: grpo
+  --use-kl-loss: true
+  --kl-loss-coef: 0.00
+  --kl-loss-type: low_var_kl
+  --entropy-coef: 0.00
+  --eps-clip: 0.2
+  --eps-clip-high: 0.28
+  --num-steps-per-rollout: 1
+  --rollout-temperature: 1
+  --colocate: true
+
+_slime:
+  inherits: _defaults
+  definition: .
+  enabled: true
+  install_variant: unpinned
+  install_group: torch
+  weight: 0.0
+  max_duration: 3600
+  num_machines: 1
+  tags:
+    - nlp
+    - llm
+    - slime
+    - megatron
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --actor-num-nodes: "{num_machines}"
+    --actor-num-gpus-per-node: "{gpu_count}"
+    --num-rollout: 10
+    --tensor-model-parallel-size: 1
+    --pipeline-model-parallel-size: 1
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 1
+    --expert-tensor-parallel-size: 1
+    --use-dynamic-batch-size: true
+    --max-tokens-per-gpu: 4096
+    --optimizer: adam
+    --lr: 1e-6
+    --lr-decay-style: constant
+    --weight-decay: 0.1
+    --adam-beta1: 0.9
+    --adam-beta2: 0.98
+    --attention-dropout: 0.0
+    --hidden-dropout: 0.0
+    --accumulate-allreduce-grads-in-fp32: true
+    --attention-softmax-in-fp32: true
+    # "flash" disables TE's fused/unfused attention and flash-attn is not installed: let TE pick (cuDNN fused on A100)
+    --attention-backend: auto
+    # TE falls back to unfused attention here (activations grow with seq_len^2: 66GB peak for a 0.5B model,
+    # OOM with long documents or DP=8): recompute them. The big-model entries set `full` themselves.
+    --recompute-granularity: selective
+    # slime_hook.py: forwards rate/loss from the Ray workers to milabench
+    --custom-megatron-init-path: slime_hook.install
+
+# --- Qwen2.5-0.5B (smoke) ---
+
+_qwen2_5_0_5b:
+  inherits: _slime
+  url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
+  model:
+    hf: Qwen/Qwen2.5-0.5B-Instruct
+    argv:
+      # APEX (fused_weight_gradient_mlp_cuda) is not installed
+      --no-gradient-accumulation-fusion: true
+      --swiglu: true
+      --num-layers: 24
+      --hidden-size: 896
+      --ffn-hidden-size: 4864
+      --num-attention-heads: 14
+      --use-rotary-position-embeddings: true
+      --disable-bias-linear: true
+      --add-qkv-bias: true
+      --normalization: RMSNorm
+      --norm-epsilon: 1e-6
+      --rotary-base: 1000000
+      --group-query-attention: true
+      --num-query-groups: 2
+      --vocab-size: 151936
+  argv:
+    --hf-checkpoint: "{milabench_data}/slime/models/qwen2.5-0.5B/hf"
+    --ref-load: "{milabench_data}/slime/models/qwen2.5-0.5B/torch_dist"
+
+slime-qwen2.5-0.5b-sft-smoke:
+  inherits: _qwen2_5_0_5b
+  tags: [pretrain, smoke, monogpu]
+  max_duration: 1200
+  devices: [0]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --rollout-batch-size: 8
+    --global-batch-size: 8
+    --actor-num-gpus-per-node: 1
+
+slime-qwen2.5-0.5b-fineweb-smoke:
+  inherits: _qwen2_5_0_5b
+  tags: [pretrain, smoke, monogpu]
+  max_duration: 1200
+  devices: [0]
+  dataset: fineweb
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/fineweb_small.parquet"
+    --rollout-batch-size: 8
+    --global-batch-size: 8
+    --actor-num-gpus-per-node: 1
+
+slime-qwen2.5-0.5b-grpo-smoke:
+  inherits: _qwen2_5_0_5b
+  tags: [rl, smoke, monogpu]
+  max_duration: 1800
+  devices: [0]
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    --rollout-batch-size: 2
+    --global-batch-size: 4
+    --n-samples-per-prompt: 2
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 256
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.4
+    # no flashinfer in this install (heavy JIT dependencies): Triton attention + PyTorch sampling
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 1
+
+# --- Single node, 8 GPUs ---
+# Data parallel: also settles whether `rate` (logging rank only) should be scaled by the DP size.
+slime-qwen2.5-0.5b-sft-8gpu:
+  inherits: _qwen2_5_0_5b
+  tags: [pretrain, multigpu]
+  max_duration: 1800
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --actor-num-gpus-per-node: 8
+
+# Colocated: trainer and 8 SGLang engines share the 8 GPUs (weights offloaded in turn).
+slime-qwen2.5-0.5b-grpo-colocate-8gpu:
+  inherits: _qwen2_5_0_5b
+  tags: [rl, multigpu]
+  max_duration: 2400
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    --rollout-batch-size: 8
+    --n-samples-per-prompt: 4
+    --global-batch-size: 32
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 256
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.4
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 8
+
+# Disaggregated: 4 GPUs train, 4 GPUs roll out (weights travel between the pools on every update).
+slime-qwen2.5-0.5b-grpo-disagg-4p4:
+  inherits: _qwen2_5_0_5b
+  tags: [rl, multigpu]
+  max_duration: 2400
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --colocate: null
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    --rollout-batch-size: 8
+    --n-samples-per-prompt: 4
+    --global-batch-size: 32
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 256
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.8
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 4
+    --rollout-num-gpus: 4
+
+# Response-length cap that changes inside one run (the schedule is applied by slime_rollout.py):
+# 128 tokens for rollouts 0-1, 256 for 2-3, 512 from rollout 4.
+slime-qwen2.5-0.5b-grpo-schedule-smoke:
+  inherits: _qwen2_5_0_5b
+  tags: [rl, smoke, monogpu]
+  max_duration: 2400
+  devices: [0]
+  dataset: dapo-math-17k
+  schedule:
+    response_len: {0: 128, 2: 256, 4: 512}
+  argv:
+    <<: *grpo_argv
+    --rollout-function-path: slime_rollout.generate_rollout
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 6
+    --rollout-batch-size: 2
+    --global-batch-size: 4
+    --n-samples-per-prompt: 2
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 128
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.4
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 1
+
+# --- MoE proxy: Qwen3-30B-A3B on one node ---
+# Layout of slime's scripts/run-qwen3-30B-A3B.sh with CP=1 (TP4 x EP8, DP=2), SFT mode. Exercises the
+# router, expert parallelism and all-to-all that the GLM-5 runs rely on, on a model that fits 8 GPUs.
+_qwen3_30b_a3b:
+  inherits: _slime
+  url: https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507
+  max_duration: 3600
+  tags: [multigpu, moe]
+  model:
+    hf: Qwen/Qwen3-30B-A3B-Instruct-2507
+    convert_nproc: 8
+    argv:
+      --no-gradient-accumulation-fusion: true
+      --disable-bias-linear: true
+      --qk-layernorm: true
+      --group-query-attention: true
+      --num-attention-heads: 32
+      --num-query-groups: 4
+      --kv-channels: 128
+      --num-layers: 48
+      --hidden-size: 2048
+      --ffn-hidden-size: 6144
+      --normalization: RMSNorm
+      --position-embedding-type: rope
+      --norm-epsilon: 1e-6
+      --rotary-percent: 1.0
+      --swiglu: true
+      --untie-embeddings-and-output-weights: true
+      --vocab-size: 151936
+      # the Instruct-2507 release; slime's script defaults to 1M and is overridden through MODEL_ARGS_ROTARY_BASE
+      --rotary-base: 10000000
+      --moe-ffn-hidden-size: 768
+      --moe-router-score-function: softmax
+      --moe-token-dispatcher-type: alltoall
+      --moe-router-topk: 8
+      --moe-layer-freq: "[1]*48"
+      --num-experts: 128
+      --moe-grouped-gemm: true
+      --moe-token-drop-policy: probs
+      --moe-router-dtype: fp32
+      --moe-permute-fusion: true
+      --moe-aux-loss-coeff: 0
+  argv:
+    --hf-checkpoint: "{milabench_data}/slime/models/qwen3-30b-a3b/hf"
+    --ref-load: "{milabench_data}/slime/models/qwen3-30b-a3b/torch_dist"
+    --tensor-model-parallel-size: 4
+    --sequence-parallel: true
+    --pipeline-model-parallel-size: 1
+    # slime's recipe uses CP=2 (H100 + flash/fused attention). Here TE finds no attention backend with CP>1
+    # (unfused cannot do context parallelism, flash-attn is not installed, cuDNN fused is rejected): CP=1, DP=2.
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --expert-tensor-parallel-size: 1
+    --recompute-granularity: full
+    --recompute-method: uniform
+    --recompute-num-layers: 1
+    --max-tokens-per-gpu: 8192
+    --optimizer-cpu-offload: true
+    --overlap-cpu-optimizer-d2h-h2d: true
+    --use-precision-aware-optimizer: true
+    --bf16: true
+    --num-rollout: 6
+    --rollout-batch-size: 16
+    --global-batch-size: 16
+
+slime-qwen3-30b-a3b-sft:
+  inherits: _qwen3_30b_a3b
+  tags: [pretrain]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+# Same run with the router forced to balance for the first 3 rollouts, then real routing (slime_hook.py).
+slime-qwen3-30b-a3b-sft-routing:
+  inherits: _qwen3_30b_a3b
+  tags: [pretrain]
+  dataset: openhermes
+  schedule:
+    router: {force_balance_until: 3}
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+# --- Real run: GLM-5.3 (744B-A40B MoE) ---
+# Architecture flags follow slime's scripts/models/glm5.2-744B-A40B.sh (rotary base 8M: the original
+# zai-org/GLM-5 has 1M and slime's hf_validate_args rejects the mix). Parallelism follows
+# scripts/run-glm5.3-744B-A40B.sh: TP4 x PP8 x CP8
+# needs 256 GPUs (32 nodes of 8). The torch_dist checkpoint is not converted
+# automatically (multi-node job): provide it at --ref-load or run prepare with
+# SLIME_CONVERT=1. NOT yet validated end to end.
+
+_glm5:
+  inherits: _slime
+  url: https://huggingface.co/zai-org/GLM-5.3
+  num_machines: 32
+  max_duration: 14400
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [multinode, moe]
+  env:
+    NCCL_NVLS_ENABLE: "0"
+    NCCL_CUMEM_ENABLE: "0"
+    TOKENIZERS_PARALLELISM: "false"
+  model:
+    hf: zai-org/GLM-5.3
+    convert: false
+    argv:
+      # APEX (fused_weight_gradient_mlp_cuda) is not installed
+      --no-gradient-accumulation-fusion: true
+      --spec: slime_plugins.models.glm5.glm5 get_glm5_spec
+      --moe-layer-freq: "[0]*3+[1]*75"
+      --num-experts: 256
+      --moe-shared-expert-intermediate-size: 2048
+      --moe-router-topk: 8
+      --moe-grouped-gemm: true
+      --moe-permute-fusion: true
+      --moe-ffn-hidden-size: 2048
+      --moe-router-score-function: sigmoid
+      --moe-router-pre-softmax: true
+      --moe-router-enable-expert-bias: true
+      --moe-router-bias-update-rate: 0
+      --moe-router-load-balancing-type: seq_aux_loss
+      --moe-router-topk-scaling-factor: 2.5
+      --moe-aux-loss-coeff: 0
+      --moe-router-dtype: fp32
+      --make-vocab-size-divisible-by: 16
+      --num-layers: 78
+      --hidden-size: 6144
+      --ffn-hidden-size: 12288
+      --num-attention-heads: 64
+      --disable-bias-linear: true
+      --swiglu: true
+      --untie-embeddings-and-output-weights: true
+      --position-embedding-type: rope
+      --no-position-embedding: true
+      --normalization: RMSNorm
+      --qk-layernorm: true
+      --multi-latent-attention: true
+      --q-lora-rank: 2048
+      --kv-lora-rank: 512
+      --qk-head-dim: 192
+      --v-head-dim: 256
+      --kv-channels: 192
+      --qk-pos-emb-head-dim: 64
+      --vocab-size: 154880
+      --rotary-base: 8000000
+      --enable-experimental: true
+      --allgather-cp: true
+  argv:
+    --hf-checkpoint: "{milabench_data}/slime/models/glm5/hf"
+    --ref-load: "{milabench_data}/slime/models/glm5/torch_dist"
+    --tensor-model-parallel-size: 4
+    --sequence-parallel: true
+    --pipeline-model-parallel-size: 8
+    --decoder-first-pipeline-num-layers: 14
+    --decoder-last-pipeline-num-layers: 16
+    --context-parallel-size: 8
+    --expert-model-parallel-size: 32
+    --recompute-granularity: full
+    --recompute-method: uniform
+    --recompute-num-layers: 1
+    --max-tokens-per-gpu: 8192
+    --data-pad-size-multiplier: 1024
+    --log-probs-chunk-size: 16384
+    --global-batch-size: 64
+    --rollout-batch-size: 64
+    --optimizer-cpu-offload: true
+    --overlap-cpu-optimizer-d2h-h2d: true
+    --use-precision-aware-optimizer: true
+    --bf16: true
+    --num-rollout: 10
+
+slime-glm5-sft:
+  inherits: _glm5
+  tags: [pretrain]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+slime-glm5-fineweb:
+  inherits: _glm5
+  tags: [pretrain]
+  dataset: fineweb
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/fineweb_small.parquet"
+
+slime-glm5-grpo:
+  inherits: _glm5
+  tags: [rl]
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    # prompts per rollout: slime requires global-batch-size == rollout-batch-size * n-samples-per-prompt
+    # (the 64 inherited from _glm5 is a sample count, right for the SFT entries only)
+    --rollout-batch-size: 8
+    --n-samples-per-prompt: 8
+    --rollout-max-response-len: 8192
+    --use-score-centering: true
+    --pg-loss-type: reinforce
+    --disable-grpo-std-normalization: true
+    --use-rollout-routing-replay: true
+    --use-tis: true
+    --tis-clip-low: 0.5
+    --tis-clip: 2.0
+    --rollout-num-gpus-per-engine: 64
+    --sglang-ep-size: 64
+    --sglang-dp-size: 64
+    --sglang-enable-dp-attention: true
+    --sglang-enable-dp-lm-head: true
+
+# --- GLM-5.3-Flash (300B MoE, glm5_next architecture): the step between the 30B proxy and the 744B ---
+# Follows slime's scripts/run-glm5.3-flash-300B.sh: 8 nodes x 8 GPUs, PP4 x CP8 x EP16, the HF checkpoint is
+# loaded directly (--load + --megatron-to-hf-mode raw, no torch_dist conversion). NOT yet validated end to end.
+
+_glm5_flash:
+  inherits: _slime
+  url: https://huggingface.co/zai-org/GLM-5.3-Flash
+  num_machines: 8
+  max_duration: 14400
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [multinode, moe]
+  env:
+    NCCL_NVLS_ENABLE: "0"
+    NCCL_CUMEM_ENABLE: "0"
+    TOKENIZERS_PARALLELISM: "false"
+  model:
+    hf: zai-org/GLM-5.3-Flash
+    convert: false
+    argv:
+      --no-gradient-accumulation-fusion: true
+      --spec: slime_plugins.models.glm5_next.model get_glm5_next_model_provider
+      --model-name: glm5_next
+      --num-layers: 45
+      --hidden-size: 4096
+      --ffn-hidden-size: 12288
+      --num-attention-heads: 64
+      --num-query-groups: 64
+      --kv-channels: 256
+      --q-lora-rank: 1536
+      --kv-lora-rank: 512
+      --vocab-size: 154880
+      --make-vocab-size-divisible-by: 64
+      --disable-bias-linear: true
+      --swiglu: true
+      --untie-embeddings-and-output-weights: true
+      --position-embedding-type: none
+      --normalization: RMSNorm
+      --norm-epsilon: 1e-5
+      --rotary-base: 800000
+      --num-experts: 288
+      --moe-layer-freq: "[0]*3+[1]*42"
+      --moe-ffn-hidden-size: 2048
+      --moe-shared-expert-intermediate-size: 2048
+      --moe-router-topk: 8
+      --moe-router-score-function: sigmoid
+      --moe-router-pre-softmax: true
+      --moe-router-enable-expert-bias: true
+      --moe-router-bias-update-rate: 0
+      --moe-router-load-balancing-type: seq_aux_loss
+      --moe-router-topk-scaling-factor: 2.5
+      --moe-aux-loss-coeff: 0
+      --moe-router-dtype: fp32
+      --moe-grouped-gemm: true
+      --moe-permute-fusion: true
+      --freeze-indexer: true
+      --enable-experimental: true
+  argv:
+    --hf-checkpoint: "{milabench_data}/slime/models/glm5.3-flash/hf"
+    --load: "{milabench_data}/slime/models/glm5.3-flash/hf"
+    --megatron-to-hf-mode: raw
+    --micro-batch-size: 1
+    --tensor-model-parallel-size: 1
+    --pipeline-model-parallel-size: 4
+    --decoder-first-pipeline-num-layers: 12
+    --decoder-last-pipeline-num-layers: 11
+    --context-parallel-size: 8
+    --expert-model-parallel-size: 16
+    --allgather-cp: true
+    --moe-token-dispatcher-type: alltoall
+    --recompute-granularity: full
+    --recompute-method: uniform
+    --recompute-num-layers: 1
+    --seq-length: 524288
+    --max-position-embeddings: 524288
+    --max-tokens-per-gpu: 2048
+    --data-pad-size-multiplier: 128
+    --log-probs-chunk-size: 256
+    --optimizer-cpu-offload: true
+    --overlap-cpu-optimizer-d2h-h2d: true
+    --use-precision-aware-optimizer: true
+    --no-load-optim: true
+    --no-load-rng: true
+    --no-save-optim: true
+    --bf16: true
+    --distributed-timeout-minutes: 60
+    --update-weight-buffer-size: 1073741824
+    --num-rollout: 3
+    --global-batch-size: 128
+
+slime-glm5.3-flash-grpo:
+  inherits: _glm5_flash
+  tags: [rl]
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    # the recipe has no KL loss (and no --ref-load): drop what the shared GRPO fragment sets
+    --use-kl-loss: null
+    --kl-loss-coef: null
+    --kl-loss-type: null
+    --colocate: true
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --rollout-batch-size: 16
+    --n-samples-per-prompt: 8
+    --rollout-max-response-len: 262144
+    --rollout-temperature: 1.0
+    --rollout-top-p: 0.95
+    --use-rollout-routing-replay: true
+    --use-score-centering: true
+    --pg-loss-type: reinforce
+    --disable-grpo-std-normalization: true
+    --calculate-per-token-loss: true
+    --use-tis: true
+    --tis-clip-low: 0.5
+    --tis-clip: 2.0
+    --rollout-num-gpus-per-engine: 16
+    --sglang-dp-size: 16
+    --sglang-ep-size: 16
+    --sglang-enable-dp-attention: true
+    --sglang-enable-dp-lm-head: true
+    --sglang-moe-dense-tp-size: 1
+    --sglang-mem-fraction-static: 0.75
+    --sglang-context-length: 524288
+    --sglang-max-running-requests: 32
+    --sglang-chunked-prefill-size: 4096
+    --sglang-disable-overlap-schedule: true
+    --sglang-cuda-graph-max-bs-decode: 8
+    --sglang-page-size: 64
+    --sglang-kv-cache-dtype: bfloat16
+    --sglang-watchdog-timeout: 3600
+
+# --- Multi-node on 4-GPU nodes (Rorqual: 4 x H100 per node, 21 nodes reserved) ---
+# The entries above assume 8 GPUs per node. These spell out --actor-num-gpus-per-node 4 and take their node
+# count from num_machines (Ray through RayCluster, the first num_machines nodes of the --system file).
+# NOT yet validated end to end.
+
+slime-qwen2.5-0.5b-sft-2n4g:
+  inherits: _qwen2_5_0_5b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [pretrain, multinode]
+  max_duration: 1800
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --actor-num-gpus-per-node: 4
+
+slime-qwen2.5-0.5b-grpo-colocate-2n4g:
+  inherits: _qwen2_5_0_5b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [rl, multinode]
+  max_duration: 2400
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --num-rollout: 3
+    --rollout-batch-size: 8
+    --n-samples-per-prompt: 4
+    --global-batch-size: 32
+    --max-tokens-per-gpu: 2048
+    --rollout-max-response-len: 256
+    --rollout-num-gpus-per-engine: 1
+    --sglang-mem-fraction-static: 0.4
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+    --actor-num-gpus-per-node: 4
+    # rollout side: slime assumes 8 GPUs per node (engine placement, ports) unless told otherwise
+    --num-gpus-per-node: 4
+
+# Qwen3-30B-A3B: TP4 x EP8 over 2 nodes (DP=2). The torch_dist conversion runs on one node: 4 GPUs.
+_qwen3_30b_a3b_2n4g:
+  inherits: _qwen3_30b_a3b
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  tags: [multinode, moe]
+  model:
+    convert_nproc: 4
+  argv:
+    --actor-num-gpus-per-node: 4
+
+slime-qwen3-30b-a3b-sft-2n4g:
+  inherits: _qwen3_30b_a3b_2n4g
+  tags: [pretrain]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+slime-qwen3-30b-a3b-sft-routing-2n4g:
+  inherits: _qwen3_30b_a3b_2n4g
+  tags: [pretrain]
+  dataset: openhermes
+  schedule:
+    router: {force_balance_until: 3}
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+
+# GLM-5.3-Flash SFT on 4-GPU nodes, to run the pipeline (PP, EP all-to-all, router, optimizer) with fewer GPUs than
+# the recipe's 64. The experts hold almost all the parameters: freezing them removes their gradient buffers and
+# optimizer state (the bf16 weights stay), the attention, router and norms stay trainable so the backward pass still
+# goes through the whole model.
+#   - SFT (--debug-train-only, no SGLang) with short sequences: the recipe's CP8 / 512k context is for rollouts
+#   - PP4 x DP(N*4/4), EP = DP (288 experts / EP per GPU); the HF checkpoint is loaded directly (no conversion)
+#   - 10 rollouts: the first steps are warm-up, drop them when comparing
+# Sweep (schedule_slime_flash_sweep.sh): frozen / unfrozen at 8 nodes (what freezing saves), frozen at 4 and 2 nodes
+# (how few GPUs the pipeline needs), frozen with the router forced to balance for the first rollouts.
+_glm5_flash_sft:
+  inherits: _glm5_flash
+  num_machines: 8
+  max_duration: 7200
+  tags: [multinode, moe]
+  dataset: openhermes
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --actor-num-gpus-per-node: 4
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --allgather-cp: null
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --max-tokens-per-gpu: 8192
+    --rollout-batch-size: 32
+    --global-batch-size: 32
+    --num-rollout: 10
+
+slime-glm5.3-flash-sft-frozen:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --freeze-params-name-list: experts
+
+# Same layout, nothing frozen: may not fit (fp32 gradients + optimizer state of every expert), which is then the result.
+slime-glm5.3-flash-sft-unfrozen:
+  inherits: _glm5_flash_sft
+
+# Router forced to balance for the first 4 rollouts, then the real router (slime_hook.py).
+slime-glm5.3-flash-sft-frozen-routing:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  schedule:
+    router: {force_balance_until: 4}
+  argv:
+    --freeze-params-name-list: experts
+
+# 16 GPUs: PP4 x DP4, EP4 (72 experts per GPU)
+slime-glm5.3-flash-sft-frozen-4n:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --freeze-params-name-list: experts
+
+# 8 GPUs: PP4 x DP2, EP2 (144 experts per GPU, about 41 GB of expert weights each): may not fit
+slime-glm5.3-flash-sft-frozen-2n:
+  inherits: _glm5_flash_sft
+  num_machines: 2
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 2
+    --freeze-params-name-list: experts
+
+# Throughput scaling check: the frozen runs above use a global batch of 32 sequences (4 per data-parallel rank at 8
+# nodes), small enough that pipeline bubbles and the cross-node all-to-all may dominate. Same layouts, bigger batches.
+slime-glm5.3-flash-sft-frozen-gbs64:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-gbs128:
+  inherits: _glm5_flash_sft
+  tags: [frozen]
+  argv:
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-4n-gbs64:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --freeze-params-name-list: experts
+
+slime-glm5.3-flash-sft-frozen-4n-gbs128:
+  inherits: _glm5_flash_sft
+  num_machines: 4
+  tags: [frozen]
+  argv:
+    --expert-model-parallel-size: 4
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --freeze-params-name-list: experts
+
+# --- GLM-5.3 744B-A40B with frozen experts, 16 nodes x 4 GPUs = 64 GPUs (the recipe uses 256) ---
+# zai-org/GLM-5.3 is the FP8 checkpoint (755 GB); slime's raw HF loader maps model_type glm_moe_dsa and dequantizes
+# FP8 on load, so, as for Flash, no torch_dist conversion: --load <hf dir> --megatron-to-hf-mode raw.
+# NOT validated: the recipe itself loads a converted torch_dist checkpoint.
+# bf16 weights are about 1.5 TB: 64 GPUs = 23 GB each (32 GPUs would be 45 GB, no room left). PP8 x DP8, EP8
+# (32 experts per GPU), the recipe's 14 / 16 first / last pipeline stage layers (14 + 6 x 8 + 16 = 78).
+# SFT (--debug-train-only, no SGLang), 8k sequences instead of the recipe's CP8 long context.
+_glm5_sft_frozen:
+  inherits: _glm5
+  num_machines: 16
+  max_duration: 14400
+  tags: [pretrain, frozen]
+  dataset: openhermes
+  env:
+    # the glm5 plugin's RoPE needs NVIDIA apex (a CUDA extension, not installed): this switches it to SGLang's kernels
+    # (plugin requires TP=1 and CP=1, as here). Forwarded to the Ray workers by main.py.
+    MEGATRON_USE_SGLANG_ROPE: "1"
+  model:
+    argv:
+      --allgather-cp: null
+  argv:
+    <<: *sft_argv
+    --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
+    --actor-num-gpus-per-node: 4
+    --tensor-model-parallel-size: 1
+    --sequence-parallel: null
+    --pipeline-model-parallel-size: 8
+    --context-parallel-size: 1
+    --expert-model-parallel-size: 8
+    --ref-load: null
+    --load: "{milabench_data}/slime/models/glm5/hf"
+    --megatron-to-hf-mode: raw
+    --no-load-optim: true
+    --no-load-rng: true
+    --no-save-optim: true
+    --seq-length: 8192
+    --max-position-embeddings: 8192
+    --max-tokens-per-gpu: 8192
+    --data-pad-size-multiplier: 128
+    --rollout-batch-size: 32
+    --global-batch-size: 32
+    --num-rollout: 6
+    --freeze-params-name-list: experts
+
+slime-glm5-sft-frozen-16n:
+  inherits: _glm5_sft_frozen
+
+# 744B, bigger batches and 10 rollouts (the first run was batch 32 / 6 rollouts: 614 tokens/s, std 28%, warm-up heavy)
+slime-glm5-sft-frozen-16n-gbs64:
+  inherits: _glm5_sft_frozen
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+
+slime-glm5-sft-frozen-16n-gbs128:
+  inherits: _glm5_sft_frozen
+  argv:
+    --rollout-batch-size: 128
+    --global-batch-size: 128
+    --num-rollout: 10
+
+# Fewer GPUs, same DP8 / EP8. The 16-node peak (58 GB / GPU) is probably set by its largest pipeline stage, 16 layers
+# (recipe split 14 first / 16 last, 8 in between), so keeping every stage <= 16 layers should keep the same peak:
+#   PP6: 14 + 4 x 12 + 16 = 78   48 GPUs (12 nodes), middle stages hold 12 layers
+#   PP5: 14 + 3 x 16 + 16 = 78   40 GPUs (10 nodes), every stage but the first holds 16 layers
+# PP4 would need 24-layer middle stages (3x the 16-node weights per GPU): not tried. Batch 64, as slime-glm5-sft-frozen-16n-gbs64.
+slime-glm5-sft-frozen-12n-gbs64:
+  inherits: _glm5_sft_frozen
+  num_machines: 12
+  argv:
+    --pipeline-model-parallel-size: 6
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+
+slime-glm5-sft-frozen-10n-gbs64:
+  inherits: _glm5_sft_frozen
+  num_machines: 10
+  argv:
+    --pipeline-model-parallel-size: 5
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+
+# --- FP8 training (TransformerEngine block-scaling), same layouts as the bf16 twins to compare against ---
+# Slime's recipe (scripts/low_precision/run-qwen3-30b-a3b-fp8.sh): bf16 master weights, TE autocast with
+# --fp8-format e4m3 --fp8-recipe blockwise, NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1 (forwarded to the Ray workers by main.py).
+# - --fp8-param-gather is NOT used: Megatron asserts it only works with the optimizer CPU offload when the recipe is
+#   "delayed", and these entries offload the optimizer. So the weights stay bf16 (TE keeps quantized copies per step).
+# - --moe-router-padding-for-quantization: every expert gets a token count the FP8 grouped GEMM accepts.
+# - Only TransformerEngine modules run in FP8: the glm5 / glm5_next plugin's own attention ops stay bf16.
+# NOT validated: compare against slime-glm5.3-flash-sft-frozen-gbs64 / slime-glm5-sft-frozen-16n-gbs64.
+slime-glm5.3-flash-sft-frozen-gbs64-fp8:
+  inherits: _glm5_flash_sft
+  tags: [frozen, fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+    --transformer-impl: transformer_engine
+    --fp8-format: e4m3
+    --fp8-recipe: blockwise
+    --moe-router-padding-for-quantization: true
+    --freeze-params-name-list: experts
+
+slime-glm5-sft-frozen-16n-gbs64-fp8:
+  inherits: _glm5_sft_frozen
+  tags: [fp8]
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv:
+    --rollout-batch-size: 64
+    --global-batch-size: 64
+    --num-rollout: 10
+    --transformer-impl: transformer_engine
+    --fp8-format: e4m3
+    --fp8-recipe: blockwise
+    --moe-router-padding-for-quantization: true
+

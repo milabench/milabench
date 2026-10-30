@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import os
+from pathlib import Path
 
 
 def _get_flag(name, type, default):
@@ -20,6 +23,16 @@ def torchmem_enabled():
     Disable with ``BENCHMATE_TORCHMEM=0`` (e.g. for Jax benches).
     """
     return _get_flag("BENCHMATE_TORCHMEM", int, 1) != 0
+
+
+def wandb_enabled():
+    """Also push metrics to wandb. Opt-in with ``BENCHMATE_WANDB=1``."""
+    return _get_flag("BENCHMATE_WANDB", int, 0) != 0
+
+
+def wandb_all_ranks():
+    """One wandb run per rank instead of rank 0 only. Opt-in with ``BENCHMATE_WANDB_ALL_RANKS=1`` (needs BENCHMATE_WANDB)."""
+    return _get_flag("BENCHMATE_WANDB_ALL_RANKS", int, 0) != 0
 
 
 def jaxmem_enabled():
@@ -58,6 +71,12 @@ def vllm_request_metrics_enabled(default: bool = True) -> bool:
             return bool(cfg["push_request_metrics"])
 
     return default
+
+
+def nodemon_dir() -> Path | None:
+    """Where the node sampler writes, from BENCHMATE_NODEMON_DIR; None when unset, which disables it."""
+    value = os.getenv("BENCHMATE_NODEMON_DIR")
+    return Path(value) if value else None
 
 
 poll_interval_default = get_poll_interval(0.25)

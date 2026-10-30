@@ -73,3 +73,14 @@ fjobs_*.json
 
 benchmarks/dinov2/logs/
 benchmarks/dinov2/config.yaml
+
+# Runtime config added to running benchmarks
+runtime_config.yaml
+runtime_config.yaml.lock
+fjobs_*.json
+
+
+logs/
+
+# wandb run data (now written to runs/<run_name>/wandb through WANDB_DIR)
+wandb/

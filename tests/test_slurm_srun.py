@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import stat
 from types import SimpleNamespace
 
@@ -124,6 +125,21 @@ class TestShrinkAllocation:
         assert _exclude_host_count(["--exclude", "tri0001"]) == 1
         assert _exclude_host_count(["--", "cmd"]) == 0
 
+    def test_nodelist_one_task_per_listed_node(self, monkeypatch):
+        # A subset of a larger allocation: one task per listed node, not the
+        # job's task count.
+        monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
+        out = _shrink_srun_allocation_for_exclude(
+            ["-w", "tri[0002-0003]", "--", "cmd"]
+        )
+        assert out[:3] == ["--nodes=2", "--ntasks=2", "--ntasks-per-node=1"]
+        assert out[3:] == ["-w", "tri[0002-0003]", "--", "cmd"]
+
+    def test_nodelist_respects_explicit_nodes_override(self, monkeypatch):
+        monkeypatch.setenv("SLURM_JOB_NUM_NODES", "4")
+        args = ["--nodes=1", "-w", "tri0002", "--", "cmd"]
+        assert _shrink_srun_allocation_for_exclude(args) == args
+
 
 class TestFilterNodes:
     def test_exclude_main(self):
@@ -150,7 +166,14 @@ class TestNormalizeAndSsh:
         argv = _ssh_argv(NODES[1], ["env", "SLURM_NODEID=1", "cmd"])
         assert argv[0] == "ssh"
         assert "tester@172.30.1.2" in argv
-        assert argv[-4:] == ["--", "env", "SLURM_NODEID=1", "cmd"]
+        assert argv[-2] == "--"
+        assert shlex.split(argv[-1]) == ["env", "SLURM_NODEID=1", "cmd"]
+
+    def test_ssh_argv_quotes_shell_metacharacters(self):
+        # ssh re-parses the remote command with the remote shell
+        command = ["env", "PS1=(env) ", "main.py", "batch_size=auto_batch(8)"]
+        argv = _ssh_argv(NODES[1], command)
+        assert shlex.split(argv[-1]) == command
 
 
 class TestNativeSrun:
@@ -302,6 +325,7 @@ class TestSshFallback:
         assert len(started) == 2
 
         argv0, info0 = started[0]
+        argv0 = _remote_words(argv0)
         assert info0["node"] == "tri0002"
         # Step-local ids among launched workers (same as native ``srun -x main``).
         assert "SLURM_NODEID=0" in argv0
@@ -310,8 +334,14 @@ class TestSshFallback:
         assert argv0[-2:] == ["benchrun", "main.py"]
 
         argv1, info1 = started[1]
+        argv1 = _remote_words(argv1)
         assert info1["node"] == "tri0003"
         assert "SLURM_NODEID=1" in argv1
+
+
+def _remote_words(argv: list[str]) -> list[str]:
+    """Split the quoted remote command (last ssh argv item) back into words."""
+    return argv[:-1] + shlex.split(argv[-1])
 
 
 def _parse_env_assignments(argv: list[str]) -> dict[str, str]:
@@ -462,6 +492,7 @@ class TestBenchrunThroughSrun:
 
         worker_ranks = []
         for argv, info in started:
+            argv = _remote_words(argv)
             env = _parse_env_assignments(argv)
             assert "SLURM_NODEID" in env
             bench_argv = _benchrun_argv_from_remote(argv)
