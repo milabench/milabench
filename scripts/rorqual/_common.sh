@@ -12,7 +12,7 @@
 #   NODELIST         hostlist the job must use                      -> sbatch --nodelist. Keep the SAME one for every step
 #                    that is compared (G1, G2, G3, G5): the comparison is only valid on one set of nodes
 #   AFTER            job id to wait for (afterany)
-#   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default megatron); UPDATE=1
+#   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default large_scale); UPDATE=1
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
 #   PREPARE=0        skip `milabench prepare` in the job (data already staged)
 #   metrics: BENCHMATE_RECORD_FINE / _OVERHEAD / _LAPS (default 1), BENCHMATE_PUSH_EVERY (10),
@@ -35,7 +35,7 @@ GPUS=${GPUS:-h100:4}   # typed: the MIG nodes of the reservation would match a p
 excluded=0
 [ -n "${EXCLUDE:-}" ] && excluded=$(scontrol show hostnames "$EXCLUDE" | wc -l)
 NODES=${NODES:-$((66 - excluded))}
-BRANCH=${BRANCH:-megatron}
+BRANCH=${BRANCH:-large_scale}
 UPDATE=${UPDATE:-1}
 
 # metrics, handed to the job (--export=ALL) and from there to every rank
