@@ -17,6 +17,8 @@
 #   PREPARE=0        skip `milabench prepare` in the job (data already staged)
 #   metrics: BENCHMATE_RECORD_FINE / _OVERHEAD / _LAPS (default 1), BENCHMATE_PUSH_EVERY (10),
 #            BENCHMATE_WANDB / _ALL_RANKS (1), BENCHMATE_WANDB_PROJECT (milabench-glm), WANDB_DIR ($MILABENCH_BASE/wandb)
+#   nodemon: always on, under $SCRATCH/nodemon/<run name> (FORMAT.md §3). job.sbatch sets it,
+#            one directory per entry.
 #   run record: CAMPAIGN (default glm5-MMDD), HEALTH_DIR (health-check results), EXCLUSIVE_CLUSTER (1 in the window),
 #            EXCLUDE_REASONS (JSON {host: reason} for the EXCLUDE nodes)
 #   NO_TAIL=1        do not follow the log      TEST_ONLY=1   sbatch --test-only, nothing submitted
