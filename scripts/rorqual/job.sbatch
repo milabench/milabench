@@ -4,6 +4,9 @@
 #   STOP_AT_FIRST=1   stop at the first entry that completes (the fallback ladders), else run them all
 #   PREPARE=0         skip `milabench prepare`
 #   RESULT_FILE       write "<first entry that completes | NONE> <job id>" there
+#   LOCAL_DATA        data folders copied to every node's local disk after prepare (default "megatron fineweb"); the runs
+#                     read them from $SLURM_TMPDIR/data instead of scratch. Empty: read $MILABENCH_BASE/data directly.
+#                     Run data, logs, wandb and nodemon stay on scratch (watched live from the login node)
 #   nodemon (FORMAT.md §3): always on, one directory per entry
 #       $SCRATCH/nodemon/<run name>
 # Prints one PASS / FAIL line per entry and the largest per-rank peak memory, then a summary at the end.
@@ -59,6 +62,23 @@ if [ "${PREPARE:-1}" = 1 ]; then
         milabench prepare --config "$CONFIG" --select "$select" \
         || echo "[$RUN_PREFIX] prepare failed, see above" >&2
 fi
+
+# the dataset on local disk: scratch is slow to read from every rank. $SLURM_TMPDIR has the same path on every node and is
+# wiped at the end of the job. MILABENCH_DIRS_DATA overrides dirs.data -> MILABENCH_DIR_DATA, inherited by the srun steps
+LOCAL_DATA=${LOCAL_DATA-megatron fineweb}
+if [ -n "$LOCAL_DATA" ]; then
+    local_data=${SLURM_TMPDIR:?}/data
+    sources=()
+    for d in $LOCAL_DATA; do sources+=("$MILABENCH_BASE/data/$d"); done
+    if srun --nodes="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 \
+            bash -c 'mkdir -p "$0" && cp -r "${@}" "$0"/ && echo "$(hostname) $(du -sh "$0" | cut -f1)"' \
+            "$local_data" "${sources[@]}" | sort | paste -sd' ' | sed "s/^/[$RUN_PREFIX] local data: /"; then
+        export MILABENCH_DIRS_DATA=$local_data
+    else
+        echo "[$RUN_PREFIX] WARNING: copy to $local_data failed, reading the data from $MILABENCH_BASE/data" >&2
+    fi
+fi
+echo "[$RUN_PREFIX] data=${MILABENCH_DIRS_DATA:-$MILABENCH_BASE/data}"
 
 # largest per-rank peak memory of a run (rank 0 in the run data, the other ranks in their rankstore files)
 peak() {
