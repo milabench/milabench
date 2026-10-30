@@ -45,8 +45,14 @@ from .sink import TsvSink
 # --- rules: what each kind of finding is, and how it is found ----------------------------------------------------------------------------
 
 
+#: Whether a row counts toward a comparison over its devices.
+Eligible = Callable[[dict[str, str]], bool]
+
+
 def by_device(
-    window: Window, metric: CollectorMetric, counts: Callable[[dict[str, str]], bool] | None = None
+    window: Window, 
+    metric: CollectorMetric, 
+    counts: Eligible | None = None
 ) -> dict[tuple[str, str], float]:
     """Each device's median of one metric over the window, from the rows `counts` accepts (all, if None)."""
     samples: dict[tuple[str, str], list[float]] = {}
@@ -143,6 +149,18 @@ class AbovePeers(CounterRule):
 
 
 @dataclass(frozen=True)
+class Above(CounterRule):
+    """A counter that rises faster than `limit` a second over the window, whatever the other devices do."""
+
+    limit: float
+
+    def check(self, window: Window) -> Iterator[Finding]:
+        for (host, device), rate in rates(window, self.metric).items():
+            if rate > self.limit:
+                yield Finding(host, self, device, f"{self.metric.name} {rate:,.0f}/s")
+
+
+@dataclass(frozen=True)
 class Flags(MetricRule):
     """A hex bit field with any bit of `mask` set."""
 
@@ -197,7 +215,7 @@ class BelowPeers(MetricRule):
     """
 
     limit: float
-    counts: Callable[[dict[str, str]], bool] | None = None
+    counts: Eligible | None = None
 
     def check(self, window: Window) -> Iterator[Finding]:
         values = by_device(window, self.metric, self.counts)
@@ -212,6 +230,63 @@ class BelowPeers(MetricRule):
 
 
 @dataclass(frozen=True)
+class DegradedLink(Rule):
+    """A GPU or HCA whose PCIe link stays below what it and its slot allow, for the whole window."""
+
+    def check(self, window: Window) -> Iterator[Finding]:
+        grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for host, row in window.rows.get(PcieCollector.name, []):
+            if row.get("driver") not in PcieCollector.drivers:
+                continue
+            grouped.setdefault((host, device_of(PcieCollector.name, row)), []).append(row)
+        for (host, device), rows in grouped.items():
+            # Two samples, both degraded: one reading can be the link still training.
+            if len(rows) >= 2 and all(self._degraded(row) for row in rows):
+                yield Finding(host, self, device, self._detail(rows[-1]))
+
+    @staticmethod
+    def _degraded(row: dict[str, str]) -> bool:
+        """Whether the link is narrower or slower than the device and its slot allow."""
+        width, max_width = number(row, "link_width"), number(row, "max_link_width")
+        speed, max_speed = number(row, "link_speed"), number(row, "max_link_speed")
+        too_narrow = width is not None and max_width is not None and width < max_width
+        too_slow = speed is not None and max_speed is not None and speed < max_speed
+        return too_narrow or too_slow
+
+    @staticmethod
+    def _detail(row: dict[str, str]) -> str:
+        lanes = f"{row.get('link_width', '?')}/{row.get('max_link_width', '?')} lanes"
+        speed = f"{row.get('link_speed', '?')}/{row.get('max_link_speed', '?')} GT/s"
+        return f"{lanes}, {speed}"
+
+
+@dataclass(frozen=True)
+class UnsyncedClock(Rule):
+    """A node whose kernel clock is not NTP-synchronized, so its timestamps may not line up with the others."""
+
+    def check(self, window: Window) -> Iterator[Finding]:
+        for host, record in sorted(window.status.items()):
+            clock = self._unsynced(record)
+            if clock is None:
+                continue
+            error = clock.get("maxerror_us")
+            detail = f"max error {error} µs" if isinstance(error, (int, float)) else ""
+            yield Finding(host, self, "", detail)
+
+    @staticmethod
+    def _unsynced(record: dict[str, Any]) -> dict | None:
+        """The latest clock reading when it is explicitly not synchronized.
+
+        `clock_end` is written when the sampler stops; `clock` is the reading from the start.
+        None means unknown, which leaves nothing to act on.
+        """
+        clock = record.get("clock_end") or record.get("clock")
+        if isinstance(clock, dict) and clock.get("synced") is False:
+            return clock
+        return None
+
+
+@dataclass(frozen=True)
 class Stale(Rule):
     """A sampler that stopped writing without closing; the status files are the evidence, not the window's rows."""
 
@@ -221,12 +296,21 @@ class Stale(Rule):
 
 CLOCK_REASONS = GpuCollector.metric("clocks_event_reasons")
 SM_CLOCK = GpuCollector.metric("sm_clock_mhz")
+GPU_POWER = GpuCollector.metric("power_w")
 CPU_BUSY_MHZ = CpuCollector.metric("cpu_mhz_busy_mean")
 
 
-def working(row: dict[str, str]) -> bool:
+def gpu_working(row: dict[str, str]) -> bool:
     """A gpu row where the GPU was not idling: an idle GPU's clock is down by design, not slow."""
     return not ClockReason.GPU_IDLE & ClockReason.parse(row.get(CLOCK_REASONS.name))
+
+
+CPU_UTIL_FOR_CLOCK_COMPARISON = 0.2
+
+
+def cpu_working(row: dict[str, str]) -> bool:
+    """Whether enough of a package is busy for its clock to identify a CPU straggler."""
+    return (number(row, CpuCollector.metric("cpu_util").name) or 0.0) >= CPU_UTIL_FOR_CLOCK_COMPARISON
 
 
 #: The rules that read why a GPU's clock is down, which also colour the clock reading.
@@ -260,13 +344,21 @@ RULES = (
         "The SM clock of a working GPU runs well below the median GPU's. In a synchronous job every GPU carries the "
         "same load, so the one that lags is the straggler, whether or not the driver gives a reason for the lower "
         "clock.",
-        SM_CLOCK, limit=-10.0, counts=working,
+        SM_CLOCK, limit=-10.0, counts=gpu_working,
+    ),
+    BelowPeers(
+        "GPU power", 0.25,
+        "A working GPU draws well under the median GPU's power. In a synchronous job every GPU carries the same "
+        "load, so the one that draws half or less is the straggler; an idle GPU draws little by design and is "
+        "left out.",
+        GPU_POWER, limit=-50.0, counts=gpu_working,
     ),
     BelowPeers(
         "CPU slow", 2,
-        "The busy cores run well below the median node's. In a synchronous job every node carries the same load, so "
-        "the one that lags is the straggler; against its own past the clock only follows the load.",
-        CPU_BUSY_MHZ, limit=-15.0,
+        "On a package using at least 20% of its cores, the busy cores run well below the median node's. In a "
+        "synchronous job every node carries the same load, so the one that lags is the straggler; against its own "
+        "past the clock only follows the load.",
+        CPU_BUSY_MHZ, limit=-15.0, counts=cpu_working,
     ),
     # Both numbers are guesses, until a run on nodes the job has to itself shows what congestion looks like: the
     # unit of xmit_wait is not in the sysfs docs, and 10,000 a second is 0.004 % of the time waiting if a tick is 4 ns.
@@ -276,6 +368,13 @@ RULES = (
         "but it slows the collectives through that port. Found only on a port far above the others: every port waits "
         "a little, and a whole fabric congested alike is not a node to look at.",
         IbCollector.metric("xmit_wait"), factor=5.0, floor=1e4,
+    ),
+    Above(
+        "IB wait", 2,
+        "xmit_wait rising by more than a million ticks a second: the port had data and the fabric would not take "
+        "it, fast enough to slow the collectives through it. Unlike IB congestion it stands on its own, whether or "
+        "not the other ports are waiting too.",
+        IbCollector.metric("xmit_wait"), limit=1_000_000,
     ),
     Rise(
         "IB symbol errors", 6,
@@ -329,6 +428,22 @@ RULES = (
         "A fatal uncorrectable PCIe error on a device (GPU, NIC, NVMe): the link cannot be trusted, and the driver "
         "resets it or the device falls off the bus.",
         PcieCollector.metric("aer_fatal"),
+    ),
+    Rise(
+        "PCIe nonfatal error", 6,
+        "A non-fatal uncorrectable PCIe error since the sampler started: the link recovered, but it is the same "
+        "class of fault as a fatal one and a device that keeps raising them is failing.",
+        PcieCollector.metric("aer_nonfatal"),
+    ),
+    DegradedLink(
+        "PCIe link degraded", 3,
+        "A GPU or HCA stayed narrower or slower than its slot allows for the whole window: a lane or a retrained "
+        "link, which caps that device. Bridges are left out; one sample can be the link still coming up.",
+    ),
+    UnsyncedClock(
+        "clock unsynchronized", 1,
+        "The kernel clock is not NTP-synchronized, so this node's timestamps may not line up with the others'. "
+        "It says the samples are hard to compare, not that the node is slow.",
     ),
     STALE,
 )
@@ -793,9 +908,9 @@ def report(found: list[Finding], flagged_hosts: int) -> list[Line]:
         by_rule.setdefault(finding.rule, []).append(finding)
     lines: list[Line] = []
     for rule in sorted(by_rule, key=lambda r: (-r.severity, r.name)):
-        places = sorted(finding.where() for finding in by_rule[rule])
+        places = listed(sorted(finding.where() for finding in by_rule[rule]), flagged_hosts)
         label = "" if lines else "Findings"
-        lines.append((rule.severity, f"{label:<12} {rule.name}: {listed(places, flagged_hosts)}"))
+        lines.append((rule.severity, f"{label:<12} {rule.name}: {places}"))
     return lines
 
 

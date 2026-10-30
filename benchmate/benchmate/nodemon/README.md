@@ -4,37 +4,22 @@
 
 It records:
 
-| Collector | What | Source |
-| --- | --- | --- |
-| `gpu` | SM clock, clock event (throttle) reasons, power, temperature, utilization | NVML (`pynvml`) |
-| `nvlink` | NVLink traffic per GPU, and its share of the links' peak | NVML (`pynvml`) |
-| `ib` | InfiniBand traffic, link rate, `port_xmit_wait`, `symbol_error`, `link_downed` | `/sys/class/infiniband` |
-| `cpu` | CPU clocks, utilization, frequency cap, temperature, throttle count, governor | `/proc/stat`, `/proc/cpuinfo`, cpufreq, hwmon |
-| `mem` | Used and total host memory with a running peak, anonymous memory, page cache, OOM kills | `/proc/meminfo`, `/proc/vmstat` |
-| `pcie` | Link width and speed, AER error counts, for GPUs, HCAs and the bridges above them | `/sys/bus/pci` |
-| `ecc` | Uncorrected memory errors, pending and failed row remapping | NVML (`pynvml`) |
-| `edac` | Correctable and uncorrectable host memory errors per controller | `/sys/devices/system/edac/mc` |
-| `gpm` | SM and tensor-pipe activity, warp occupancy, DRAM bandwidth, on Hopper and newer | NVML GPM (`pynvml`) |
-| `dcgm` | The same SM and tensor-pipe activity, where a dcgm-exporter runs on the host | dcgm-exporter |
+| Collector | Every | What | Source |
+| --- | --- | --- | --- |
+| [`gpu.py`](collectors/gpu.py) | 1 s | SM clock, clock event (throttle) reasons, power, temperature, utilization | NVML (`pynvml`) |
+| [`nvlink.py`](collectors/nvlink.py) | 10 s | NVLink traffic per GPU, and its share of the links' peak | NVML (`pynvml`) |
+| [`ib.py`](collectors/ib.py) | 1 s | InfiniBand traffic, link rate, `port_xmit_wait`, `symbol_error`, `link_downed` | `/sys/class/infiniband` |
+| [`cpu.py`](collectors/cpu.py) | 2 s | CPU clocks, utilization, frequency cap, temperature, throttle count, governor | `/proc/stat`, `/proc/cpuinfo`, cpufreq, hwmon |
+| [`mem.py`](collectors/mem.py) | 1 s | Used and total host memory with a running peak, anonymous memory, page cache, OOM kills | `/proc/meminfo`, `/proc/vmstat` |
+| [`pcie.py`](collectors/pcie.py) | 10 s | Link width and speed, AER error counts, for GPUs, HCAs and the bridges above them | `/sys/bus/pci` |
+| [`ecc.py`](collectors/ecc.py) | 60 s | Uncorrected memory errors, pending and failed row remapping | NVML (`pynvml`) |
+| [`edac.py`](collectors/edac.py) | 60 s | Correctable and uncorrectable host memory errors per controller | `/sys/devices/system/edac/mc` |
+| [`gpm.py`](collectors/gpm.py) | 1 s | SM and tensor-pipe activity, warp occupancy, DRAM bandwidth, on Hopper and newer | NVML GPM (`pynvml`) |
+| [`dcgm.py`](collectors/dcgm.py) | disabled | The same SM and tensor-pipe activity, where a dcgm-exporter runs on the host | dcgm-exporter |
 
-Each collector's `metrics` documents its columns, in file order: the name, the unit, a description,
-and whether the column names the device a row is for (`device`), is a reading at the tick (`sample`)
-or counts since boot or driver load (`counter`). `watch` reads the same objects for its rules.
+The `dcgm` collector is disabled in favor of `gpm`, which needs Hopper or newer.
 
-The `gpu` rows also carry `xid`: the critical XID errors NVML delivered since the previous row,
-empty on every other row. It is a column rather than its own file so the GPU grid stays fixed;
-an event is attributed to the row that drains it, so its time is up to one period late.
-
-`ecc` is deliberately separate from `gpu`, although it is only four columns. Its queries are the
-ones that go slow on a failing GPU — exactly when their values matter — and in their own
-collector a hang costs ECC alone, not the one-second series. For the same reason only the
-run-scoped values are rows: the lifetime error and remapped-row totals are written once into the
-status file instead.
-
-`gpu`, `ib`, `mem`, `gpm` and `dcgm` sample every second, `cpu` every 2 s, `nvlink` and `pcie` every
-10 s, and `ecc` and `edac` every 60 s. The periods are fixed in `default_registry()`; to sample at other periods from Python, register the collectors on a `CollectorRegistry` yourself.
-
-All values are node-wide. Nodes are assumed to be used by one job at a time, so node-wide counters are the job's counters.
+The periods are fixed in [`default_registry()`](collectors/__init__.py); to sample at other periods from Python, register the collectors on a `CollectorRegistry` yourself.
 
 ## Running it
 
@@ -44,19 +29,6 @@ All values are node-wide. Nodes are assumed to be used by one job at a time, so 
 export BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/$MILABENCH_RUN_NAME
 python -m benchmate.nodemon --bench llama &
 ```
-
-`gpm` and `dcgm` measure the same thing two ways, and both are off where they cannot answer.
-GPM reads the SM counters through NVML, with no exporter and no host engine, but needs Hopper or
-newer; its metrics are the difference between two samples, so the first row of a run is empty.
-Where GPM is unavailable the exporter is the fallback, and where neither answers GPU activity is
-the duty cycle in the `gpu` row's `util_mean`.
-
-The `dcgm` collector only reads a `dcgm-exporter` that is already running (by default
-`http://localhost:9400/metrics`, `url=` to change it). Scraping one is a plain read of what the
-host already publishes; the sampler never runs `dcgmi`, never starts a host engine and never
-creates a watch, because the DCGM engine is shared with everything else on the node. Without an
-exporter, or when it does not publish the `DCGM_FI_PROF_*` fields, the collector switches itself
-off and GPU activity comes from NVML alone.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -165,8 +137,8 @@ python -m benchmate.nodemon.watch $BENCHMATE_NODEMON_DIR --follow 30
 
 One block per refresh: the lowest SM clock with its throttle reasons (a Note column names the GPU or node behind a reading), how busy the GPUs are, their power and temperature,
 NVLink and IB rates, IB link errors and congestion (a port whose `xmit_wait` rises far faster than the other ports'), the median CPU busy-core clock, how busy the CPUs are
-and any CPU package or GPU whose clock is well below its peers' (the stragglers), host memory, XIDs and pending or failed row remaps,
-uncorrected ECC and EDAC errors, OOM kills, and any node whose sampler has died while its status still says
+and any CPU package or GPU whose clock or power is well below its peers' (the stragglers), host memory, XIDs, and pending or failed row remaps,
+uncorrected ECC and EDAC errors, PCIe errors or persistently degraded GPU/HCA links, an unsynchronized node clock, OOM kills, and any node whose sampler has died while its status still says
 `running`.
 
 Nodes ranked by score, worst first: the nodes to look at, or drain, before the others.

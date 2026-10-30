@@ -49,8 +49,14 @@ class _Port:
         self.hca = port.parents[1].name
         self.port = port.name
         self.rate = PolledFile(port / "rate")
+        # The narrow PortCounters value sticks at 2^32-1. ConnectX publishes the same count as a
+        # 64-bit PPCNT counter under hw_counters, which keeps counting past that.
+        extended = port / "hw_counters" / "port_xmit_wait"
+        self.xmit_wait_extended = extended.is_file()
         self.counters = {
-            name: PolledFile(port / "counters" / name)
+            name: PolledFile(
+                extended if name == "port_xmit_wait" and self.xmit_wait_extended else port / "counters" / name
+            )
             for name
             in self.counters_read
         }
@@ -108,7 +114,7 @@ class IbCollector(NodeCollector):
         rows = []
         for port in self._ports:
             values = {
-                name: self._counter(name, polled.read_int())
+                name: self._counter(name, polled.read_int(), port.xmit_wait_extended)
                 for name, polled
                 in port.counters.items()
             }
@@ -142,7 +148,10 @@ class IbCollector(NodeCollector):
     def _bytes(self, lanes: int | None) -> int | None:
         return None if lanes is None else lanes * self.lane_bytes
 
-    def _counter(self, name: str, value: int | None) -> int | None:
+    def _counter(self, name: str, value: int | None, extended: bool) -> int | None:
+        # The 64-bit counter does not stick at the 32-bit maximum, so that value is a real reading there.
+        if name == "port_xmit_wait" and extended:
+            return value
         return None if value == self.saturation.get(name) else value
 
 
