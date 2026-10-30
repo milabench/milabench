@@ -17,8 +17,11 @@ Throughput is reported as ``rate`` (global tokens / step time, items/s) by bench
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import socket
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -118,6 +121,7 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
         dist.all_gather_object(gathered, tuple(counts))
         trainable, total = (sum(c[k] for c in gathered) for k in (0, 1))
         fraction = trainable / total if total else None
+        RUN["trainable_fraction"], RUN["model_initialized"] = fraction, time.time()
         if LOG is not None and total:
             debug(f"params_trainable_fraction: {fraction:.4f}")
             LOG({"params_trainable_fraction": fraction, "units": "ratio", "task": "main", "time": time.time()})
@@ -242,7 +246,10 @@ LOG = None          # milabench event sink on rank 0 (setupvoir), None elsewhere
 STARTED = time.time()
 
 PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False,
-             "every": 10, "steps": 0}
+             "every": 10, "steps": 0, "a2a_ms": [], "a2a_steps": 0}
+# for the run summary: when each phase ended on this rank (epoch seconds)
+RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None}
+WARMUP_STEPS = 1  # left out of the summary's step statistics (NCCL communicators, allocator growth)
 
 
 def short(host: str) -> str:
@@ -451,6 +458,10 @@ def report_a2a(log):
     now = time.time()
     times = [g.item() for g in gathered]
     per_group = [sum(times[r] for r in ranks) / len(ranks) for ranks in PLACEMENT["groups"]]
+    if len(PLACEMENT["a2a_ms"]) != len(per_group):
+        PLACEMENT["a2a_ms"] = [0.0] * len(per_group)
+    PLACEMENT["a2a_ms"] = [total + value * steps for total, value in zip(PLACEMENT["a2a_ms"], per_group)]
+    PLACEMENT["a2a_steps"] += steps
     for i, value in enumerate(per_group):
         log({"a2a_time": value, "units": "ms", "ep_group": i, "crosses_switch": PLACEMENT["crosses"][i],
              "task": "train", "time": now})
@@ -530,20 +541,34 @@ def patch_train_step(log):
 
     steps = step_metrics.install(log)
     rank_log = log if log is not None else metric_log()  # rank 0: milabench (+ wandb), other ranks: rankstore (+ wandb)
+    if log is not None:
+        from benchmate.metrics import wandb_push
+        from benchmate.rankstore import add_sink
+        from benchmate.toggles import wandb_all_ranks, wandb_enabled
+
+        # rank 0's step rows go to its rankstore file, not through ``log``: mirror them to its wandb run as metric_log
+        # does for the other ranks (wandb_push returns the process's one run)
+        if wandb_enabled() and wandb_all_ranks():
+            add_sink(wandb_push())
     original = training.train_step
     state = {"step": 0}
     patch_straggler(rank_log, state, steps)
 
     def timed(*args, **kwargs):
         # rate / laps / clock: StepTimer (benchmate TimedIterator). Here only what it does not know about.
+        steps.rows.begin()
+        steps.rows.time_optimizer(args[3] if len(args) > 3 else kwargs.get("optimizer"))
         result = original(*args, **kwargs)
         state["step"] += 1
         margs = get_args()
+        # every rank of a data-parallel replica runs the replica's tokens (micro-batch x sequence x grad accumulation)
+        steps.rows.end(state["step"], margs.global_batch_size * margs.seq_length // (getattr(margs, "data_parallel_size", 1) or 1))
         steps.step(margs.global_batch_size * margs.seq_length)
         if state["step"] == 1 and log is not None:
             # launch -> end of the first (warm-up) step: imports, init, model build, first step
             log({"time_to_first_step": time.time() - STARTED, "units": "s", "task": "main", "time": time.time()})
         if state["step"] == 1:
+            RUN["first_step_done"] = time.time()
             report_peak_memory(rank_log)  # every rank
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
             if state["step"] == 1:
@@ -563,6 +588,172 @@ def patch_train_step(log):
 
     training.train_step = timed
     return steps
+
+
+def percentile(values, q):
+    values = sorted(values)
+    return values[min(len(values) - 1, max(0, math.ceil(q * len(values)) - 1))] if values else None
+
+
+def rank_summary(rows):
+    """This rank's part of the run summary, from its step rows (warm-up left out)."""
+    from megatron.core import parallel_state
+
+    measured = [r for r in rows.written if r["batch_id"] > WARMUP_STEPS]
+    steps = [r["elapsed"] for r in measured]
+    waits = [r["next"] for r in measured if "next" in r]
+
+    def median(key):
+        values = [r[key] for r in measured if key in r]
+        return round(statistics.median(values), 3) if values else None
+
+    return {
+        "rank": int(os.environ.get("RANK", 0)),
+        "host": short(socket.gethostname()),
+        "local_rank": int(os.environ.get("LOCAL_RANK", 0)),
+        "gpu_uuid": gpu_uuid(),
+        "pp_stage": parallel_state.get_pipeline_model_parallel_rank(),
+        "step_median": round(statistics.median(steps), 5) if steps else None,
+        "step_p90": round(percentile(steps, 0.9), 5) if steps else None,
+        "step_max": round(max(steps), 5) if steps else None,
+        "fwd_ms_median": median("fwd_ms"),
+        "bwd_ms_median": median("bwd_ms"),
+        "fwd_bwd_ms_median": median("fwd_bwd_ms"),
+        "optimizer_ms_median": median("optimizer_ms"),
+        "peak_alloc_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2),
+        "peak_reserved_gib": round(torch.cuda.max_memory_reserved() / 2**30, 2),
+        "data_wait_sum_s": round(sum(waits), 6) if waits else None,
+        "data_wait_max_s": round(max(waits), 6) if waits else None,
+        # not in per_rank: startup and data loading are summarized across the ranks
+        "_process_start": STARTED,
+        "_model_initialized": RUN["model_initialized"],
+        "_first_step_done": RUN["first_step_done"],
+        "_data_wait_median": statistics.median(waits) if waits else None,
+        "_measured": (measured[0]["time"], measured[-1]["time"], len(measured)) if measured else None,
+    }
+
+
+def mfu_inputs(args):
+    try:
+        from megatron.training.training import num_floating_point_operations
+
+        tokens = args.global_batch_size * args.seq_length
+        flops = num_floating_point_operations(args, args.global_batch_size) / tokens
+    except Exception as exc:
+        debug("flops per token failed:", exc)
+        flops = None
+    return {
+        "flops_per_token": flops,
+        "peak_flops_per_gpu": None,
+        "formula": (
+            "Megatron's num_floating_point_operations (megatron/training/training.py) for one global batch / "
+            "global batch tokens. It assumes every weight gets its gradient: frozen parameters skip theirs, so it "
+            "overestimates the FLOPs of frozen runs (params_trainable_fraction < 1). "
+            "mfu = flops_per_token * tokens_per_s / (peak * gpus)"
+        ),
+    }
+
+
+def push_summary(log, steps):
+    """``data: {summary: {...}}`` (scripts/analysis/FORMAT.md, ``milabench.pretrain.v1``), rank 0, after training.
+    A collective: every rank calls it, once ``pretrain`` has returned (process groups still up)."""
+    import torch.distributed as dist
+    from megatron.core import parallel_state as ps
+    from megatron.training import get_args
+
+    args = get_args()  # Megatron's own, with the derived sizes
+    try:
+        local = rank_summary(steps.rows)
+    except Exception as exc:  # every rank must reach the gather
+        debug("rank summary failed:", exc)
+        local = {"rank": int(os.environ.get("RANK", 0))}
+    ranks = [None] * dist.get_world_size()
+    dist.all_gather_object(ranks, local)
+    if log is None:
+        return
+
+    def spread(key):
+        values = [r[key] for r in ranks if r.get(key) is not None]
+        return {"min": min(values), "max": max(values)} if values else None
+
+    t0 = min((r["_process_start"] for r in ranks if r.get("_process_start")), default=STARTED)
+
+    def since_start(key):
+        values = [r[key] - t0 for r in ranks if r.get(key) is not None]
+        return {"min_s": min(values), "max_s": max(values)} if values else None
+
+    info = run_start(args, RUN["trainable_fraction"])
+    hosts = list(dict.fromkeys(r["host"] for r in sorted(ranks, key=lambda r: r["rank"]) if r.get("host")))
+    dp = ps.get_data_parallel_world_size()
+    waits = [r["_data_wait_median"] for r in ranks if r.get("_data_wait_median") is not None]
+    window = local.get("_measured")
+    a2a_steps = PLACEMENT["a2a_steps"]
+    summary = {
+        "schema": "milabench.pretrain.v1",
+        "run": info["run"],
+        "workload": info["workload"],
+        "parallelism": {
+            "gpus": dist.get_world_size(),
+            "nodes": len(hosts),
+            # Megatron's data parallelism replicates the weights; the distributed optimizer shards its states only
+            "dp_replicate": dp,
+            "dp_shard": 1,
+            "distributed_optimizer": bool(getattr(args, "use_distributed_optimizer", False)),
+            "expert_dp": ps.get_expert_data_parallel_world_size(),
+            "tp": ps.get_tensor_model_parallel_world_size(),
+            "pp": ps.get_pipeline_model_parallel_world_size(),
+            "vpp": getattr(args, "virtual_pipeline_model_parallel_size", None),
+            "cp": ps.get_context_parallel_world_size(),
+            "ep": ps.get_expert_model_parallel_world_size(),
+        },
+        "placement": info["placement"] or {"hosts": hosts},
+        "measurement": {
+            "warmup_steps": WARMUP_STEPS,
+            "measured_steps": window[2] if window else 0,
+            "measure_seconds_budget": None,
+            "measurement_start_epoch": RUN["first_step_done"],
+            "measurement_end_epoch": window[1] if window else None,
+            "rate_definition": (
+                "per step: global tokens / step time; step time from device events on rank 0 (benchmate "
+                "ManualTimedIterator); official value = median of the per-step rates"
+            ),
+        },
+        "mfu_inputs": mfu_inputs(args),
+        "memory_gib": {"peak_allocated": spread("peak_alloc_gib"), "peak_reserved": spread("peak_reserved_gib")},
+        "startup": {
+            "process_start_epoch": spread("_process_start"),
+            "model_initialized": since_start("_model_initialized"),
+            "first_step_done": since_start("_first_step_done"),
+            "measurement_start": since_start("_first_step_done"),
+            "compile_cache": "none",
+            "note": "seconds since the earliest rank's process start (main.py import)",
+        },
+        "data_loading": {
+            "median_s_per_step": max(waits) if waits else None,
+            "max_s_per_step": max((r["data_wait_max_s"] for r in ranks if r.get("data_wait_max_s") is not None),
+                                  default=None),
+            "definition": (
+                "host time blocked in the train loader's next, measured steps; median per rank, worst rank "
+                "reported. Only the first and last pipeline stages have a loader"
+            ),
+        },
+        "per_rank": [{k: v for k, v in r.items() if not k.startswith("_")} for r in sorted(ranks, key=lambda r: r["rank"])],
+        "per_ep_group": [
+            {"hosts": hosts_of_group, "a2a_s_per_step": total / a2a_steps / 1000, "crosses_switch": crosses}
+            for hosts_of_group, total, crosses in zip(
+                (info["placement"] or {}).get("ep_groups") or [], PLACEMENT["a2a_ms"], PLACEMENT["crosses"])
+        ] if a2a_steps else None,
+        "rank_metrics": {
+            "dir": os.path.dirname(steps.rows.path) if steps.rows.path else None,
+            "files": "metrics.<bench>.<host>.<rank>.jsonl (benchmate rankstore)",
+            "rows": "worker and config (benchmate.rankmetrics.v1) headers, then one row per step on every rank "
+                    "(batch_id, elapsed, wall, next, rate, local_tokens, fwd_ms / bwd_ms or fwd_bwd_ms, optimizer_ms, "
+                    "mem_*_gib)",
+        },
+        "deviations": [],
+        "estimates": [],
+    }
+    log({"summary": summary, "task": "train", "time": time.time()})
 
 
 # --- placement report --------------------------------------------------------------------------------------------
@@ -640,6 +831,8 @@ def main():
             forward_step,
             get_embedding_ranks=get_embedding_ranks,
         )
+        steps.flush()
+        push_summary(log, steps)
     finally:
         steps.flush()
         if sampler is not None:
