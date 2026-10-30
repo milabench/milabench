@@ -27,10 +27,10 @@ Worked examples, written by `analyze.py synth`:
 | event | written by | content | status |
 |---|---|---|---|
 | `config`, `meta`, `start`, `end` | milabench | run name, system, command, **`return_code`** | exists |
-| `data: {run_start: {...}}` | benchmark, once, right after `torch.distributed` init | the `run`, `placement` and `workload` blocks below | **new** |
-| `data: {rate, units, task: "train", time, elapsed, step}` | benchmate, one per measured step | global tokens/s for that step | exists; **add `step`** (optional: event order is enough when no step is skipped) |
+| `data: {run_start: {...}}` | benchmark, rank 0, once, as the trainer starts building | the `run`, `placement` and `workload` blocks below | exists |
+| `data: {rate, units, task: "train", time, elapsed, batch_id}` | benchmate, one per measured step | global tokens/s for that step | exists; `batch_id` is the step index (TorchTitan's step, not the measured-step index) |
 | `data: {loss, task}` | benchmark | every log step | exists |
-| `data: {summary: {...}, task: "train"}` | benchmark, rank 0, after training | schema below | exists as TorchTitan v2; **move to `milabench.pretrain.v1`** |
+| `data: {summary: {...}, task: "train"}` | benchmark, rank 0, after training | schema below | exists as `milabench.pretrain.v1` |
 
 `run_start` makes a failed run identifiable: today a crash before the summary leaves only
 `end` with a return code, so job, variant and nodes are lost (run ledger, Table 3).
@@ -269,7 +269,8 @@ the launcher exported them, so the directory name stays the join of record. `gpu
 The run data (section 1) gives each rank's median, p90 and max step: *that* ranks differ, not
 *when*. This is the per-step series behind it, one file per rank rather than more events in the run
 JSONL (voir writes that from one process, and gathering every rank's step time into it is the
-measurement being made). Status: **new** — specified here first, as section 3 was.
+measurement being made). Status: written by the TorchTitan pack (benchmate's `rankstore`); the
+group header, the WandB mirror and Megatron are still open (item 9).
 
 **The record is the JSONL; WandB is for monitoring.** Each rank appends its own rows to
 `<run>/metrics.<bench>.<host>.<rank>.jsonl` in the run directory (benchmate's rankstore: no
@@ -356,19 +357,11 @@ For MoE, Megatron has two data-parallel sizes: `dp` = world / (TP x PP x CP) for
 
 | # | change | where | why | size |
 |---|---|---|---|---|
-| 1 | summary as `milabench.pretrain.v1` (move `config` fields into `run` / `workload` / `parallelism` / `placement`; add `deviations`, `estimates`) | `tt_native/instrument.py` | one schema for TorchTitan and Megatron | small |
-| 2 | `run_start` event after init | `tt_native/instrument.py` | failed runs keep their identity | small |
-| 3 | launcher variables above + topology snapshot | `tt_variants.sh` | placement recorded at run time; real repetition index | small |
-| 3c | `run.slurm_reservation` ($SLURM_JOB_RESERVATION) and `run.exclusive_cluster` (launcher flag in the window) | `instrument.py`, `tt_variants.sh` | traffic isolation of each run (placement comparisons only within one level); today inferred from the reservation tracker and the campaign | small |
-| 4 | `gpu_uuid`, `local_rank` in `per_rank`; `CUDA_DEVICE_ORDER=PCI_BUS_ID` | `instrument.py`, `benchfile.py` | join with the node telemetry | small |
-| 5 | `step` in `rate` events | benchmate `ManualTimedIterator` | explicit step index | small, optional |
 | 6c | run both `--job-per switch` and `--job-per cluster` in the window (one leaf and whole machine); optionally `--switches A B --job-per cluster` for 2-leaf scopes (e.g. 217+316) | window plan | communication scopes (Fig. 4) | none (operational) |
-| 3b | family **O** (1 node per switch, one node on each of N leaves) in the node picker | `tt_pick_nodes.py` | nodes-per-switch figure (S / H / O at 3, 6, 9, 12 nodes; O up to 16) | small |
 | 7b | GLM-5 expert-group layouts on Rorqual: EP8 aligned / mixed (~1 group in 4 crossing) / crossed on the **same 52 nodes** (even number per leaf: 13 x 2 + 12 + 8 + 6; fall back to 50 / 48), only the node order differs; plus mixed on every healthy node (largest achievable, Megatron's default order, even count); full model if it fits on 208 GPUs (to confirm); record `placement.ep_groups`; per-group all-to-all time if Megatron's MoE timers allow. Picker: "even per leaf" selection + the three orders | GLM-5 pipeline, `tt_pick_nodes.py` | expert-placement figure | medium |
 | 7 | same events from Megatron (voirfile or converter) | GLM-5 pipeline | MoE section | medium |
-| 8 | `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` exported by the launcher, and nodemon merged into the run branches (the GLM-5 pack starts it already) | `tt_variants.sh`, `feat/nodemon` | stability, stragglers, CPU-clock stragglers | small |
 | 8c | `NodeMonitor` sidecar so milabench starts the sampler on every node of every bench | `milabench/commands/`, `multi.py` | today each pack starts it itself, or the sbatch wrapper does | medium |
-| 9 | per-rank step metrics as JSONL in the run directory, mirrored to WandB (`benchmate.rankmetrics.v1`, section 4) on every rank, with the timer off the data loader so middle pipeline stages write too, and the coverage config | benchmate (`rankmetrics.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
+| 9 | per-rank step metrics as JSONL in the run directory (done for TorchTitan: benchmate's `rankstore`, timer off the data loader). Left: the WandB mirror, the `benchmate.rankmetrics.v1` group header, `fwd_ms` / `bwd_ms`, the same rows from Megatron (middle pipeline stages included), and the coverage config | benchmate (`rankstore.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
 
 Not available: per-rank compute vs. NCCL time. The section 4 columns do not give it (they include the
 exposed waits) and profiler-level timing is not on offer. `util_mean` is a duty cycle, not

@@ -744,7 +744,8 @@ class TimedIterator:
 
             self._push_lap_events()
 
-        if True:
+        # What this push itself cost, under the flag that gates the other self-timings
+        if _flags.record_overhead:
             self.message(sync_time=sync_time.elapsed(), units="s", task=self.task)
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 
@@ -757,9 +758,9 @@ class TimedIterator:
             )
 
     def log_progress(self):
-        if self.rank is None or self.rank == 0 and self.early_stop is not None:
-            progress = self.progress()
-            self.message(progress=(progress, self.early_stop), task="early_stop")
+        if self.early_stop is not None:
+            # Progress is against the early stop count: rank 0 only, as the rate is
+            self.rank0_log(progress=(self.progress(), self.early_stop), task="early_stop")
 
     def message(self, **kwargs):
         if self.rank is None or self.rank == 0:

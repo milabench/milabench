@@ -97,7 +97,8 @@ def test_workers_write_step_time_to_their_own_file(tmp_path):
     store = LocalMetricStore(base, rank=0)
     store.close()
     names = [os.path.basename(f) for f in store.files() if ".rank0_push." not in f]
-    assert names == [f"metrics.{r}.jsonl" for r in range(4)]
+    tag = f"{store.host}." if store.host else ""
+    assert names == [f"metrics.{tag}{r}.jsonl" for r in range(4)]
 
     records = store.read()
     by_rank = {}
@@ -105,7 +106,7 @@ def test_workers_write_step_time_to_their_own_file(tmp_path):
         by_rank.setdefault(r["rank"], []).append(r)
     for rank in (1, 2, 3):
         assert rank in by_rank, f"rank {rank} wrote nothing"
-        assert any("step_time" in r for r in by_rank[rank])
+        assert any(r.get("elapsed", 0) > 0 for r in by_rank[rank])
         assert all(r["rank"] == rank for r in by_rank[rank])
 
 
@@ -211,10 +212,11 @@ def test_fine_workers_store_has_everything(tmp_path, kind):
         recs = stored[rank]
         assert all(r["rank"] == rank for r in recs)
 
-        step_times = _names(recs, "step_time")
-        assert [r["batch_id"] for r in step_times] == list(range(STEPS))
-        assert all(r["step_time"] > 0 for r in step_times)
-        assert not _names(recs, "rate"), "workers do not report rate"
+        # a worker reports its own rate and step time (`elapsed`); only rank 0's
+        # rate is the global one (_push_time_steps: no batch size reduce here)
+        steps = _names(recs, "rate")
+        assert [r["batch_id"] for r in steps] == list(range(STEPS))
+        assert all(r["elapsed"] > 0 and r["rate"] > 0 for r in steps)
 
         works = _names(recs, "work")
         assert sorted(w["batch_id"] for w in works) == list(range(STEPS)), "one `work` timer per step"
