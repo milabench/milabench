@@ -52,8 +52,17 @@ export MILABENCH_RUN_NAME=${MILABENCH_RUN_NAME:-${TT_RUN_TAG:-$BENCH}.$SLURM_JOB
 # Same directory as the GLM-5 launcher. Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
 export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${SCRATCH:?}/nodemon/$MILABENCH_RUN_NAME}
 
+# wandb from the compute nodes (Rorqual): through the cluster's HTTP proxy, as the GLM-5 launcher. The proxy only
+# lets api.wandb.ai through: wandb 0.31 defaults to api.forge.coreweave.com, refused (403), and rank 0 then loses
+# ~100 s at startup before training on without wandb. Clusters without the module (Fir) reach wandb directly.
+if [ "${BENCHMATE_WANDB:-0}" = 1 ]; then
+    { command -v module >/dev/null && module -t avail httpproxy 2>&1 | grep -q httpproxy && module load httpproxy; } || true
+    export WANDB_BASE_URL=${WANDB_BASE_URL:-https://api.wandb.ai}
+fi
+
 echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST"
 echo "[tt-native] run_name=$MILABENCH_RUN_NAME nodemon=${BENCHMATE_NODEMON_DIR:-off}"
+echo "[tt-native] wandb=${BENCHMATE_WANDB:-0} base_url=${WANDB_BASE_URL:-default} proxy=${https_proxy:-none}"
 squeue -h -j "$SLURM_JOB_ID" -o "[tt-native] submit=%V start=%S" || true
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed 's/^/[tt-native] gpu /'
 ip -br addr | grep -v "^lo" | sed 's/^/[tt-native] iface /'
