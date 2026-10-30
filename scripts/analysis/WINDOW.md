@@ -2,7 +2,7 @@
 
 The order of the experiments and the command for each block. Why each block exists, the figure it feeds and the
 fallbacks are in `EXPERIMENTS.md`; the GLM-5 runs are described in `GLM_RUNS.md` and run with the scripts of
-PR #46 (`scripts/rorqual/`, branch `megatron`).
+PR #46 (`scripts/rorqual/`, now on `large_scale`).
 
 ## How blocks run
 
@@ -25,7 +25,7 @@ Dependency on everything already in the reservation (any group, any user):
 AFTER=$(squeue -h --reservation=MILABENCH2026 -t PENDING,CONFIGURING,RUNNING -o %i | paste -sd:)
 ```
 
-`scripts/slurm/window.sh` (this branch) defines it as `window_after`, plus `window_dep` (the same as
+`scripts/slurm/window.sh` (on `large_scale`) defines it as `window_after`, plus `window_dep` (the same as
 `afterany:<ids>`, empty when nothing is queued: for `healthcheck.py --dependency`), `window_status` (what runs and
 what waits) and `qblock` (one Qwen block, below). Check once at the start that `squeue` shows the other users'
 jobs; if it does not, post job ids in the log and pass them by hand.
@@ -39,21 +39,22 @@ Time limits: health ~20 min, Qwen block 30 min (long run 90 min), GLM G block 1 
 ```bash
 LEAVES=ihpc134u25,ihpc135u25,ihpc136u25,ihpc217u25,ihpc218u25,ihpc316u25,ihpc317u25,ihpc318u25,ihpc319u25,\
 ihpc320u25,ihpc321u25,ihpc322u25,ihpc323u25,ihpc324u25,ihpc325u25,ihpc326u25   # the 66 full-GPU nodes, no MIG leaf
-source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_after, window_dep, window_status
+source <a large_scale checkout>/scripts/slurm/window.sh       # window_after, window_dep, window_status
 ```
 
 **Qwen**, on a login node:
 
 ```bash
-cd $SCRATCH/tt38/milabench && source scripts/slurm/window.sh
+cd $SCRATCH/tt38/milabench && git checkout large_scale && git pull --ff-only && source scripts/slurm/window.sh
 export TT_CAMPAIGN=window-1030 TT_EXCLUSIVE_CLUSTER=1 TT_CONFIG=window TT_LOCAL_VENV=1
 export TT_HEALTHY=$H                     # H below
 ```
 
-**GLM**, in the `megatron` checkout, `scripts/rorqual/` (see its README):
+**GLM**, in a `large_scale` checkout, `scripts/rorqual/` (see its README):
 
 ```bash
-source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_after, window_status
+source ../slurm/window.sh                                       # window_after, window_status
+export BRANCH=large_scale    # the scripts fast-forward to origin/$BRANCH; their default, megatron, is not an ancestor
 export CAMPAIGN=window-1030 EXCLUSIVE_CLUSTER=1 NO_TAIL=1
 export NODELIST=$H NODES=$(scontrol show hostnames "$H" | wc -l)   # whole healthy machine (H below)
 export HEALTH_DIR=<health results dir> EXCLUDE_REASONS='{"rg21701": "CPU clock drops ~30% under training load"}'

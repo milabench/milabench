@@ -670,6 +670,8 @@ class TimedIterator:
                 self.last_time += elapsed
                 self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
             else:
+                # rank 0 reduces the batch size in _make_rate: every rank must join that collective
+                self.batch_size(event.batch_size)
                 rate, elapsed = self._make_rate(event, global_batch_size=False)
                 self.last_time += elapsed
                 self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
