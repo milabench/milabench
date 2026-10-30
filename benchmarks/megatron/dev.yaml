@@ -337,6 +337,10 @@ _megatron_glm5_g:
     nodes: aligned
     gpus_per_node: 4
     a2a_timing: true
+  # DSA cross-layer top-k sharing off: with it, a stage can only start on layer 1, 2, 3, 7, 11, ..., 75 (index_topk_freq
+  # 4, offset 3), which no PP25 / PP16 layout does (window 10-30, job 25255085). Run `deviations`: dsa_index_share
+  model:
+    index_share: false
   argv:
     --pipeline-model-parallel-size: 25
     --decoder-first-pipeline-num-layers: 4

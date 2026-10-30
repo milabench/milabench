@@ -84,6 +84,26 @@ def freeze_model(model, spec: dict):
 
 # --- model -------------------------------------------------------------------------------------------------------
 
+def index_share() -> bool:
+    """model.index_share (default true): GLM-5's DSA cross-layer top-k sharing (index_topk_freq=4, offset 3 in the HF
+    config). With it, a pipeline stage can only start on a computing layer (1, 2, 3, 7, 11, ..., 75), which rules out
+    the PP25 / PP16 window layouts. false: every layer computes its own top-k (plain DSA), any layout works."""
+    return bool((config().get("model") or {}).get("index_share", True))
+
+
+def no_index_share(auto_config):
+    """``AutoConfig`` stand-in for the glm5 plugin: the HF config with index sharing turned off."""
+
+    class NoIndexShare:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            hf_config = auto_config.from_pretrained(*args, **kwargs)
+            hf_config.index_topk_freq, hf_config.index_skip_topk_offset = 1, 0
+            return hf_config
+
+    return NoIndexShare
+
+
 def configure_model(model_cfg, args, spec: dict, hf_path: str):
     """Hook the GLM-5 layer spec and the freezing into the model config.
 
@@ -93,10 +113,13 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
     # model.spec: default -> Megatron's own TE layer spec (small stand-in models for smoke tests, no GLM-5 plugin)
     glm5 = (config().get("model") or {}).get("spec", "glm5") == "glm5"
     if glm5:
+        from slime_plugins.models.glm5 import glm5 as glm5_plugin
         from slime_plugins.models.glm5.glm5 import get_glm5_spec
 
         # get_glm5_spec reads the DSA indexer sizes from the HF config at this path
         args.hf_checkpoint = hf_path
+        if not index_share():
+            glm5_plugin.AutoConfig = no_index_share(glm5_plugin.AutoConfig)
 
     def layer_spec(cfg, vp_stage=None):
         return get_glm5_spec(args, cfg.transformer, vp_stage)
@@ -750,7 +773,8 @@ def push_summary(log, steps):
                     "(batch_id, elapsed, wall, next, rate, local_tokens, fwd_ms / bwd_ms or fwd_bwd_ms, optimizer_ms, "
                     "mem_*_gib)",
         },
-        "deviations": [],
+        "deviations": [] if index_share() else [
+            {"id": "dsa_index_share", "text": "DSA index sharing off: every layer computes its own top-k"}],
         "estimates": [],
     }
     log({"summary": summary, "task": "train", "time": time.time()})
