@@ -106,6 +106,15 @@ All optional, as environment variables:
 
 Extra `sbatch` arguments go after `--`, e.g. `./02_g1_aligned.sh pass1 -- --qos=normal`.
 
+Nodes to leave out can also be given on the command line, by every step script (added to `EXCLUDE` /
+`EXCLUDE_REASONS`). `NODES` follows: 66 minus the excluded nodes, or what is left of `NODELIST` once they are taken out of it.
+
+```bash
+./01_check_full.sh g1 --exclude rg21701,rg31701 \
+    --exclude-reasons '{"rg21701": "CPU clock drops under load", "rg31701": "drained: missing GPU"}'
+./02_g1_aligned.sh pass2 --exclude rg31701
+```
+
 ### Metrics and wandb
 
 On by default for every step:

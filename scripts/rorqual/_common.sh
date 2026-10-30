@@ -6,11 +6,15 @@
 #   WORKDIR          the milabench checkout the job runs            (default $MILABENCH_BASE/src)
 #   CONFIG           (default $WORKDIR/benchmarks/megatron/dev.yaml)
 #   RESERVATION / ACCOUNT / GPUS                                    (default MILABENCH2026 / def-bengioy_gpu / 4)
-#   NODES            nodes of the allocation (default 66: every healthy full-GPU node; each entry picks and orders its
-#                    own set from it, see benchmarks/megatron/placement.py)
-#   EXCLUDE          hostlist to leave out (unhealthy nodes)        -> sbatch --exclude
+#   NODES            nodes of the allocation (default: every node of NODELIST, else 66 minus EXCLUDE; each entry picks and
+#                    orders its own set from it, see benchmarks/megatron/placement.py)
+#   EXCLUDE          hostlist to leave out (unhealthy nodes)        -> sbatch --exclude, or taken out of NODELIST
 #   NODELIST         hostlist the job must use                      -> sbatch --nodelist. Keep the SAME one for every step
 #                    that is compared (G1, G2, G3, G5): the comparison is only valid on one set of nodes
+#
+# options, accepted by every step script before its `--` (added to the env variables of the same name):
+#   --exclude HOSTS            e.g. ./01_check_full.sh g1 --exclude rg21701,rg31701
+#   --exclude-reasons JSON     e.g. --exclude-reasons '{"rg31701": "drained: missing GPU"}'
 #   AFTER            job id to wait for (afterany)
 #   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default large_scale); UPDATE=1
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
@@ -24,6 +28,22 @@
 #   NO_TAIL=1        do not follow the log      TEST_ONLY=1   sbatch --test-only, nothing submitted
 set -euo pipefail
 
+# --exclude / --exclude-reasons out of the caller's arguments (sourced without arguments: "$@" is the step script's),
+# up to `--`; the rest stays in place for the script. Exported: the child scripts (all.sh) and the job see them
+opts=()
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+    case $1 in
+        --exclude)            EXCLUDE=${EXCLUDE:+$EXCLUDE,}${2:?--exclude needs a hostlist}; shift 2 ;;
+        --exclude=*)          EXCLUDE=${EXCLUDE:+$EXCLUDE,}${1#*=}; shift ;;
+        --exclude-reasons)    EXCLUDE_REASONS=${2:?--exclude-reasons needs a JSON object}; shift 2 ;;
+        --exclude-reasons=*)  EXCLUDE_REASONS=${1#*=}; shift ;;
+        *) opts+=("$1"); shift ;;
+    esac
+done
+set -- ${opts[@]+"${opts[@]}"} "$@"
+[ -n "${EXCLUDE:-}" ] && export EXCLUDE
+[ -n "${EXCLUDE_REASONS:-}" ] && export EXCLUDE_REASONS
+
 RORQUAL=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 export MILABENCH_BASE=${MILABENCH_BASE:-/home/delaunay/links/scratch/shared}
 export WORKDIR=${WORKDIR:-$MILABENCH_BASE/src}
@@ -31,10 +51,17 @@ export CONFIG=${CONFIG:-$WORKDIR/benchmarks/megatron/dev.yaml}
 RESERVATION=${RESERVATION:-MILABENCH2026}
 ACCOUNT=${ACCOUNT:-def-bengioy_gpu}
 GPUS=${GPUS:-h100:4}   # typed: the MIG nodes of the reservation would match a plain count
-# the reservation's 66 full-GPU nodes minus the EXCLUDE ones (asking for more nodes than remain never starts)
+# the reservation's 66 full-GPU nodes minus the EXCLUDE ones (asking for more nodes than remain never starts). With a
+# NODELIST, the EXCLUDE nodes are taken out of it (sbatch refuses a node in both) and NODES is what is left
 excluded=0
-[ -n "${EXCLUDE:-}" ] && excluded=$(scontrol show hostnames "$EXCLUDE" | wc -l)
-NODES=${NODES:-$((66 - excluded))}
+[ -n "${EXCLUDE:-}" ] && excluded=$(scontrol show hostnames "$EXCLUDE" | sort -u | wc -l)
+if [ -n "${NODELIST:-}" ]; then
+    [ -n "${EXCLUDE:-}" ] \
+        && NODELIST=$(scontrol show hostnames "$NODELIST" | grep -vxF -f <(scontrol show hostnames "$EXCLUDE") | paste -sd,)
+    NODES=${NODES:-$(scontrol show hostnames "$NODELIST" | wc -l)}
+else
+    NODES=${NODES:-$((66 - excluded))}
+fi
 BRANCH=${BRANCH:-large_scale}
 UPDATE=${UPDATE:-1}
 
@@ -130,7 +157,7 @@ submit() {
     local args=(--job-name="$name" --reservation="$RESERVATION" --account="$ACCOUNT"
                 --nodes="$NODES" --ntasks-per-node=1 --exclusive --mem=0 --gpus-per-node="$GPUS" --time="$time"
                 --output="$MILABENCH_BASE/slurm/$name-%j.out" --export=ALL)
-    [ -n "${EXCLUDE:-}" ]  && args+=(--exclude="$EXCLUDE")
+    [ -n "${EXCLUDE:-}" ] && [ -z "${NODELIST:-}" ] && args+=(--exclude="$EXCLUDE")   # else already out of NODELIST
     [ -n "${NODELIST:-}" ] && args+=(--nodelist="$NODELIST")
     [ -n "${AFTER:-}" ]    && args+=(--dependency="afterany:$AFTER")
     [ -n "${TEST_ONLY:-}" ] && args+=(--test-only)

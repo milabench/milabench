@@ -4,9 +4,13 @@
 #   STOP_AT_FIRST=1   stop at the first entry that completes (the fallback ladders), else run them all
 #   PREPARE=0         skip `milabench prepare`
 #   RESULT_FILE       write "<first entry that completes | NONE> <job id>" there
-#   LOCAL_DATA        data folders copied to every node's local disk after prepare (default "megatron fineweb"); the runs
-#                     read them from $SLURM_TMPDIR/data instead of scratch. Empty: read $MILABENCH_BASE/data directly.
-#                     Run data, logs, wandb and nodemon stay on scratch (watched live from the login node)
+#   LOCAL_BASE        node-local MILABENCH_BASE the runs use (default $SLURM_TMPDIR/milabench: same path on every node,
+#                     wiped at the end of the job). On every node: data/{LOCAL_DATA} and cache/ are copied from the shared
+#                     base (scratch, slow to read from every rank), venv/, runs/ and extra/ are symlinks to it: the
+#                     installed venv is reused and the metrics land on scratch, watched live from the login node.
+#                     LOCAL_BASE= (empty): run on the shared base directly
+#   LOCAL_DATA        data folders copied (default "megatron fineweb")
+#   Logs, system / topology files, wandb and nodemon stay on the shared base / $SCRATCH
 #   nodemon (FORMAT.md §3): always on, one directory per entry
 #       $SCRATCH/nodemon/<run name>
 # Prints one PASS / FAIL line per entry and the largest per-rank peak memory, then a summary at the end.
@@ -57,28 +61,31 @@ echo "[$RUN_PREFIX] nodemon root=$nodemon_root"
 milabench slurm system > "$system" || { echo "[$RUN_PREFIX] milabench slurm system failed" >&2; exit 1; }
 cat "$system"
 
+# node-local base: the same layout on every node (the srun steps of the other ranks inherit MILABENCH_BASE)
+SHARED_BASE=$MILABENCH_BASE
+LOCAL_BASE=${LOCAL_BASE-${SLURM_TMPDIR:?}/milabench}
+if [ -n "$LOCAL_BASE" ]; then
+    if srun --nodes="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 bash -c '
+            set -e; shared=$1 dst=$2; shift 2
+            mkdir -p "$dst/data"
+            for d in venv runs extra; do ln -sfn "$shared/$d" "$dst/$d"; done
+            cp -r "$shared/cache" "$dst/cache"
+            for d in "$@"; do cp -r "$shared/data/$d" "$dst/data/"; done
+            echo "$(hostname):$(du -shL "$dst/data" | cut -f1)"' _ "$SHARED_BASE" "$LOCAL_BASE" ${LOCAL_DATA-megatron fineweb} \
+            | sort | paste -sd' ' | sed "s/^/[$RUN_PREFIX] local base: /"; then
+        export MILABENCH_BASE=$LOCAL_BASE
+    else
+        echo "[$RUN_PREFIX] WARNING: could not build $LOCAL_BASE on every node, running on $SHARED_BASE" >&2
+    fi
+fi
+echo "[$RUN_PREFIX] base=$MILABENCH_BASE (data $(readlink -f "$MILABENCH_BASE/data"), runs $(readlink -f "$MILABENCH_BASE/runs"))"
+
+# after the local base: prepare finds the copied data (no-op, the compute nodes are offline)
 if [ "${PREPARE:-1}" = 1 ]; then
     srun --nodes=1 --ntasks=1 --nodelist="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)" \
         milabench prepare --config "$CONFIG" --select "$select" \
         || echo "[$RUN_PREFIX] prepare failed, see above" >&2
 fi
-
-# the dataset on local disk: scratch is slow to read from every rank. $SLURM_TMPDIR has the same path on every node and is
-# wiped at the end of the job. MILABENCH_DIRS_DATA overrides dirs.data -> MILABENCH_DIR_DATA, inherited by the srun steps
-LOCAL_DATA=${LOCAL_DATA-megatron fineweb}
-if [ -n "$LOCAL_DATA" ]; then
-    local_data=${SLURM_TMPDIR:?}/data
-    sources=()
-    for d in $LOCAL_DATA; do sources+=("$MILABENCH_BASE/data/$d"); done
-    if srun --nodes="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 \
-            bash -c 'mkdir -p "$0" && cp -r "${@}" "$0"/ && echo "$(hostname) $(du -sh "$0" | cut -f1)"' \
-            "$local_data" "${sources[@]}" | sort | paste -sd' ' | sed "s/^/[$RUN_PREFIX] local data: /"; then
-        export MILABENCH_DIRS_DATA=$local_data
-    else
-        echo "[$RUN_PREFIX] WARNING: copy to $local_data failed, reading the data from $MILABENCH_BASE/data" >&2
-    fi
-fi
-echo "[$RUN_PREFIX] data=${MILABENCH_DIRS_DATA:-$MILABENCH_BASE/data}"
 
 # largest per-rank peak memory of a run (rank 0 in the run data, the other ranks in their rankstore files)
 peak() {
@@ -99,7 +106,7 @@ for entry in "${entries[@]}"; do
     export TT_VARIANT=${VARIANT:-$entry} TT_REPETITION=${REPETITION:-1}
     milabench run --config "$CONFIG" --system "$system" --select "$entry" --run-name "$run"
     status=$?
-    rundir=$MILABENCH_BASE/runs/$run
+    rundir=$SHARED_BASE/runs/$run
     line="$entry: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)")  $(( $(date +%s) - start ))s"
     line+="  peak allocated $(peak peak_memory_allocated "$rundir") / reserved $(peak peak_memory_reserved "$rundir") GiB"
     echo "[$RUN_PREFIX] $line"
@@ -110,7 +117,7 @@ for entry in "${entries[@]}"; do
     fi
 done
 
-echo "[$RUN_PREFIX] ===== summary (runs in $MILABENCH_BASE/runs/$RUN_PREFIX.$SLURM_JOB_ID.*)"
+echo "[$RUN_PREFIX] ===== summary (runs in $SHARED_BASE/runs/$RUN_PREFIX.$SLURM_JOB_ID.*)"
 printf '  %s\n' "${summary[@]}"
 [ "${STOP_AT_FIRST:-0}" = 1 ] && echo "[$RUN_PREFIX] first entry that completes: ${passed:-NONE}"
 [ "${WANDB_MODE:-}" = offline ] && echo "[$RUN_PREFIX] wandb, from a login node: wandb sync $WANDB_DIR/wandb/offline-run-*"
