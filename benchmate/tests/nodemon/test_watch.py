@@ -104,12 +104,15 @@ def test_a_counter_an_earlier_job_left_is_quiet_and_only_a_rise_is_red(tmp_path)
     assert f"{Ansi.RED.value}Findings     OOM kill: cn-b oom_kill +2{Ansi.RESET.value}" in text
 
 
-def test_a_node_whose_cpu_clock_lags_the_others_is_slow_whatever_its_own_start(tmp_path):
+def test_cpu_slow_compares_loaded_packages_to_their_loaded_peers(tmp_path):
     now = time.time()
     stamp = int((now - 5) * 1000)
-    columns = ["time_ms", "package", "cpu_mhz_busy_mean"]
-    for host, mhz in (("cn-a", 2400), ("cn-b", 2400), ("cn-c", 1500)):
-        tsv(tmp_path / "nodes" / f"{host}.cpu.tsv", columns, [[stamp - 60_000, 0, 3700], [stamp, 0, mhz]])
+    columns = ["time_ms", "package", "cpu_mhz_busy_mean", "cpu_util"]
+    for host, mhz, util in (
+        ("cn-a", 2400, 0.2), ("cn-b", 2400, 0.2), ("cn-c", 1500, 0.2), ("cn-idle", 1000, 0.06),
+    ):
+        tsv(tmp_path / "nodes" / f"{host}.cpu.tsv", columns,
+            [[stamp - 60_000, 0, 3700, util], [stamp, 0, mhz, util]])
 
     window = Window(window_s=30.0)
     read(tmp_path, {}, window)
@@ -117,6 +120,7 @@ def test_a_node_whose_cpu_clock_lags_the_others_is_slow_whatever_its_own_start(t
     text = block(window)
 
     assert "CPU slow: cn-c:0 1500 MHz, -38% from its peers' median\n" in text
+    assert "cn-idle" not in text.split("CPU slow:", 1)[1]
 
 
 def test_follow_stops_once_every_sampler_has_finished(tmp_path, capsys):
@@ -263,11 +267,31 @@ def test_one_gpu_whose_clock_lags_its_peers_is_slow_but_an_idle_one_is_not(tmp_p
     assert "cn-a:2" not in text.split("GPU slow:", 1)[1]  # idling, so its clock says nothing
 
 
+def test_a_working_gpu_drawing_far_less_than_its_peers_is_low_power_but_an_idle_one_is_not(tmp_path):
+    now = time.time()
+    stamp = int((now - 5) * 1000)
+    columns = ["time_ms", "gpu", "power_w", "clocks_event_reasons"]
+    for host in ("cn-a", "cn-b", "cn-c"):
+        rows = [[stamp, 0, 200 if host == "cn-c" else 450, "0x0"]]
+        tsv(tmp_path / "nodes" / f"{host}.gpu.tsv", columns, rows + ([[stamp, 1, 120, "0x1"]] if host == "cn-a" else []))
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh({}, now)
+    text = block(window)
+
+    assert "GPU power: cn-c:0 200 W, -56% from its peers' median\n" in text
+    assert "cn-a:1" not in text.split("GPU power:", 1)[1]  # idling, so its low draw says nothing
+    scores = {host: score for score, host, _ in ranked(findings(window), {"cn-a", "cn-b", "cn-c"})}
+    assert scores["cn-c"] == 0.25 and scores["cn-a"] == 0 and scores["cn-b"] == 0
+
+
 def test_ib_congestion_is_a_port_far_above_the_others_not_one_that_is_merely_busy(tmp_path):
     now = time.time()
     columns = ["time_ms", "hca", "port", "xmit_wait"]
-    # Over 10 s: three ports at 2 million a second, one at ten times that, and one near idle.
-    for host, ticks in (("cn-a", 20_000_000), ("cn-b", 20_000_000), ("cn-c", 20_000_000), ("cn-d", 200_000_000),
+    # Over 10 s: three ports at 200,000 a second, one at a hundred times that, and one near idle.
+    # 200,000/s stays under the absolute million-a-second rule, so only the peer rule can flag these.
+    for host, ticks in (("cn-a", 2_000_000), ("cn-b", 2_000_000), ("cn-c", 2_000_000), ("cn-d", 200_000_000),
                         ("cn-e", 1_000)):
         tsv(tmp_path / "nodes" / f"{host}.ib.tsv", columns,
             [[int((now - 12) * 1000), "mlx5_0", 1, 7], [int((now - 2) * 1000), "mlx5_0", 1, 7 + ticks]])
@@ -277,9 +301,76 @@ def test_ib_congestion_is_a_port_far_above_the_others_not_one_that_is_merely_bus
     window.refresh({}, now)
     text = block(window)
 
-    assert "IB congestion: cn-d:mlx5_0:1 xmit_wait 20,000,000/s, median 2,000,000/s\n" in text
+    assert "IB congestion: cn-d:mlx5_0:1 xmit_wait 20,000,000/s, median 200,000/s\n" in text
     flagged = text.split("IB congestion:", 1)[1]
     assert not any(host in flagged for host in ("cn-a", "cn-b", "cn-c", "cn-e"))
+
+
+def test_xmit_wait_above_a_million_a_second_scores_two(tmp_path):
+    now = time.time()
+    columns = ["time_ms", "hca", "port", "xmit_wait"]
+    # Over 10 s: two ports at 2 million ticks a second, one idle. The absolute rule flags the two; the peer rule
+    # does not, because neither is far above the other.
+    for host, ticks in (("cn-a", 20_000_000), ("cn-b", 20_000_000), ("cn-c", 1_000)):
+        tsv(tmp_path / "nodes" / f"{host}.ib.tsv", columns,
+            [[int((now - 12) * 1000), "mlx5_0", 1, 0], [int((now - 2) * 1000), "mlx5_0", 1, ticks]])
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh({}, now)
+    text = block(window)
+
+    assert "IB wait: cn-a:mlx5_0:1 xmit_wait 2,000,000/s, cn-b:mlx5_0:1 xmit_wait 2,000,000/s\n" in text
+    assert "cn-c" not in text.split("IB wait:", 1)[1].split("\n", 1)[0]
+    assert "IB congestion" not in text
+    scores = {host: score for score, host, _ in ranked(findings(window), {"cn-a", "cn-b", "cn-c"})}
+    assert scores["cn-a"] == 2 and scores["cn-b"] == 2 and scores["cn-c"] == 0
+
+
+def test_a_nonfatal_pcie_error_and_a_link_that_stays_narrow_are_found(tmp_path):
+    now = time.time()
+    earlier, stamp = int((now - 20) * 1000), int((now - 5) * 1000)
+    columns = [
+        "time_ms", "device", "driver", "link_width", "max_link_width", "link_speed", "max_link_speed", "aer_nonfatal",
+    ]
+    tsv(tmp_path / "nodes" / "cn-a.pcie.tsv", columns, [
+        [earlier, "0000:4e:00.0", "nvidia", 8, 16, 32, 32, 0],
+        [stamp, "0000:4e:00.0", "nvidia", 8, 16, 32, 32, 1],
+        [earlier, "0000:5b:02.0", "pcieport", 8, 16, 16, 32, 0],
+        [stamp, "0000:5b:02.0", "pcieport", 8, 16, 16, 32, 0],
+        [stamp, "0000:db:00.0", "nvidia", 8, 16, 32, 32, 0],
+    ])
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh({}, now)
+    text = block(window)
+
+    assert "PCIe nonfatal error: cn-a:0000:4e:00.0 aer_nonfatal +1\n" in text
+    assert "PCIe link degraded: cn-a:0000:4e:00.0 8/16 lanes, 32/32 GT/s\n" in text
+    assert "0000:5b:02.0" not in text  # a bridge, not a GPU or HCA
+    assert "0000:db:00.0" not in text  # one sample can be the link still coming up
+
+
+def test_an_unsynchronized_clock_comes_from_the_status_file(tmp_path):
+    now = time.time()
+    (tmp_path / "cn-a.status.json").write_text(json.dumps({
+        "state": "running", "flush_every": 10.0, "start": int(now * 1000),
+        "clock": {"synced": False, "maxerror_us": 500000},
+    }))
+    (tmp_path / "cn-b.status.json").write_text(json.dumps({
+        "state": "running", "flush_every": 10.0, "start": int(now * 1000),
+        "clock": {"synced": True, "maxerror_us": 20},
+    }))
+
+    window = Window(window_s=60.0)
+    window.refresh(statuses(tmp_path), now)
+    text = block(window)
+
+    assert "clock unsynchronized: cn-a max error 500000 µs\n" in text
+    assert "cn-b" not in text.split("clock unsynchronized:", 1)[1]
+    scores = {host: score for score, host, _ in ranked(findings(window), {"cn-a", "cn-b"})}
+    assert scores["cn-a"] == 1 and scores["cn-b"] == 0
 
 
 def test_several_xids_in_one_tick_are_still_an_xid(tmp_path):
