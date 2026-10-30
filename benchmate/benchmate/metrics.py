@@ -574,16 +574,13 @@ class TimedIterator:
             self._push_total_time_elapsed()
             self.earlystop()
 
-    def _make_rate(self, event: TimedEvent, global_batch_size=True):
+    def _make_rate(self, event: TimedEvent):
         event.end.synchronize()
         sync(self.device)
 
         elapsed = (event.elapsed_time()) / self.unit
 
-        if global_batch_size:
-            bs = self.batch_size(event.batch_size)
-        else:
-            bs = event.batch_size
+        bs = self.batch_size(event.batch_size)
 
         rate = bs / elapsed
 
@@ -665,15 +662,14 @@ class TimedIterator:
 
     def _push_time_steps(self):
         for event in self.events:
+            rate, elapsed = self._make_rate(event)
+            self.last_time += elapsed
+
             if self.rank is None or self.rank == 0:
-                rate, elapsed = self._make_rate(event)
-                self.last_time += elapsed
                 self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
             else:
-                rate, elapsed = self._make_rate(event, global_batch_size=False)
-                self.last_time += elapsed
-                self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
-           
+                self.ranked_log(rate=event.batch_size / elapsed, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+
         self.total_obs += len(self.events)
         self.events = []
 
@@ -744,7 +740,8 @@ class TimedIterator:
 
             self._push_lap_events()
 
-        if True:
+        # What this push itself cost, under the flag that gates the other self-timings
+        if _flags.record_overhead:
             self.message(sync_time=sync_time.elapsed(), units="s", task=self.task)
             self.message(process_time=process_time.elapsed(), units="s", task=self.task)
 
@@ -757,9 +754,9 @@ class TimedIterator:
             )
 
     def log_progress(self):
-        if self.rank is None or self.rank == 0 and self.early_stop is not None:
-            progress = self.progress()
-            self.message(progress=(progress, self.early_stop), task="early_stop")
+        if self.early_stop is not None:
+            # Progress is against the early stop count: rank 0 only, as the rate is
+            self.rank0_log(progress=(self.progress(), self.early_stop), task="early_stop")
 
     def message(self, **kwargs):
         if self.rank is None or self.rank == 0:
