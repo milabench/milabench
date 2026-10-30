@@ -4,6 +4,8 @@
 #   STOP_AT_FIRST=1   stop at the first entry that completes (the fallback ladders), else run them all
 #   PREPARE=0         skip `milabench prepare`
 #   RESULT_FILE       write "<first entry that completes | NONE> <job id>" there
+#   nodemon (FORMAT.md §3): always on, one directory per entry
+#       $SCRATCH/nodemon/<run name>
 # Prints one PASS / FAIL line per entry and the largest per-rank peak memory, then a summary at the end.
 set -uo pipefail
 : "${MILABENCH_BASE:?}" "${WORKDIR:?}" "${CONFIG:?}" "${ENTRIES:?}" "${RUN_PREFIX:?}"
@@ -43,6 +45,12 @@ fi
 export TT_EXCLUDED
 echo "[$RUN_PREFIX] campaign=${TT_CAMPAIGN:-} topology=${TT_TOPOLOGY:-none} excluded=$TT_EXCLUDED health=${TT_HEALTH_DIR:-none}"
 
+# Node telemetry, always. The Megatron pack starts benchmate.nodemon from every rank when
+# BENCHMATE_NODEMON_DIR is set. The directory name is the milabench run name (the join to
+# the run data), and a second run in the same directory is refused, so each entry gets its own.
+nodemon_root=${SCRATCH:?}/nodemon
+echo "[$RUN_PREFIX] nodemon root=$nodemon_root"
+
 milabench slurm system > "$system" || { echo "[$RUN_PREFIX] milabench slurm system failed" >&2; exit 1; }
 cat "$system"
 
@@ -61,7 +69,11 @@ summary=()
 passed=
 for entry in "${entries[@]}"; do
     run=$RUN_PREFIX.$SLURM_JOB_ID.$entry
-    echo "[$RUN_PREFIX] === $entry   (run $run)"
+    export MILABENCH_RUN_NAME=$run
+    export BENCHMATE_NODEMON_DIR=$nodemon_root/$MILABENCH_RUN_NAME
+    mkdir -p "$BENCHMATE_NODEMON_DIR" \
+        || echo "[$RUN_PREFIX] WARNING: could not create $BENCHMATE_NODEMON_DIR" >&2
+    echo "[$RUN_PREFIX] === $entry   (run $run)  nodemon=$BENCHMATE_NODEMON_DIR"
     start=$(date +%s)
     # run.variant: the G run (VARIANT, set by _g.sh) or the entry itself (the check ladders)
     export TT_VARIANT=${VARIANT:-$entry} TT_REPETITION=${REPETITION:-1}

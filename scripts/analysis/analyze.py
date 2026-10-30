@@ -33,7 +33,7 @@ REPORT = HERE / "report"
 GENERATED = REPORT / "generated"
 CLUSTERS = ["rorqual", "fir", "tamia"]
 # Per cluster: directories under $SCRATCH copied into data/raw/<cluster>/.
-REMOTE = ["tt38/output/runs", "tt38/health", "tt38/logs", "tt38/nodemon"]
+REMOTE = ["tt38/output/runs", "tt38/health", "tt38/logs", "nodemon"]
 QUICK_FIGURES = {"weak_scaling", "placement_pairs"}
 
 

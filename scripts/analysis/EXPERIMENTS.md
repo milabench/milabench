@@ -32,11 +32,14 @@ Owner: fill in per item (`Owner:`).
 - [ ] **Dry run of the three window modes on reserved nodes** (before 10-27 04:00), to time them and check
       our adapter parses real output: `--job-per switch`, `--job-per cluster`, `--switches ihpc217u25
       ihpc316u25 --job-per cluster`. Figs. 2, 4. Owner:
-- [ ] **nodemon (node telemetry)**: merge `feat/nodemon` into the run branches (the GLM-5 pack starts
-      the sampler itself), export `BENCHMATE_NODEMON_DIR=$SCRATCH/tt38/nodemon/<run_name>` from the
-      launcher, and check one dry-run job's TSVs parse (FORMAT §3). On Rorqual's H100s also check
-      that `<host>.gpm.tsv` fills: with it the straggler figure has tensor-pipe activity, without
-      it `util_mean`. Stability and straggler figures. Owner:
+- [ ] **nodemon (node telemetry)**: both launchers write
+      `BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/<run_name>`. GLM-5
+      (`scripts/rorqual/job.sbatch`) always sets it; the pack starts the sampler. TorchTitan
+      (`scripts/slurm/tt_native.sh`) sets the same path; an empty value disables it. Still to check:
+      one dry-run job's TSVs parse (FORMAT §3),
+      and on Rorqual's H100s that `<host>.gpm.tsv` fills during a training step. An idle sample
+      has an empty first tick, then zeros and a tiny `dram_bw_util`; tensor-pipe activity in the
+      straggler figure needs a busy GPU, otherwise `util_mean`. Owner:
 
 ### Qwen3.8-27B (TorchTitan)
 

@@ -32,6 +32,6 @@ Output: `report/main.pdf`, figures in `report/generated/figures/`, tables in `da
 | `report/` | LaTeX source; `sections/*.tex` hold the text |
 
 Collection is read-only on the login nodes (rsync of
-`$SCRATCH/tt38/{output/runs,health,logs,nodemon}` and `scontrol show topology`), following
+`$SCRATCH/tt38/{output/runs,health,logs}`, `$SCRATCH/nodemon`, and `scontrol show topology`), following
 `journals/cluster-guidelines.md`.
 `data/` and `report/generated/` are not versioned: everything is regenerated.

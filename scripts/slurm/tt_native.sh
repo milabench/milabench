@@ -49,9 +49,8 @@ export PYTHONUNBUFFERED=1
 
 export MILABENCH_RUN_NAME=${MILABENCH_RUN_NAME:-${TT_RUN_TAG:-$BENCH}.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}}
 
-# benchmate.nodemon (node telemetry): main.py starts the sampler from every rank when this is set.
-# Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
-export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-$MILABENCH_BASE/nodemon/$MILABENCH_RUN_NAME}
+# Same directory as the GLM-5 launcher. Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
+export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${SCRATCH:?}/nodemon/$MILABENCH_RUN_NAME}
 
 echo "[tt-native] job_start_epoch=$(date +%s.%N) job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST"
 echo "[tt-native] run_name=$MILABENCH_RUN_NAME nodemon=${BENCHMATE_NODEMON_DIR:-off}"

@@ -163,7 +163,7 @@ calls cannot give.
 ### Layout
 
 ```
-$SCRATCH/tt38/nodemon/<run_name>/<host>.status.json
+$SCRATCH/nodemon/<run_name>/<host>.status.json
                                  <host>.lock
                                  nodes/<host>.<collector>.tsv
 ```
@@ -173,6 +173,11 @@ must be the milabench run name** — the whole join to the run data
 (`gpu_monitor.source == runs.run_name`). One run per directory (nodemon refuses to start on an
 existing `status.json`), one sampler per host (`<host>.lock`): every rank may start it, only
 the first collects.
+
+Both launchers set `BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/<run_name>`. The Rorqual GLM-5
+launcher always sets it, for every entry including the check ladder (`scripts/rorqual/job.sbatch`);
+the Megatron pack starts it from every rank (`benchmarks/megatron/main.py`). TorchTitan's
+`scripts/slurm/tt_native.sh` sets the same path; an empty value disables it.
 
 Identity is in the paths, not the rows: a row carries `time_ms` alone, the host is in the file
 name, the benchmark in the status file. One wide file per collector, melted to
@@ -360,7 +365,6 @@ For MoE, Megatron has two data-parallel sizes: `dp` = world / (TP x PP x CP) for
 | 6c | run both `--job-per switch` and `--job-per cluster` in the window (one leaf and whole machine); optionally `--switches A B --job-per cluster` for 2-leaf scopes (e.g. 217+316) | window plan | communication scopes (Fig. 4) | none (operational) |
 | 7b | GLM-5 expert-group layouts on Rorqual: EP8 aligned / mixed (~1 group in 4 crossing) / crossed on the **same 52 nodes** (even number per leaf: 13 x 2 + 12 + 8 + 6; fall back to 50 / 48), only the node order differs; plus mixed on every healthy node (largest achievable, Megatron's default order, even count); full model if it fits on 208 GPUs (to confirm); record `placement.ep_groups`; per-group all-to-all time if Megatron's MoE timers allow. Picker: "even per leaf" selection + the three orders | GLM-5 pipeline, `tt_pick_nodes.py` | expert-placement figure | medium |
 | 7 | same events from Megatron (voirfile or converter) | GLM-5 pipeline | MoE section | medium |
-| 8c | `NodeMonitor` sidecar so milabench starts the sampler on every node of every bench | `milabench/commands/`, `multi.py` | today each pack starts it itself, or the sbatch wrapper does | medium |
 | 9 | per-rank step metrics as JSONL in the run directory (done for TorchTitan: benchmate's `rankstore`, timer off the data loader). Left: the WandB mirror, the `benchmate.rankmetrics.v1` group header, `fwd_ms` / `bwd_ms`, the same rows from Megatron (middle pipeline stages included), and the coverage config | benchmate (`rankstore.py`), `tt_native/instrument.py`, GLM-5 pipeline | per-step rank spread and the collective-wait share; today only an end-of-run aggregate exists | medium |
 
 Not available: per-rank compute vs. NCCL time. The section 4 columns do not give it (they include the
