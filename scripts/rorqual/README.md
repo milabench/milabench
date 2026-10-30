@@ -99,7 +99,7 @@ All optional, as environment variables:
 | `RESERVATION` / `ACCOUNT` | `MILABENCH2026` / `def-bengioy_gpu` | |
 | `MILABENCH_BASE` | `/home/delaunay/links/scratch/shared` | Venv, data, runs and logs. |
 | `WORKDIR` | `$MILABENCH_BASE/src` | The milabench checkout the job runs. |
-| `BRANCH` / `UPDATE` | `megatron` / 1 | The checkout is fast-forwarded to `origin/$BRANCH` before submitting (`UPDATE=0`: fail instead). |
+| `BRANCH` / `UPDATE` | `large_scale` / 1 | The checkout is fast-forwarded to `origin/$BRANCH` before submitting (`UPDATE=0`: fail instead). |
 | `PREPARE` | 1 | 0 skips `milabench prepare` in the job. |
 | `NO_TAIL` | | 1: do not follow the log. |
 | `TEST_ONLY` | | 1: `sbatch --test-only`, shows where and when the job would start, submits nothing. |
@@ -120,6 +120,8 @@ On by default for every step:
 | `BENCHMATE_WANDB_ALL_RANKS` | 1 | One wandb run per rank (200 or 256 per benchmark), grouped by milabench run. 0: rank 0 only. |
 | `BENCHMATE_WANDB_PROJECT` | `milabench-glm` | wandb project. |
 | `WANDB_DIR` | `$MILABENCH_BASE/wandb` | Each job keeps its local wandb files under `$WANDB_DIR/<job-name>.<jobid>/`. |
+
+Node telemetry is always on. Each entry writes to `$SCRATCH/nodemon/<run name>` (CPU, IB, GPU clocks, GPM).
 
 wandb logs online. The compute nodes have no direct internet, so the job runs `module load httpproxy` and the runs go
 through the cluster's proxy. The API key is not set by these scripts: it comes from your environment or `~/.netrc`
@@ -150,6 +152,8 @@ pass2 = 2), `placement.family` (EP for G1-G3 / G5, ALL for G4). The job saves `s
 - Job logs: `$MILABENCH_BASE/slurm/<job-name>-<jobid>.out` (e.g. `glm5-g1-pass1-1234.out`, `glm5-check-full-g1-1234.out`)
 - Run data: `$MILABENCH_BASE/runs/<job-name>.<jobid>.<entry>/`, one folder per benchmark. The other ranks' metrics
   (peak memory per pipeline stage, straggler data) are in the rankstore files next to it.
+- Node telemetry: `$SCRATCH/nodemon/<job-name>.<jobid>.<entry>/` (`<host>.status.json`,
+  `nodes/<host>.<collector>.tsv`). The directory name is the milabench run name.
 
 What to look at in a job log:
 

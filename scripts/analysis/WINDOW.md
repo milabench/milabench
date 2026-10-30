@@ -2,7 +2,7 @@
 
 The order of the experiments and the command for each block. Why each block exists, the figure it feeds and the
 fallbacks are in `EXPERIMENTS.md`; the GLM-5 runs are described in `GLM_RUNS.md` and run with the scripts of
-PR #46 (`scripts/rorqual/`, branch `megatron`).
+PR #46 (`scripts/rorqual/`, on `large_scale`).
 
 ## How blocks run
 
@@ -45,12 +45,13 @@ source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_
 **Qwen**, on a login node:
 
 ```bash
-cd $SCRATCH/tt38/milabench && source scripts/slurm/window.sh
+cd $SCRATCH/tt38/milabench && git checkout large_scale && git pull --ff-only && source scripts/slurm/window.sh
+$SCRATCH/tt38/output/venv/torchtitan_native/bin/pip install nvidia-ml-py   # once: the node sampler's GPU collectors need pynvml
 export TT_CAMPAIGN=window-1030 TT_EXCLUSIVE_CLUSTER=1 TT_CONFIG=window TT_LOCAL_VENV=1
 export TT_HEALTHY=$H                     # H below
 ```
 
-**GLM**, in the `megatron` checkout, `scripts/rorqual/` (see its README):
+**GLM**, `scripts/rorqual/` (see its README):
 
 ```bash
 source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_after, window_status
