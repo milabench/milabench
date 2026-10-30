@@ -46,7 +46,6 @@ source <milabench checkout of this branch>/scripts/slurm/window.sh     # window_
 
 ```bash
 cd $SCRATCH/tt38/milabench && git checkout large_scale && git pull --ff-only && source scripts/slurm/window.sh
-$SCRATCH/tt38/output/venv/torchtitan_native/bin/pip install nvidia-ml-py   # once: the node sampler's GPU collectors need pynvml
 export TT_CAMPAIGN=window-1030 TT_EXCLUSIVE_CLUSTER=1 TT_CONFIG=window TT_LOCAL_VENV=1
 export TT_HEALTHY=$H                     # H below
 ```

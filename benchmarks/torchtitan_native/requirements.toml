@@ -33,6 +33,8 @@ dependencies = [
 [cuda]
 dependencies = [
     "attn-gym[linear]==0.0.16",
+    # pynvml: GPU collectors of the node sampler (benchmate.nodemon); without it they are off.
+    "nvidia-ml-py",
 ]
 
 # No Gated DeltaNet kernels outside CUDA: the model does not build.
