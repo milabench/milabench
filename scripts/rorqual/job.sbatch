@@ -25,13 +25,16 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 if [ "${BENCHMATE_WANDB:-0}" = 1 ]; then
     { command -v module >/dev/null && module load httpproxy; } \
         || echo "[$RUN_PREFIX] WARNING: module load httpproxy failed: wandb cannot reach its server" >&2
+    # the proxy only lets api.wandb.ai through: wandb 0.31 defaults to api.forge.coreweave.com, refused (403), and each
+    # rank then loses ~100 s at startup before training on without wandb. Same key and project (brdg-mila/milabench)
+    export WANDB_BASE_URL=${WANDB_BASE_URL:-https://api.wandb.ai}
 fi
 # one wandb folder per job (every rank of every entry keeps its local run files there), on the shared filesystem
 export WANDB_DIR=${WANDB_DIR:-$MILABENCH_BASE/wandb}/$RUN_PREFIX.$SLURM_JOB_ID
 mkdir -p "$WANDB_DIR"
 echo "[$RUN_PREFIX] fine-grained timings: BENCHMATE_RECORD_FINE=${BENCHMATE_RECORD_FINE:-0}  wandb: BENCHMATE_WANDB=${BENCHMATE_WANDB:-0}" \
      "all ranks=${BENCHMATE_WANDB_ALL_RANKS:-0} project=${BENCHMATE_WANDB_PROJECT:-} mode=${WANDB_MODE:-online}" \
-     "proxy=${https_proxy:-${HTTPS_PROXY:-none}} dir=$WANDB_DIR"
+     "proxy=${https_proxy:-${HTTPS_PROXY:-none}} base_url=${WANDB_BASE_URL:-default} dir=$WANDB_DIR"
 read -ra entries <<< "$ENTRIES"
 select=$(IFS=,; echo "${entries[*]}")
 system=$MILABENCH_BASE/slurm/system.$SLURM_JOB_ID.yaml
