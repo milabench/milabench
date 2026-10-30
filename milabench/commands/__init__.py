@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 from copy import deepcopy
 from hashlib import md5
 from typing import Dict, Generator, List, Tuple
@@ -695,6 +696,12 @@ class SSHCommand(WrapperCommand):
         #         "-",
         #         f"XDG_CACHE_HOME={str(self.pack.dirs.cache)}",
         #     ]
+
+        # Non-interactive SSH sessions skip most of ~/.bashrc (e.g. NCCL_IB_HCA
+        # set after the interactive guard), so forward system.env explicitly
+        system_env = (self.pack.config.get("system") or {}).get("env") or {}
+        if system_env:
+            envs = ["env", *(shlex.quote(f"{k}={v}") for k, v in system_env.items())]
 
         argv.extend(["-oPasswordAuthentication=no"])
         argv.extend(["-p", str(self.port)])

@@ -7,6 +7,7 @@ it so Slurm's real launcher is used unchanged.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sys
 from dataclasses import dataclass
@@ -199,7 +200,9 @@ def _ssh_argv(node: dict, command: list[str], sshkey: Optional[str] = None) -> l
     argv = ["ssh", *SSH_OPTIONS, "-p", str(port)]
     if key:
         argv.append(f"-i{key}")
-    argv.extend([target, "--", *command])
+    # ssh joins its argv with spaces and the remote shell re-parses it, so
+    # quote each word (args like batch_size=auto_batch(8), PS1=(env) ...)
+    argv.extend([target, "--", shlex.join(command)])
     return argv
 
 

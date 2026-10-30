@@ -44,7 +44,7 @@ import torchcompat.core as compat
 
 """
 python -i examples/scripts/ppo/ppo.py \
-    --dataset_name trl-internal-testing/descriptiveness-sentiment-trl-style \
+    --dataset_name Milabench/descriptiveness-sentiment-trl-style \
     --dataset_train_split descriptiveness \
     --learning_rate 3e-6 \
     --output_dir models/minimal/ppo \
@@ -56,7 +56,7 @@ python -i examples/scripts/ppo/ppo.py \
 
 accelerate launch --config_file examples/accelerate_configs/deepspeed_zero3.yaml \
     examples/scripts/ppo/ppo.py \
-    --dataset_name trl-internal-testing/descriptiveness-sentiment-trl-style \
+    --dataset_name Milabench/descriptiveness-sentiment-trl-style \
     --dataset_train_split descriptiveness \
     --output_dir models/minimal/ppo \
     --num_ppo_epochs 1 \

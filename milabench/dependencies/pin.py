@@ -202,8 +202,13 @@ def _build_index_args(
         args.extend(["--extra-index-url", resolved_url])
 
     for url in idx.find_links:
-        resolved_url = url.format(**variables)
-        if _is_optional_find_links_url(resolved_url) and not _find_links_url_available(
+        resolved_url = os.path.expandvars(url.format(**variables))
+        if "://" not in resolved_url:
+            # Local wheel directory (e.g. $MILABENCH_WHEELS_DIR); skipped when
+            # the variable is unset or the combo was never built locally.
+            if not os.path.isdir(resolved_url):
+                continue
+        elif _is_optional_find_links_url(resolved_url) and not _find_links_url_available(
             resolved_url
         ):
             print(
@@ -552,6 +557,7 @@ def _compile_lockfile(
     torch_version: str,
     arch: str,
     label: str,
+    override_lines: list[str] | None = None,
 ) -> None:
     """Run ``uv pip compile`` and post-process one lockfile."""
     with tempfile.NamedTemporaryFile(
@@ -572,6 +578,7 @@ def _compile_lockfile(
                 cons_file.write(f"{line}\n")
             constraints_path = Path(cons_file.name)
 
+    overrides_path = None
     try:
         cmd = [
             "uv", "pip", "compile",
@@ -582,6 +589,13 @@ def _compile_lockfile(
         ]
         if constraints_path:
             cmd.extend(["-c", str(constraints_path)])
+        if override_lines:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", prefix="toml-overrides-", delete=False
+            ) as ovr_file:
+                ovr_file.write("\n".join(override_lines) + "\n")
+                overrides_path = Path(ovr_file.name)
+            cmd.extend(["--override", str(overrides_path)])
         if extra_compile_args:
             cmd.extend(extra_compile_args)
         cmd.append(str(deps_path))
@@ -607,6 +621,8 @@ def _compile_lockfile(
         deps_path.unlink(missing_ok=True)
         if constraints_path:
             constraints_path.unlink(missing_ok=True)
+        if overrides_path:
+            overrides_path.unlink(missing_ok=True)
 
 
 def _platform_constraint_lines(
@@ -701,6 +717,7 @@ async def pin_combination(
         torch_version=torch_version,
         arch=arch,
         label=label,
+        override_lines=platform_config.get_backend(backend).exclude_overrides(),
     )
 
     return output_file

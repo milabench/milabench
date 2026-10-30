@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import stat
 from types import SimpleNamespace
 
@@ -165,7 +166,14 @@ class TestNormalizeAndSsh:
         argv = _ssh_argv(NODES[1], ["env", "SLURM_NODEID=1", "cmd"])
         assert argv[0] == "ssh"
         assert "tester@172.30.1.2" in argv
-        assert argv[-4:] == ["--", "env", "SLURM_NODEID=1", "cmd"]
+        assert argv[-2] == "--"
+        assert shlex.split(argv[-1]) == ["env", "SLURM_NODEID=1", "cmd"]
+
+    def test_ssh_argv_quotes_shell_metacharacters(self):
+        # ssh re-parses the remote command with the remote shell
+        command = ["env", "PS1=(env) ", "main.py", "batch_size=auto_batch(8)"]
+        argv = _ssh_argv(NODES[1], command)
+        assert shlex.split(argv[-1]) == command
 
 
 class TestNativeSrun:
@@ -317,6 +325,7 @@ class TestSshFallback:
         assert len(started) == 2
 
         argv0, info0 = started[0]
+        argv0 = _remote_words(argv0)
         assert info0["node"] == "tri0002"
         # Step-local ids among launched workers (same as native ``srun -x main``).
         assert "SLURM_NODEID=0" in argv0
@@ -325,8 +334,14 @@ class TestSshFallback:
         assert argv0[-2:] == ["benchrun", "main.py"]
 
         argv1, info1 = started[1]
+        argv1 = _remote_words(argv1)
         assert info1["node"] == "tri0003"
         assert "SLURM_NODEID=1" in argv1
+
+
+def _remote_words(argv: list[str]) -> list[str]:
+    """Split the quoted remote command (last ssh argv item) back into words."""
+    return argv[:-1] + shlex.split(argv[-1])
 
 
 def _parse_env_assignments(argv: list[str]) -> dict[str, str]:
@@ -477,6 +492,7 @@ class TestBenchrunThroughSrun:
 
         worker_ranks = []
         for argv, info in started:
+            argv = _remote_words(argv)
             env = _parse_env_assignments(argv)
             assert "SLURM_NODEID" in env
             bench_argv = _benchrun_argv_from_remote(argv)

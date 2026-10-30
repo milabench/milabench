@@ -33,6 +33,8 @@ class InstallArgs:
     index_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     platform_constraint_file: Path | None = None
+    # uv --override file dropping ``[backend] exclude`` packages
+    override_file: Path | None = None
     _temp_files: list[Path] = field(default_factory=list, repr=False)
 
     def as_pip_args(self) -> list[str]:
@@ -43,6 +45,8 @@ class InstallArgs:
             args.extend(["-c", str(self.platform_constraint_file)])
         if self.constraint_file and self.constraint_file.exists():
             args.extend(["-c", str(self.constraint_file)])
+        if self.override_file and self.override_file.exists():
+            args.extend(["--override", str(self.override_file)])
         args.extend(self.index_args)
         return args
 
@@ -186,10 +190,25 @@ def install_args(
     if vllm_mapping is not None:
         _append_vllm_index_args(index_args, vllm_mapping)
 
+    override_file = None
+    override_lines = platform_config.get_backend(backend).exclude_overrides()
+    if override_lines:
+        temp_ovr = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            prefix=f"milabench-{benchmark_path.name}-overrides-",
+            delete=False,
+        )
+        temp_ovr.write("\n".join(override_lines) + "\n")
+        temp_ovr.close()
+        override_file = Path(temp_ovr.name)
+        temp_files.append(override_file)
+
     return InstallArgs(
         requirements_file=temp_req_path,
         constraint_file=constraint_file,
         platform_constraint_file=platform_constraint_file,
+        override_file=override_file,
         index_args=index_args,
         _temp_files=temp_files,
     )

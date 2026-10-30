@@ -117,6 +117,7 @@ class PlatformConfig:
         Also injects derived variables:
           - cuda_major: first 2 chars of cuda version (e.g. "130" → "13", "126" → "12")
           - torch_short: major.minor of torch (e.g. "2.10.0" → "2.10")
+          - rocm_major: major of rocm (e.g. "7.2" → "7", "10.0" → "10")
 
         Explicit ``vllm=...`` overrides are rejected; vLLM is selected by the
         exact ``(backend, backend_version, torch)`` mapping in platforms.toml.
@@ -134,6 +135,9 @@ class PlatformConfig:
         # Derived variables
         if "cuda" in resolved and "cuda_major" not in resolved:
             resolved["cuda_major"] = resolved["cuda"][:2]
+
+        if "rocm" in resolved and "rocm_major" not in resolved:
+            resolved["rocm_major"] = resolved["rocm"].split(".")[0]
 
         # torch_short: major.minor for release tags (2.10.0 → 2.10)
         if "torch" in resolved and "torch_short" not in resolved:
@@ -273,6 +277,13 @@ class BackendConfig:
     overrides: dict[str, OverrideConfig] = field(default_factory=dict)
     # Vendor / hardware pip packages from ``[backend] requires`` (e.g. nvidia-ml-py).
     requires: list[str] = field(default_factory=list)
+    # Packages dropped from the resolution (``[backend] exclude``), e.g. the
+    # CUDA ``triton`` that xgrammar requires, which clobbers triton-rocm.
+    exclude: list[str] = field(default_factory=list)
+
+    def exclude_overrides(self) -> list[str]:
+        """uv ``--override`` lines removing the excluded packages."""
+        return [f'{pkg} ; sys_platform == "never"' for pkg in self.exclude]
 
 
 @dataclass
@@ -502,6 +513,8 @@ def load_platform_config(
         if isinstance(raw_requires, str):
             raw_requires = [raw_requires]
         backend.requires = [str(x) for x in raw_requires]
+
+        backend.exclude = [str(x) for x in section.get("exclude", [])]
 
         # Constraints
         backend.constraints = section.get("constraints", {})

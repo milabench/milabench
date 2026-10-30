@@ -835,7 +835,7 @@ _rlhf:
     --logging_strategy: "no"
     --log_level: "critical"
     --dtype: bfloat16
-    --dataset-name: "trl-internal-testing/descriptiveness-sentiment-trl-style"
+    --dataset-name: "Milabench/descriptiveness-sentiment-trl-style"
     --dataset_train_split: "descriptiveness"
   
 rlhf-single:

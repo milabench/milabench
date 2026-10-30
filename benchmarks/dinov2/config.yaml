@@ -60,9 +60,9 @@ ibot:
   head_hidden_dim: 2048
 train:
   batch_size_per_gpu: 32
-  dataset_path: ImageNet:split=TRAIN:root=/data/output/rocm/results/data/FakeImageNet:extra=/data/output/rocm/results/data/FakeImageNet
-  output_dir: /home/amd/milabench/benchmarks/dinov2
-  saveckp_freq: 100
+  dataset_path: ImageNet:split=TRAIN:root=/mnt/milabench/results/data/FakeImageNet:extra=/mnt/milabench/results/data/FakeImageNet
+  output_dir: /home/amd/workspace/milabench/benchmarks/dinov2
+  saveckp_freq: 999999
   seed: 0
   num_workers: 10
   OFFICIAL_EPOCH_LENGTH: 1250

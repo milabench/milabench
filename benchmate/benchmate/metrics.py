@@ -666,14 +666,14 @@ class TimedIterator:
 
     def _push_time_steps(self):
         for event in self.events:
+            # every rank must call _make_rate: the global batch size is a
+            # dist.reduce, and skipping it on rank != 0 deadlocks rank 0
+            rate, elapsed = self._make_rate(event)
+            self.last_time += elapsed
             if self.rank is None or self.rank == 0:
-                rate, elapsed = self._make_rate(event)
-                self.last_time += elapsed
                 self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
             else:
-                rate, elapsed = self._make_rate(event, global_batch_size=False)
-                self.last_time += elapsed
-                self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+                self.ranked_log(rate=event.batch_size / elapsed, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
            
         self.total_obs += len(self.events)
         self.events = []

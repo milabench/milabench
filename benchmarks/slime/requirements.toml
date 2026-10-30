@@ -24,19 +24,16 @@ dependencies = [
     "IPython",
     "partial_json_parser",
     "sglang-router",
-    # the SGLang server process (GRPO entries) also imports these; sglang-kernel is its CUDA ops wheel
+    # the SGLang server process (GRPO entries) also imports these; sglang-kernel is in [cuda]
     "uvloop",
     "torchvision",
     "sentencepiece",
     "compressed-tensors",
     "gguf",
     "openai",
-    "xgrammar==0.2.7",
+    "xgrammar>=0.2.7",
     "soundfile",
     "python-multipart",
-    "sglang-kernel==0.4.7",
-    # flashinfer is imported by sglang at module load on CUDA (fp8_utils); installed --no-deps by benchfile.py
-    "nvidia-ml-py",
     "tabulate",
     "apache-tvm-ffi>=0.1.6,<0.2,!=0.1.8,!=0.1.8.post0",
     "uvicorn",
@@ -45,7 +42,12 @@ dependencies = [
 ]
 
 [cuda]
-dependencies = []
+dependencies = [
+    # SGLang CUDA ops wheel; pins torch==2.13.0 exactly
+    "sglang-kernel==0.4.7",
+    # flashinfer is imported by sglang at module load on CUDA (fp8_utils); installed --no-deps by benchfile.py
+    "nvidia-ml-py",
+]
 
 [rocm]
 dependencies = []

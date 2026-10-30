@@ -5,7 +5,7 @@ dependencies = [
     "PyYAML",
     "argklass",
     "fairscale",
-    "torchtune @ git+https://github.com/meta-pytorch/torchtune.git@50a2b8f",
+    "torchtune @ git+https://github.com/meta-pytorch/torchtune.git@bd2a0fc7",
     "accelerate",
     "transformers",
     "torchvision",

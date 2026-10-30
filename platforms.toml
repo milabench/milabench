@@ -24,11 +24,13 @@ cpu = "0"
 # does not list it in build-system.requires. uv then fails unless click is
 # already in the venv and we install with --no-build-isolation.
 #
+# pybind11: megatron-core (megatron, slime) imports it in setup.py.
+#
 # Only used by the TOML-based install path (MILABENCH_USE_TOML_DEPS=1); the
 # legacy requirements-file path falls back to pack.py's own hardcoded default
 # instead of loading platforms.toml at all.
 [build]
-requires = ["setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", "click"]
+requires = ["setuptools", "wheel", "poetry", "uv", "flit_core", "maturin", "hatchling", "click", "pybind11"]
 
 # ─── Pin Discovery ────────────────────────────────────────────────────────────
 # At pin time, milabench fetches the torch wheel index and discovers which
@@ -84,6 +86,10 @@ pydantic = ">=2,<3"
 
 [rocm]
 requires = []
+# Dropped from the resolution (uv --override with a never-true marker):
+# xgrammar requires `triton` on linux/x86_64, which resolves to the CUDA build
+# from PyPI and overwrites triton-rocm's `triton` module (import segfaults).
+exclude = ["triton"]
 
 [rocm.indexes]
 index-url = "https://pypi.org/simple"
@@ -94,6 +100,9 @@ extra-index-url = [
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-rocm{rocm}",
+    # Locally built milabench/wheels (WHEELS_DIR=$MILABENCH_WHEELS_DIR/torch<X.Y>-rocm<X.Y>);
+    # skipped when unset or missing. Use $VAR, not ${VAR}: the entry goes through str.format.
+    "$MILABENCH_WHEELS_DIR/torch{torch_short}-rocm{rocm}",
 ]
 [rocm.constraints]
 voir = ">=0.2.23"
@@ -264,3 +273,6 @@ pydantic = ">=2,<3"
 # milabench wheel for pytorch.org torch 2.12 + rocm7.2 (no official wheels.vllm.ai match)
 "2.12.0,7.2" = { version = "0.18.1+rocm7.2", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.12-rocm7.2" }
 "2.12.1,7.2" = { version = "0.18.1+rocm7.2", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.12-rocm7.2" }
+
+# milabench wheel for pytorch.org torch 2.15 + rocm10.0 (vLLM 0.32.0 built with its torch pin stripped)
+"2.15.0,10.0" = { version = "0.32.0+rocm10.0", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.15-rocm10.0" }
