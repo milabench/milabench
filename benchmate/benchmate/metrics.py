@@ -574,16 +574,13 @@ class TimedIterator:
             self._push_total_time_elapsed()
             self.earlystop()
 
-    def _make_rate(self, event: TimedEvent, global_batch_size=True):
+    def _make_rate(self, event: TimedEvent):
         event.end.synchronize()
         sync(self.device)
 
         elapsed = (event.elapsed_time()) / self.unit
 
-        if global_batch_size:
-            bs = self.batch_size(event.batch_size)
-        else:
-            bs = event.batch_size
+        bs = self.batch_size(event.batch_size)
 
         rate = bs / elapsed
 
@@ -665,15 +662,14 @@ class TimedIterator:
 
     def _push_time_steps(self):
         for event in self.events:
+            rate, elapsed = self._make_rate(event)
+            self.last_time += elapsed
+
             if self.rank is None or self.rank == 0:
-                rate, elapsed = self._make_rate(event)
-                self.last_time += elapsed
                 self.log_rate(rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
             else:
-                rate, elapsed = self._make_rate(event, global_batch_size=False)
-                self.last_time += elapsed
-                self.ranked_log(rate=rate, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
-           
+                self.ranked_log(rate=event.batch_size / elapsed, time=self.last_time, elapsed=elapsed, batch_id=event.batch_id, schedule_time=event.cpu_timer)
+
         self.total_obs += len(self.events)
         self.events = []
 
