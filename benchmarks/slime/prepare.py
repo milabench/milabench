@@ -53,11 +53,16 @@ def prepare_model(cfg):
     )
     # >1 spreads the layers over the GPUs (the converter makes pipeline size = world size), needed for big models
     nproc = os.environ.get("SLIME_CONVERT_NPROC") or str(cfg["model"].get("convert_nproc", 1))
+    import torch
+
+    # the converter asserts it on AMD GPUs
+    rocm = ["--use-cpu-initialization"] if torch.version.hip else []
     run(
         [
             "torchrun", f"--nproc-per-node={nproc}",
             str(common.slime_src() / "tools" / "convert_hf_to_torch_dist.py"),
             *common.model_argv(),
+            *rocm,
             "--hf-checkpoint", str(hf_dir),
             "--save", str(torch_dist),
         ],
