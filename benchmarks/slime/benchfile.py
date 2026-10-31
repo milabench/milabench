@@ -153,7 +153,7 @@ class Slime(Package):
         await self.message("sglang patches applied:", applied, "skipped (not needed or do not apply):", skipped)
         if rocm:
             accel = "rocm" + str(self.config.get("version_overrides", {}).get("rocm", "10.0"))
-            await self.pip_install(ROCM_TE_REQUIREMENT.format(accel=accel), ROCM_TMS_REQUIREMENT)
+            await self.pip_install(*self.index_args("rocm"), ROCM_TE_REQUIREMENT.format(accel=accel), ROCM_TMS_REQUIREMENT)
             self.mark_installed(done)
             return
         if os.environ.get("SLIME_DOWNLOAD_ONLY"):
@@ -165,6 +165,13 @@ class Slime(Package):
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
         self.mark_installed(done)
+
+    def index_args(self, backend: str) -> list[str]:
+        # platforms.toml's indexes and find-links (milabench/wheels releases, $MILABENCH_WHEELS_DIR): pip_install only
+        # passes them to the requirements install, not to a direct `pip_install(<wheel>)`
+        from milabench.dependencies import get_index_args, load_platform_config
+
+        return get_index_args(load_platform_config(), backend, self.config.get("version_overrides", {}))
 
     def mark_installed(self, done: Path):
         # pip_install does not raise on failure: only skip later installs once TE and torch_memory_saver are there

@@ -62,11 +62,27 @@ def wait_ray_ready(ray_bin: str, address: str, timeout_s: int) -> bool:
     return False
 
 
+def ip_towards(head_ip: str) -> str:
+    """This node's address on the interface that reaches the head (no packet is sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect((head_ip, 9))
+        return s.getsockname()[0]
+
+
+def set_vllm_host_ip(ip: str) -> None:
+    # vLLM's get_ip() follows the default route (the public interface on multi-homed nodes), not the address Ray
+    # knows the node by: the driver then finds no worker on its node and maps ranks to the wrong GPUs. Ray actors
+    # inherit it from `ray start`; vLLM never copies it between nodes (WORKER_SPECIFIC_ENV_VARS). Always this node's own
+    # address, even when the launcher passed the head's.
+    os.environ["VLLM_HOST_IP"] = ip
+
+
 def run_head(
     ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
     extra_args: list[str] = (),
 ) -> int:
     print(f"[rayrun] this node ({head_ip}) is head, starting ray --block", flush=True)
+    set_vllm_host_ip(head_ip)
     if os.path.exists(marker):
         os.remove(marker)
 
@@ -110,6 +126,7 @@ def run_worker(
     waited = int(time.time() - start)
 
     print(f"[rayrun] head ready after {waited}s, joining {address} --block", flush=True)
+    set_vllm_host_ip(ip_towards(head_ip))
     cmd = [ray_bin, "start", f"--address={head_ip}:{port}", *extra_args, "--block"]
     print("[rayrun] +", " ".join(cmd), flush=True)
     # Nothing runs after this, so replace this process with ray's instead of

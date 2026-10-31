@@ -3,6 +3,7 @@ import os
 from milabench.pack import Package
 import milabench.commands as cmd
 from milabench.commands.ray import RayCluster
+from milabench.commands.srun import _main_node
 from milabench.merge import merge
 from milabench.utils import assemble_options
 
@@ -114,6 +115,8 @@ class VLLM(Package):
                 for name in ("ATOM_DISABLE_VLLM_PLUGIN", "XDG_CACHE_HOME", "TORCH_HOME", "GLOO_SOCKET_IFNAME")
                 if name in env
             )
+            # the engine runs on the main node: same address as the Ray head (rayrun sets it for the actors)
+            env.setdefault("VLLM_HOST_IP", cmd.node_address(_main_node(self.config)))
 
         return env
 
