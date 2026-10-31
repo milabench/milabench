@@ -162,6 +162,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.extra_ray_args[:1] == ["--"]:
         args.extra_ray_args = args.extra_ray_args[1:]
 
+    # A failed run leaves this node's raylet up (its teardown `ray stop` never ran); it then joins the next
+    # cluster too, which counts its GPUs twice and can never place a full-size placement group.
+    subprocess.run([args.ray_bin, "stop", "--force"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     if is_head(args.head_hostname):
         return run_head(
             args.ray_bin, args.head_ip, args.port, args.ready_marker, args.timeout,
