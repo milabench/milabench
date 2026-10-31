@@ -49,6 +49,11 @@ FLASHINFER_REQUIREMENT = "flashinfer-python==0.6.18"
 TE_REQUIREMENT = "transformer-engine[pytorch]==2.18.0"
 # slime's Dockerfile builds it from git (not on PyPI), after torch
 TMS_REQUIREMENT = "torch_memory_saver @ git+https://github.com/zhuzilin/torch_memory_saver.git@bdab8c55f490a00a746ec34e301391617f5ca878"
+# ROCm: TE comes from ROCm's fork and both are prebuilt by milabench/wheels (build-transformer-engine.sh,
+# build-torch-memory-saver.sh with GPU_BACKEND=rocm), found through the rocm find-links. flashinfer and
+# the nvcc toolkit wheels are CUDA-only and skipped.
+ROCM_TE_REQUIREMENT = "transformer_engine==2.18.0+{accel}"
+ROCM_TMS_REQUIREMENT = "torch_memory_saver==0.0.9.post1+slime"
 BUILD_REQUIRES = ("setuptools", "wheel", "pybind11", "ninja", "packaging", "numpy", "scikit-build-core")
 
 
@@ -131,18 +136,26 @@ class Slime(Package):
         done = Path(str(self.dirs.venv)) / ".slime_installed"
         if done.exists():
             return
+        rocm = self.is_rocm()
         # megatron-core / transformer-engine are built with --no-build-isolation
         # and their setup.py import these at metadata time
         await self.pip_install(*BUILD_REQUIRES, build_isolation=True)
-        # TE and torch_memory_saver compile CUDA code: they need nvcc and the toolkit headers
-        await self.pip_install(*self.toolkit_requirements(), build_isolation=True)
-        self.link_unversioned_libs()
+        if not rocm:
+            # TE and torch_memory_saver compile CUDA code: they need nvcc and the toolkit headers
+            await self.pip_install(*self.toolkit_requirements(), build_isolation=True)
+            self.link_unversioned_libs()
         await super().install()
         # TE compiles against the installed torch/CUDA, so it needs torch to be
         # importable already: it cannot be part of the batch that installs torch
-        await self.pip_install("--no-deps", SGLANG_REQUIREMENT, FLASHINFER_REQUIREMENT, build_isolation=True)
+        sglang = [SGLANG_REQUIREMENT] if rocm else [SGLANG_REQUIREMENT, FLASHINFER_REQUIREMENT]
+        await self.pip_install("--no-deps", *sglang, build_isolation=True)
         applied, skipped = self.patch_sglang()
         await self.message("sglang patches applied:", applied, "skipped (not needed or do not apply):", skipped)
+        if rocm:
+            accel = "rocm" + str(self.config.get("version_overrides", {}).get("rocm", "10.0"))
+            await self.pip_install(ROCM_TE_REQUIREMENT.format(accel=accel), ROCM_TMS_REQUIREMENT)
+            done.write_text("ok")
+            return
         if os.environ.get("SLIME_DOWNLOAD_ONLY"):
             # login node (no GPU/libcuda): TE and torch_memory_saver cannot be built, and `prepare` needs neither.
             # No marker: a later install on a GPU node still builds them.
@@ -152,6 +165,9 @@ class Slime(Package):
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
         done.write_text("ok")
+
+    def is_rocm(self) -> bool:
+        return self.config.get("system", {}).get("arch") == "rocm"
 
     @property
     def num_machines(self) -> int:
@@ -176,6 +192,12 @@ class Slime(Package):
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         if self.uses_ray_cluster():
             env["RAY_ADDRESS"] = "auto"
+        if self.is_rocm():
+            # from slime's docker/Dockerfile.rocm_MI350-5
+            env.setdefault("HIP_FORCE_DEV_KERNARG", "1")
+            env.setdefault("HSA_NO_SCRATCH_RECLAIM", "1")
+            env.setdefault("SGLANG_USE_AITER", "1")
+            return env
         self.add_nvidia_wheel_paths(env)
         # torch_memory_saver's build picks its CUDA flavour from this ("130" -> 13)
         cuda = str(self.config.get("version_overrides", {}).get("cuda", ""))

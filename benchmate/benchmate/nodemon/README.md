@@ -38,7 +38,7 @@ All values are node-wide. Nodes are assumed to be used by one job at a time, so 
 
 ## Running it
 
-`nodemon` only runs when it has an output directory, from `BENCHMATE_NODEMON_DIR` or `--out`.  The directory must not already contain `nodemon` results, so name it after the run and give every attempt (a relaunch, a second bench of the same job) its own run name.
+`nodemon` only runs when it has an output directory: `--out`, else `BENCHMATE_NODEMON_DIR` (`0`, `off` or empty disables it), else, inside a milabench bench, the run folder: `$MILABENCH_DIR_RUN/nodemon/<bench>.<n>` (same stem as the bench's `.data` file). Outside milabench, with neither set, it does not run.  The directory must not already contain `nodemon` results, so give every attempt (a relaunch, a second bench of the same job) its own run name.
 
 ```bash
 export BENCHMATE_NODEMON_DIR=$SCRATCH/nodemon/$MILABENCH_RUN_NAME

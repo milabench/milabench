@@ -74,9 +74,28 @@ def vllm_request_metrics_enabled(default: bool = True) -> bool:
 
 
 def nodemon_dir() -> Path | None:
-    """Where the node sampler writes, from BENCHMATE_NODEMON_DIR; None when unset, which disables it."""
+    """Where the node sampler writes; None disables it.
+
+    ``BENCHMATE_NODEMON_DIR`` when set (``0``, ``off`` or empty disables it).
+    Otherwise, under milabench, the run's folder:
+    ``$MILABENCH_DIR_RUN/nodemon/<bench>.<n>`` (one directory per bench
+    execution, since the sampler refuses a directory holding earlier results).
+    Outside milabench (no run folder): None.
+    """
     value = os.getenv("BENCHMATE_NODEMON_DIR")
-    return Path(value) if value else None
+    if value is not None:
+        return None if value.strip().lower() in ("", "0", "off", "false") else Path(value)
+
+    run_dir = os.getenv("MILABENCH_DIR_RUN")
+    if not run_dir:
+        return None
+    try:
+        config = json.loads(os.getenv("MILABENCH_CONFIG") or "{}")
+    except json.JSONDecodeError:
+        config = {}
+    # Same stem as the bench's .data file; workers carry an extra "nolog" tag.
+    tag = [t for t in config.get("tag") or [config.get("name") or "bench"] if t != "nolog"]
+    return Path(run_dir) / "nodemon" / ".".join(str(t) for t in tag)
 
 
 poll_interval_default = get_poll_interval(0.25)

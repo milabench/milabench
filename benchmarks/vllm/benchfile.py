@@ -90,7 +90,30 @@ class VLLM(Package):
         if self._arch() == "rocm":
             env["VLLM_TARGET_DEVICE"] = "rocm"
             env["VLLM_DISABLE_FLASHINFER"] = "1"
-            env["FLASH_ATTENTION_TRITON_AMD_ENABLE"] = "TRUE"
+            # Not forcing FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE: vLLM only wants it
+            # on RDNA, and on CDNA it switches the installed (CK) flash-attn to its
+            # Triton backend, whose autotune keys triton >= 3.8 rejects at import.
+            # Export it on RDNA; the server inherits the environment.
+            if self.server_backend() == "atom":
+                # flydsl (aiter's kernel DSL) serializes through MLIR's ROCDL
+                # target, which needs a ROCm tree with amdgcn/bitcode and
+                # llvm/bin/ld.lld; the torch rocm-sdk wheels lay theirs out differently
+                # (an empty ROCM_PATH, as exported by env.sh, counts as unset)
+                env["ROCM_PATH"] = env.get("ROCM_PATH") or os.environ.get("ROCM_PATH") or "/opt/rocm"
+            else:
+                # atom registers vLLM platform/model plugins that swap vLLM's
+                # own models for ATOM's whenever atom is installed
+                env["ATOM_DISABLE_VLLM_PLUGIN"] = "1"
+
+        if self.uses_ray():
+            # vLLM only forwards VLLM_*, NCCL_*, HF_*, ... to its Ray actors, and
+            # `ray start` on the workers (over ssh) does not see this env either:
+            # without it, worker nodes load ATOM's model while the head loads vLLM's
+            env["VLLM_RAY_EXTRA_ENV_VARS_TO_COPY"] = ",".join(
+                name
+                for name in ("ATOM_DISABLE_VLLM_PLUGIN", "XDG_CACHE_HOME", "TORCH_HOME")
+                if name in env
+            )
 
         return env
 

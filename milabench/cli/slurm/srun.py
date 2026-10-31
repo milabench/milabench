@@ -212,6 +212,7 @@ def run_on_nodes(
     sshkey: Optional[str] = None,
     *,
     all_nodes: list[dict] | None = None,
+    env: dict | None = None,
 ) -> int:
     """SSH to each system node and run *command* via voir's Multiplexer.
 
@@ -219,6 +220,10 @@ def run_on_nodes(
     ``SLURM_NNODES`` from the full system list when provided. Step-local ids match
     native ``srun -x <main>`` numbering so ``benchrun`` can map them to global
     ranks via ``SLURM_NODEID + 1``.
+
+    *env* (``system.env``) is forwarded explicitly: native srun exports the
+    caller's environment, but a non-interactive ssh shell does not (e.g. NCCL_*
+    set in ~/.bashrc after the interactive guard), and cross-node RCCL hangs.
     """
     rank_source = all_nodes or nodes
     nnodes = len(rank_source)
@@ -228,6 +233,7 @@ def run_on_nodes(
         label = node.get("name") or node["ip"]
         remote_cmd = [
             "env",
+            *(f"{k}={v}" for k, v in (env or {}).items()),
             f"SLURM_NODEID={step_id}",
             f"SLURM_PROCID={step_id}",
             f"SLURM_NNODES={nnodes}",
@@ -303,7 +309,11 @@ class SlurmRun(Command):
 
         print(f"[srun] {' '.join(command)}", file=sys.stderr, flush=True)
         return run_on_nodes(
-            nodes, command, sshkey=system.get("sshkey"), all_nodes=all_nodes
+            nodes,
+            command,
+            sshkey=system.get("sshkey"),
+            all_nodes=all_nodes,
+            env=system.get("env"),
         )
 
 

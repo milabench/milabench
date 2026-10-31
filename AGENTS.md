@@ -1,4 +1,19 @@
 
+Guides
+------
+
+Read only the guides that match the task; each one is self-contained.
+
+| Read | When |
+|---|---|
+| [.agents/running.md](.agents/running.md) | Installing, preparing, running benchmarks, checking results, what not to do during a run |
+| [.agents/multinode.md](.agents/multinode.md) | `*-nodes` benchmarks, the system file, syncing workers, Ray, cleaning up leftovers (`milabench tools warden`) |
+| [.agents/debugging.md](.agents/debugging.md) | A benchmark failed, hung, or reports a strange rate; where the logs are |
+| [.agents/wheels.md](.agents/wheels.md) | Adding dependencies, pinning a torch/accelerator combo, building GPU extension wheels |
+| [.agents/rocm.md](.agents/rocm.md) | Anything on AMD GPUs: supported stacks, amdsmi, vLLM vs ATOM |
+| [.agents/dependencies.md](.agents/dependencies.md) | The fix belongs in voir, torchcompat, cantilever, argklass or wheels; how a change reaches the benchmarks |
+
+Never print `env.sh`: it holds HF and W&B tokens.
 
 
 Code

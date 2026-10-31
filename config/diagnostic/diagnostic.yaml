@@ -1,5 +1,6 @@
 include:
   - ../_defaults.yaml
+  - ../synthetic.yaml
 
 # Dummy torchrun + srun multi-node smoke test.
 # Main keeps metrics locally; workers are nolog via TorchrunSrun.
@@ -36,6 +37,172 @@ torchsrun:
     --repeats: 30
     --warmup: 5
     --size-mb: 64
+
+# -----------------------------------------------------------------------------
+# Interconnect bandwidth (benchmarks/diagnostic/netbench), one entry per kind of
+# link. Each entry scores only its headline numbers (GB/s, see HEADLINE in
+# main.py); every other measurement is still in the .data file as "detail".
+#
+#   net-host        CPU <-> GPU        per-GPU H2D/D2H pinned, all GPUs at once
+#   net-p2p         GPU <-> GPU        send/recv, every pair of a node
+#   net-coll        GPUs of a node     collectives busbw (rccl-tests style)
+#   net-inter       GPU <-> GPU        send/recv GPU i <-> GPU i across nodes, per rail
+#   net-coll-nodes  GPUs of all nodes  collectives busbw across nodes
+#   net-net         node <-> node      ib_write_bw per RDMA NIC (+ TCP as detail)
+#   net-latency       small messages   all_reduce/all_gather/sendrecv time in us at 8 B
+#   net-latency-nodes small messages   same across nodes (lower is better; 8 B .. 1 MiB as detail)
+# -----------------------------------------------------------------------------
+_net:
+  inherits: _defaults
+  definition: ../../benchmarks/diagnostic/netbench
+  install_group: torch
+  weight: 0.0
+  max_duration: 600
+  num_machines: 1
+  enabled: true
+  tags:
+    - diagnostic
+    - network
+    - nobatch
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --size-mb: 256
+    --coll-sizes-mb: "1,16,256,1024"
+    --repeats: 20
+    --warmup: 5
+
+# tags are merged along inherits: each template adds its one monitor tag
+_net_node:
+  inherits: _net
+  tags:
+    - multigpu
+
+_net_nodes:
+  inherits: _net
+  num_machines: 2
+  tags:
+    - multinode
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+
+net-host:
+  inherits: _net_node
+  argv:
+    --tests: host
+
+net-p2p:
+  inherits: _net_node
+  argv:
+    --tests: p2p
+
+net-coll:
+  inherits: _net_node
+  argv:
+    --tests: coll
+    --coll-groups: intra
+
+net-inter:
+  inherits: _net_nodes
+  argv:
+    --tests: inter
+
+net-coll-nodes:
+  inherits: _net_nodes
+  argv:
+    --tests: coll
+    --coll-groups: world
+
+net-net:
+  inherits: _net_nodes
+  argv:
+    --tests: net
+
+net-latency:
+  inherits: _net_node
+  argv:
+    --tests: latency
+    --coll-groups: intra
+
+net-latency-nodes:
+  inherits: _net_nodes
+  argv:
+    --tests: latency
+    --coll-groups: world
+
+# -----------------------------------------------------------------------------
+# GPU memory bandwidth (netbench "hbm" test): copy / read / write / triad on every
+# GPU at once; scored on triad GB/s per GPU (counts read + write bytes).
+# -----------------------------------------------------------------------------
+gpu-hbm:
+  inherits: _defaults
+  definition: ../../benchmarks/diagnostic/netbench
+  install_group: torch
+  weight: 0.0
+  max_duration: 300
+  num_machines: 1
+  enabled: true
+  tags:
+    - diagnostic
+    - multigpu
+    - nobatch
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --tests: hbm
+    --hbm-size-mb: 4096
+    --repeats: 20
+    --warmup: 5
+
+# -----------------------------------------------------------------------------
+# Storage throughput of $MILABENCH_BASE/data (benchmarks/diagnostic/storage).
+# O_DIRECT so the page cache does not hide the disks; GB/s across all workers.
+# Read files are created on first use in data/storage and kept.
+#
+#   storage-write   sequential write, one 2 GiB file per worker
+#   storage-read    sequential read, one 2 GiB file per worker
+#   storage-small   200k x 128 KiB files (dataset-like), files/s as detail
+# -----------------------------------------------------------------------------
+_storage:
+  inherits: _defaults
+  definition: ../../benchmarks/diagnostic/storage
+  install_group: torch
+  weight: 0.0
+  max_duration: 600
+  num_machines: 1
+  enabled: true
+  tags:
+    - diagnostic
+    - storage
+    - multigpu
+    - nobatch
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --workers: 32
+    --file-gb: 2
+    --block-kb: 4096
+    --small-kb: 128
+    --small-count: 200000
+    --repeats: 10
+
+storage-write:
+  inherits: _storage
+  argv:
+    --tests: write
+
+storage-read:
+  inherits: _storage
+  argv:
+    --tests: read
+
+storage-small:
+  inherits: _storage
+  argv:
+    --tests: small
 
 # -----------------------------------------------------------------------------
 # Ray cluster placement smoke test (independent of vllm: vllm's own

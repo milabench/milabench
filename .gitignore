@@ -86,3 +86,5 @@ logs/
 wandb/
 
 benchmarks/**/requirements.*.txt
+dependencies/
+

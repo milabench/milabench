@@ -218,7 +218,7 @@ def with_wandb(log):
 
 
 def start_nodemon(cfg: dict):
-    """Start the node sampler beside the training processes, when ``BENCHMATE_NODEMON_DIR`` is set.
+    """Start the node sampler beside the training processes (output: ``benchmate.toggles.nodemon_dir``).
 
     Every rank calls this: the first on each host takes the lock and samples, the
     others return at once. It runs before Megatron is imported, so model init and

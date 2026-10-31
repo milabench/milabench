@@ -27,7 +27,7 @@ Frozen parameters are set before Megatron wraps the model, so they get no gradie
 
 ## Node telemetry
 
-With `BENCHMATE_NODEMON_DIR` set, `main.py` starts `benchmate.nodemon` from every rank before Megatron is imported,
+`main.py` starts `benchmate.nodemon` (output in the run folder, `runs/<run>/nodemon/<bench>.<n>`, or `BENCHMATE_NODEMON_DIR`; `BENCHMATE_NODEMON_DIR=0` disables it) from every rank before Megatron is imported,
 so GPU clocks, NVLink, InfiniBand, CPU clocks and host memory are sampled through model init and training. Only the
 first rank on each host collects (`nodes/<host>.*.tsv` plus `<host>.status.json` under that directory), and the
 sampler is stopped when the bench ends. Unset, nothing is sampled. One run per directory: a second bench pointed at

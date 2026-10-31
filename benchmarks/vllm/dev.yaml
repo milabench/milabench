@@ -211,17 +211,32 @@ vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
     - moe
     - mxfp4
     - multinode
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+    - "len(nodes) >= ${..num_machines}"
   url: https://huggingface.co/moonshotai/Kimi-K3
   client:
     argv:
       --model: moonshotai/Kimi-K3
+      --trust-remote-code: true
+      # same load as serving-moe-kimi-k3-mxfp4-gpus, to compare 1 node vs N
+      --num-prompts: 64
+      --max-concurrency: 64
   server:
     argv:
       moonshotai/Kimi-K3: true
       --trust-remote-code: true
-      --enable-auto-tool-choice: true
-      --tool-call-parser: kimi_k3
-      --reasoning-parser: kimi_k3
+      # TP inside a node (xGMI/NVLink), PP across nodes: only the activations
+      # between stages cross the network, not every layer's all-reduce
+      --tensor-parallel-size: "{gpu_count}"
+      --pipeline-parallel-size: "{num_machines}"
+      # text-only benchmark: skip the vision tower and its profiling memory
+      --language-model-only: true
+      # default context is 1M tokens
+      --max-model-len: 16384
+      --max-num-seqs: 64
+      --max-num-batched-tokens: 16384
 
 vllm-moe-glm52-744b-bf16-nodes:
   inherits: _vllm_nodes
@@ -543,9 +558,20 @@ serving-qwen38-flash-next-fp8-gpus:
   server:
     argv:
       Qwen/Qwen3.8-Flash-Next-FP8: true
-      --tensor-parallel-size: "{gpu_count}"
+      # moe/shared_expert_intermediate_size = 640: TP=8 shards it to 80, not a
+      # multiple of the FP8 block (128). Replicate attention, split the experts.
+      --tensor-parallel-size: 1
+      --data-parallel-size: "{gpu_count}"
+      --enable-expert-parallel: true
       --max-model-len: 262144
       --kv-cache-dtype: fp8
       --enable-auto-tool-choice: true
       --tool-call-parser: qwen3_coder
       --reasoning-parser: qwen3
+
+  variants:
+    rocm:
+      server:
+        argv:
+          # vLLM's AMD Qwen4Exp QSA attention requires a BF16 main KV cache
+          --kv-cache-dtype: auto

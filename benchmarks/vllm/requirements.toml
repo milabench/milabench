@@ -31,8 +31,10 @@ dependencies = [
     # ATOM serving (serving-* benchmarks): install atom + amd-aiter wheels from the
     # milabench ROCm release (build with `make GPU_BACKEND=rocm atom`).
     # MoE EP may also need amd_mori.
-    # "atom" is disabled until that wheel exists: PyPI's `atom` is an unrelated package
-    "amd-aiter",
+    # PyPI's `atom` is an unrelated package (0.3+); the bound keeps us on ROCm's ATOM.
+    # ATOM >= 0.1.6 needs amd-aiter >= 0.1.23 (aiter.topk_select).
+    "atom>=0.1.8,<0.2",
+    "amd-aiter>=0.1.23",
 
     # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
     "torchcodec",

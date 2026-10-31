@@ -253,15 +253,16 @@ class TestSshFallback:
         monkeypatch.setattr(
             srun_mod,
             "_load_system",
-            lambda: {"nodes": NODES, "sshkey": None},
+            lambda: {"nodes": NODES, "sshkey": None, "env": {"NCCL_IB_HCA": "mlx5_0"}},
         )
 
         seen = {}
 
-        def fake_run_on_nodes(nodes, command, sshkey=None, *, all_nodes=None):
+        def fake_run_on_nodes(nodes, command, sshkey=None, *, all_nodes=None, env=None):
             seen["nodes"] = [n["name"] for n in nodes]
             seen["command"] = command
             seen["all_nodes"] = [n["name"] for n in all_nodes]
+            seen["env"] = env
             return 0
 
         monkeypatch.setattr(srun_mod, "run_on_nodes", fake_run_on_nodes)
@@ -275,6 +276,7 @@ class TestSshFallback:
         assert seen["nodes"] == ["tri0002", "tri0003"]
         assert seen["command"] == ["benchrun", "--nnodes=3"]
         assert seen["all_nodes"] == ["tri0001", "tri0002", "tri0003"]
+        assert seen["env"] == {"NCCL_IB_HCA": "mlx5_0"}
 
     def test_execute_missing_command(self, no_srun, monkeypatch):
         monkeypatch.setattr(
@@ -337,6 +339,30 @@ class TestSshFallback:
         argv1 = _remote_words(argv1)
         assert info1["node"] == "tri0003"
         assert "SLURM_NODEID=1" in argv1
+
+    def test_run_on_nodes_forwards_system_env(self, monkeypatch):
+        started = []
+
+        class FakeMP:
+            def __init__(self, timeout=None, constructor=None):
+                pass
+
+            def start(self, argv, info=None):
+                started.append(list(argv))
+
+            def __iter__(self):
+                return iter(())
+
+        monkeypatch.setattr(srun_mod, "Multiplexer", FakeMP)
+
+        env = {"NCCL_SOCKET_IFNAME": "eth1", "NCCL_PROTO": "^LL"}
+        run_on_nodes(NODES[1:2], ["benchrun", "main.py"], all_nodes=NODES, env=env)
+
+        words = _remote_words(started[0])
+        # ssh joins and re-parses the command: "^LL" must survive quoting
+        assert "NCCL_SOCKET_IFNAME=eth1" in words
+        assert "NCCL_PROTO=^LL" in words
+        assert words.index("NCCL_PROTO=^LL") < words.index("benchrun")
 
 
 def _remote_words(argv: list[str]) -> list[str]:
