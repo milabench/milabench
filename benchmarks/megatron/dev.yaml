@@ -144,6 +144,30 @@ megatron-glm5-unfrozen-16n:
     --optimizer-cpu-offload: true
     --use-precision-aware-optimizer: true
 
+# Everything trains on 2 nodes x 8 GPUs with 288 GB (MI355X) and 3 TB of host memory each. Not validated.
+# GPU: bf16 weights + bf16 grads ~3 TB, ~186 GB per GPU with EP8 x PP2 (39 layers per stage).
+# Host: the Adam state is offloaded at 6 B/param (fp16 master, bf16 moments) ~4.5 TB, ~2.2 TB per node
+# (fp32 master and moments would need ~9 TB).
+megatron-glm5-unfrozen-2n:
+  inherits: megatron-glm5-unfrozen-16n
+  num_machines: 2
+  max_duration: 3600
+  placement:
+    gpus_per_node: 8
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --global-batch-size: 16
+    --train-iters: 6
+    --pipeline-model-parallel-size: 2
+    --expert-model-parallel-size: 8
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --main-grads-dtype: bf16
+    --main-params-dtype: fp16
+    --exp-avg-dtype: bf16
+    --exp-avg-sq-dtype: bf16
+
 # Only the attention (MLA + DSA indexer) trains.
 megatron-glm5-attn-only-16n:
   inherits: _megatron_glm5
