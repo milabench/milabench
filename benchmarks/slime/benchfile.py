@@ -52,7 +52,7 @@ TMS_REQUIREMENT = "torch_memory_saver @ git+https://github.com/zhuzilin/torch_me
 # ROCm: TE comes from ROCm's fork and both are prebuilt by milabench/wheels (build-transformer-engine.sh,
 # build-torch-memory-saver.sh with GPU_BACKEND=rocm), found through the rocm find-links. flashinfer and
 # the nvcc toolkit wheels are CUDA-only and skipped.
-ROCM_TE_REQUIREMENT = "transformer_engine==2.18.0+{accel}"
+ROCM_TE_REQUIREMENT = "transformer_engine==2.18.0.post1+{accel}"
 ROCM_TMS_REQUIREMENT = "torch_memory_saver==0.0.9.post1+slime"
 BUILD_REQUIRES = ("setuptools", "wheel", "pybind11", "ninja", "packaging", "numpy", "scikit-build-core")
 

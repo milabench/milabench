@@ -50,7 +50,10 @@ dependencies = [
 ]
 
 [rocm]
-dependencies = []
+dependencies = [
+    # Transformer Engine's ROCm init sets ROCM_PATH from the SDK development package (rocm_sdk_devel)
+    "rocm[devel]",
+]
 
 [xpu]
 enabled = false
