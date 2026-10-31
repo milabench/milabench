@@ -97,16 +97,19 @@ def run_worker(
     ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
     extra_args: list[str] = (),
 ) -> int:
-    print(f"[rayrun] waiting for head marker at {marker}", flush=True)
-    waited = 0
-    while not os.path.exists(marker):
-        if waited >= timeout_s:
-            print(f"[rayrun] ERROR: head marker never appeared after {timeout_s}s", file=sys.stderr)
+    # The marker needs a filesystem shared with the head; without one (nodes with local disks, the venv
+    # rsynced by milabench) the head is ready once `ray status` reaches it.
+    address = f"{head_ip}:{port}"
+    print(f"[rayrun] waiting for head marker at {marker} or for {address} to answer", flush=True)
+    start = time.time()
+    while not os.path.exists(marker) and not wait_ray_ready(ray_bin, address, 0.1):
+        if time.time() - start >= timeout_s:
+            print(f"[rayrun] ERROR: head never became ready after {timeout_s}s", file=sys.stderr)
             return 1
         time.sleep(1)
-        waited += 1
+    waited = int(time.time() - start)
 
-    print(f"[rayrun] head marker seen after {waited}s, joining {head_ip}:{port} --block", flush=True)
+    print(f"[rayrun] head ready after {waited}s, joining {address} --block", flush=True)
     cmd = [ray_bin, "start", f"--address={head_ip}:{port}", *extra_args, "--block"]
     print("[rayrun] +", " ".join(cmd), flush=True)
     # Nothing runs after this, so replace this process with ray's instead of
@@ -123,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head-hostname", required=True, help="Head node hostname (for role detection)")
     parser.add_argument("--port", type=int, required=True, help="Ray GCS port")
     parser.add_argument(
-        "--ready-marker", required=True, help="Shared-filesystem path signaling head readiness"
+        "--ready-marker", required=True, help="Shared-filesystem path signaling head readiness (workers also poll the head with `ray status`)"
     )
     parser.add_argument(
         "--timeout", type=int, default=600, help="Seconds to wait for readiness (default: 600)"
