@@ -1,7 +1,7 @@
 # Native TorchTitan Qwen3.8-27B pre-training throughput benchmark.
 #
-#   milabench install --config config/torchtitan_native.yaml --select tt-qwen38-smoke
-#   milabench run     --config config/torchtitan_native.yaml --select tt-qwen38-smoke
+#   milabench install --config benchmarks/torchtitan/torchtitan_native.yaml --select tt-qwen38-smoke
+#   milabench run     --config benchmarks/torchtitan/torchtitan_native.yaml --select tt-qwen38-smoke
 #
 # Per-GPU settings (seq 4096, 3 sequences = 12,288 tokens per GPU per step, full
 # AC, compile regions, no CUDA graphs, FSDP over all GPUs) are identical in every
@@ -24,11 +24,11 @@
 # Results: one JSON record per run in {milabench_extra}/results.
 
 include:
-  - _defaults.yaml
+  - ../../config/_defaults.yaml
 
 _tt_native:
   inherits: _defaults
-  definition: ../benchmarks/torchtitan_native
+  definition: .
   enabled: true
   install_group: torchtitan_native
   install_variant: unpinned

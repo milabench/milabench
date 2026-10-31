@@ -258,10 +258,12 @@ def placement_block(hosts: list[str]) -> dict[str, Any]:
 
 def deviations() -> list[dict[str, str]]:
     d = RUN_DESCRIPTION
-    result = [
-        {"id": "mtp", "text": "MTP off"},
-        {"id": "text_only", "text": "text only (vision encoder removed)"},
-    ]
+    result = []
+    if d.get("model") == "qwen3_8":
+        result += [
+            {"id": "mtp", "text": "MTP off"},
+            {"id": "text_only", "text": "text only (vision encoder removed)"},
+        ]
     if d.get("n_layers") and d.get("n_layers_full") and d["n_layers"] < d["n_layers_full"]:
         result.append({"id": "truncated", "text": f"{d['n_layers']} of {d['n_layers_full']} layers"})
     if d.get("options", {}).get("dataset") == "random":
@@ -294,13 +296,12 @@ def set_wandb_env() -> None:
         config = {}
     run = run_block()
     name = run["run_tag"] or run["variant"]
-    tags = [run["cluster"], os.environ.get("TT_FAMILY"), run["campaign"]]
+    tags = [t for t in (run["cluster"], os.environ.get("TT_FAMILY"), run["campaign"]) if t]
     defaults = {
         "WANDB_PROJECT": os.environ.get("BENCHMATE_WANDB_PROJECT", "milabench"),
         "WANDB_RUN_GROUP": config.get("run_name"),
         "WANDB_RUN_JOB_TYPE": config.get("name"),
         "WANDB_RUN_NAME": name,
-        "WANDB_RUN_TAGS": ",".join(t for t in tags if t),
     }
     if wandb_all_ranks():
         # One run per rank: name it after its worker (rank zero-padded so names sort
@@ -311,9 +312,11 @@ def set_wandb_env() -> None:
         local_rank = os.environ.get("LOCAL_RANK", "0")
         host = socket.gethostname().split(".")[0]
         defaults["WANDB_RUN_NAME"] = f"{name or 'run'}-r{rank:05d}-{host}-gpu{local_rank}"
-        defaults["WANDB_RUN_TAGS"] += f",{host}"
+        tags.append(host)
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
+    # Comma-separated; an empty item fails wandb's settings validation.
+    defaults["WANDB_RUN_TAGS"] = ",".join(tags)
     for name, value in defaults.items():
         if value:
             os.environ.setdefault(name, str(value))
@@ -405,7 +408,8 @@ class TrainerInstrument:
         self._data_time_acc = 0.0
         self._data_times: list[float] = []
         self._local_tokens = 0
-        self._loss = None
+        # (step, loss averaged over all tokens of the step) from TorchTitan's logging steps
+        self._global_loss: tuple[int, float] | None = None
         self.run_start: dict[str, Any] | None = None
         self.wandb_init_s: float | None = None  # this rank's wandb.init, when it ran
         self._pending_rows: list[dict[str, Any]] = []  # steps not yet written to the rank file
@@ -459,6 +463,7 @@ class TrainerInstrument:
 
         def log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=None):
             extra = dict(extra_metrics or {})
+            self._global_loss = (step, float(global_avg_loss))
             extra.update(self.wandb_metrics(step, global_avg_loss))
             extra.update(self.flush_rank_rows())
             return orig_log(step, global_avg_loss, global_max_loss, grad_norm, extra_metrics=extra)
@@ -543,9 +548,6 @@ class TrainerInstrument:
     def on_tokens(self, local_tokens: int) -> None:
         self._local_tokens = int(local_tokens)
 
-    def on_loss(self, loss) -> None:
-        self._loss = loss
-
     def on_data_time(self, seconds: float) -> None:
         self._data_time_acc += seconds
 
@@ -593,8 +595,10 @@ class TrainerInstrument:
         # synchronize; every rank pushes at the same step (collective reduce).
         if self.timer.is_done() or step % 10 == 0:
             self.timer._push()
-            if self._loss is not None and _rank() == 0:
-                self.push(loss=float(self._loss), task="train")
+            # Not the engine's loss: it is normalized by the global token count,
+            # so each rank holds only its share of the mean.
+            if self._global_loss is not None and self._global_loss[0] == step and _rank() == 0:
+                self.push(loss=self._global_loss[1], task="train")
 
     def should_stop(self) -> bool:
         return self.timer is not None and self.timer.is_done()
@@ -728,7 +732,7 @@ class TrainerInstrument:
             "mfu_inputs": {
                 "flops_per_token": trainer.engine.num_flops_per_token,
                 "peak_flops_per_gpu": trainer.metrics_processor.gpu_peak_flops,
-                "formula": (
+                "formula": RUN_DESCRIPTION.get("flops_formula") or (
                     "TorchTitan Qwen35Model.get_nparams_and_flops: "
                     "6*active_params (embeddings excluded, lm_head included) "
                     "+ per full-attention layer 6*n_heads*2*head_dim*seq_len "
@@ -954,9 +958,6 @@ def install(instrument: TrainerInstrument) -> None:
     def train_step(self, data_iterator):
         instrument.before_step()
         orig_train_step(self, data_iterator)
-        loss = getattr(self.engine, "loss", None)
-        if loss is not None:
-            instrument.on_loss(loss)
         instrument.after_step()
 
     def train(self):

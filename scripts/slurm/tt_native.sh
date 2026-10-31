@@ -37,11 +37,11 @@ unset PYTHONPATH PIP_CONFIG_FILE
 export PATH=$TT38/env/bin:$HOME/.local/bin:$PATH
 
 export MILABENCH_BASE=$TT38/output
-# TT_CONFIG=window selects config/torchtitan_native_window.yaml.
+# TT_CONFIG=window selects benchmarks/torchtitan/torchtitan_native_window.yaml.
 if [ "${TT_CONFIG:-}" = window ]; then
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_window.yaml
+    export MILABENCH_CONFIG=$TT38/milabench/benchmarks/torchtitan/torchtitan_native_window.yaml
 else
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml
+    export MILABENCH_CONFIG=$TT38/milabench/benchmarks/torchtitan/torchtitan_native.yaml
 fi
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1

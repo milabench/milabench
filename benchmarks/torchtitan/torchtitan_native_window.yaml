@@ -3,7 +3,7 @@
 #   sbatch --nodes=<N> [-w <node list>] ... scripts/slurm/tt_native.sh \
 #       TT_CONFIG=window tt-w-<name>
 #
-# Every entry has the same per-GPU settings as config/torchtitan_native.yaml
+# Every entry has the same per-GPU settings as torchtitan_native.yaml
 # (seq 4096, 3 sequences = 12,288 tokens/GPU, full AC, compile regions without
 # CUDA graphs, FSDP over all GPUs), so results are directly comparable (weak
 # scaling). Global batch = 12,288 x GPUs tokens (3.24M tokens/step at 264 GPUs).

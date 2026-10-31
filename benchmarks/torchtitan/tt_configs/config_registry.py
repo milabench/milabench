@@ -1,138 +1,65 @@
-"""Job configs for milabench torchtitan benches (pretrain + SFT).
+"""TorchTitan configs for the HF transformers backend benches (pretrain + SFT).
 
-Loaded by torchtitan ConfigManager via ``--module tt_configs --config <name>``.
-Paths resolve from MILABENCH_DIR_* at parse time.
+One function per bench; run options (sequence length, batch, data,
+parallelism) come from :mod:`tt_native.options`, like the native configs.
+Assets (config, tokenizer, SFT weights) are staged by prepare.py under
+``{data}/hf/<model name>``.
 """
 
 from __future__ import annotations
 
+import copy
 import os
-from dataclasses import dataclass, replace
-from functools import partial
+from dataclasses import asdict
 from pathlib import Path
 
-from torchtitan.components.checkpoint import CheckpointManager
-from torchtitan.components.loss import CrossEntropyLoss
-from torchtitan.components.lr_scheduler import LRSchedulersContainer
-from torchtitan.components.metrics import MetricsProcessor
-from torchtitan.components.optimizer import (
-    default_adamw,
-    register_moe_load_balancing_hook,
+from torchtitan.components.checkpointer import CheckpointManager
+from torchtitan.components.data import (
+    FirstFitPackingConfig,
+    GrainDataLoader,
+    HuggingFaceRandomAccessSource,
+    SingleDatasetConfig,
 )
-from torchtitan.config import DebugConfig, ParallelismConfig, TrainingConfig
-from torchtitan.distributed.activation_checkpoint import SelectiveAC
+from torchtitan.components.loss import CrossEntropyLoss
+from torchtitan.components.optim import (
+    AdamW,
+    LRSchedulersContainer,
+    Optim,
+    OptimizersContainer,
+)
+from torchtitan.config import TrainingConfig
+from torchtitan.config.configs import CommConfig, DebugConfig
+from torchtitan.config.parallelism import ParallelismConfig
 from torchtitan.experiments.transformers_modeling_backend import (
+    HFTransformerModel,
     TitanModelConfig,
     TitanMoeModelConfig,
 )
-from torchtitan.experiments.transformers_modeling_backend.configs import (
-    TransformersBackendConfig,
-)
-from torchtitan.experiments.transformers_modeling_backend.model import (
-    HFTransformerModel,
-)
-from torchtitan.experiments.transformers_modeling_backend.parallelize import (
-    parallelize_hf_transformers,
-)
-from torchtitan.experiments.transformers_modeling_backend.pipeline import (
-    pipeline_hf_transformers,
-)
-from torchtitan.experiments.transformers_modeling_backend.state_dict_adapter import (
-    HFTransformerStateDictAdapter,
-)
-from .state_dict_adapter import MilabenchMoeStateDictAdapter
 from torchtitan.experiments.transformers_modeling_backend.tokenizer import (
     HFBackendTokenizer,
 )
-from torchtitan.hf_datasets import DatasetConfig
-from torchtitan.hf_datasets.text_datasets import (
-    DATASETS,
-    ChatDataLoader,
-    HuggingFaceTextDataLoader,
-)
-from torchtitan.protocols.model_spec import ModelSpec
-from torchtitan.tools.profiler import Profiler
+from torchtitan.hf_datasets.text_datasets import ChatProcessor
+from torchtitan.observability.metrics import MetricsProcessor
+from torchtitan.trainer import Trainer
+from transformers import AutoConfig
 
-from benchmate.fineweb import load_fineweb
+from tt_native import instrument
+from tt_native.assets import data_dir
+from tt_native.options import Options, activation_checkpoint, pretrain_data
 
+from .state_dict_adapter import MilabenchHFStateDictAdapter
 
-def _data_dir() -> Path:
-    for key in ("MILABENCH_DIR_DATA",):
-        if os.environ.get(key):
-            return Path(os.environ[key])
-    base = os.environ.get("MILABENCH_BASE")
-    if base:
-        return Path(base) / "data"
-    # Fallback for this machine's shared milabench base.
-    shared = Path("/data/results/data")
-    if shared.exists():
-        return shared
-    return Path(os.environ.get("MILABENCH_DIR_DATA", "."))
+# SFT loads the HF weights; upstream's adapter cannot map MoE checkpoints.
+HFTransformerModel.state_dict_adapter_cls = MilabenchHFStateDictAdapter
 
 
-def _code_dir() -> Path:
-    return Path(
-        os.environ.get("MILABENCH_DIR_CODE", Path(__file__).resolve().parents[1])
-    )
-
-
-def _extra_dir() -> Path:
-    return Path(os.environ.get("MILABENCH_DIR_EXTRA", "./outputs"))
-
-
-def _hf_assets(model_id: str) -> str:
-    """Local dir written by prepare.py: ``{data}/hf/<model_name>``."""
-    name = model_id.split("/")[-1]
-    return str(_data_dir() / "hf" / name)
-
-
-def _c4_path() -> str:
-    bundled = _code_dir() / "assets" / "c4_test"
-    staged = _data_dir() / "c4_test"
-    return str(staged if staged.exists() else bundled)
-
-
-def _fineweb_path() -> Path:
-    """FineWeb subset written by prepare.py (see benchmate.fineweb)."""
-    return _data_dir() / "fineweb" / "sample-10BT"
-
-
-def _read_text(sample) -> str:
-    return sample["text"]
-
-
-# Pretrain dataset is chosen per bench with ``--dataloader.dataset <name>``;
-# each entry carries its own path, so ``dataset_path`` stays unset.
-DATASETS["c4_test"] = replace(DATASETS["c4_test"], path=_c4_path())
-DATASETS["fineweb"] = DatasetConfig(
-    path=str(_fineweb_path()),
-    loader=load_fineweb,
-    sample_processor=_read_text,
-)
-
-
-class MilabenchTextDataLoader(HuggingFaceTextDataLoader):
-    """Text dataloader whose config also sizes datasets fetched by prepare.py."""
-
-    @dataclass(kw_only=True, slots=True)
-    class Config(HuggingFaceTextDataLoader.Config):
-        samples: int | None = None
-        """Documents prepare.py downloads and the loader reads for ``fineweb``."""
-
-    def __init__(self, config: Config, **kwargs):
-        if config.dataset == "fineweb":
-            # Read exactly the first `samples` docs, even from a larger subset
-            # prepared for another bench.
-            DATASETS["fineweb"] = replace(
-                DATASETS["fineweb"], loader=partial(load_fineweb, samples=config.samples)
-            )
-        super().__init__(config, **kwargs)
+def hf_assets(hf_model: str) -> Path:
+    """Local dir written by prepare.py: ``{data}/hf/<model name>``."""
+    return data_dir() / "hf" / hf_model.split("/")[-1]
 
 
 def _sft_json() -> str:
-    bundled = _code_dir() / "assets" / "sft_test" / "data.json"
-    staged = _data_dir() / "sft_test" / "data.json"
-    return str(staged if staged.exists() else bundled)
+    return str(data_dir() / "sft_test" / "data.json")
 
 
 def _process_sft_sample(sample):
@@ -142,269 +69,264 @@ def _process_sft_sample(sample):
     ]
 
 
-def _model_spec(flavor: str) -> ModelSpec:
-    flavors = {
-        "dense": HFTransformerModel.Config(model_config=TitanModelConfig()),
-        "dense_sft": HFTransformerModel.Config(
-            model_config=TitanModelConfig(attn_mask_type="block_causal"),
-        ),
-        # Empty MoE overrides → HF AutoConfig supplies expert dims (Qwen3-MoE, GLM-5, …).
-        "moe": HFTransformerModel.Config(model_config=TitanMoeModelConfig()),
-        "moe_sft": HFTransformerModel.Config(
-            model_config=TitanMoeModelConfig(attn_mask_type="block_causal"),
-        ),
-    }
-    adapter = (
-        MilabenchMoeStateDictAdapter
-        if flavor in ("moe", "moe_sft")
-        else HFTransformerStateDictAdapter
+def _restore_per_layer_config(model, hf_model_id: str) -> None:
+    """Give the model the HF config's per-layer overrides (heterogeneous configs).
+
+    load_hf_config copies the HF config's public attributes only, so it drops
+    ``_heterogeneity_spec``: every layer then gets the global values (Gemma4's
+    full-attention layers lose head_dim 512 and 2 KV heads, and no longer
+    match the checkpoint).
+    """
+    hf = AutoConfig.from_pretrained(hf_model_id)
+    hf = getattr(hf, "text_config", hf)
+    spec = hf.__dict__.get("_heterogeneity_spec")
+    if spec is not None:
+        model.__dict__["_heterogeneity_spec"] = copy.deepcopy(spec)
+
+
+def _model_config(opts: Options, hf_model: str, *, moe: bool, sft: bool):
+    # Empty overrides: the HF config supplies every dimension (expert counts too).
+    # SFT packs several chats per sequence: attention must stay within each one.
+    titan = (TitanMoeModelConfig if moe else TitanModelConfig)(
+        attn_mask_type="block_causal" if sft else "causal",
     )
-    return ModelSpec(
-        name="transformers_modeling_backend",
-        flavor=flavor,
-        model=flavors[flavor],
-        parallelize_fn=parallelize_hf_transformers,
-        pipelining_fn=pipeline_hf_transformers,
-        post_optimizer_build_fn=register_moe_load_balancing_hook,
-        state_dict_adapter=adapter,
+    model = HFTransformerModel.Config(model_config=titan)
+    assets = hf_assets(hf_model)
+    # Local copy when prepared: runs are offline (HF_HUB_OFFLINE).
+    hf_model_id = str(assets) if (assets / "config.json").exists() else hf_model
+    model.load_hf_config(
+        hf_model_id=hf_model_id,
+        max_context_length=opts.seq_len,
+        deterministic=False,
+    )
+    _restore_per_layer_config(model, hf_model_id)
+    if opts.compile == "eager":
+        model.local_compile_regions = []
+    elif opts.compile != "regions":
+        raise ValueError(f"compile={opts.compile!r}: HF models support eager or regions")
+    return model
+
+
+def _sft_data(opts: Options):
+    return GrainDataLoader.Config(
+        dataset=FirstFitPackingConfig(
+            dataset=SingleDatasetConfig(
+                source=HuggingFaceRandomAccessSource.Config(
+                    path="json",
+                    split="train",
+                    load_dataset_kwargs={"data_files": _sft_json()},
+                ),
+                processor=ChatProcessor.Config(messages_fn=_process_sft_sample),
+                post_filters=(lambda sample: sample is not None,),
+            ),
+        ),
+        seed=opts.seed,
+        max_num_documents=opts.max_documents,
     )
 
 
-def _base_pretrain(
-    *,
+def hf_trainer(
     hf_model: str,
-    flavor: str,
-    local_batch_size: int = 1,
-    seq_len: int = 2048,
-    steps: int = 40,
-) -> TransformersBackendConfig:
-    return TransformersBackendConfig(
-        loss=CrossEntropyLoss.Config(),
-        hf_assets_path=_hf_assets(hf_model),
-        hf_model=hf_model,
-        dump_folder=str(_extra_dir() / "torchtitan"),
-        debug=DebugConfig(print_config=True),
-        model_spec=_model_spec(flavor),
-        profiler=Profiler.Config(enable_profiling=False),
-        optimizer=default_adamw(lr=8e-4),
-        lr_scheduler=LRSchedulersContainer.Config(
-            warmup_steps=2,
-            decay_ratio=0.8,
-            decay_type="linear",
-            min_lr_factor=0.0,
-        ),
-        training=TrainingConfig(
-            local_batch_size=local_batch_size,
-            seq_len=seq_len,
-            steps=steps,
-            dtype="bfloat16",
-            mixed_precision_param="bfloat16",
-        ),
-        dataloader=MilabenchTextDataLoader.Config(dataset="c4_test"),
-        metrics=MetricsProcessor.Config(log_freq=1),
-        parallelism=ParallelismConfig(pipeline_parallel_schedule="1F1B"),
-        checkpoint=CheckpointManager.Config(enable=False),
-        activation_checkpoint=SelectiveAC.Config(),
-        tokenizer=HFBackendTokenizer.Config(),
-    )
-
-
-def _base_sft(
     *,
-    hf_model: str,
-    flavor: str,
-    local_batch_size: int = 1,
-    seq_len: int = 1024,
-    steps: int = 40,
-) -> TransformersBackendConfig:
-    assets = _hf_assets(hf_model)
-    return TransformersBackendConfig(
-        loss=CrossEntropyLoss.Config(),
-        hf_assets_path=assets,
-        hf_model=hf_model,
-        dump_folder=str(_extra_dir() / "torchtitan"),
-        debug=DebugConfig(print_config=True),
-        model_spec=_model_spec(flavor),
-        profiler=Profiler.Config(enable_profiling=False),
-        optimizer=default_adamw(lr=2e-5),
-        lr_scheduler=LRSchedulersContainer.Config(
-            warmup_steps=2,
-            decay_ratio=0.8,
-            decay_type="linear",
-            min_lr_factor=0.0,
-        ),
-        training=TrainingConfig(
-            local_batch_size=local_batch_size,
-            seq_len=seq_len,
-            steps=steps,
-            dtype="bfloat16",
-            mixed_precision_param="bfloat16",
-        ),
-        dataloader=ChatDataLoader.Config(
-            dataset_path="json",
-            load_dataset_kwargs={
-                "data_files": _sft_json(),
-                "split": "train",
-            },
-            sample_processor=_process_sft_sample,
-        ),
-        metrics=MetricsProcessor.Config(log_freq=1),
-        parallelism=ParallelismConfig(pipeline_parallel_schedule="1F1B"),
-        checkpoint=CheckpointManager.Config(
-            enable=True,
+    moe: bool = False,
+    sft: bool = False,
+    lr: float | None = None,
+) -> Trainer.Config:
+    """Trainer config for ``hf_model``: pre-training from scratch on FineWeb
+    (or random tokens), or SFT from the HF weights on the staged chat set."""
+    opts = Options.from_env()
+    model = _model_config(opts, hf_model, moe=moe, sft=sft)
+    assets = str(hf_assets(hf_model))
+    tokenizer = HFBackendTokenizer.Config()
+
+    if sft:
+        hf_assets_path, dataloader = assets, _sft_data(opts)
+        checkpointer = CheckpointManager.Config(
             initial_load_in_hf=True,
             initial_load_model_only=True,
             initial_load_path=assets,
-            interval=10_000,
-            last_save_model_only=True,
+            # The voirfile stops the run: never save.
+            interval=10**9,
+        )
+    else:
+        hf_assets_path, tokenizer, dataloader = pretrain_data(
+            opts, model.vocab_size, tokenizer=(assets, tokenizer)
+        )
+        checkpointer = None
+
+    instrument.RUN_DESCRIPTION = {
+        **instrument.RUN_DESCRIPTION,
+        "model": hf_model.split("/")[-1],
+        "flavor": "sft" if sft else "pretrain",
+        "hf_model": hf_model,
+        "backend": "transformers_modeling_backend",
+        "n_layers": getattr(model, "num_hidden_layers", None),
+        "n_layers_full": getattr(model, "num_hidden_layers", None),
+        "moe": moe,
+        "precision": "bf16 (fp32 master weights, FSDP mixed precision)",
+        "compile": opts.compile,
+        "cuda_graphs": False,
+        "local_compile_regions": list(model.local_compile_regions),
+        "activation_checkpointing": opts.ac,
+        "adam_moments": opts.adam_moments,
+        "seq_len": opts.seq_len,
+        "microbatch_sequences_per_gpu": opts.microbatch_sequences,
+        "grad_accum": opts.grad_accum,
+        "data": (
+            "SFT chat samples (sft_test), packed with document masking"
+            if sft
+            else "random tokens (packed, fixed length)"
+            if opts.dataset == "random"
+            else f"FineWeb (first {opts.samples} docs), {hf_model} tokenizer, packed"
         ),
-        activation_checkpoint=SelectiveAC.Config(),
-        tokenizer=HFBackendTokenizer.Config(),
+        "flops_formula": (
+            "TorchTitan HFTransformerModel.get_nparams_and_flops: 6*active_params "
+            "(embeddings excluded) + attention. "
+            "mfu = flops_per_token * tokens_per_s / (peak * gpus)"
+        ),
+        "options": asdict(opts),
+    }
+
+    return Trainer.Config(
+        model=model,
+        loss=CrossEntropyLoss.Config(global_vocab_size=model.vocab_size),
+        hf_assets_path=hf_assets_path,
+        tokenizer=tokenizer,
+        dataloader=dataloader,
+        optim=Optim.Config(
+            optimizer=OptimizersContainer.Config(
+                optimizers=[
+                    AdamW.Config(
+                        pattern=r".*",
+                        lr=lr if lr is not None else (2e-5 if sft else 8e-4),
+                        moment_dtype=(
+                            "bfloat16" if opts.adam_moments == "bf16" else "parameter"
+                        ),
+                    )
+                ]
+            ),
+            lr_scheduler=LRSchedulersContainer.Config(
+                warmup_steps=2,
+                decay_ratio=0.8,
+                decay_type="linear",
+                min_lr_factor=0.0,
+            ),
+        ),
+        training=TrainingConfig(
+            num_tokens_per_microbatch_per_dp_rank=opts.tokens_per_microbatch,
+            num_tokens_per_train_step=opts.tokens_per_train_step,
+            max_context_length=opts.seq_len,
+            # The voirfile stops the run (voir skip/stop); keep the LR schedule long.
+            steps=1_000_000,
+            disable_cuda_graphs=True,
+            # fp32 master weights, bf16 compute (FSDP mixed precision). bf16
+            # parameters break MoE: the swapped-in experts keep fp32 state and
+            # FSDP needs one parameter dtype per group.
+            mixed_precision_param="bfloat16",
+        ),
+        parallelism=ParallelismConfig(
+            data_parallel_replicate_degree=opts.dp_replicate,
+            data_parallel_shard_degree=-1,
+            tensor_parallel_degree=opts.tp,
+            expert_parallel_degree=opts.ep,
+            fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
+            pipeline_parallel_schedule="1F1B",
+        ),
+        comm=CommConfig(
+            init_timeout_seconds=opts.init_timeout_seconds,
+            train_timeout_seconds=opts.train_timeout_seconds,
+        ),
+        debug=DebugConfig(
+            seed=opts.seed,
+            enable_structured_logging=opts.structured_logging,
+        ),
+        metrics=MetricsProcessor.Config(
+            log_freq=opts.log_freq,
+            enable_wandb=opts.wandb or os.environ.get("BENCHMATE_WANDB") == "1",
+            save_for_all_ranks=opts.wandb_all_ranks
+            or os.environ.get("BENCHMATE_WANDB_ALL_RANKS") == "1",
+        ),
+        checkpointer=checkpointer,
+        activation_checkpoint=activation_checkpoint(opts.ac),
+        dump_folder=opts.dump_folder,
     )
 
 
-def qwen3_4b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="Qwen/Qwen3-4B-Instruct-2507",
-        flavor="dense",
-    )
+def qwen3_4b_pretrain():
+    return hf_trainer("Qwen/Qwen3-4B-Instruct-2507")
 
 
-def qwen3_4b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="Qwen/Qwen3-4B-Instruct-2507",
-        flavor="dense_sft",
-    )
+def qwen3_4b_sft():
+    return hf_trainer("Qwen/Qwen3-4B-Instruct-2507", sft=True)
 
 
-def qwen3_30b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="Qwen/Qwen3-30B-A3B",
-        flavor="moe",
-    )
+def mistral_7b_pretrain():
+    return hf_trainer("mistralai/Mistral-7B-v0.1")
 
 
-def qwen3_30b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="Qwen/Qwen3-30B-A3B",
-        flavor="moe_sft",
-    )
+def mistral_7b_sft():
+    return hf_trainer("mistralai/Mistral-7B-v0.1", sft=True)
 
 
-def mistral_7b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="mistralai/Mistral-7B-v0.1",
-        flavor="dense",
-    )
+def olmo_7b_pretrain():
+    return hf_trainer("allenai/OLMo-7B-hf")
 
 
-def mistral_7b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="mistralai/Mistral-7B-v0.1",
-        flavor="dense_sft",
-    )
+def olmo_7b_sft():
+    return hf_trainer("allenai/OLMo-7B-hf", sft=True)
 
 
-def olmo_7b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="allenai/OLMo-7B-hf",
-        flavor="dense",
-    )
+def qwen3_30b_pretrain():
+    return hf_trainer("Qwen/Qwen3-30B-A3B", moe=True)
 
 
-def olmo_7b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="allenai/OLMo-7B-hf",
-        flavor="dense_sft",
-    )
+def qwen3_30b_sft():
+    return hf_trainer("Qwen/Qwen3-30B-A3B", moe=True, sft=True)
 
 
-def mixtral_8x7b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="mistralai/Mixtral-8x7B-v0.1",
-        flavor="moe",
-    )
+def mixtral_8x7b_pretrain():
+    return hf_trainer("mistralai/Mixtral-8x7B-v0.1", moe=True)
 
 
-def mixtral_8x7b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="mistralai/Mixtral-8x7B-v0.1",
-        flavor="moe_sft",
-    )
+def mixtral_8x7b_sft():
+    return hf_trainer("mistralai/Mixtral-8x7B-v0.1", moe=True, sft=True)
 
 
-def olmoe_7b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="allenai/OLMoE-1B-7B-0924",
-        flavor="moe",
-    )
+def olmoe_7b_pretrain():
+    return hf_trainer("allenai/OLMoE-1B-7B-0924", moe=True)
 
 
-def olmoe_7b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="allenai/OLMoE-1B-7B-0924",
-        flavor="moe_sft",
-    )
+def olmoe_7b_sft():
+    return hf_trainer("allenai/OLMoE-1B-7B-0924", moe=True, sft=True)
 
 
-def gemma4_26b_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="google/gemma-4-26B-A4B",
-        flavor="moe",
-    )
+def gemma4_26b_pretrain():
+    return hf_trainer("google/gemma-4-26B-A4B", moe=True)
 
 
-def gemma4_26b_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="google/gemma-4-26B-A4B",
-        flavor="moe_sft",
-    )
+def gemma4_26b_sft():
+    return hf_trainer("google/gemma-4-26B-A4B", moe=True, sft=True)
 
 
-def deepseek_v2_lite_pretrain() -> TransformersBackendConfig:
-    return _base_pretrain(
-        hf_model="deepseek-ai/DeepSeek-V2-Lite",
-        flavor="moe",
-    )
+def deepseek_v2_lite_pretrain():
+    return hf_trainer("deepseek-ai/DeepSeek-V2-Lite", moe=True)
 
 
-def deepseek_v2_lite_sft() -> TransformersBackendConfig:
-    return _base_sft(
-        hf_model="deepseek-ai/DeepSeek-V2-Lite",
-        flavor="moe_sft",
-    )
+def deepseek_v2_lite_sft():
+    return hf_trainer("deepseek-ai/DeepSeek-V2-Lite", moe=True, sft=True)
 
 
-def _glm5_parallelism(cfg: TransformersBackendConfig) -> TransformersBackendConfig:
-    # Upstream: TP/CP unsupported for GLM-5 DSA — FSDP+EP only.
-    cfg.parallelism.tensor_parallel_degree = 1
-    cfg.parallelism.context_parallel_degree = 1
-    cfg.parallelism.expert_parallel_degree = 8
-    # dp_shard stays -1 (auto → world_size on 8 GPUs); do not set to 1 with EP.
-    # 744B MoE init/parallelize + SFT checkpoint load can take 30–60+ minutes.
-    cfg.comm.init_timeout_seconds = 7200
-    cfg.comm.train_timeout_seconds = 1800
-    # Flight recorder defaults (trace_buf_size=20000) enable extra NCCL
-    # monitoring; disable for long CPU-only GLM-5 init.
+def _glm5(cfg: Trainer.Config) -> Trainer.Config:
+    # Upstream: TP/CP unsupported for GLM-5 DSA, FSDP+EP only (--ep 8 in dev.yaml).
+    # Flight recorder off (trace_buf_size=0): long CPU-only init with no NCCL ops.
     cfg.comm.trace_buf_size = 0
-    # MoE build uses CPU + per-layer EP shard (torch_compat); trainer still
-    # materializes EP/FSDP-local shards on GPU after parallelize_fn returns.
     return cfg
 
 
-def glm5_pretrain() -> TransformersBackendConfig:
-    cfg = _base_pretrain(
-        hf_model="zai-org/GLM-5",
-        flavor="moe",
-        seq_len=1024,
-    )
-    return _glm5_parallelism(cfg)
+def glm5_pretrain():
+    return _glm5(hf_trainer("zai-org/GLM-5", moe=True))
 
 
-def glm5_sft() -> TransformersBackendConfig:
-    cfg = _base_sft(
-        hf_model="zai-org/GLM-5",
-        flavor="moe_sft",
-        seq_len=1024,
-    )
-    return _glm5_parallelism(cfg)
+def glm5_sft():
+    return _glm5(hf_trainer("zai-org/GLM-5", moe=True, sft=True))
+
