@@ -84,3 +84,5 @@ logs/
 
 # wandb run data (now written to runs/<run_name>/wandb through WANDB_DIR)
 wandb/
+
+benchmarks/**/requirements.*.txt
