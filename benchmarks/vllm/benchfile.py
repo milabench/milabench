@@ -111,7 +111,7 @@ class VLLM(Package):
             # without it, worker nodes load ATOM's model while the head loads vLLM's
             env["VLLM_RAY_EXTRA_ENV_VARS_TO_COPY"] = ",".join(
                 name
-                for name in ("ATOM_DISABLE_VLLM_PLUGIN", "XDG_CACHE_HOME", "TORCH_HOME")
+                for name in ("ATOM_DISABLE_VLLM_PLUGIN", "XDG_CACHE_HOME", "TORCH_HOME", "GLOO_SOCKET_IFNAME")
                 if name in env
             )
 

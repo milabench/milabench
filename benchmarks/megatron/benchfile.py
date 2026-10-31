@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -42,9 +43,12 @@ class SrunOneNode(SrunCommand):
     ``milabench slurm srun`` forwards its arguments to Slurm's srun, but its own parser rejects the node-count flags
     and only ``-x`` gets a node count: with ``-w`` alone the step spans the whole job (default node count) and also
     starts the worker on the main node (rank 4 and rank 0 on the same GPU: "Duplicate GPU detected").
-    So call srun directly, with what ``milabench slurm srun`` would exec (``--overlap``)."""
+    So call srun directly, with what ``milabench slurm srun`` would exec (``--overlap``). Without Slurm (no srun),
+    ``milabench slurm srun -w <host>`` goes over SSH to exactly that node."""
 
     def _argv(self, **kwargs):
+        if shutil.which("srun") is None:
+            return super()._argv(**kwargs)
         host = self.resolve_nodelist()
         return ["srun", "--overlap", "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", "-w", host, "--"]
 
@@ -126,8 +130,12 @@ class MegatronGlm5(Slime):
         nodes = system.get("nodes")
         if not nodes or len(nodes) <= 1:
             return
-        ordered = placement_lib.order_nodes(nodes, self.placement())
         want = self.num_machines
+        if want == 1:
+            # single-node entry on a multi-node system: the main node alone
+            system["nodes"] = [placement_lib.main_node(nodes)]
+            return
+        ordered = placement_lib.order_nodes(nodes, self.placement())
         if len(ordered) < want:
             raise RuntimeError(
                 f"placement.nodes={self.placement().get('nodes')} gives {len(ordered)} nodes, the entry wants {want} "

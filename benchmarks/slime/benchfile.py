@@ -154,7 +154,7 @@ class Slime(Package):
         if rocm:
             accel = "rocm" + str(self.config.get("version_overrides", {}).get("rocm", "10.0"))
             await self.pip_install(ROCM_TE_REQUIREMENT.format(accel=accel), ROCM_TMS_REQUIREMENT)
-            done.write_text("ok")
+            self.mark_installed(done)
             return
         if os.environ.get("SLIME_DOWNLOAD_ONLY"):
             # login node (no GPU/libcuda): TE and torch_memory_saver cannot be built, and `prepare` needs neither.
@@ -164,7 +164,14 @@ class Slime(Package):
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
         # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
-        done.write_text("ok")
+        self.mark_installed(done)
+
+    def mark_installed(self, done: Path):
+        # pip_install does not raise on failure: only skip later installs once TE and torch_memory_saver are there
+        site = Path(str(self.dirs.venv)).glob("lib/python*/site-packages")
+        found = {d.name.split("-")[0].lower() for s in site for d in s.glob("*.dist-info")}
+        if {"transformer_engine", "torch_memory_saver"} <= found:
+            done.write_text("ok")
 
     def is_rocm(self) -> bool:
         return self.config.get("system", {}).get("arch") == "rocm"
