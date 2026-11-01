@@ -57,6 +57,8 @@ def _loader_class():
                 )
             load_config = copy(load_config)
             load_config.model_loader_extra_config = extra
+            # the default loader picks the checkpoint files by load format: ours is safetensors
+            load_config.load_format = "safetensors"
             super().__init__(load_config)
 
         def _rank_dir_and_prefix(self):
