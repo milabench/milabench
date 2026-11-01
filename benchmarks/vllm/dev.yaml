@@ -212,6 +212,8 @@ _vllm_nodes:
 
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
   inherits: _vllm_nodes
+  # the first run loads the 1.5 TB checkpoint (~50 min with Ray start) and saves the per-rank shards
+  max_duration: 10800
   tags:
     - moe
     - mxfp4
