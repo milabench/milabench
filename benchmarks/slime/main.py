@@ -112,6 +112,9 @@ def main():
         # RAY_ADDRESS is honored when set. Otherwise a fresh local cluster: a bare ray.init() joins the cluster named
         # in /tmp/ray/ray_current_cluster, which outlives a killed head, and then waits for its GCS forever.
         address = os.environ.get("RAY_ADDRESS") or "local"
+        # a local ray.init() would otherwise turn token auth on and write ~/.ray/auth_token, which every later Ray
+        # process on this node then requires (multi-node runs fail with InvalidAuthToken on the other nodes)
+        os.environ.setdefault("RAY_AUTH_MODE", "disabled")
         ray.init(address=address, namespace=slime_metrics.NAMESPACE, runtime_env={"env_vars": env_vars})
         debug("main: ray initialised", ray.cluster_resources())
 

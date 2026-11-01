@@ -165,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     # A failed run leaves this node's raylet up (its teardown `ray stop` never ran); it then joins the next
     # cluster too, which counts its GPUs twice and can never place a full-size placement group.
     subprocess.run([args.ray_bin, "stop", "--force"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Ray >= 2.5x enables token auth as soon as ~/.ray/auth_token exists on a node (any local ray.init() writes one),
+    # and the token is per node: the other nodes then fail with InvalidAuthToken. The cluster is internal to the job.
+    os.environ.setdefault("RAY_AUTH_MODE", "disabled")
 
     if is_head(args.head_hostname):
         return run_head(
