@@ -106,6 +106,10 @@ class VLLM(Package):
                 # own models for ATOM's whenever atom is installed
                 env["ATOM_DISABLE_VLLM_PLUGIN"] = "1"
 
+        if "milabench_sharded" in [str(a) for a in self.server_argv()]:
+            # benchmate's vLLM loader: per-rank weight shards, written on the first run (node-local)
+            env["VLLM_MILABENCH_SHARD_DIR"] = os.path.join(str(self.dirs.data), "vllm-shards", self.config["name"])
+
         if self.uses_ray():
             # vLLM only forwards VLLM_*, NCCL_*, HF_*, ... to its Ray actors, and
             # `ray start` on the workers (over ssh) does not see this env either:

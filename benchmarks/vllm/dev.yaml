@@ -242,6 +242,9 @@ vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
       --max-model-len: 16384
       --max-num-seqs: 64
       --max-num-batched-tokens: 16384
+      # per-rank weight shards (benchmate.vllm_sharded_loader): the first run loads the 1.5 TB checkpoint
+      # (~1 h, every rank slices every file) and saves them; later runs read only their own shards
+      --load-format: milabench_sharded
 
 vllm-moe-glm52-744b-bf16-nodes:
   inherits: _vllm_nodes
