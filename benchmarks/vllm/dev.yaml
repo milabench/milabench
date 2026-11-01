@@ -204,6 +204,11 @@ _vllm_nodes:
       --distributed-executor-backend: ray
       --tensor-parallel-size: "{total_gpu_count}"
       --gpu-memory-utilization: 0.9
+  ray:
+    env:
+      # vLLM's Ray workers inherit `ray start`'s environment and load plugins on import, before vLLM copies
+      # the engine's env to them: without this, ATOM (installed on ROCm) swaps in its own models there
+      ATOM_DISABLE_VLLM_PLUGIN: "1"
 
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
   inherits: _vllm_nodes

@@ -211,7 +211,7 @@ def _ssh_argv(node: dict, command: list[str], sshkey: Optional[str] = None) -> l
 _FORWARD_PREFIXES = (
     "MILABENCH_", "BENCHMATE_", "VOIR_", "PYTHON", "HF_", "TRANSFORMERS_", "TORCH", "PYTORCH_", "TRITON_",
     "OMP_", "CUDA_", "HIP_", "ROCM_", "ROCR_", "HSA_", "NCCL_", "RCCL_", "GLOO_", "MASTER_", "NVTE_", "MEGATRON_",
-    "TT_", "SLIME_", "XDG_CACHE_HOME", "LD_LIBRARY_PATH", "PATH",
+    "TT_", "SLIME_", "RAY_", "VLLM_", "ATOM_", "AITER_", "XDG_CACHE_HOME", "LD_LIBRARY_PATH", "PATH",
 )
 # Never put secrets on an ssh command line: other users see it in `ps` on the remote node.
 _SECRET_WORDS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL")
