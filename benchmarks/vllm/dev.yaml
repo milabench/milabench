@@ -210,6 +210,28 @@ _vllm_nodes:
       # the engine's env to them: without this, ATOM (installed on ROCm) swaps in its own models there
       ATOM_DISABLE_VLLM_PLUGIN: "1"
 
+# Same 2-node layout as the big -nodes entries (TP per node x PP across nodes, Ray), on a small
+# dense model: checks the multi-node plumbing in a few minutes.
+vllm-ray-smoke-nodes:
+  inherits: _vllm_nodes
+  max_duration: 1800
+  tags:
+    - smoke
+    - multinode
+  client:
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+      --num-prompts: 16
+      --max-concurrency: 8
+      --ready-check-timeout-sec: 1200
+  server:
+    argv:
+      meta-llama/Llama-3.1-8B-Instruct: true
+      --dtype: bfloat16
+      --tensor-parallel-size: "{gpu_count}"
+      --pipeline-parallel-size: "{num_machines}"
+      --max-model-len: 8192
+
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
   inherits: _vllm_nodes
   # the first run loads the 1.5 TB checkpoint (~50 min with Ray start) and saves the per-rank shards
