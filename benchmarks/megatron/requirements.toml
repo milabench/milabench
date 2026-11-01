@@ -55,6 +55,8 @@ dependencies = [
 dependencies = [
     # Transformer Engine's ROCm init sets ROCM_PATH from the SDK development package (rocm_sdk_devel)
     "rocm[devel]",
+    # torch.cuda.utilization / memory telemetry on ROCm (Megatron's straggler detector, benchmate)
+    "amdsmi",
 ]
 
 [xpu]

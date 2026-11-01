@@ -206,6 +206,25 @@ def _ssh_argv(node: dict, command: list[str], sshkey: Optional[str] = None) -> l
     return argv
 
 
+# Variables forwarded over ssh, by prefix: native srun exports the caller's whole environment (the
+# pack's MILABENCH_CONFIG, dirs, PYTHONPATH, ...), a remote ssh shell starts from the login one.
+_FORWARD_PREFIXES = (
+    "MILABENCH_", "BENCHMATE_", "VOIR_", "PYTHON", "HF_", "TRANSFORMERS_", "TORCH", "PYTORCH_", "TRITON_",
+    "OMP_", "CUDA_", "HIP_", "ROCM_", "ROCR_", "HSA_", "NCCL_", "RCCL_", "GLOO_", "MASTER_", "NVTE_", "MEGATRON_",
+    "TT_", "SLIME_", "XDG_CACHE_HOME", "LD_LIBRARY_PATH", "PATH",
+)
+# Never put secrets on an ssh command line: other users see it in `ps` on the remote node.
+_SECRET_WORDS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL")
+
+
+def forwarded_env(environ=None) -> dict:
+    environ = os.environ if environ is None else environ
+    return {
+        k: v for k, v in environ.items()
+        if k.startswith(_FORWARD_PREFIXES) and not any(w in k.upper() for w in _SECRET_WORDS)
+    }
+
+
 def run_on_nodes(
     nodes: list[dict],
     command: list[str],
@@ -221,7 +240,7 @@ def run_on_nodes(
     native ``srun -x <main>`` numbering so ``benchrun`` can map them to global
     ranks via ``SLURM_NODEID + 1``.
 
-    *env* (``system.env``) is forwarded explicitly: native srun exports the
+    The run environment (``forwarded_env``) and *env* (``system.env``) are forwarded explicitly: native srun exports the
     caller's environment, but a non-interactive ssh shell does not (e.g. NCCL_*
     set in ~/.bashrc after the interactive guard), and cross-node RCCL hangs.
     """
@@ -233,7 +252,8 @@ def run_on_nodes(
         label = node.get("name") or node["ip"]
         remote_cmd = [
             "env",
-            *(f"{k}={v}" for k, v in (env or {}).items()),
+            # system.env last: it wins over the caller's values
+            *(f"{k}={v}" for k, v in {**forwarded_env(), **(env or {})}.items()),
             f"SLURM_NODEID={step_id}",
             f"SLURM_PROCID={step_id}",
             f"SLURM_NNODES={nnodes}",
