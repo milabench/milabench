@@ -52,11 +52,43 @@ def setup_flashinfer():
             print(f"Warning: '{' '.join(cmd)}' exited with code {result.returncode}")
 
 
+def eval_tasks() -> list[str]:
+    """lm-eval tasks of the client passes (client.passes[].eval.tasks), shared section and arch variant."""
+    import json
+    import os
+
+    try:
+        cfg = json.loads(os.environ.get("MILABENCH_CONFIG", "{}"))
+    except json.JSONDecodeError:
+        return []
+    arch = cfg.get("system", {}).get("arch", "cuda")
+    sections = [cfg.get("client") or {}, (((cfg.get("variants") or {}).get(arch) or {}).get("client") or {})]
+    tasks = []
+    for section in sections:
+        for spec in section.get("passes") or []:
+            tasks += [t for t in (spec.get("eval") or {}).get("tasks", []) if t not in tasks]
+    return tasks
+
+
+def download_eval_datasets(tasks):
+    """Building the tasks downloads their datasets into the HF cache (the runs are offline)."""
+    import os
+
+    from lm_eval.tasks import TaskManager, get_task_dict
+
+    print(f"Downloading lm-eval datasets: {tasks}")
+    include = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_tasks")
+    get_task_dict(tasks, TaskManager(include_path=include))
+
+
 def main():
     args = arguments()
 
     if args.hf_name:
         download_hf_dataset(args.hf_name, args.hf_split)
+
+    if tasks := eval_tasks():
+        download_eval_datasets(tasks)
 
     model = args.model or args.server_model
     hf_aliases = {

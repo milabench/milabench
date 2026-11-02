@@ -1,0 +1,441 @@
+# =============================================================================
+# Kimi-K3 serving study: ATOM vs vLLM, 1 vs 2 nodes
+#
+#   * latency / throughput trade-off: concurrency passes (conc*)
+#   * cost of a growing context: input-length passes (ctx*) and the ITL-by-context-position curve
+#     of the long-decode passes (decodelong*), see pass_summary.itl_by_context
+#   * accuracy of the quantization we add (ATOM online ptpc_fp8 on the BF16 layers, fp8 KV cache):
+#     lm-eval GSM8K / ARC-Challenge / GPQA diamond against the running server (eval pass)
+#
+# Kimi-K3 ships its routed experts in MXFP4 (release format); attention, shared experts and lm_head
+# are BF16. kimi-atom-tp8-bf16 (no online quant, bf16 KV) is the accuracy reference.
+#
+# One entry per server configuration: the server loads once and every client pass runs against it
+# (client.passes, see benchmarks/serving: one client benchmark per pass). Toggle flags (--enforce-eager, --enable-dp-attention,
+# --online_quant_config) cannot be switched by a placeholder, hence explicit entries rather than a matrix.
+#
+#   MILABENCH_CONFIG_OVERRIDE=$PWD/milabench/config/kimi_study.yaml bash run.sh --select kimi-atom-tp8-bf16
+#
+# Results: runs/<run name>/<entry>.*.data, events pass_summary / eval_summary;
+# scripts/analysis/kimi_study.py turns them into tables and plots.
+# =============================================================================
+
+include:
+  - ../benchmarks/vllm/dev.yaml
+
+_kimi:
+  inherits: _serving
+  # milabench runs the server, each client pass is its own benchmark (<entry>.<pass>.<job>.data)
+  definition: ../benchmarks/serving
+  enabled: true
+  num_machines: 1
+  max_duration: 10800
+  tags:
+    - multigpu
+    - moe
+    - mxfp4
+    - kimi-study
+  plan:
+    method: njobs
+    n: 1
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+  url: https://huggingface.co/moonshotai/Kimi-K3
+  voir:
+    options:
+      # several passes push many more rate events than one: do not stop after the first ones
+      stop: 1000000
+  client:
+    argv:
+      --model: moonshotai/Kimi-K3
+      --trust-remote-code: true
+      --dataset-name: random
+      --ignore-eos: true
+      --random-range-ratio: 0.0
+      --ready-check-timeout-sec: 10800
+    passes:
+      # Sized for Kimi-K3's speed on 1 node (~6-8 output tok/s per sequence in eager mode, ~500 tok/s at 64):
+      # about 30 min of passes per config. 256 output tokens are plenty for TPOT.
+      # latency / throughput: 1k in, 256 out
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 4,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc4,   argv: {--max-concurrency: 4,   --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc16,  argv: {--max-concurrency: 16,  --num-prompts: 32,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc128, argv: {--max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc256, argv: {--max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
+      # past 256 the GPUs are not saturated yet (TPOT still ~165 ms); the server runs at most 512 (see --max-num-seqs)
+      - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+      # prefill / decode cost vs input length: 128 out (TPOT here = decode at that context length)
+      - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c1,  argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 131072, --random-output-len: 128}}
+      - {name: ctx1k-c16,   argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c16,   argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c16,  argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c16,  argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c16, argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 131072, --random-output-len: 128}}
+      # decode slowdown as the context fills within the requests: 1k in, 4k out
+      - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 1,  --random-input-len: 1024, --random-output-len: 4096}}
+      - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 1024, --random-output-len: 4096}}
+
+# accuracy pass, appended by the entries that measure it (quantization variants, one reference layout
+# per backend): `client: {passes: {append: [*eval]}}`. Kimi-K3 reasons before answering: leave room for it.
+_kimi_eval_pass:
+  enabled: false
+  pass: &eval
+    name: eval
+    eval:
+      tasks: [milabench_gsm8k, milabench_arc_challenge, milabench_gpqa_diamond]
+      limit: {milabench_gsm8k: 250, milabench_arc_challenge: 250}
+      num_concurrent: 128
+      gen_kwargs: {max_gen_toks: 8192, temperature: 0}
+
+# -----------------------------------------------------------------------------
+# ATOM (ROCm). 1-node entries: TP8 inside the node.
+# -----------------------------------------------------------------------------
+
+_kimi_atom:
+  inherits: _kimi
+  # load (~15 min) + the performance passes (~65 min) + the eval (~45 min): 2 h was not enough
+  max_duration: 10800
+  server:
+    backend: atom
+    argv:
+      --model: moonshotai/Kimi-K3
+      --trust-remote-code: true
+      -tp: "{gpu_count}"
+      --max-model-len: 133120
+      # Kimi-K3's linear-attention state is ~56 MB per sequence per GPU (TP8): with the BF16 weights (198 GB of
+      # 288 GB) 1024 sequences need 57.5 GB of the 48 GB left (InsufficientPoolBudget). 512: 29 GB, the rest for KV.
+      # conc1024 then shows the saturation (requests beyond 512 queue).
+      --max-num-seqs: 512
+      --max-num-batched-tokens: 16384
+      --gpu-memory-utilization: 0.93
+      --block-size: 128
+      --no-enable_prefix_caching: true
+
+# accuracy reference: no online quantization, bf16 KV cache
+kimi-atom-tp8-bf16:
+  inherits: _kimi_atom
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --kv_cache_dtype: bf16
+      --enforce-eager: true
+
+# conc512 / conc1024 for the reference, which ran before they were added (same server flags)
+kimi-atom-tp8-bf16-hiconc:
+  inherits: kimi-atom-tp8-bf16
+  # disabled: make-up for the first run (max-num-seqs 256); kimi-atom-tp8-bf16 now runs every point
+  enabled: false
+  client:
+    passes:
+      - {name: conc256,  argv: {--max-concurrency: 256,  --num-prompts: 512,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+
+# The reference's performance passes again with the same --max-num-seqs as every other config (512): its first
+# run used 256, and the cap changes the state / KV pools and the scheduling. Accuracy does not depend on it.
+kimi-atom-tp8-bf16-seqs512:
+  inherits: _kimi_atom
+  # disabled: superseded: kimi-atom-tp8-bf16 runs with --max-num-seqs 512 now
+  enabled: false
+  server:
+    argv:
+      --kv_cache_dtype: bf16
+      --enforce-eager: true
+
+# what serving-moe-kimi-k3-mxfp4-gpus runs: ptpc_fp8 on the BF16 linear layers + fp8 KV cache
+kimi-atom-tp8-fp8:
+  inherits: _kimi_atom
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --enforce-eager: true
+      --online_quant_config: &ptpc '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*self_attn.f_b_proj*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
+
+# fp8 weights only: separates the two quantization effects
+kimi-atom-tp8-fp8w-bf16kv:
+  inherits: _kimi_atom
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --kv_cache_dtype: bf16
+      --enforce-eager: true
+      --online_quant_config: *ptpc
+
+# GPQA diamond for kimi-atom-tp8-fp8w-bf16kv, whose first run hit max_duration (then 2 h) during it
+kimi-atom-tp8-fp8w-bf16kv-gpqa:
+  inherits: kimi-atom-tp8-fp8w-bf16kv
+  # disabled: make-up after a 2 h max_duration; the limit is 3 h now
+  enabled: false
+  client:
+    passes:
+      - name: eval
+        eval:
+          tasks: [milabench_gpqa_diamond]
+          num_concurrent: 128
+          gen_kwargs: {max_gen_toks: 8192, temperature: 0}
+
+# CUDA graphs (no --enforce-eager)
+kimi-atom-tp8-fp8-graphs:
+  inherits: _kimi_atom
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: *ptpc
+
+# BF16 with CUDA graphs: eager mode spends ~90% of a decode step outside the GPU (FP8: 154 ms -> 15 ms TPOT at
+# concurrency 1), so the layouts below run with graphs; the eager entries above are the accuracy comparison
+kimi-atom-tp8-bf16-graphs:
+  inherits: _kimi_atom
+  server:
+    argv:
+      --kv_cache_dtype: bf16
+
+# DP attention + expert parallel over the 8 GPUs (CUDA graphs)
+kimi-atom-dpattn8-ep8-fp8:
+  inherits: _kimi_atom
+  # disabled: out of memory: DP attention replicates attention + shared layers on every GPU (266 GB/GPU before KV)
+  enabled: false
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: *ptpc
+      --enable-dp-attention: true
+      --enable-expert-parallel: true
+
+# -----------------------------------------------------------------------------
+# ATOM, 2 nodes: data parallelism across the nodes (ATOM has no cross-node TP/PP)
+# -----------------------------------------------------------------------------
+
+_kimi_atom_nodes:
+  inherits: _kimi_atom
+  num_machines: 2
+  tags:
+    - multinode
+    - moe
+    - mxfp4
+    - kimi-study
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+    - "len(nodes) >= ${..num_machines}"
+  server:
+    multinode: dp
+    dp_local: 1
+
+# one replica per node behind the coordinator's endpoint
+kimi-atom-2n-dp2-tp8-fp8:
+  inherits: _kimi_atom_nodes
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: *ptpc
+
+# DP attention on the 16 GPUs, experts sharded over both nodes (cross-node all-to-all)
+kimi-atom-2n-dpattn16-ep16-fp8:
+  inherits: _kimi_atom_nodes
+  # disabled: aiter fused_moe: a16w4 (bf16 A x MXFP4 W) SiTUv2 does not support expert-parallel masking
+  enabled: false
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: *ptpc
+      --enable-dp-attention: true
+      --enable-expert-parallel: true
+
+# -----------------------------------------------------------------------------
+# vLLM. On ROCm the MXFP4 experts run on vLLM's EMULATION MoE backend (no native kernel for this model).
+# -----------------------------------------------------------------------------
+
+_kimi_vllm:
+  inherits: _kimi
+  server:
+    backend: vllm
+    argv:
+      moonshotai/Kimi-K3: true
+      --trust-remote-code: true
+      # text-only benchmark: skip the vision tower and its profiling memory
+      --language-model-only: true
+      --max-model-len: 133120
+      # Kimi-K3's linear-attention state is ~56 MB per sequence per GPU (TP8): with the BF16 weights (198 GB of
+      # 288 GB) 1024 sequences need 57.5 GB of the 48 GB left (InsufficientPoolBudget). 512: 29 GB, the rest for KV.
+      # conc1024 then shows the saturation (requests beyond 512 queue).
+      --max-num-seqs: 512
+      --max-num-batched-tokens: 16384
+      --gpu-memory-utilization: 0.9
+      --no-enable-prefix-caching: true
+
+kimi-vllm-tp8:
+  inherits: _kimi_vllm
+  # disabled: vLLM 0.32 on ROCm: Quark hw_emulation JIT build gets -DUSE_CUDA on HIP (cuda.h), grouped_topk compile stalls
+  enabled: false
+  client:
+    passes: {append: [*eval]}
+  server:
+    argv:
+      --tensor-parallel-size: "{gpu_count}"
+      # per-rank weight shards (benchmate.vllm_sharded_loader): the first run saves them
+      --load-format: milabench_sharded
+
+kimi-vllm-tp8-ep:
+  inherits: _kimi_vllm
+  # disabled: vLLM not runnable for Kimi-K3 on ROCm (see kimi-vllm-tp8)
+  enabled: false
+  server:
+    argv:
+      --tensor-parallel-size: "{gpu_count}"
+      --enable-expert-parallel: true
+      --load-format: milabench_sharded
+
+_kimi_vllm_nodes:
+  inherits: _kimi_vllm
+  num_machines: 2
+  tags:
+    - multinode
+    - moe
+    - mxfp4
+    - kimi-study
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+    - "len(nodes) >= ${..num_machines}"
+  server:
+    multinode: dp
+
+kimi-vllm-2n-dp2-tp8:
+  inherits: _kimi_vllm_nodes
+  # disabled: vLLM not runnable for Kimi-K3 on ROCm (see kimi-vllm-tp8)
+  enabled: false
+  server:
+    dp_local: 1
+    argv:
+      --tensor-parallel-size: "{gpu_count}"
+      --load-format: milabench_sharded
+
+# wide EP: one DP rank per GPU, experts over the 16 GPUs. No sharded loader: its shard names are
+# per (PP, TP) rank and every rank here is TP 0 with different experts.
+kimi-vllm-2n-dp16-ep16:
+  inherits: _kimi_vllm_nodes
+  # disabled: vLLM not runnable for Kimi-K3 on ROCm (see kimi-vllm-tp8)
+  enabled: false
+  server:
+    dp_local: 8
+    argv:
+      --tensor-parallel-size: 1
+      --enable-expert-parallel: true
+
+# -----------------------------------------------------------------------------
+# Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
+# -----------------------------------------------------------------------------
+
+_kimi_smoke:
+  inherits: _kimi
+  max_duration: 1800
+  client:
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+    passes:
+      - {name: conc4,      argv: {--max-concurrency: 4,  --num-prompts: 16, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: ctx4k-c4,   argv: {--max-concurrency: 4,  --num-prompts: 8,  --random-input-len: 4096, --random-output-len: 512}}
+      - name: eval
+        eval:
+          tasks: [milabench_gsm8k, milabench_arc_challenge, milabench_gpqa_diamond]
+          limit: 20
+          num_concurrent: 16
+          gen_kwargs: {max_gen_toks: 2048, temperature: 0}
+
+kimi-smoke-atom:
+  inherits: _kimi_smoke
+  # disabled: smoke of the machinery, not part of the study
+  enabled: false
+  server:
+    backend: atom
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+      -tp: 1
+      --max-model-len: 8192
+      --enforce-eager: true
+
+# same layout as the Kimi 2-node entries (DP2 x TP8: every node full). With fewer GPUs per node than the
+# DP slice, the RCCL group guesses its device from the global rank (rank % GPUs) and the worker fails with
+# "Expected tensor on cuda:1 but found tensor on cuda:0".
+kimi-smoke-atom-2n-dp2:
+  inherits: kimi-smoke-atom
+  # disabled: smoke of the machinery, not part of the study
+  enabled: false
+  num_machines: 2
+  tags:
+    - multinode
+    - kimi-study
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  server:
+    multinode: dp
+    dp_local: 1
+    argv:
+      -tp: "{gpu_count}"
+
+kimi-smoke-vllm-2n-dp2:
+  inherits: _kimi_smoke
+  # disabled: smoke of the machinery, not part of the study
+  enabled: false
+  num_machines: 2
+  tags:
+    - multinode
+    - kimi-study
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  server:
+    backend: vllm
+    multinode: dp
+    dp_local: 1
+    argv:
+      meta-llama/Llama-3.1-8B-Instruct: true
+      --tensor-parallel-size: 1
+      --max-model-len: 8192
+
+# -----------------------------------------------------------------------------
+# vLLM Kimi-K3 bring-up (ROCm): after loading, the workers spin on the CPU (3 threads at 100%, GPUs idle) and
+# the engine waits forever ("No available shared memory broadcast block"), on 1 node as on 2 (TP8 x PP2).
+# Short entries to bisect it; same server flags as kimi-vllm-tp8 plus one change each.
+# -----------------------------------------------------------------------------
+
+_kimi_vllm_debug:
+  inherits: kimi-vllm-tp8
+  max_duration: 2400
+  client:
+    passes:
+      - {name: conc1,  argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 1024, --random-output-len: 128}}
+      - {name: conc16, argv: {--max-concurrency: 16, --num-prompts: 32, --random-input-len: 1024, --random-output-len: 128}}
+
+kimi-vllm-tp8-debug-eager:
+  inherits: _kimi_vllm_debug
+  # disabled: bring-up only
+  enabled: false
+  server:
+    argv:
+      --enforce-eager: true
+
+# The "hang" is Inductor compiling vLLM's grouped_topk router (@torch.compile in
+# fused_moe/router/grouped_topk_router.py): Triton's AMD backend (make_amdgcn) stays in LLVM for tens of
+# minutes, even with --enforce-eager. TORCHDYNAMO_DISABLE turns torch.compile into plain eager code.
+kimi-vllm-tp8-debug-nodynamo:
+  inherits: kimi-vllm-tp8-debug-eager
+  # disabled: bring-up only
+  enabled: false
+  env:
+    TORCHDYNAMO_DISABLE: "1"

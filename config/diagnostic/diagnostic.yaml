@@ -119,6 +119,15 @@ net-net:
   argv:
     --tests: net
 
+# net-inter with 4 RDMA queue pairs per connection: spreads each GPU pair over
+# several fabric paths (ECMP); if the ~31 GB/s pairs disappear, the slow pairs
+# come from flows hashed onto a degraded path.
+net-inter-qps4:
+  inherits: _net_nodes
+  argv:
+    --tests: inter
+    --set-env: NCCL_IB_QPS_PER_CONNECTION=4
+
 net-latency:
   inherits: _net_node
   argv:

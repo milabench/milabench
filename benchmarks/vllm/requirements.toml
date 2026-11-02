@@ -4,6 +4,8 @@ dependencies = [
     "torch",
     # Required for multi-node vLLM via milabench.commands.ray.RayCluster
     "ray",
+    # accuracy passes (client.passes[].eval): lm-eval against the server's OpenAI API
+    "lm-eval[api]",
 ]
 
 [cuda]

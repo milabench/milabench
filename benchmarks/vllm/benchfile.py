@@ -1,11 +1,20 @@
+import asyncio
 import os
+import sys
+from copy import deepcopy
+from pathlib import Path
 
+from milabench.alt_async import destroy
 from milabench.pack import Package
 import milabench.commands as cmd
+from milabench.commands.executors import get_or_create_warden
 from milabench.commands.ray import RayCluster
-from milabench.commands.srun import _main_node
+from milabench.commands.srun import SrunExceptMain, _main_node
 from milabench.merge import merge
-from milabench.utils import assemble_options
+from milabench.utils import assemble_options, select_nodes
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from server_backends import multinode_dp_flags  # noqa: E402
 
 
 # vLLM-only server flags; ATOM accepts --served-model-name and --trust-remote-code.
@@ -60,6 +69,67 @@ class VLLMParallel(cmd.Command):
         os.environ["VLLM_DP_MASTER_PORT"] = str(dp_master_port)
 
 
+class DataParallelServers(cmd.SequenceCommand):
+    """Multi-node data parallel serving: engine-only servers on the worker nodes, *workload* on the main node.
+
+    The workload (main.py) starts the coordinator server (DP rank 0, HTTP endpoint) and the client; every
+    other node runs ``server_worker.py``, which joins the coordinator's DP group. The worker servers never
+    exit on their own, and the ssh fallback of ``milabench slurm srun`` does not forward signals, so once
+    the workload is done ``server_worker.py --stop`` kills them by pidfile (same idea as RayCluster)."""
+
+    def __init__(self, executor, worker, stop, **kwargs):
+        super().__init__(None, **kwargs)
+        self.executor = executor
+        self.worker = worker
+        self.stop = stop
+
+    @property
+    def pack(self):
+        return self.executor.pack
+
+    @property
+    def executors(self):
+        return [cmd.ListCommand(self.worker, cmd.SequenceCommand(self.executor, self.stop))]
+
+    async def execute(self, phase="run", timeout=False, timeout_delay=600, warden=None, resource_cleaner=True,
+                      with_gpu_warden=True, **kwargs):
+        run_kwargs = {**self._kwargs, **kwargs, "phase": phase, "timeout": timeout, "timeout_delay": timeout_delay}
+        with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+            worker_task = asyncio.create_task(self.worker.execute(**run_kwargs, warden=warden))
+            workload_task = asyncio.create_task(self.executor.execute(**run_kwargs, warden=warden))
+            try:
+                done, _ = await asyncio.wait({worker_task, workload_task}, return_when=asyncio.FIRST_COMPLETED)
+                if workload_task not in done:
+                    # a worker server exited first: the coordinator would wait for its engines until the timeout
+                    await self.executor.pack.message("A worker node's server exited: stopping the workload")
+                    for proc in self.executor.pack.processes:
+                        if proc.poll() is None:
+                            destroy(proc)
+                error_count = await workload_task
+                if workload_task not in done:
+                    error_count = max(1, error_count)
+            finally:
+                await self.stop.execute(**run_kwargs, warden=warden)
+                for proc in self.worker.pack.processes:
+                    if proc.poll() is None:
+                        destroy(proc)
+                try:
+                    await asyncio.wait_for(worker_task, timeout=60)
+                except Exception:
+                    worker_task.cancel()
+        return error_count
+
+    def set_run_options(self, **kwargs):
+        self.executor.set_run_options(**kwargs)
+        return self
+
+    def copy(self, pack):
+        # the worker / stop steps keep their own (nolog) pack
+        copy = deepcopy(self)
+        copy.executor._set_pack(pack)
+        return copy
+
+
 class VLLM(Package):
     # Requirements file installed by install(). It can be empty or absent.
     base_requirements = "requirements.in"
@@ -101,6 +171,10 @@ class VLLM(Package):
                 # llvm/bin/ld.lld; the torch rocm-sdk wheels lay theirs out differently
                 # (an empty ROCM_PATH, as exported by env.sh, counts as unset)
                 env["ROCM_PATH"] = env.get("ROCM_PATH") or os.environ.get("ROCM_PATH") or "/opt/rocm"
+                if self.multinode_dp():
+                    # aiter's custom all-gather (IPC) is intra-node: it is disabled on a DP group that spans nodes,
+                    # and ATOM's DP-sharded lm_head then asserts on it. ATOM's opt-out falls back to RCCL.
+                    env["ATOM_USE_CUSTOM_ALL_GATHER"] = "0"
             else:
                 # atom registers vLLM platform/model plugins that swap vLLM's
                 # own models for ATOM's whenever atom is installed
@@ -160,10 +234,34 @@ class VLLM(Package):
     def client_argv(self, prepare=False):
         return assemble_options(self._merged_section("client", prepare=prepare)["argv"])
 
-    def server_argv(self, prepare=False):
+    def multinode_dp(self) -> bool:
+        """``server.multinode: dp``: one server per node joined by data parallelism (ATOM, vLLM), instead of
+        one vLLM engine spread over the nodes with Ray."""
+        return self.num_machines > 1 and self._merged_section("server").get("multinode") == "dp"
+
+    def dp_local(self) -> int:
+        return int(self._merged_section("server").get("dp_local", 1))
+
+    def dp_nodes(self) -> list[str]:
+        """Addresses of the nodes of the run, the main node (coordinator) first."""
+        main = _main_node(self.config)
+        nodes = select_nodes(self.config["system"]["nodes"], self.num_machines)
+        others = [n for n in nodes if n is not main and cmd.node_address(n) != cmd.node_address(main)]
+        return [cmd.node_address(main)] + [cmd.node_address(n) for n in others]
+
+    def base_server_argv(self, prepare=False):
         args = assemble_options(self._merged_section("server", prepare=prepare)["argv"])
         if self.server_backend() == "atom":
             args = filter_vllm_server_argv_for_atom(args)
+        return args
+
+    def server_argv(self, prepare=False):
+        args = self.base_server_argv(prepare=prepare)
+        if self.multinode_dp():
+            nodes = self.dp_nodes()
+            return args + multinode_dp_flags(
+                self.server_backend(), nnodes=len(nodes), dp_local=self.dp_local(), node_index=0, master_ip=nodes[0]
+            )
         if self.server_backend() == "vllm" and self.num_machines > 1 and not any(
             a == "--distributed-executor-backend"
             or str(a).startswith("--distributed-executor-backend=")
@@ -178,7 +276,7 @@ class VLLM(Package):
 
     def uses_ray(self) -> bool:
         """True for multi-node or when the server explicitly asks for Ray."""
-        if self.server_backend() != "vllm":
+        if self.server_backend() != "vllm" or self.multinode_dp():
             return False
         if self.num_machines > 1:
             return True
@@ -202,13 +300,43 @@ class VLLM(Package):
             self, prep, *argv, env=self.make_env(), cwd=prep.parent
         )
 
+    def client_passes(self) -> list:
+        return self._merged_section("client").get("passes") or []
+
     def build_run_plan(self):
         main = self.dirs.code / self.main_script
-        pack = cmd.PackCommand(self, *self.argv, lazy=True)
+        target = self
+        if self.client_passes():
+            # main.py writes every client pass to its own <bench>.<pass>.<job>.data (the metrics to report);
+            # what milabench records from the process is the server's (start, load, warmup, idle): nolog
+            target = self.copy(cmd.clone_with(self.config, {"tag": [*self.config["tag"], "server", "nolog"]}))
+        pack = cmd.PackCommand(target, *self.argv, lazy=True)
         workload = cmd.VoirCommand(pack, cwd=main.parent).use_stdout()
+        if self.multinode_dp():
+            return self.dp_servers(workload)
         if self.uses_ray():
             return RayCluster(workload)
         return workload
+
+    def dp_servers(self, workload):
+        worker_pack = self.copy(cmd.clone_with(self.config, {"tag": [*self.config["tag"], "dpworker", "nolog"]}))
+        python = f"{self.dirs.venv}/bin/python"
+        script = str(self.dirs.code / "server_worker.py")
+        pidfile = f"{self.dirs.runs}/server-worker.{self.config['name']}.pid"
+        env = self.make_env()
+        worker = cmd.CmdCommand(
+            worker_pack, python, script,
+            "--backend", self.server_backend(),
+            "--nodes", ",".join(self.dp_nodes()),
+            "--dp-local", str(self.dp_local()),
+            "--pidfile", pidfile,
+            "--", *self.base_server_argv(),
+            env=env, cwd=str(self.dirs.code),
+        )
+        stop = cmd.CmdCommand(
+            worker_pack, python, script, "--stop", "--pidfile", pidfile, env=env, cwd=str(self.dirs.code),
+        )
+        return DataParallelServers(workload, SrunExceptMain(worker), SrunExceptMain(stop))
 
 
 __pack__ = VLLM

@@ -618,6 +618,10 @@ def main():
     parser.add_argument("--rdma-seconds", type=int, default=3, help="ib_write_bw duration per run")
     parser.add_argument("--rdma-msg-bytes", type=int, default=1 << 20, help="ib_write_bw message size")
     parser.add_argument("--rdma-qps", type=int, default=4, help="ib_write_bw queue pairs")
+    parser.add_argument(
+        "--set-env", action="append", default=[], metavar="NAME=VALUE",
+        help="Set before the process group starts, on every rank (workers only get system.env otherwise)",
+    )
     parser.add_argument("--no-numa-bind", action="store_true", help="Do not pin ranks to their GPU's NUMA node")
     args = parser.parse_args()
 
@@ -625,6 +629,10 @@ def main():
     unknown = set(tests) - set(TESTS)
     if unknown:
         parser.error(f"unknown tests {sorted(unknown)}")
+
+    for assignment in args.set_env:
+        name, _, value = assignment.partition("=")
+        os.environ[name] = value
 
     local_rank = int(os.getenv("LOCAL_RANK", 0))
     device = accelerator.fetch_device(local_rank)

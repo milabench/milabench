@@ -39,6 +39,8 @@ benchmarks/vjepa/jepa
 benchmarks/llm/bench/original
 benchmarks/_extern/
 benchmarks/torchtitan/assets
+benchmarks/*/Megatron-LM/
+benchmarks/*/slime_src/
 benchmarks/dinov2/training_metrics.json
 
 scripts/inventory.yaml
