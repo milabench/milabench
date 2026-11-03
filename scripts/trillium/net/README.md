@@ -49,4 +49,26 @@ Arguments after `--` go to every script.
 
 ## Durations
 
-TODO after the Rorqual test.
+Measured on Rorqual, 4 nodes x 4 H100 (job 25476067, 2026-11-03): whole job 1 min 49 s; D2 43 s
+(3 rounds of ~3 s, the rest is srun + torch import + NCCL init), D3 47 s (1, 2, 4 nodes, size sweep
+at 2), D4 14 s (1 cut). Trillium at 52 nodes x 8 B200, *estimates* (not measured):
+
+| | estimate | basis |
+|---|---|---|
+| D2, concurrent | ~10 min | 51 rounds x 3-6 s (1 GiB x 13 at ~90 GB/s per node, NCCL connection set-up for each new peer, 416-rank gathers) + ~2 min start-up |
+| D2, `--sequential` | ~1 h | 1,326 pairs x 2-3 s |
+| D3 | ~15 min | 7 node counts x 2 repetitions x 4 collectives + 2 size sweeps (up to 4 GiB all-to-all at 52 nodes: ~0.4 s per iteration) + a communicator per node count |
+| D4 | ~2 min | 3 cuts x ~5 s + start-up |
+
+`net.sbatch` asks for 1 h; shorten it once D2 has run once.
+
+## Rorqual test (job 25476067, 4 nodes, 1 HDR HCA = 25 GB/s per node)
+
+- D2: 18.7-22.2 GB/s per node one direction (median 21.4) with both directions at once; latency
+  24.2-25.1 us one way. That latency is NCCL send/recv through torch (kernel launch included), far
+  above the IB wire latency (~2 us, `ib_write_lat`): it compares pairs, not fabrics.
+- D3, 1 GiB: 1 node (NVLink) all-reduce 334-337 GB/s bus BW, all-gather / reduce-scatter 310,
+  all-to-all 300; 2 nodes all-reduce 37.5 (NCCL tree: bus BW can exceed the NIC), all-gather /
+  reduce-scatter 18-21, all-to-all 8.6-9.0; 4 nodes 19-21, all-to-all 6.3-6.8 (= ~20 GB/s per node
+  across the NIC).
+- D4, 2 + 2 nodes: median 20.9 GB/s per node, min 19.7.

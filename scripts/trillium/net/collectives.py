@@ -41,7 +41,7 @@ def op(net: Net, coll, size, group, n):
 
 
 def iterations(size):
-    return (50, 10) if size <= 2**20 else (20, 5) if size <= 2**26 else (10, 3)
+    return (50, 10) if size <= 2**20 else (20, 5) if size <= 2**26 else (10, 5)
 
 
 def main():
