@@ -25,6 +25,22 @@ Frozen parameters are set before Megatron wraps the model, so they get no gradie
   and TP under one switch; `nodes: topology` does that with the default order, `tp-cp-ep-pp-dp` makes the pipeline
   local instead and pushes the data-parallel reduce across switches.
 
+## Layout check
+`placement.gpus_per_node` is required (4 on Rorqual, 8 on Trillium). Before launch, `placement.check_layout` checks
+the entry against Megatron's rules on `num_machines` x `gpus_per_node` GPUs (TP x CP x PP and ETP x EP x PP divide the
+world, the global batch is whole micro-batches per data-parallel rank) and warns when a pipeline gets fewer
+micro-batches than stages. `python placement.py --hosts ... --gpus-per-node 8 --pp 13 --ep 8 --gbs 256` prints it.
+
+## Checkpoints (`checkpoint:`)
+`{dir, op: save | load, content: weights | full, mode: sync | async, step}` (dir may use environment variables) becomes
+Megatron's flags (`torch_dist`; async through the persistent `mcore` worker; a weights load is a `--finetune` without
+optimizer). One save per run, at `step`. Rank 0 logs a `checkpoint` event (`scripts/trillium/FORMAT.md`): time blocked,
+total time, bytes, files, filesystem; a weights checksum written at save time is compared after the load.
+
+## Loss
+The last pipeline stage's first data-parallel rank keeps the loss of every step (with the gradient norm) in its step
+rows; rank 0 emits `{loss, grad_norm, step}` events at the end of the run.
+
 ## Node telemetry
 
 With `BENCHMATE_NODEMON_DIR` set, `main.py` starts `benchmate.nodemon` from every rank before Megatron is imported,
