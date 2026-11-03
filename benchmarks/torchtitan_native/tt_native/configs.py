@@ -206,13 +206,15 @@ def _mxfp8(model, opts: Options):
         from torchtitan.config.transform.quantization import MXFP8LinearConverter
 
         converter = MXFP8LinearConverter.Config(fqns=targets).build()
-    except (ImportError, ValueError) as exc:
+        # Conversion errors too (e.g. a dimension not a multiple of 32) are
+        # raised after run_start; the run fails then, whatever the model holds.
+        model = converter.convert(model)
+    except (ImportError, ValueError, TypeError, RuntimeError) as exc:
         gpu = "no GPU"
         if torch.cuda.is_available():
             gpu = "GPU sm_{}{}".format(*torch.cuda.get_device_capability())
         instrument.FATAL = f"precision=mxfp8 unavailable ({gpu}): {exc}"
         return model
-    model = converter.convert(model)
     instrument.RUN_DESCRIPTION["mxfp8_targets"] = targets
     instrument.RUN_DESCRIPTION["quantized_linears"] = sum(
         isinstance(cfg, MXFP8Linear.Config) for _, cfg, _, _ in model.traverse(Linear.Config)
