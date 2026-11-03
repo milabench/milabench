@@ -17,6 +17,15 @@ clock, every rank): ``blocked_s`` / ``total_s`` are the maximum over ranks,
   until the write has completed (the save future resolves).
 - load: until ``load()`` returns (synchronous).
 
+Page cache: every rank reads back the shards it wrote seconds earlier, so a
+load could be served from the client's page cache instead of the filesystem.
+Before each load, one rank per node drops the step directory's pages
+(``posix_fadvise(POSIX_FADV_DONTNEED)`` on every file; no root needed; the
+writer has synced the files, so their pages are clean and droppable); the load
+event records it as ``cache_drop``. Reads are not shifted to another node: with
+the same world size DCP gives every rank its own shards back, and re-sharding
+the load is not cheap, so the measurement relies on the cache drop.
+
 ``content``: ``full`` = model + optimizer + LR scheduler + data loader + train
 state (``CheckpointManager.save``); ``weights`` = model only, bf16
 (TorchTitan's last-step model-only save, synchronous only), loaded back through
@@ -65,6 +74,26 @@ def _usage(path: str) -> tuple[int, int]:
             except OSError:
                 pass
     return total, files
+
+
+CACHE_DROP = "posix_fadvise_dontneed"
+
+
+def _drop_page_cache(path: str) -> int:
+    """Drop this node's cached pages of every file under ``path``; returns the file count."""
+    count = 0
+    for root, _, names in os.walk(path):
+        for name in names:
+            try:
+                fd = os.open(os.path.join(root, name), os.O_RDONLY)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                count += 1
+            finally:
+                os.close(fd)
+    return count
 
 
 def _local(t: torch.Tensor) -> torch.Tensor:
@@ -169,6 +198,9 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
 
         # Load into overwritten weights: the checksum shows they come back.
         _zero_weights(params)
+        dropped = 0
+        if int(os.environ.get("LOCAL_RANK", "0")) == 0:
+            dropped = _drop_page_cache(path)
         torch.cuda.synchronize()
         dist.barrier()
         t0 = time.time()
@@ -185,7 +217,9 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         tolerance = 1e-9 if content == "full" else 1e-2
         ok = abs(restored - reference) <= tolerance * max(abs(reference), 1.0)
         dist.barrier()
-        event = {"op": "load", "repetition": rep, "mode": "sync"}
+        event = {"op": "load", "repetition": rep, "mode": "sync", "cache_drop": CACHE_DROP}
+        if _rank() == 0:
+            event["cache_drop_files_rank0"] = dropped
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
         record(event, [t0, t1, t1, float(ok)])
