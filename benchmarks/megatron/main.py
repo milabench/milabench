@@ -955,6 +955,9 @@ def checkpoint_argv(cfg: dict, argv: list[str]) -> list[str]:
         if ck["content"] == "weights":
             argv += ["--finetune", "--no-load-optim"]
         else:
+            # Megatron builds the load's state dict with the same code as the save's: with --no-save-optim the optimizer
+            # is left out of it, and the load fails on a checkpoint that has one (KeyError: 'optimizer')
+            argv = drop(argv, "--no-save-optim")
             # a full load resumes at the saved iteration: --train-iters counts the steps to run after it
             try:
                 with open(os.path.join(ck["dir"], "latest_checkpointed_iteration.txt")) as f:
