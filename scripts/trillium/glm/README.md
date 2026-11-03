@@ -48,6 +48,9 @@ with these differences, to check on the first B200 node:
   `benchmarks/slime/benchfile.py` puts the wheels' `nvcc` first; check `which nvcc` inside a run if a build fails.
 - **Caches**: `$HOME` is read-only from the compute nodes: `job.sbatch` points `XDG_CACHE_HOME`, `TRITON_CACHE_DIR`,
   `TILELANG_CACHE_DIR` at `$MILABENCH_BASE/cache` (scratch). Install with `UV_CACHE_DIR` on scratch too.
+- **Megatron's dataset helpers**: rank 0 runs `make` in `Megatron-LM/megatron/core/datasets` at every start (with
+  the `python3` on `PATH`: `job.sbatch` puts the benchmark venv first, it has pybind11). The checkout must be
+  writable and a failed build stops the run.
 - **No local disk** (`TmpDisk` 2 GB): unlike Rorqual's `job.sbatch`, nothing is copied to a node-local base; data and
   venv are read from scratch (VAST).
 - **sm_100 kernels to verify** in the 1-node smoke: TileLang DSA indexer and sparse MLA (GLM-5 plugin), SGLang RoPE
