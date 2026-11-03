@@ -175,9 +175,9 @@ def run_block() -> dict[str, Any]:
         "exclusive_cluster": os.environ.get("TT_EXCLUSIVE_CLUSTER", "0") == "1",
         "run_tag": os.environ.get("TT_RUN_TAG"),
         # Trillium (scripts/trillium/FORMAT.md): DESIGN.md experiment ID; E1 node set and condition.
-        "experiment": os.environ.get("TT_EXPERIMENT"),
-        "node_set": os.environ.get("TT_NODE_SET"),
-        "condition": os.environ.get("TT_CONDITION"),
+        "experiment": os.environ.get("TT_EXPERIMENT") or None,
+        "node_set": os.environ.get("TT_NODE_SET") or None,
+        "condition": os.environ.get("TT_CONDITION") or None,
     }
 
 
