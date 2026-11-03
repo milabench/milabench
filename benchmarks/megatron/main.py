@@ -141,6 +141,7 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
             counts[0] += trainable
             counts[1] += total
             debug(f"model chunk {i}: {trainable:,} trainable / {total:,} parameters on this rank")
+        RUN["params_total"], RUN["params_active"] = model_params(models)
         # fraction over all the ranks' parameters: the replicated (non-expert) ones count once per data-parallel rank,
         # so this is a weighted figure, close to the real fraction of the model that trains
         gathered = [None] * dist.get_world_size()
@@ -159,6 +160,28 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
         model_cfg.transformer_layer_spec = layer_spec
     model_cfg.pre_wrap_hooks.append(freeze_hook)
     return model_cfg
+
+
+def model_params(models) -> tuple[int, int]:
+    """(parameters, trainable parameters) of one model copy, a collective: the dense ones of each stage counted on its
+    first data-parallel rank, the experts (``allreduce`` False) on the first expert data-parallel rank of each expert
+    group, so that replicas count once."""
+    import torch.distributed as dist
+    from megatron.core import parallel_state as ps
+
+    local = [0, 0, 0, 0]  # dense, expert, trainable dense, trainable expert
+    for chunk in models:
+        for param in chunk.parameters():
+            expert = not getattr(param, "allreduce", True)
+            local[expert] += param.numel()
+            if param.requires_grad:
+                local[2 + expert] += param.numel()
+    info = (ps.get_data_parallel_rank(), ps.get_expert_data_parallel_rank(), *local)
+    every = [None] * dist.get_world_size()
+    dist.all_gather_object(every, info)
+    total = sum(r[2] for r in every if r[0] == 0) + sum(r[3] for r in every if r[1] == 0)
+    active = sum(r[4] for r in every if r[0] == 0) + sum(r[5] for r in every if r[1] == 0)
+    return total, active
 
 
 # --- data --------------------------------------------------------------------------------------------------------
@@ -274,7 +297,8 @@ STARTED = time.time()
 PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep_group": None, "timing": False,
              "every": 10, "steps": 0, "a2a_ms": [], "a2a_steps": 0}
 # for the run summary: when each phase ended on this rank (epoch seconds)
-RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None}
+RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None, "params_total": None,
+       "params_active": None}
 WARMUP_STEPS = 1  # left out of the summary's step statistics (NCCL communicators, allocator growth)
 # the loss per step, kept by one rank of the last pipeline stage (``loss_reporter``): (step, loss tensor, grad norm, time)
 LOSS = {"reporter": False, "steps": []}
@@ -477,7 +501,7 @@ def run_start(args, trainable_fraction):
             "nccl_version": ".".join(map(str, torch.cuda.nccl.version())) if torch.cuda.is_available() else None,
             "n_layers": args.num_layers, "n_layers_full": layers_full,
             "params_trainable_fraction": trainable_fraction,
-            "params_total": None, "params_active": None,
+            "params_total": RUN["params_total"], "params_active": RUN["params_active"],
             "seq_len": args.seq_length, "microbatch_sequences": args.micro_batch_size, "grad_accum": grad_accum,
             "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
             "global_batch_tokens": args.global_batch_size * args.seq_length,
@@ -1032,7 +1056,8 @@ def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, ste
         "op": ck["op"], "step": step,
         "repetition": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
         "mode": ck["mode"] if ck["op"] == "save" else "sync", "content": ck["content"], "format": "torch_dist",
-        "bytes": size, "files": files, "blocked_s": blocked_end - start, "total_s": end - start,
+        "bytes": size, "files": files, "params_total": RUN["params_total"],
+        "blocked_s": blocked_end - start, "total_s": end - start,
         "path": ck["dir"], "filesystem": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end,
         "checksum_match": checksum_match,
         "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
