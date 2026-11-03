@@ -107,6 +107,12 @@ class MegatronGlm5(Slime):
         gpus = placement_lib.gpus_per_node(placement)
         if self.num_machines == 1 and len(self.config.get("devices") or []) > gpus and "CUDA_VISIBLE_DEVICES" not in os.environ:
             env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(gpus))
+        # Megatron builds its dataset helpers at startup with the `python3` on PATH (pybind11): the benchmark venv's,
+        # not the milabench CLI's that milabench puts first
+        venv_bin = str(Path(str(self.dirs.venv)) / "bin")
+        path = env.get("PATH") or os.environ.get("PATH", "")
+        if not path.startswith(venv_bin + os.pathsep):
+            env["PATH"] = os.pathsep.join([venv_bin, path])
         # NCCL / network knobs of the cluster (NCCL_TOPO_FILE, NCCL_CROSS_NIC, NCCL_IB_HCA, ...)
         for key, value in (placement.get("nccl") or {}).items():
             env[str(key)] = str(value)
