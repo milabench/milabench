@@ -108,6 +108,11 @@ JOB_ENV=(
     MILABENCH_DIRS_RUNS="$TRI/runs"
     TT_NODEMON_ROOT="$TRI/nodemon"
     TT_CKPT_ROOT="$TRI/checkpoints"
+    # /tmp holds 2 GB on the B200 nodes (TmpDisk=2048): compile cache, datasets
+    # copy and TMPDIR in /dev/shm (RAM, 2 TB per node), removed at the end. Not
+    # per job: compile cache entries store absolute paths.
+    TT_LOCAL_ROOT="/dev/shm/$USER"
+    TT_LOCAL_CLEANUP=1
     # No HTTP proxy on Trillium compute nodes: wandb offline, `wandb sync` from a login node.
     WANDB_MODE=offline
     "${ENVS[@]}"
