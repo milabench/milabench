@@ -32,25 +32,33 @@ BENCH=${1:?usage: tt_native.sh [NAME=value ...] <bench-name> [milabench run args
 shift
 
 TT38=${TT38:-$SCRATCH/tt38}
+# Modules the cluster needs (Trillium B200: TT_MODULES=cuda/12.9).
+if [ -n "${TT_MODULES:-}" ]; then
+    set +u  # Lmod's scripts read unset variables
+    module load $TT_MODULES
+    set -u
+fi
 # DRAC login profile points Python at cvmfs site-packages and the DRAC wheelhouse.
 unset PYTHONPATH PIP_CONFIG_FILE
 export PATH=$TT38/env/bin:$HOME/.local/bin:$PATH
 
 export MILABENCH_BASE=$TT38/output
-# TT_CONFIG=window selects config/torchtitan_native_window.yaml.
-if [ "${TT_CONFIG:-}" = window ]; then
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_window.yaml
-else
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml
-fi
+# TT_CONFIG=window|trillium selects config/torchtitan_native_<name>.yaml; a path
+# to a .yaml file selects that file.
+case "${TT_CONFIG:-}" in
+    window|trillium) export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_$TT_CONFIG.yaml ;;
+    *.yaml) export MILABENCH_CONFIG=$TT_CONFIG ;;
+    *) export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml ;;
+esac
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 
 
 export MILABENCH_RUN_NAME=${MILABENCH_RUN_NAME:-${TT_RUN_TAG:-$BENCH}.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}}
 
-# Same directory as the GLM-5 launcher. Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
-export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${SCRATCH:?}/nodemon/$MILABENCH_RUN_NAME}
+# Same directory as the GLM-5 launcher (TT_NODEMON_ROOT: another base). Export
+# BENCHMATE_NODEMON_DIR= (empty) to switch it off.
+export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${TT_NODEMON_ROOT:-${SCRATCH:?}/nodemon}/$MILABENCH_RUN_NAME}
 
 # wandb from the compute nodes (Rorqual): through the cluster's HTTP proxy, as the GLM-5 launcher. The proxy only
 # lets api.wandb.ai through: wandb 0.31 defaults to api.forge.coreweave.com, refused (403), and rank 0 then loses
@@ -78,12 +86,24 @@ done
 STAGE_NODES=${TT_NODES:-$SLURM_JOB_NODELIST}
 STAGE_N=$(scontrol show hostnames "$STAGE_NODES" | wc -l)
 
+# Node-local root of the compile cache, local venv, datasets copy and TMPDIR.
+# Default /tmp/$USER. TT_LOCAL_ROOT moves them (Trillium: /dev/shm/$USER, its
+# /tmp holds 2 GB); TT_LOCAL_CLEANUP=1 removes it from every node at the end
+# (/dev/shm is RAM). The path must not depend on the job: compile cache entries
+# store absolute paths (see below).
+LOCAL_ROOT=${TT_LOCAL_ROOT:-/tmp/$USER}
+if [ -n "${TT_LOCAL_ROOT:-}" ]; then
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" mkdir -p "$LOCAL_ROOT/tmp"
+    export TMPDIR=$LOCAL_ROOT/tmp
+fi
+echo "[tt-native] local_root=$LOCAL_ROOT $(df -h "$(dirname "$LOCAL_ROOT")" | tail -1)"
+
 # Pre-warmed torch.compile caches (Inductor + Triton): unpack an archive onto
 # every node's local disk (same path as benchfile.py's cache dirs; it must be
 # job-independent because cache entries store absolute paths). Per-GPU shapes
 # are identical at every scale, so a cache built on a few nodes is valid for
 # large runs. TT_COMPILE_CACHE= (empty) disables it.
-LOCAL_CACHE=${TT_NATIVE_CACHE_DIR:-/tmp/$USER/tt_native_cache}
+LOCAL_CACHE=${TT_NATIVE_CACHE_DIR:-$LOCAL_ROOT/tt_native_cache}
 export TT_NATIVE_CACHE_DIR=$LOCAL_CACHE
 # Archive named by torch/Triton version and GPU model: a cache built with another
 # stack is never loaded. (Different model configs can share one archive:
@@ -111,7 +131,7 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     PY_REAL=$(readlink -f "$SRC_VENV/bin/python")              # .../cpython-3.12.13-.../bin/python3.12
     PY_ROOT=$(dirname "$(dirname "$PY_REAL")")
     PY_LINK_ROOT=$(dirname "$(dirname "$(readlink "$SRC_VENV/bin/python")")")  # cpython-3.12-... (symlinked dir)
-    LOCAL_SW=/tmp/$USER/tt_native_sw
+    LOCAL_SW=$LOCAL_ROOT/tt_native_sw
     VENV_ARCHIVE=$TT38/venv-archive/torchtitan_native-$CACHE_KEY.tar
     mkdir -p "$(dirname "$VENV_ARCHIVE")"
     t0=$(date +%s.%N)
@@ -148,7 +168,7 @@ fi
 # staging takes ~6 s for 597 MB.
 if [ "${TT_LOCAL_DATA:-1}" = 1 ] && [ -d "$MILABENCH_BASE/data/datasets" ]; then
     SRC_DATASETS=$MILABENCH_BASE/data/datasets
-    LOCAL_DATASETS=/tmp/$USER/tt_native_data/datasets
+    LOCAL_DATASETS=$LOCAL_ROOT/tt_native_data/datasets
     t0=$(date +%s.%N)
     srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
         set -e
@@ -186,6 +206,10 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ] \
         tar -cf "$CACHE_ARCHIVE.tmp" -C "$LOCAL_CACHE" . && mv "$CACHE_ARCHIVE.tmp" "$CACHE_ARCHIVE"
     ) 9>"$CACHE_ARCHIVE.lock"
     echo "[tt-native] compile_cache_saved archive=$CACHE_ARCHIVE files=$CACHE_FILES_BEFORE->$CACHE_FILES_AFTER size=$(du -h "$CACHE_ARCHIVE" | cut -f1)"
+fi
+if [ "${TT_LOCAL_CLEANUP:-0}" = 1 ]; then
+    echo "[tt-native] local_root_before_cleanup $(du -sh "$LOCAL_ROOT" 2>/dev/null | cut -f1)"
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" rm -rf "$LOCAL_ROOT" || true
 fi
 echo "[tt-native] job_end_epoch=$(date +%s.%N)"
 exit $rc
