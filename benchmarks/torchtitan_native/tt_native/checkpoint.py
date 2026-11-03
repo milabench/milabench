@@ -49,19 +49,26 @@ from .instrument import _gather_floats, _rank
 MODES = {"disabled": "sync", "async": "async", "async_with_pinned_mem": "async_pinned"}
 
 
-def _fs_type(path: str) -> str | None:
-    """Filesystem type of ``path`` (longest mount point prefix in /proc/mounts)."""
-    best, fstype = "", None
+def _filesystem(path: str) -> tuple[str | None, str | None]:
+    """(filesystem, mount source) of ``path``: the longest mount point prefix of
+    its real path in /proc/mounts. NFS from a VAST server (Trillium:
+    ``trillium.vast.local:/trillium_scratch``) is ``vast-nfs``; other NFS mounts
+    keep their type and name the server (``nfs4:<server>``)."""
+    path = os.path.realpath(path)
+    best, fstype, source = "", None, None
     try:
         with open("/proc/mounts") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) >= 3 and (path == parts[1] or path.startswith(parts[1].rstrip("/") + "/")):
-                    if len(parts[1]) > len(best):
-                        best, fstype = parts[1], parts[2]
+                    if len(parts[1]) >= len(best):
+                        best, fstype, source = parts[1], parts[2], parts[0]
     except OSError:
         pass
-    return fstype
+    if fstype and fstype.startswith("nfs") and source:
+        server = source.split(":", 1)[0]
+        fstype = "vast-nfs" if "vast" in server.lower() else f"{fstype}:{server}"
+    return fstype, source
 
 
 def _usage(path: str) -> tuple[int, int]:
@@ -136,7 +143,8 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     step = engine.num_completed_steps
     path = ckpt._create_checkpoint_id(step)
     params = engine.model_parts
-    fs_type = _fs_type(os.path.abspath(ckpt.folder))
+    # The folder does not exist yet: its parent's mount.
+    fs_type, fs_source = _filesystem(os.path.dirname(os.path.abspath(ckpt.folder)))
 
     # Collectives here wait for whole saves / loads: the training timeout
     # (train_timeout_seconds) is far too short for them.
@@ -161,6 +169,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
                 "format": "torch.dcp",
                 "path": ckpt.folder,  # the step is in step-<step>/
                 "filesystem": fs_type,
+                "filesystem_source": fs_source,
                 "ranks": len(rows),
                 "start_epoch": min(r[0] for r in rows),
                 "end_epoch": max(r[2] for r in rows),
