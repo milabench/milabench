@@ -138,6 +138,8 @@ class Options:
     """Default: ``$TT_CKPT_ROOT/<milabench run name>``. Must not exist."""
     checkpoint_repeats: int = 1
     checkpoint_keep: bool = False
+    checkpoint_timeout_seconds: int = 1800
+    """Process-group timeout while saving / loading (training uses train_timeout_seconds)."""
 
     # Distributed timeouts. init covers process-group setup, model init and the
     # first step (compilation, CUDA graph capture); train covers later steps.

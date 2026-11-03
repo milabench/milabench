@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from datetime import timedelta
 from typing import Any
 
 import torch
@@ -103,6 +104,15 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     path = ckpt._create_checkpoint_id(step)
     params = engine.model_parts
     fs_type = _fs_type(os.path.abspath(ckpt.folder))
+
+    # Collectives here wait for whole saves / loads: the training timeout
+    # (train_timeout_seconds) is far too short for them.
+    from torchtitan.distributed import utils as dist_utils
+
+    timeout = timedelta(seconds=int(opts.get("checkpoint_timeout_seconds", 1800)))
+    dist_utils.set_pg_timeouts(timeout=timeout, parallelism_context=engine.parallelism_context)
+    if getattr(ckpt, "pg", None) is not None:  # async saves' gloo group
+        dist.set_timeout(timeout, ckpt.pg)
 
     def record(event: dict[str, Any], local: list[float]) -> None:
         # Every rank's [start, end_blocked, end_total, ok] -> spreads on rank 0.
