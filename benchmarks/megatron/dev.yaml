@@ -738,7 +738,8 @@ megatron-glm5-check-fit-full-offload1-64n:
 # 768, 1024; bubble 12 / 44 = 27 %); the other layouts take the batch of their node count (12 nodes: 256, 48: 1024).
 # Strong scaling: 768 in total (96 / 48 / 32 / 24 micro-batches at 13 / 26 / 39 / 52 nodes: bubble 11 % to 33 %).
 # 64 per copy is the small-batch point. Every entry runs on exactly its num_machines nodes: submit each with that many.
-# Names: megatron-glm5-tri-<layout>-n<nodes>-gbs<global batch>[-mb2][-sel][-<precision>].
+# Names: megatron-glm5-tri-<layout>-n<nodes>-gbs<global batch>[-sel][-<precision>].
+# Micro-batch is always 1: the GLM-5 plugin's attention takes THD input only (checked before launch).
 # Stage splits (first / middle x stages / last, 78 layers; the first stage holds the 3 dense layers, the last the loss):
 #   PP13 7 / 6 x 11 / 5     PP26 4 / 3 x 24 / 2     PP6 15 / 13 x 4 / 11
 # DSA index sharing off (as the Rorqual G runs: it only allows some stage boundaries). Run `deviations`: dsa_index_share.
@@ -814,13 +815,7 @@ megatron-glm5-tri-pp13-ep8-n52-gbs768:
 megatron-glm5-tri-pp13-ep8-n13-gbs64:
   inherits: _tri_glm5
   argv: {--global-batch-size: 64}
-# micro-batch 2, selective recompute
-megatron-glm5-tri-pp13-ep8-n13-gbs256-mb2:
-  inherits: _tri_glm5
-  argv: {--micro-batch-size: 2}
-megatron-glm5-tri-pp13-ep8-n52-gbs1024-mb2:
-  inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
-  argv: {--micro-batch-size: 2}
+# selective recompute
 megatron-glm5-tri-pp13-ep8-n13-gbs256-sel:
   inherits: _tri_glm5
   argv: {<<: *tri_sel}
@@ -1010,9 +1005,6 @@ megatron-glm5-tri-test-n4-gbs32:
 megatron-glm5-tri-test-n4-gbs16:
   inherits: _tri_test
   num_machines: 4
-megatron-glm5-tri-test-n2-gbs16-mb2:
-  inherits: _tri_test
-  argv: {--micro-batch-size: 2}
 megatron-glm5-tri-test-n2-gbs16-sel:
   inherits: _tri_test
   argv: {<<: *tri_sel}

@@ -1206,5 +1206,24 @@ def main():
             monitor.stop()
 
 
+def kill_everywhere():
+    """An exception on one rank leaves the others blocked in a receive until the job's time limit (seen with the first
+    forward failing on one stage): stop the benchmark on every node of the allocation, the job goes on to its next entry."""
+    import subprocess
+
+    nodes = os.environ.get("SLURM_JOB_NUM_NODES")
+    if nodes and int(nodes) > 1:
+        subprocess.run(["srun", "--overlap", f"--nodes={nodes}", f"--ntasks={nodes}", "--ntasks-per-node=1", "pkill", "-KILL",
+                        "-f", "megatron/main.py"], timeout=120, check=False)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        sys.stderr.flush()
+        kill_everywhere()
+        raise

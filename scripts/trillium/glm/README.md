@@ -8,7 +8,7 @@ following, not the job). `DRY_RUN=1` prints what would be submitted.
 | Step | Script | What it does |
 |------|--------|--------------|
 | 0 | `./00_plan.sh` | No GPU. Every layout of the campaign against Megatron's rules: copies, data parallel, micro-batches per pipeline. `./00_plan.sh pp13 8 13 256` shows one layout's rank groups. |
-| A-G | `./10_ag.sh 13\|26\|52\|12\|48` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16; micro-batch 2, selective recompute, 64 per copy |
+| A-G | `./10_ag.sh 13\|26\|52\|12\|48` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16; selective recompute, 64 per copy |
 | B-G | `./20_bg.sh 13\|26\|39\|52` | pp13-ep8 with 1-4 copies: 256 per copy (weak) and 768 in total (strong) |
 | C | `./30_c.sh speed 13\|52`, `./30_c.sh loss [recipes]` | bf16 / fp8-tensorwise / fp8-blockwise / mxfp8; 500-step loss runs from seed 1234 |
 | F1 | `./40_f1.sh weights\|full 13\|52` | save sync, load, save async, load; the checkpoint is deleted after each load (timed) |
@@ -18,9 +18,9 @@ Global batch: with PP stages and m micro-batches per data-parallel rank, the 1F1
 (A-G), use 32 micro-batches per data-parallel rank of pp13-ep8 at micro-batch 1: 256 / 512 / 768 / 1024 sequences at
 13 / 26 / 39 / 52 nodes, bubble 12 / 44 = 27 % throughout (the other layouts take their node count's batch; pp6-ep16:
 256 at 12 nodes, 1024 at 48). Strong scaling keeps 768 in total: 96 / 48 / 32 / 24 micro-batches, bubble 11 % to 33 %,
-the cost of spreading a fixed batch. 64 per copy (8 micro-batches, 60 %) is the small-batch point. Micro-batch 2
-(`-mb2` entries) halves the micro-batch count at the same batch; if it fits in B200 memory (not testable on Rorqual's
-80 GB H100) it is an option for larger batches per GPU, the defaults stay at micro-batch 1. `./00_plan.sh` prints
+the cost of spreading a fixed batch. 64 per copy (8 micro-batches, 60 %) is the small-batch point. Micro-batch stays at
+1: the GLM-5 plugin's attention takes THD input only (`--micro-batch-size 2` fails in its first forward, Rorqual job
+25534799) and the launcher refuses it. `./00_plan.sh` prints
 every entry's micro-batches and bubble.
 
 Every entry runs on exactly its `num_machines` nodes (the job is sized from the node count), and the layout is checked

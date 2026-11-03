@@ -149,6 +149,9 @@ class MegatronGlm5(Slime):
             value = argv.get(name)
             return default if value in (None, False) else int(value)
 
+        # the GLM-5 plugin's attention takes THD input (one packed sample): it fails in its first forward otherwise
+        if (self.config.get("model") or {}).get("spec", "glm5") == "glm5" and size("--micro-batch-size") != 1:
+            raise ValueError("the GLM-5 plugin needs --micro-batch-size 1 (THD); a larger sample is data.docs_per_sample")
         world = self.num_machines * placement_lib.gpus_per_node(self.config.get("placement") or {})
         return placement_lib.check_layout(
             world, pp=size("--pipeline-model-parallel-size"), ep=size("--expert-model-parallel-size"),
