@@ -18,7 +18,8 @@
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
 #   PREPARE=0        skip `milabench prepare` in the job (data already staged)
 #   REPETITION       run.repetition (default 1); CAMPAIGN (default trillium-MMDD); EXCLUSIVE_CLUSTER (1 in the window)
-#   CKPT_ROOT        where F1 writes its checkpoints (default $SCRATCH/trillium/ckpt)
+#   CKPT_ROOT        where F1 writes its checkpoints (default $SCRATCH/trillium/checkpoints)
+#   RUNS_DIR         run data, $MILABENCH_BASE/runs links there (default $SCRATCH/trillium/runs, scripts/trillium/FORMAT.md)
 #   metrics: BENCHMATE_RECORD_FINE / _OVERHEAD / _LAPS (default 1), BENCHMATE_PUSH_EVERY (10),
 #            BENCHMATE_WANDB / _ALL_RANKS (1), BENCHMATE_WANDB_PROJECT (milabench-glm), WANDB_DIR ($MILABENCH_BASE/wandb)
 #   nodemon: always on, $SCRATCH/trillium/nodemon/<run name>
@@ -32,7 +33,8 @@ export WORKDIR=${WORKDIR:-$MILABENCH_BASE/src}
 export MILABENCH_VENV=${MILABENCH_VENV:-$WORKDIR/.venv}
 export CONFIG=${CONFIG:-$WORKDIR/benchmarks/megatron/dev.yaml}
 export CUDA_MODULE=${CUDA_MODULE-cuda/12.9}
-export CKPT_ROOT=${CKPT_ROOT:-$SCRATCH/trillium/ckpt}
+export CKPT_ROOT=${CKPT_ROOT:-$SCRATCH/trillium/checkpoints}
+RUNS_DIR=${RUNS_DIR:-$SCRATCH/trillium/runs}
 export NODEMON_ROOT=${NODEMON_ROOT:-$SCRATCH/trillium/nodemon}
 ACCOUNT=${ACCOUNT:-rrg-bengioy-ad}
 PARTITION=${PARTITION-compute_b200_full_node}
@@ -53,7 +55,8 @@ export WANDB_ENTITY=${WANDB_ENTITY:-brdg-mila}
 export WANDB_DIR=${WANDB_DIR:-$MILABENCH_BASE/wandb}
 
 # run identity for run_start (scripts/analysis/FORMAT.md, scripts/trillium/FORMAT.md). The step scripts set
-# TT_EXPERIMENT (A-G, B-G, C-speed, C-loss, F1); job.sbatch sets TT_VARIANT (the entry) per run
+# TT_EXPERIMENT (A-G, B-G-weak, C-speed, C-loss, F1, ...; an entry given as ENTRY@EXPERIMENT overrides it for that
+# run); job.sbatch sets TT_VARIANT (the entry) per run
 export TT_CAMPAIGN=${CAMPAIGN:-${TT_CAMPAIGN:-trillium-$(date +%m%d)}}
 export TT_EXPERIMENT=${TT_EXPERIMENT:-}
 export TT_REPETITION=${REPETITION:-${TT_REPETITION:-1}}
@@ -78,6 +81,10 @@ preflight() {
     [ -d "$MILABENCH_BASE/venv/torch" ] || { echo "no $MILABENCH_BASE/venv/torch (README: install)" >&2; exit 1; }
     [ -d "$MILABENCH_BASE/data/megatron" ] || { echo "no $MILABENCH_BASE/data/megatron (README: install)" >&2; exit 1; }
     [ -d "$WORKDIR/benchmarks/megatron/Megatron-LM" ] || { echo "no Megatron-LM in $WORKDIR/benchmarks/megatron" >&2; exit 1; }
+    # the run data where the analysis copies it from (milabench writes to $MILABENCH_BASE/runs)
+    if [ ! -e "$MILABENCH_BASE/runs" ]; then
+        mkdir -p "$RUNS_DIR" && ln -s "$RUNS_DIR" "$MILABENCH_BASE/runs"
+    fi
 }
 
 # job id from submit's output ("submitted job N")
@@ -85,7 +92,7 @@ job_id() {
     printf '%s\n' "$1" | sed -n 's/^submitted job \([0-9]*\).*/\1/p' | tail -1
 }
 
-# submit NAME TIME NODES ENTRY [ENTRY ...] [-- extra sbatch args]
+# submit NAME TIME NODES ENTRY[@EXPERIMENT] [...] [-- extra sbatch args]
 #   one job on NODES nodes; job.sbatch runs the entries one after the other
 submit() {
     local name=$1 time=$2 nodes=$3

@@ -8,14 +8,13 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 nodes=${1:?usage: $0 26|39|52 [-- sbatch args]}
 shift
 [ $# -gt 0 ] && [ "$1" = -- ] && shift
-export TT_EXPERIMENT=B-G
+export TT_EXPERIMENT=B-G-weak   # the strong-scaling entries are tagged @B-G-strong
 
 e=megatron-glm5-tri-pp13-ep8
 case $nodes in
-    13) entries=($e-n13-gbs256) ;;
-    26) entries=($e-n26-gbs512 $e-n26-gbs256) ;;
-    39) entries=($e-n39-gbs768 $e-n39-gbs264) ;;
-    52) entries=($e-n52-gbs1024 $e-n52-gbs256) ;;
-    *) echo "no B-G entries on $nodes nodes (13, 26, 39, 52)" >&2; exit 2 ;;
+    26) entries=($e-n26-gbs512 $e-n26-gbs256@B-G-strong) ;;
+    39) entries=($e-n39-gbs768 $e-n39-gbs264@B-G-strong) ;;
+    52) entries=($e-n52-gbs1024 $e-n52-gbs256@B-G-strong) ;;
+    *) echo "no B-G entries on $nodes nodes (26, 39, 52; 13 nodes is A-G's run)" >&2; exit 2 ;;
 esac
 submit "glm5-bg-n$nodes-r$TT_REPETITION" "${TIME:-01:30:00}" "$nodes" "${entries[@]}" -- "$@"

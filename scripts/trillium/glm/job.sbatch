@@ -35,8 +35,8 @@ fi
 export WANDB_DIR=${WANDB_DIR:-$MILABENCH_BASE/wandb}/$RUN_PREFIX.$SLURM_JOB_ID
 mkdir -p "$WANDB_DIR"
 echo "[$RUN_PREFIX] wandb: BENCHMATE_WANDB=${BENCHMATE_WANDB:-0} mode=${WANDB_MODE:-online} proxy=${https_proxy:-${HTTPS_PROXY:-none}} dir=$WANDB_DIR"
-read -ra entries <<< "$ENTRIES"
-select=$(IFS=,; echo "${entries[*]}")
+read -ra entries <<< "$ENTRIES"   # ENTRY or ENTRY@EXPERIMENT (run.experiment of that run, else TT_EXPERIMENT)
+select=$(IFS=,; echo "${entries[*]%@*}")
 system=$MILABENCH_BASE/slurm/system.$SLURM_JOB_ID.yaml
 echo "[$RUN_PREFIX] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST ($SLURM_JOB_NUM_NODES) experiment=${TT_EXPERIMENT:-} campaign=${TT_CAMPAIGN:-}"
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed "s/^/[$RUN_PREFIX] /"
@@ -78,7 +78,11 @@ peak() {
 summary=()
 status_all=0
 declare -A seen
-for entry in "${entries[@]}"; do
+experiment=${TT_EXPERIMENT:-}
+for item in "${entries[@]}"; do
+    entry=${item%@*}
+    export TT_EXPERIMENT=$experiment
+    [ "$item" != "$entry" ] && export TT_EXPERIMENT=${item#*@}
     # an entry that comes back in the job (F1's load) gets .2, .3, ... : one run name (and nodemon directory) per run
     seen[$entry]=$(( ${seen[$entry]:-0} + 1 ))
     run=$RUN_PREFIX.$SLURM_JOB_ID.$entry

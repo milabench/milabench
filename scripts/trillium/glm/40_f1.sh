@@ -4,7 +4,7 @@
 #   ./40_f1.sh weights|full 13|52 [-- extra sbatch args]
 # Escalation (DESIGN.md, with the admins' agreement): weights 13 -> weights 52 -> full 13 -> full 52. Expected sizes:
 # weights ~1.5 TB, full ~10 TB (estimates). Repeat at different times of day with REPETITION=2, 3.
-# env: TIME (default 02:00:00, an estimate), CKPT_ROOT (default $SCRATCH/trillium/ckpt), REPETITION, and _common.sh's
+# env: TIME (default 02:00:00, an estimate), CKPT_ROOT (default $SCRATCH/trillium/checkpoints), REPETITION, and _common.sh's
 set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 content=${1:?usage: $0 weights|full 13|52 [-- sbatch args]}

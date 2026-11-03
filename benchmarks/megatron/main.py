@@ -416,13 +416,15 @@ def pp_split(args) -> list[int] | str:
 
 
 def layout_record(args) -> dict:
-    """``parallelism`` additions (Trillium): the layout name, model copies (PP x EP x ETP GPUs each = expert data
-    parallel), layers per stage and micro-batches per pipeline (per data-parallel rank and step)."""
+    """``parallelism`` additions (scripts/trillium/FORMAT.md): the layout name, model copies (PP x EP x ETP GPUs each =
+    expert data parallel), layers per stage (``pp_split``, an addition) and micro-batches per pipeline and step."""
     tp, pp, ep = args.tensor_model_parallel_size, args.pipeline_model_parallel_size, args.expert_model_parallel_size
     etp = getattr(args, "expert_tensor_parallel_size", None) or tp
     dp = getattr(args, "data_parallel_size", 1) or 1
     return {
         "layout": f"pp{pp}-ep{ep}" + (f"-tp{tp}" if tp > 1 else ""),
+        "pp_schedule": "1F1B" if pp > 1 else None,  # no virtual pipeline stages
+        "expert_dp": args.world_size // (pp * ep * etp),
         "copies": args.world_size // (pp * ep * etp),
         "pp_split": pp_split(args),
         "microbatches_per_pipeline": args.global_batch_size // (args.micro_batch_size * dp),
@@ -480,6 +482,10 @@ def run_start(args, trainable_fraction):
             "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
             "global_batch_tokens": args.global_batch_size * args.seq_length,
             "precision": precision(args)[0], "precision_detail": precision(args)[1],
+            # the gradient buffers' dtype is the one reduced across data parallel
+            "grad_reduce_dtype": "bf16" if getattr(args, "grad_reduce_in_bf16", False)
+                                 or "bfloat16" in str(getattr(args, "main_grads_dtype", "")) else "fp32",
+            "seed": getattr(args, "seed", None),
             "optimizer": "AdamW" if args.optimizer == "adam" and args.weight_decay > 0 else args.optimizer,
             "optimizer_state_dtype": dtype("exp_avg_dtype") if precise else "fp32",
             "optimizer_offload_fraction": getattr(args, "optimizer_offload_fraction", 0.0)
@@ -746,6 +752,15 @@ def rank_summary(rows):
     }
 
 
+# dense BF16 spec per GPU (MFU in BF16 units for every recipe, scripts/trillium/FORMAT.md)
+PEAK_FLOPS = {"B200": 2.25e15, "H100": 989e12}
+
+
+def peak_flops():
+    name = torch.cuda.get_device_name() if torch.cuda.is_available() else ""
+    return next((v for k, v in PEAK_FLOPS.items() if k in name), None)
+
+
 def mfu_inputs(args):
     try:
         from megatron.training.training import num_floating_point_operations
@@ -757,7 +772,7 @@ def mfu_inputs(args):
         flops = None
     return {
         "flops_per_token": flops,
-        "peak_flops_per_gpu": None,
+        "peak_flops_per_gpu": peak_flops(),
         "formula": (
             "Megatron's num_floating_point_operations (megatron/training/training.py) for one global batch / "
             "global batch tokens. It assumes every weight gets its gradient: frozen parameters skip theirs, so it "
@@ -1005,15 +1020,17 @@ def gather_checksums(model) -> list:
 
 def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, checksum_match=None,
                      saved_by=None):
-    """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md)."""
+    """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md, "Checkpoint events")."""
     if LOG is None:
         return
     size, files = dir_usage(ck["dir"])
+    # times on rank 0 between barriers: the slowest rank's
     event = {
-        "op": ck["op"], "content": ck["content"], "mode": ck["mode"] if ck["op"] == "save" else "sync",
-        "blocked_s": blocked_end - start, "total_s": end - start, "bytes": size, "files": files,
-        "path": ck["dir"], "fs_type": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end, "step": step,
-        "rep": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
+        "op": ck["op"], "step": step,
+        "repetition": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
+        "mode": ck["mode"] if ck["op"] == "save" else "sync", "content": ck["content"], "format": "torch_dist",
+        "bytes": size, "files": files, "blocked_s": blocked_end - start, "total_s": end - start,
+        "path": ck["dir"], "filesystem": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end,
         "checksum_match": checksum_match,
         "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
     }
