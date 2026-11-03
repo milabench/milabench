@@ -100,13 +100,17 @@ def _local(t: torch.Tensor) -> torch.Tensor:
     return t._local_tensor if hasattr(t, "_local_tensor") else t
 
 
-def _checksum(model_parts) -> float:
-    """Sum of squares of this rank's model weights (fp32)."""
+def _checksum(model_parts, dtype: torch.dtype | None = None) -> float:
+    """Sum of squares of this rank's model weights, rounded to ``dtype`` first
+    (bf16 for weights-only checkpoints), accumulated in fp64."""
     with torch.no_grad():
         total = torch.zeros((), dtype=torch.float64, device="cuda")
         for part in model_parts:
             for p in part.parameters():
-                total += _local(p).double().square().sum()
+                local = _local(p)
+                if dtype is not None:
+                    local = local.to(dtype)
+                total += local.double().square().sum()
     return float(total)
 
 
@@ -175,7 +179,9 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     for rep in range(1, repeats + 1):
         torch.cuda.synchronize()
         dist.barrier()
-        reference = _checksum(params)
+        # Weights-only checkpoints hold bf16 weights: the loaded fp32 weights
+        # must equal the bf16-rounded ones (same values, same summation order).
+        reference = _checksum(params, torch.bfloat16 if content == "weights" else None)
         t0 = time.time()
         ckpt.load_only = False
         try:
@@ -213,9 +219,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         torch.cuda.synchronize()
         t1 = time.time()
         restored = _checksum(params)
-        # weights are saved in bf16: compare at bf16 precision.
-        tolerance = 1e-9 if content == "full" else 1e-2
-        ok = abs(restored - reference) <= tolerance * max(abs(reference), 1.0)
+        ok = abs(restored - reference) <= 1e-12 * max(abs(reference), 1.0)
         dist.barrier()
         event = {"op": "load", "repetition": rep, "mode": "sync", "cache_drop": CACHE_DROP}
         if _rank() == 0:
