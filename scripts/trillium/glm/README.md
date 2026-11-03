@@ -33,7 +33,7 @@ Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, accou
 
 ## Runs that serve two experiments
 
-`run.experiment` holds one value, the tag the launcher gives. Three entries are not run a second time, and serve a second
+`run.experiment` holds one value, the tag the launcher gives. Four entries are not run a second time, and serve a second
 experiment under the tag they already have:
 
 | entry | `run.experiment` | also serves |
@@ -41,9 +41,9 @@ experiment under the tag they already have:
 | `megatron-glm5-tri-pp13-ep8-n13-gbs256` | `A-G` (`10_ag.sh 13`) | `B-G-weak`, 13 nodes |
 | `megatron-glm5-tri-pp13-ep8-n52-gbs1024` | `A-G` (`10_ag.sh 52`) | `B-G-weak`, 52 nodes |
 | `megatron-glm5-tri-pp13-ep8-n39-gbs768` | `B-G-weak` (`20_bg.sh 39`) | `B-G-strong`, 39 nodes |
+| `megatron-glm5-tri-pp13-ep8-n26-gbs512` | `B-G-weak` (`20_bg.sh 26`) | `A-G`, the pp13-ep8 reference at 26 nodes (`10_ag.sh 26` has no pp13-ep8 run) |
 
-Everything else has one experiment: `megatron-glm5-tri-pp13-ep8-n26-gbs512` is `B-G-weak`; n13 / n26 / n52 at 768 are
-`B-G-strong`. C-speed runs its own BF16 baselines (`30_c.sh speed`, same entries as the first two rows, tagged `C-speed`).
+Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-speed runs its own BF16 baselines (`30_c.sh speed`, same entries as the first two rows, tagged `C-speed`).
 
 ## What the runs record (run data, `scripts/analysis/FORMAT.md` + `scripts/trillium/FORMAT.md`)
 
@@ -75,6 +75,8 @@ with these differences, to check on the first B200 node:
 - **Failed builds**: `milabench install` only logs a failed `pip install`. After the builds the pack imports
   `transformer_engine` in the venv and stops if it can't; `torch_memory_saver` is optional for this pack (a `WARNING`
   in the install log, and `.slime_installed` then reads `ok, missing: torch_memory_saver`). Check that file after installing.
+  On Fir it fails at link time (`cannot find -lcuda`, no `libcuda.so` on the linker path; Fir job 2302534): the GLM runs there
+  go without it. `TMS_CUDA_MAJOR` defaults to 13 like the toolkit wheels, so `--set cuda=130` is not needed for it (not run).
 - **Megatron's dataset helpers**: rank 0 runs `make` in `Megatron-LM/megatron/core/datasets` at every start, with
   the `python3` on `PATH`, which under milabench's launcher is the milabench CLI's (`MILABENCH_VENV`): install
   `pybind11` there (`uv pip install pybind11`). The checkout must be writable; a failed build stops the run.
