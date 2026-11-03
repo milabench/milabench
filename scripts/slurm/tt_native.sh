@@ -32,25 +32,33 @@ BENCH=${1:?usage: tt_native.sh [NAME=value ...] <bench-name> [milabench run args
 shift
 
 TT38=${TT38:-$SCRATCH/tt38}
+# Modules the cluster needs (Trillium B200: TT_MODULES=cuda/12.9).
+if [ -n "${TT_MODULES:-}" ]; then
+    set +u  # Lmod's scripts read unset variables
+    module load $TT_MODULES
+    set -u
+fi
 # DRAC login profile points Python at cvmfs site-packages and the DRAC wheelhouse.
 unset PYTHONPATH PIP_CONFIG_FILE
 export PATH=$TT38/env/bin:$HOME/.local/bin:$PATH
 
 export MILABENCH_BASE=$TT38/output
-# TT_CONFIG=window selects config/torchtitan_native_window.yaml.
-if [ "${TT_CONFIG:-}" = window ]; then
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_window.yaml
-else
-    export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml
-fi
+# TT_CONFIG=window|trillium selects config/torchtitan_native_<name>.yaml; a path
+# to a .yaml file selects that file.
+case "${TT_CONFIG:-}" in
+    window|trillium) export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native_$TT_CONFIG.yaml ;;
+    *.yaml) export MILABENCH_CONFIG=$TT_CONFIG ;;
+    *) export MILABENCH_CONFIG=$TT38/milabench/config/torchtitan_native.yaml ;;
+esac
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 
 
 export MILABENCH_RUN_NAME=${MILABENCH_RUN_NAME:-${TT_RUN_TAG:-$BENCH}.$SLURM_JOB_ID${SLURM_STEP_ID:+.$SLURM_STEP_ID}}
 
-# Same directory as the GLM-5 launcher. Export BENCHMATE_NODEMON_DIR= (empty) to switch it off.
-export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${SCRATCH:?}/nodemon/$MILABENCH_RUN_NAME}
+# Same directory as the GLM-5 launcher (TT_NODEMON_ROOT: another base). Export
+# BENCHMATE_NODEMON_DIR= (empty) to switch it off.
+export BENCHMATE_NODEMON_DIR=${BENCHMATE_NODEMON_DIR-${TT_NODEMON_ROOT:-${SCRATCH:?}/nodemon}/$MILABENCH_RUN_NAME}
 
 # wandb from the compute nodes (Rorqual): through the cluster's HTTP proxy, as the GLM-5 launcher. The proxy only
 # lets api.wandb.ai through: wandb 0.31 defaults to api.forge.coreweave.com, refused (403), and rank 0 then loses
