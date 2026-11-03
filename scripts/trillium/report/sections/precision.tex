@@ -1,0 +1,32 @@
+\section{Precision}
+\label{sec:precision}
+
+\begin{question}
+  \textbf{What do FP8 and MXFP8 buy, and do they train the same?} Low precision doubles the matmul rate
+  but not the network: does the gain measured on one node survive at 52 nodes? Does the loss follow BF16?
+\end{question}
+
+\paragraph{Speed (C-speed).} Recipes: BF16; FP8 with tensorwise scaling; FP8 with rowwise (Qwen) or
+blockwise (GLM-5) scaling; MXFP8. Each runs on the best layout, at 1 node (Qwen) or 13 nodes (GLM-5),
+and at 52 nodes.
+
+\begin{figure}[h]
+  \centering\fig{precision_speed}
+  \caption{Speedup over BF16 by recipe, at 1 node (13 for GLM-5) and at 52 nodes, for both workloads.
+    \syntheticnote{precision_speed}}
+  \label{fig:precision_speed}
+\end{figure}
+
+\placeholder{speedup per recipe at small scale and at 52 nodes; how much the network takes back.}
+
+\paragraph{Loss (C-loss).} The same recipes train for 500 steps from the same seed and data at 13 nodes.
+The difference to the BF16 loss at each step measures the effect of the recipe.
+\placeholder{data used for C-loss (random tokens do not give a meaningful loss).}
+
+\begin{figure}[h]
+  \centering\fig{precision_loss}
+  \caption{Loss difference to BF16 vs.\ step, by recipe, at 13 nodes. \syntheticnote{precision_loss}}
+  \label{fig:precision_loss}
+\end{figure}
+
+\placeholder{loss difference at step 500 against the run-to-run noise of BF16.}

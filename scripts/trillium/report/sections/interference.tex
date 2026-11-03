@@ -1,0 +1,36 @@
+\section{Running jobs side by side}
+\label{sec:interference}
+
+\begin{question}
+  \textbf{Can jobs run side by side without slowing each other, and does the background load move our
+  numbers?} If four 13-node jobs run as fast together as alone, the later experiments can be packed in
+  parallel. The fabric and filesystem are shared with other partitions, so the same run may also change
+  speed during the window.
+\end{question}
+
+\paragraph{Interference (E1).} The Qwen best guess (HSDP within a node, 24k tokens per GPU) runs on 4
+disjoint random sets of 13 nodes: each set alone, then the 4 together. This is repeated twice with new
+random sets. If the slowdown together is below 2\,\%, runs of up to 26 nodes are packed in parallel for
+the layout, scaling, precision and operations experiments.
+
+\begin{figure}[h]
+  \centering\fig{interference}
+  \caption{Tokens/s per GPU of each 13-node set, alone and with the 3 others running.
+    \syntheticnote{interference}}
+  \label{fig:interference}
+\end{figure}
+
+\placeholder{slowdown together vs.\ alone, per set and repetition; decision on packing.}
+
+\paragraph{Reference drift (R).} The reference run (\cref{sec:method}) is repeated about every 3 hours.
+Its spread bounds the differences between configurations that can be attributed to the configurations
+themselves.
+
+\begin{figure}[h]
+  \centering\fig{reference_drift}
+  \caption{Throughput of the reference run (Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens per GPU) vs.\ time
+    in the window. \syntheticnote{reference_drift}}
+  \label{fig:reference_drift}
+\end{figure}
+
+\placeholder{spread of the reference runs; correlation with time of day or with other users' load.}

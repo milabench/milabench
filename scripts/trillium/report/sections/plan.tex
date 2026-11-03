@@ -1,0 +1,68 @@
+\section{Run plan}
+\label{app:plan}
+
+The experiment groups run in the order of \cref{tab:plan}. Every time and count in this appendix is an
+estimate made before access.
+
+\begin{table}[h]
+  \caption{Experiments. Times are estimates.}
+  \label{tab:plan}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{lp{0.62\linewidth}ll}
+    \toprule
+    ID & What & Scale & Time \est{} \\
+    \midrule
+    D1 & Per-node health check: per-GPU matmul BF16 / FP8, NVLink all-reduce, per-HCA loopback bandwidth, GPU--HCA affinity & every node & 30\,min \\
+    D2 & Pairwise latency and bandwidth: 26 disjoint pairs per round, 51 rounds (all 1{,}326 pairs) & 52 nodes & 15\,min \\
+    D3 & NCCL all-reduce, all-gather, reduce-scatter, all-to-all, 1\,GiB, at 1--52 nodes; size sweep at 2 and 52 nodes & 1--52 & 45\,min \\
+    D4 & Bisection: two random halves of 26 all-to-all with each other, 3 cuts & 52 & 15\,min \\
+    P  & Only if D2 shows groups: Qwen and GLM-5 at 13 nodes inside one group vs.\ spread & 13 & -- \\
+    \midrule
+    E1 & Qwen (HSDP-8, 24k tokens/GPU) on 4 disjoint sets of 13 nodes, alone then together; 2 repetitions & 52 & 1.5\,h \\
+    R  & Reference: Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens/GPU, 10\,min, every $\sim$3\,h & 4 & 10\,min each \\
+    \midrule
+    A-Q & Qwen layouts $\times$ tokens per GPU $\times$ reduction dtype $\times$ checkpointing (\cref{tab:aq}); $\sim$45 runs $\times$ 2 $\times$ $\sim$10\,min & 1--52 & see \cref{tab:budget} \\
+    A-G & GLM-5 layouts (\cref{tab:ag}), recompute, micro-batch; $\sim$14 runs $\times$ 2 $\times$ $\sim$25\,min & 13, 52 & see \cref{tab:budget} \\
+    \midrule
+    B-Q-weak & Qwen, best layout and \texttt{fsdp}, fixed tokens per GPU & 1--52 & \\
+    B-Q-strong & Qwen, fixed global batch ($52\times8\times24$k tokens) & 13, 26, 52 & \\
+    B-G & GLM-5, 1--4 copies, 64 sequences per copy (weak) and in total (strong) & 13--52 & \\
+    \midrule
+    C-speed & BF16 / FP8 tensorwise / FP8 rowwise (Qwen) or blockwise (GLM-5) / MXFP8, best layout & 1 or 13, and 52 & \\
+    C-loss & Same recipes, 500 steps, same seed and data & 13 & \\
+    \midrule
+    F1 & Checkpoint save / load, sync vs.\ async, 3 repetitions; escalation agreed with the administrators & 1--52 & \\
+    F2 & Long run: best Qwen layout, $\geq$1\,h & 52 & \\
+    F3 & Startup, from every run & -- & -- \\
+    F4 & Energy, from every run & -- & -- \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\begin{table}[h]
+  \caption{Budget \est{}. ``Packed'' applies if E1 shows less than 2\,\% slowdown, so that runs of up to
+    26 nodes run in parallel.}
+  \label{tab:budget}
+  \centering\small
+  \begin{tabular}{lrr}
+    \toprule
+    Group & Serial (est.) & Packed (est.) \\
+    \midrule
+    Bring-up on B200 (install, 1-node smoke tests, FP8 / MXFP8 smoke tests) & 4\,h & \\
+    D & 2\,h & \\
+    E + R & 2.5\,h & \\
+    A-Q & 15\,h & 6\,h \\
+    A-G & 12\,h & 6\,h \\
+    B & 8\,h & 5\,h \\
+    C & 6\,h & 4\,h \\
+    F & 6\,h & \\
+    \midrule
+    Total & $\sim$55\,h & $\sim$35\,h \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Priorities if the window is short.} Tier 0: bring-up, D1. Tier 1: A-Q at 13 nodes, B-Q-weak,
+A-G at 13 and 52 nodes, B-G. Tier 2: D2--D4, E1, C, F1. Tier 3: F2, B-Q-strong, the rest of A.

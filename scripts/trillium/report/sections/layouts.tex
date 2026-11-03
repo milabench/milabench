@@ -1,0 +1,98 @@
+\section{Parallel layouts}
+\label{sec:layouts}
+
+\begin{question}
+  \textbf{Which parallel layout should each workload use on this partition?} For Qwen3.8-27B: which layout,
+  at which batch per GPU, and which lever (batch, gradient-reduction dtype, pipeline parallelism,
+  activation checkpointing) buys the most? How much of the step is spent in exposed communication? For
+  GLM-5: should expert parallelism stay inside a node or cross nodes?
+\end{question}
+
+\paragraph{Qwen3.8-27B (A-Q).} The factors and levels are in \cref{tab:aq}. The full cross of layouts and
+tokens per GPU runs at 13 nodes; the 3 best layouts also run at 2 and 52 nodes, and the layouts without
+pipeline parallelism at 1 node. About 45 runs, each repeated twice, about 10 minutes each \est{}.
+
+\begin{table}[h]
+  \caption{Factors of the Qwen layout experiment (A-Q).}
+  \label{tab:aq}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{ll}
+    \toprule
+    Factor & Levels \\
+    \midrule
+    Layout & \texttt{fsdp} / \texttt{hsdp8} / \texttt{hsdp16} / \texttt{tp2-fsdp} / \texttt{tp8-fsdp} /
+             \texttt{pp2-fsdp} / \texttt{pp4-fsdp} \\
+    Tokens per GPU & 12k ($4096\times3$) / 24k ($4096\times6$) / 48k ($4096\times12$) \\
+    Gradient reduction & FP32 / BF16 (on the 2 best layouts) \\
+    Activation checkpointing & selective / full / none (1 and 13 nodes; none only where it fits) \\
+    Nodes & 13 (full cross); 2 and 52 for the 3 best; 1 for the layouts without PP \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\begin{figure}[h]
+  \centering\fig{qwen_layouts}
+  \caption{Qwen3.8-27B throughput (tokens/s per GPU, or MFU) by layout (rows) and tokens per GPU
+    (columns), at 2, 13 and 52 nodes (panels). \syntheticnote{qwen_layouts}}
+  \label{fig:qwen_layouts}
+\end{figure}
+
+\placeholder{best layout and batch at each scale; whether keeping the shards in a node (\texttt{hsdp8},
+\texttt{tp8-fsdp}) wins as expected.}
+
+\begin{figure}[h]
+  \centering\fig{qwen_levers}
+  \caption{Throughput change of each lever (batch, gradient-reduction dtype, pipeline parallelism,
+    activation checkpointing) relative to \texttt{fsdp} at 12k tokens per GPU, at 13 nodes.
+    \syntheticnote{qwen_levers}}
+  \label{fig:qwen_levers}
+\end{figure}
+
+\placeholder{ranking of the levers; comparison with the network arithmetic of \cref{sec:method}.}
+
+\paragraph{Where the step time goes.} \Cref{fig:step_decomposition} splits the step time into compute,
+taken from 1-node runs at the same batch per GPU, and exposed communication, the remainder of the
+measured step time. With 8 GPUs on NVLink, the 1-node runs train the full model, so the compute part is
+measured, not scaled from a truncated model.
+
+\begin{figure}[h]
+  \centering\fig[0.85\linewidth]{step_decomposition}
+  \caption{Step time of Qwen3.8-27B split into compute (1-node step time) and exposed communication, by
+    layout and number of nodes. \syntheticnote{step_decomposition}}
+  \label{fig:step_decomposition}
+\end{figure}
+
+\placeholder{share of exposed communication by layout at 13 and 52 nodes.}
+
+\paragraph{GLM-5 (A-G).} The global batch is 64 sequences per model copy. The layouts differ in where
+the expert groups lie (\cref{tab:ag}). Recomputation (full vs.\ selective) and micro-batch size (1 vs.\
+2) are varied on the best layout. Each runs at 13 nodes (1 copy) and 52 nodes (4 copies). About 14 runs,
+each repeated twice, about 25 minutes each \est{}, including about 15 minutes of startup at scale \est{}.
+
+\begin{table}[h]
+  \caption{GLM-5 layouts (A-G).}
+  \label{tab:ag}
+  \centering\small
+  \begin{tabular}{llll}
+    \toprule
+    Layout & Expert group & Nodes per copy & Copies on 52 nodes \\
+    \midrule
+    \texttt{pp13-ep8}  & in a node (NVLink) & 13 & 4 \\
+    \texttt{pp13-ep16} & across 2 nodes & 13 & 4 \\
+    \texttt{pp13-ep32} & across 4 nodes & 13 & 4 \\
+    \texttt{pp26-ep8}  & in a node & 26 & 2 \\
+    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 & 4 (48 nodes), if it fits \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[h]
+  \centering\fig{glm_layouts}
+  \caption{GLM-5 throughput (tokens/s per GPU) and all-to-all time by layout, at 13 and 52 nodes.
+    \syntheticnote{glm_layouts}}
+  \label{fig:glm_layouts}
+\end{figure}
+
+\placeholder{cost of expert groups crossing nodes; best layout, recomputation and micro-batch.}

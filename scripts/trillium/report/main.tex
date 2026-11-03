@@ -1,0 +1,90 @@
+\documentclass{article}
+
+% NeurIPS 2026 style, preprint option: no line numbers, authors shown.
+\usepackage[preprint]{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{adjustbox}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[most]{tcolorbox}
+\usepackage[capitalise,noabbrev]{cleveref}
+
+% Macros written by the analysis pipeline. Fallbacks so that the report compiles before it has run.
+\IfFileExists{generated/tables/macros.tex}{\input{generated/tables/macros}}{}
+\providecommand{\DataGenerated}{(no data yet)}
+\providecommand{\NRunsReal}{0}
+\providecommand{\NRunsFailed}{0}
+\providecommand{\NRunsSynthetic}{0}
+
+% Question box at the top of each analysis section.
+\newtcolorbox{question}{enhanced, breakable, colback=white, colframe=black!35,
+  boxrule=0.4pt, leftrule=2pt, arc=0pt, left=6pt, right=6pt, top=3pt, bottom=3pt,
+  fontupper=\small}
+% Analysis still to write (shown in color so that it can't be mistaken for results).
+\newcommand{\placeholder}[1]{{\color{orange!80!black}\textit{[To write: #1]}}}
+% Figure that needs data not collected yet (all of it, or part of it, synthetic).
+% Shown only when the figure was drawn with synthetic data (flags written by the pipeline).
+\IfFileExists{generated/figures/synthetic.tex}{\input{generated/figures/synthetic.tex}}{}
+\makeatletter
+\newcommand{\syntheticnote}[1]{\expandafter\ifx\csname syn@#1\endcsname\relax\else
+  \if1\csname syn@#1\endcsname{\color{red!70!black}\textbf{Synthetic data}: placeholder values from a
+  toy model, not measurements; hollow markers.}\ \fi\fi}
+\makeatother
+% Generated figure, or a box saying its data is missing (the figure file is deleted when it has no data).
+\newcommand{\fig}[2][\linewidth]{\IfFileExists{generated/figures/#2.pdf}%
+  {\includegraphics[width=#1]{generated/figures/#2}}%
+  {\fbox{\parbox{0.9\linewidth}{\centering\small\vspace{1em}No data yet for \texttt{\detokenize{#2}}.\vspace{1em}}}}}
+% Value from DESIGN.md that is an estimate, not a measurement.
+\newcommand{\est}{\textit{(est.)}}
+
+\title{Large-scale LLM pre-training\\ on Trillium's B200 partition}
+
+\author{%
+  Milabench team \\
+  Mila -- Quebec AI Institute \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training: 52 nodes of
+  8 B200 GPUs (416 GPUs), with as much inter-node bandwidth per FLOP as Rorqual but nodes twice as large.
+  Two workloads are used: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM).
+  We report node and fabric health, interference between jobs running side by side, the choice of
+  parallel layout for each workload, scaling to the full partition, the gain of FP8 and MXFP8, and
+  operational aspects (checkpointing, stability, startup, energy).
+  \placeholder{key numbers once the window is analyzed.}
+\end{abstract}
+
+\begin{tcolorbox}[colback=red!4, colframe=red!50!black, boxrule=0.4pt, arc=0pt, fontupper=\small]
+  \textbf{Draft generated \DataGenerated.} \NRunsReal{} runs measured on Trillium
+  (\NRunsFailed{} failed), and \NRunsSynthetic{} synthetic runs standing in for experiments not run yet.
+  Every figure with synthetic data says so and draws it with hollow markers.
+\end{tcolorbox}
+
+\input{sections/introduction}
+\input{sections/methodology}
+\input{sections/network}
+\input{sections/interference}
+\input{sections/layouts}
+\input{sections/scaling}
+\input{sections/precision}
+\input{sections/operations}
+\input{sections/conclusion}
+
+\appendix
+\input{sections/plan}
+
+\end{document}

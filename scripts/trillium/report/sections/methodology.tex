@@ -1,0 +1,74 @@
+\section{Methodology}
+\label{sec:method}
+
+\paragraph{Workloads.} \Cref{tab:workloads} summarizes the two training workloads. Both train every
+parameter (memory allows it; no frozen experts in GLM-5).
+
+\begin{table}[h]
+  \caption{Workloads. ``To add'' is work planned before or during bring-up.}
+  \label{tab:workloads}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{lll}
+    \toprule
+    & Qwen3.8-27B (dense) & GLM-5 (744B MoE, 256 experts, top-8) \\
+    \midrule
+    Framework & TorchTitan & Megatron-LM \\
+    Parallelism today & FSDP, HSDP, TP & EP, PP, DP; TP $=1$ and CP $=1$ \\
+    To add & PP, FP8 / MXFP8, gradient-reduction dtype, checkpointing
+           & 8 GPUs per node, checkpoint save / load, FP8 / MXFP8, B200 layouts \\
+    Sequence & $3\times4{,}096$ per GPU (12{,}288 tokens) by default & 8{,}192, micro-batch 1 \\
+    Global batch & grows with the GPUs (weak scaling) & 64 sequences per model copy (weak scaling) \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\paragraph{Network arithmetic for Qwen \est{}.} Any data-parallel layout (FSDP, HSDP, TP + FSDP) moves
+about 8 bytes per parameter per node per step: BF16 parameter gathers in the forward and backward
+passes, and an FP32 gradient reduction. That is about 215\,GB, or at least 2.2\,s per step at 800\,Gb/s,
+against about 3\,s of compute at 12{,}288 tokens per GPU and 50\,\% of 1{,}668\,TFLOP/s. The levers that
+change this ratio are the tokens per GPU, a BF16 gradient reduction (about 6 bytes per parameter), and
+pipeline parallelism across nodes (volume divided by the number of stages). HSDP instead of FSDP changes
+when the traffic happens, not its volume.
+
+\paragraph{Layouts.} Qwen layouts are named after their parallel dimensions: \texttt{fsdp} shards over
+all GPUs; \texttt{hsdp8} and \texttt{hsdp16} shard within 1 or 2 nodes and replicate across;
+\texttt{tp2-fsdp} and \texttt{tp8-fsdp} add tensor parallelism of 2 or 8; \texttt{pp2-fsdp} and
+\texttt{pp4-fsdp} add 2 or 4 pipeline stages. GLM-5 layouts are written \texttt{pp}$P$\texttt{-ep}$E$:
+GLM-5's 78 layers split into $P$ stages, and expert groups of $E$ GPUs. With 13 stages of 6 layers and
+EP8, one copy uses $13\times8=104$ GPUs, 13 nodes, so 4 copies fill the 52 nodes (\texttt{pp13-ep8}).
+Its memory: Rorqual's full GLM-5 run peaked at 66.6\,GiB on each of 200 GPUs, about 13\,TiB; 13 B200
+nodes hold about 17\,TiB \est{}.
+
+\paragraph{Throughput.} Qwen runs skip 30 warm-up steps (compilation, allocator growth), then measure for
+5 minutes. GLM-5 runs measure 20 iterations and skip the first 5. The official throughput is the median
+of the per-step global token rates, reported per GPU (tokens/s per GPU).
+\placeholder{MFU definition and the peak it uses (nominal B200 peak or SciNet's measured matmul rate).}
+
+\paragraph{Telemetry and health.} Every node of every job is sampled once a second by the node monitor
+(GPU clocks, throttle reasons, power, temperature and duty cycle, XID and ECC errors, NVLink, InfiniBand,
+CPU clocks). Every node is checked before use (\cref{sec:network}); failing nodes are excluded for the rest
+of the window, and a node is used whole or not at all.
+
+\paragraph{Reference runs and repetitions.} A reference run (Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens
+per GPU, 10 minutes) is repeated about every 3 hours through the window, to tell changes in our
+configurations from changes in the shared fabric and filesystem (\cref{sec:interference}). Layout
+experiments are repeated twice; checkpoint experiments three times at different times of day.
+
+\paragraph{Measured, estimated and synthetic values.}
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+  \item \emph{Measured}: filled markers, solid lines.
+  \item \emph{Estimated} (extrapolated or model-based): dashed lines or hatched bars, and ``est.'' in the
+        label.
+  \item \emph{Synthetic} (placeholder for an experiment not run yet): hollow markers, and the figure says
+        so in its caption.
+\end{itemize}
+Estimates never replace measurements; both are kept in the data. Synthetic values are removed as the
+experiments they stand in for are run.
+
+\paragraph{Data.} Raw results are written to \texttt{\$SCRATCH/trillium/} on Trillium and copied
+read-only to the analysis machine; every figure and table here is regenerated from them by one command.
+Formats: \texttt{scripts/analysis/FORMAT.md}, with the Trillium additions in
+\texttt{scripts/trillium/FORMAT.md} (layout and precision fields, loss per step, checkpoint events,
+collective sweeps).

@@ -1,0 +1,37 @@
+\section{Scaling}
+\label{sec:scaling}
+
+\begin{question}
+  \textbf{How far does each workload scale on the partition?} How does Qwen3.8-27B's throughput per GPU
+  change from 8 to 416 GPUs, with the best layout and with plain FSDP? Do GLM-5 model copies scale from
+  1 to 4?
+\end{question}
+
+All scaling runs use the best layouts found in \cref{sec:layouts}. In weak scaling the work per GPU is
+fixed, so perfect scaling is a flat line of throughput per GPU. Unlike on 4-GPU nodes, a 1-node run
+trains the full Qwen model, so it serves as the 100\,\% efficiency reference.
+
+\paragraph{Qwen3.8-27B (B-Q).} Weak scaling at 1, 2, 4, 8, 13, 26 and 52 nodes with fixed tokens per GPU,
+for the best layout and the \texttt{fsdp} baseline (B-Q-weak). Strong scaling keeps the global batch of
+the full partition ($52\times8\times24$k tokens) at 13, 26 and 52 nodes (B-Q-strong).
+
+\begin{figure}[h]
+  \centering\fig{qwen_scaling}
+  \caption{Qwen3.8-27B tokens/s per GPU and scaling efficiency vs.\ number of GPUs (8--416), best layout
+    vs.\ \texttt{fsdp}; strong scaling in a separate panel. \syntheticnote{qwen_scaling}}
+  \label{fig:qwen_scaling}
+\end{figure}
+
+\placeholder{efficiency at 52 nodes for both layouts; where the curve bends; strong-scaling efficiency.}
+
+\paragraph{GLM-5 (B-G).} 1, 2, 3 and 4 model copies (13, 26, 39 and 52 nodes), with 64 sequences per
+copy (weak scaling) and 64 sequences in total (strong scaling).
+
+\begin{figure}[h]
+  \centering\fig{glm_scaling}
+  \caption{GLM-5 tokens/s per GPU vs.\ number of model copies (1--4), weak vs.\ strong batch.
+    \syntheticnote{glm_scaling}}
+  \label{fig:glm_scaling}
+\end{figure}
+
+\placeholder{whether copies interfere through the shared fabric; strong-scaling efficiency.}

@@ -1,0 +1,73 @@
+\section{Operations}
+\label{sec:operations}
+
+\begin{question}
+  \textbf{What does it cost to run production training here?} How long do checkpoints take to save and
+  load, and how long is training blocked? Is throughput stable over an hour, and are some GPUs or nodes
+  slower? How long until training starts? How many tokens does a kWh buy?
+\end{question}
+
+\paragraph{Checkpoints (F1).} Save and load of Qwen3.8-27B (about 0.38\,TB \est{}) at 1, 13 and 52 nodes,
+and of GLM-5, weights only (about 1.5\,TB \est{}) and full (about 10.4\,TB \est{}), at 13 and 52 nodes;
+synchronous vs.\ asynchronous saves (time training is blocked vs.\ total write time); 3 repetitions at
+different times of day. The filesystem is shared with the rest of Trillium, so the sizes escalate with
+the administrators' agreement (Qwen 1 node, Qwen 52 nodes, GLM-5 weights, GLM-5 full), and only one GLM-5
+checkpoint is on disk at a time, deleted once its load is timed.
+
+\begin{figure}[h]
+  \centering\fig{checkpoint}
+  \caption{Checkpoint save and load time, and time training is blocked, vs.\ number of nodes;
+    synchronous vs.\ asynchronous, full vs.\ weights only; write throughput.
+    \syntheticnote{checkpoint}}
+  \label{fig:checkpoint}
+\end{figure}
+
+\placeholder{blocked time per checkpoint for each workload at 52 nodes; write throughput against the
+filesystem's rated bandwidth; variation with time of day.}
+
+\paragraph{Stability (F2).} The best Qwen layout trains for at least one hour on 52 nodes. GPU clocks and
+power from the node telemetry share the time axis with throughput, so a drop can be traced to a GPU.
+
+\begin{figure}[h]
+  \centering\fig{stability}
+  \caption{Tokens/s per step (top) and GPU clocks and power (bottom) vs.\ time over the long run.
+    \syntheticnote{stability}}
+  \label{fig:stability}
+\end{figure}
+
+\placeholder{throughput drift over the hour; throttling events.}
+
+\paragraph{Stragglers (F2).} With data parallelism every rank waits for the slowest one, so per-rank step
+times are equal and cannot point to a slow GPU. The slow GPU is the one that waits least: its activity is
+highest. A node whose CPU clock falls also holds back every rank on it.
+
+\begin{figure}[h]
+  \centering\fig{stragglers}
+  \caption{Per-GPU activity (top) and per-node CPU clock from the node telemetry (bottom), long run.
+    \syntheticnote{stragglers}}
+  \label{fig:stragglers}
+\end{figure}
+
+\placeholder{slowest GPUs and nodes, and their effect on throughput.}
+
+\paragraph{Startup (F3).} Time to an initialized model and to the first step, taken from every run (no
+extra runs).
+
+\begin{figure}[h]
+  \centering\fig{startup}
+  \caption{Time to the first step vs.\ number of nodes, for both workloads. \syntheticnote{startup}}
+  \label{fig:startup}
+\end{figure}
+
+\placeholder{startup at 52 nodes for each workload; which phase grows with scale.}
+
+\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in every run (no
+extra runs). Only GPU power is counted: CPUs, memory, network and cooling are not.
+
+\begin{figure}[h]
+  \centering\fig{energy}
+  \caption{Tokens per kWh (GPU power only) by layout, precision and scale. \syntheticnote{energy}}
+  \label{fig:energy}
+\end{figure}
+
+\placeholder{energy per token of the best configurations; effect of precision and scale.}
