@@ -6,7 +6,7 @@
 # Submit from the repository root (the scripts are found under $SLURM_SUBMIT_DIR, or $NET_DIR).
 # Defaults are for Trillium's B200 partition; on Rorqual override account, partition and GPUs:
 #   --account=rrg-bengioy-ad_gpu --partition=gpubase_bynode_b1 --gpus-per-node=h100:4 --mem=0
-# Results: $NET_OUT (default $SCRATCH/trillium/nccl/<job>/): pairs.jsonl, collectives.jsonl, logs/.
+# Results: $NET_OUT (default ${NET_ROOT:-$SCRATCH/trillium}/nccl/<job>/): pairs.jsonl, collectives.jsonl, logs/.
 # Per-experiment arguments: NET_D2_ARGS, NET_D3_ARGS, NET_D4_ARGS (e.g. NET_D2_ARGS=--sequential).
 #
 #SBATCH --job-name=tri-net
@@ -24,7 +24,7 @@ while [[ $# -gt 0 && "$1" != "--" ]]; do EXPERIMENTS+=("$1"); shift; done
 [[ ${#EXPERIMENTS[@]} -gt 0 ]] || EXPERIMENTS=(d2 d3 d4)
 
 NET_DIR=${NET_DIR:-$SLURM_SUBMIT_DIR/scripts/trillium/net}
-NET_OUT=${NET_OUT:-$SCRATCH/trillium/nccl/$SLURM_JOB_ID}
+NET_OUT=${NET_OUT:-${NET_ROOT:-$SCRATCH/trillium}/nccl/$SLURM_JOB_ID}
 NET_PY=${NET_PY:-$SCRATCH/tt38/output/venv/torchtitan_native/bin/python}
 export NET_OUT
 mkdir -p "$NET_OUT/logs/topo"
