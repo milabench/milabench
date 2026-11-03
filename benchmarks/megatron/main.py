@@ -10,6 +10,9 @@ config is read here:
                     tokenized with the model's HF tokenizer and packed in N documents per sample (THD layout, as the
                     DSA attention needs ``packed_seq_params``)
     placement:      node order / rank order, see placement.py (reported here, applied by benchfile.py)
+    checkpoint:     {dir, op: save | load, content: weights | full, mode: sync | async, step}: turned into Megatron's
+                    checkpoint flags before they are parsed, timed and reported as ``checkpoint`` events (see
+                    ``checkpoint_argv`` / ``patch_checkpointing``)
 
 Throughput is reported as ``rate`` (global tokens / step time, items/s) by benchmate's ManualTimedIterator (CUDA events, rank 0), through setupvoir.
 """
@@ -273,6 +276,17 @@ PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep
 # for the run summary: when each phase ended on this rank (epoch seconds)
 RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None}
 WARMUP_STEPS = 1  # left out of the summary's step statistics (NCCL communicators, allocator growth)
+# the loss per step, kept by one rank of the last pipeline stage (``loss_reporter``): (step, loss tensor, grad norm, time)
+LOSS = {"reporter": False, "steps": []}
+
+
+def loss_reporter() -> bool:
+    """Only the last pipeline stage gets the loss from ``train_step`` (averaged over data parallel there): its first
+    data-parallel / tensor / context rank keeps it, rank 0 reports it at the end (``push_summary``)."""
+    from megatron.core import parallel_state as ps
+
+    return (ps.is_pipeline_last_stage(ignore_virtual=True) and ps.get_data_parallel_rank() == 0
+            and ps.get_tensor_model_parallel_rank() == 0 and ps.get_context_parallel_rank() == 0)
 
 
 def short(host: str) -> str:
@@ -354,14 +368,76 @@ def collect_ep_groups(cfg: dict):
 FAMILY = {"aligned": "EP", "crossed": "EP", "mixed": "EP", "leaf": "ALL", "topology": "ALL", "as-is": "slurm"}
 
 
+PRECISIONS = {"tensorwise": "fp8-tensorwise", "blockwise": "fp8-blockwise", "mxfp8": "mxfp8", "delayed": "fp8-delayed"}
+
+
+def precision(args) -> tuple[str, dict | None]:
+    """(workload.precision, workload.precision_detail): bf16 | fp8-tensorwise | fp8-blockwise | mxfp8, and how it runs."""
+    if not getattr(args, "fp8", None):
+        return "bf16", None
+    recipe = str(getattr(args, "fp8_recipe", None) or "delayed").split(".")[-1]
+    try:
+        import transformer_engine
+
+        te = transformer_engine.__version__
+    except Exception:
+        te = None
+    major, minor = torch.cuda.get_device_capability() if torch.cuda.is_available() else (None, None)
+    return PRECISIONS.get(recipe, f"fp8-{recipe}"), {
+        "format": args.fp8, "recipe": recipe, "fp8_param_gather": bool(getattr(args, "fp8_param_gather", False)),
+        "moe_router_padding_for_quantization": bool(getattr(args, "moe_router_padding_for_quantization", False)),
+        "block_scaling_fp32_scales": os.environ.get("NVTE_FP8_BLOCK_SCALING_FP32_SCALES") == "1",
+        "compute_capability": f"sm_{major}{minor}" if major is not None else None, "transformer_engine": te,
+        "scope": "TransformerEngine linear / grouped GEMMs; the GLM-5 plugin's DSA indexer and sparse MLA stay bf16",
+        "master_weights": "fp32 (bf16 weights, quantized copies per step)",
+    }
+
+
+def check_precision(args):
+    """MXFP8 needs Blackwell (sm_100+): stop every rank before the model is built rather than deep inside TE."""
+    if getattr(args, "fp8", None) and str(getattr(args, "fp8_recipe", "")).split(".")[-1] == "mxfp8":
+        major, minor = torch.cuda.get_device_capability()
+        if major < 10:
+            raise SystemExit(f"[megatron-glm5] --fp8-recipe mxfp8 needs a Blackwell GPU (sm_100+), this one is "
+                             f"sm_{major}{minor}: use tensorwise or blockwise here")
+
+
+def pp_split(args) -> list[int] | str:
+    """Layers per pipeline stage (first to last), or the explicit --pipeline-model-parallel-layout."""
+    if getattr(args, "pipeline_model_parallel_layout", None):
+        return str(args.pipeline_model_parallel_layout)
+    pp, layers = args.pipeline_model_parallel_size, args.num_layers
+    first = getattr(args, "decoder_first_pipeline_num_layers", None)
+    last = getattr(args, "decoder_last_pipeline_num_layers", None)
+    middle = pp - (first is not None) - (last is not None)
+    rest = layers - (first or 0) - (last or 0)
+    per = rest // middle if middle > 0 else 0
+    return [*([first] if first is not None else []), *([per] * middle), *([last] if last is not None else [])][:pp]
+
+
+def layout_record(args) -> dict:
+    """``parallelism`` additions (Trillium): the layout name, model copies (PP x EP x ETP GPUs each = expert data
+    parallel), layers per stage and micro-batches per pipeline (per data-parallel rank and step)."""
+    tp, pp, ep = args.tensor_model_parallel_size, args.pipeline_model_parallel_size, args.expert_model_parallel_size
+    etp = getattr(args, "expert_tensor_parallel_size", None) or tp
+    dp = getattr(args, "data_parallel_size", 1) or 1
+    return {
+        "layout": f"pp{pp}-ep{ep}" + (f"-tp{tp}" if tp > 1 else ""),
+        "copies": args.world_size // (pp * ep * etp),
+        "pp_split": pp_split(args),
+        "microbatches_per_pipeline": args.global_batch_size // (args.micro_batch_size * dp),
+    }
+
+
 def run_start(args, trainable_fraction):
-    """``data: {run_start: {run, placement, workload}}`` (scripts/analysis/FORMAT.md, section 1): once, after init, so a
+    """``data: {run_start: {run, placement, workload, parallelism}}`` (scripts/analysis/FORMAT.md, section 1): once, after init, so a
     run that fails later keeps its identity. The launcher's TT_* variables fill run.* and placement.family."""
     env = os.environ.get
     run = {
         "cluster": env("CC_CLUSTER"),
         "campaign": env("TT_CAMPAIGN"),
         "variant": env("TT_VARIANT"),
+        "experiment": env("TT_EXPERIMENT"),
         "repetition": int(env("TT_REPETITION")) if env("TT_REPETITION") else None,
         "slurm_job_id": env("SLURM_JOB_ID"),
         "slurm_step_id": env("SLURM_STEP_ID"),
@@ -403,7 +479,7 @@ def run_start(args, trainable_fraction):
             "seq_len": args.seq_length, "microbatch_sequences": args.micro_batch_size, "grad_accum": grad_accum,
             "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
             "global_batch_tokens": args.global_batch_size * args.seq_length,
-            "precision": "fp8" if getattr(args, "fp8", None) else "bf16",
+            "precision": precision(args)[0], "precision_detail": precision(args)[1],
             "optimizer": "AdamW" if args.optimizer == "adam" and args.weight_decay > 0 else args.optimizer,
             "optimizer_state_dtype": dtype("exp_avg_dtype") if precise else "fp32",
             "optimizer_offload_fraction": getattr(args, "optimizer_offload_fraction", 0.0)
@@ -421,7 +497,12 @@ def run_start(args, trainable_fraction):
         }
     except Exception as exc:  # the record is informative, never fatal
         debug("run_start workload failed:", exc)
-    return {"run": run, "placement": PLACEMENT.get("record"), "workload": workload}
+    try:
+        parallelism = layout_record(args)
+    except Exception as exc:
+        debug("run_start parallelism failed:", exc)
+        parallelism = {}
+    return {"run": run, "placement": PLACEMENT.get("record"), "workload": workload, "parallelism": parallelism}
 
 
 def install_a2a_timer():
@@ -579,11 +660,22 @@ def patch_train_step(log):
 
     def timed(*args, **kwargs):
         # rate / laps / clock: StepTimer (benchmate TimedIterator). Here only what it does not know about.
+        if state["step"] == 0:
+            LOSS["reporter"] = loss_reporter()
         steps.rows.begin()
         steps.rows.time_optimizer(args[3] if len(args) > 3 else kwargs.get("optimizer"))
         result = original(*args, **kwargs)
         state["step"] += 1
         margs = get_args()
+        if LOSS["reporter"]:
+            # the last stage's loss (already averaged over data parallel by train_step), kept on the device: read once
+            # the step's events have completed (rank rows) and at the end (summary), no extra GPU sync here
+            loss_dict = result[0] if isinstance(result, tuple) else {}
+            if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
+                grad_norm = result[5] if isinstance(result, tuple) and len(result) > 5 else None
+                loss = loss_dict["lm loss"].detach()
+                LOSS["steps"].append((margs.curr_iteration + 1, loss, grad_norm, time.time()))
+                steps.rows.set_loss(loss, grad_norm)
         # every rank of a data-parallel replica runs the replica's tokens (micro-batch x sequence x grad accumulation)
         steps.rows.end(state["step"], margs.global_batch_size * margs.seq_length // (getattr(margs, "data_parallel_size", 1) or 1))
         steps.step(margs.global_batch_size * margs.seq_length)
@@ -603,10 +695,6 @@ def patch_train_step(log):
                 # the report syncs with the GPU and runs a collective: keep it out of the measured step time
                 report_a2a(log)
                 steps.restart_clock()
-        if log is not None:
-            loss_dict = result[0] if isinstance(result, tuple) else {}
-            if isinstance(loss_dict, dict) and "lm loss" in loss_dict:
-                log({"loss": float(loss_dict["lm loss"]), "task": "train", "time": time.time()})
         return result
 
     training.train_step = timed
@@ -653,6 +741,8 @@ def rank_summary(rows):
         "_first_step_done": RUN["first_step_done"],
         "_data_wait_median": statistics.median(waits) if waits else None,
         "_measured": (measured[0]["time"], measured[-1]["time"], len(measured)) if measured else None,
+        # the loss reporter's steps (end of the run: the device is done, reading the tensors costs nothing)
+        "_losses": [(step, float(loss), None if grad is None else float(grad), t) for step, loss, grad, t in LOSS["steps"]],
     }
 
 
@@ -728,6 +818,7 @@ def push_summary(log, steps):
             "vpp": getattr(args, "virtual_pipeline_model_parallel_size", None),
             "cp": ps.get_context_parallel_world_size(),
             "ep": ps.get_expert_model_parallel_world_size(),
+            **info["parallelism"],
         },
         "placement": info["placement"] or {"hosts": hosts},
         "measurement": {
@@ -777,7 +868,232 @@ def push_summary(log, steps):
             {"id": "dsa_index_share", "text": "DSA index sharing off: every layer computes its own top-k"}],
         "estimates": [],
     }
+    # the loss per step, from the last pipeline stage (one rank keeps it, see loss_reporter)
+    for step, loss, grad_norm, t in sorted(item for r in ranks for item in r.get("_losses") or []):
+        log({"loss": loss, "grad_norm": grad_norm, "step": step, "task": "train", "time": t})
     log({"summary": summary, "task": "train", "time": time.time()})
+
+
+# --- checkpointing (Trillium F1) ----------------------------------------------------------------------------------
+# ``checkpoint: {dir, op: save | load, content: weights | full, mode: sync | async, step}``. One save per run (at
+# ``step``, default the last one), timed on rank 0 with barriers around it: ``blocked_s`` is the time training is
+# stopped, ``total_s`` the time until the write is complete (async: when Megatron finalizes it). A checksum of the
+# model weights is written beside the checkpoint and compared after the load: slime's Megatron patch lets a load
+# skip missing tensors silently.
+
+CKPT = {"cfg": None, "saved": False}
+CHECKSUM_FILE = "milabench_checksum.json"
+
+
+def drop(argv: list[str], name: str, value: bool = False) -> list[str]:
+    """``argv`` without ``name`` (and its value)."""
+    out, skip = [], False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == name:
+            skip = value
+            continue
+        out.append(a)
+    return out
+
+
+LIST_FLAGS = ("--recompute-modules",)
+
+
+def split_lists(argv: list[str]) -> list[str]:
+    """The config writes a list as one comma-separated value (milabench's assemble_options): Megatron's list flags
+    (nargs) want one token per item."""
+    out = []
+    for i, a in enumerate(argv):
+        out.extend(a.split(",") if i > 0 and argv[i - 1] in LIST_FLAGS else [a])
+    return out
+
+
+def checkpoint_argv(cfg: dict, argv: list[str]) -> list[str]:
+    """The Megatron flags of ``checkpoint:`` (added before the arguments are parsed)."""
+    ck = cfg.get("checkpoint")
+    if not ck:
+        return argv
+    ck = {"content": "weights", "mode": "sync", **ck}
+    ck["dir"] = os.path.expandvars(str(ck["dir"]))
+    if "$" in ck["dir"]:
+        raise SystemExit(f"[megatron-glm5] checkpoint.dir {ck['dir']}: environment variable not set")
+    assert ck["op"] in ("save", "load") and ck["content"] in ("weights", "full") and ck["mode"] in ("sync", "async"), ck
+    for name in ("--save", "--load", "--save-interval", "--ckpt-format"):
+        argv = drop(argv, name, value=True)
+    argv = [*argv, "--ckpt-format", "torch_dist"]
+    if ck["op"] == "save":
+        step = int(ck.get("step") or flag(argv, "--train-iters"))
+        ck["step"] = step
+        argv += ["--save", ck["dir"], "--save-interval", str(step)]
+        if ck["content"] == "weights":
+            argv += [f for f in ("--no-save-optim", "--no-save-rng") if f not in argv]
+        else:
+            argv = drop(drop(argv, "--no-save-optim"), "--no-save-rng")
+        if ck["mode"] == "async":
+            # without the persistent worker Megatron turns async off (a warning only); nvrx (the default) is not installed
+            argv += ["--async-save", "--use-persistent-ckpt-worker", "--async-strategy", "mcore"]
+    else:
+        argv += ["--load", ck["dir"], "--ckpt-fully-parallel-load", "--exit-on-missing-checkpoint", "--no-load-rng"]
+        if ck["content"] == "weights":
+            argv += ["--finetune", "--no-load-optim"]
+        else:
+            # a full load resumes at the saved iteration: --train-iters counts the steps to run after it
+            try:
+                with open(os.path.join(ck["dir"], "latest_checkpointed_iteration.txt")) as f:
+                    ck["step"] = int(f.read().strip())
+            except (OSError, ValueError):
+                ck["step"] = 0
+            iters = flag(argv, "--train-iters")
+            argv = [*drop(argv, "--train-iters", value=True), "--train-iters", str(ck["step"] + iters)]
+    CKPT["cfg"] = ck
+    return argv
+
+
+def fs_type(path: str) -> str | None:
+    """Filesystem type of ``path`` (longest mount point of /proc/mounts that contains it)."""
+    best, kind = "", None
+    real = os.path.realpath(path)
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                mount = parts[1]
+                if (real == mount or real.startswith(mount.rstrip("/") + "/")) and len(mount) > len(best):
+                    best, kind = mount, parts[2]
+    except OSError:
+        pass
+    return kind
+
+
+def dir_usage(path: str) -> tuple[int, int]:
+    """(bytes, files) under ``path``."""
+    size = files = 0
+    for root, _, names in os.walk(path):
+        for name in names:
+            try:
+                size += os.path.getsize(os.path.join(root, name))
+                files += 1
+            except OSError:
+                pass
+    return size, files
+
+
+def weights_checksum(model) -> list[float]:
+    """[sum, sum of squares] of this rank's model weights, in float64, in slices (no full-size copy)."""
+    total = torch.zeros(2, dtype=torch.float64, device="cuda")
+    with torch.no_grad():
+        for chunk in model:
+            for _, p in sorted(chunk.named_parameters(), key=lambda kv: kv[0]):
+                for part in p.detach().reshape(-1).split(2**26):
+                    part = part.double()
+                    total[0] += part.sum()
+                    total[1] += (part * part).sum()
+    return total.tolist()
+
+
+def gather_checksums(model) -> list:
+    import torch.distributed as dist
+
+    mine = weights_checksum(model)
+    every = [None] * dist.get_world_size()
+    dist.all_gather_object(every, mine)
+    return every
+
+
+def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, checksum_match=None,
+                     saved_by=None):
+    """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md)."""
+    if LOG is None:
+        return
+    size, files = dir_usage(ck["dir"])
+    event = {
+        "op": ck["op"], "content": ck["content"], "mode": ck["mode"] if ck["op"] == "save" else "sync",
+        "blocked_s": blocked_end - start, "total_s": end - start, "bytes": size, "files": files,
+        "path": ck["dir"], "fs_type": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end, "step": step,
+        "rep": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
+        "checksum_match": checksum_match,
+        "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
+    }
+    debug("checkpoint:", json.dumps(event))
+    LOG({"checkpoint": event, "task": "train", "time": time.time()})
+
+
+def patch_checkpointing(steps):
+    """Time the save (``save_checkpoint_and_time``, async finalize) and the load (``load_checkpoint``)."""
+    import torch.distributed as dist
+    import megatron.training.checkpointing as checkpointing
+    import megatron.training.training as training
+
+    ck = CKPT["cfg"]
+    if ck is None:
+        return
+
+    if ck["op"] == "save":
+        save = training.save_checkpoint_and_time
+        schedule = checkpointing.schedule_async_save
+        pending = {}
+
+        def finished(step, start, blocked_end, checksums):
+            if dist.get_rank() == 0:
+                with open(os.path.join(ck["dir"], CHECKSUM_FILE), "w") as f:
+                    json.dump({"step": step, "content": ck["content"], "mode": ck["mode"],
+                               "run": os.environ.get("MILABENCH_RUN_NAME"), "ranks": checksums}, f)
+            checkpoint_event(ck, start, blocked_end, time.time(), step)
+
+        def timed_schedule(request):
+            # the last finalize function: runs on every rank once all of them have written (maybe_finalize_async_save)
+            # (pending is read then: blocked_end is only known once the save call has returned)
+            request.add_finalize_fn(lambda: finished(pending["step"], pending["start"], pending["blocked_end"],
+                                                     pending["checksums"]))
+            return schedule(request)
+
+        def timed_save(iteration, model, *args, **kwargs):
+            if CKPT["saved"]:  # one checkpoint per run: Megatron's end-of-training save is skipped
+                debug(f"checkpoint already saved: no save at iteration {iteration}")
+                return None
+            CKPT["saved"] = True
+            checksums = gather_checksums(model)
+            dist.barrier()
+            start = time.time()
+            pending.update(step=iteration, start=start, checksums=checksums)
+            result = save(iteration, model, *args, **kwargs)
+            dist.barrier()
+            blocked_end = time.time()
+            pending["blocked_end"] = blocked_end
+            if ck["mode"] == "sync":
+                finished(iteration, start, blocked_end, checksums)
+            steps.restart_clock()
+            return result
+
+        checkpointing.schedule_async_save = timed_schedule
+        training.save_checkpoint_and_time = timed_save
+    else:
+        load = training.load_checkpoint
+
+        def timed_load(model, *args, **kwargs):
+            dist.barrier()
+            start = time.time()
+            result = load(model, *args, **kwargs)
+            dist.barrier()
+            end = time.time()
+            checksums = gather_checksums(model)
+            match, step, saved_by = None, ck.get("step"), None
+            try:
+                with open(os.path.join(ck["dir"], CHECKSUM_FILE)) as f:
+                    saved = json.load(f)
+                match, step = saved["ranks"] == checksums, saved["step"]
+                saved_by = {"mode": saved.get("mode"), "run": saved.get("run")}
+            except OSError:
+                debug(f"no {CHECKSUM_FILE} in {ck['dir']}: the load cannot be checked")
+            checkpoint_event(ck, start, end, end, step, match, saved_by)
+            if match is False:
+                raise RuntimeError("the loaded weights differ from the saved ones (checksum): a partial load?")
+            return result
+
+        training.load_checkpoint = timed_load
 
 
 # --- placement report --------------------------------------------------------------------------------------------
@@ -830,6 +1146,11 @@ def main():
             LOG = log
             report_placement(cfg, argv)
 
+    gpus = (cfg.get("placement") or {}).get("gpus_per_node")
+    if gpus and os.environ.get("LOCAL_WORLD_SIZE") and int(os.environ["LOCAL_WORLD_SIZE"]) != int(gpus):
+        # the layout check and the placement report assume gpus_per_node processes per node
+        debug(f"WARNING: {os.environ['LOCAL_WORLD_SIZE']} processes on this node, placement.gpus_per_node is {gpus}")
+
     spec = freeze_patterns(cfg.get("frozen"))
     debug("frozen:", spec)
     hf_path = str(cfg["model"]["hf_path"]).replace("{milabench_data}", os.environ["MILABENCH_DIR_DATA"])
@@ -842,11 +1163,14 @@ def main():
     from megatron.training.arguments import parse_and_validate_args
     from pretrain_gpt import forward_step, get_embedding_ranks
 
+    sys.argv = [sys.argv[0], *checkpoint_argv(cfg, split_lists(argv))]
     args = parse_and_validate_args(args_defaults={"tokenizer_type": "NullTokenizer"})
+    check_precision(args)
     model_cfg = configure_model(gpt_config_from_args(args), args, spec, hf_path)
     full_config = pretrain_cfg_container_from_args(args, model_cfg)
 
     steps = patch_train_step(log)
+    patch_checkpointing(steps)
     try:
         pretrain(
             full_config,
