@@ -31,6 +31,20 @@ Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, accou
 `trillium-MMDD`, `REPETITION`). Node telemetry under `$SCRATCH/trillium/nodemon/<run>`, checkpoints under
 `$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there), checkpoint deletions in `$MILABENCH_BASE/slurm/ckpt-rm.<job>.jsonl`.
 
+## Runs that serve two experiments
+
+`run.experiment` holds one value, the tag the launcher gives. Three entries are not run a second time, and serve a second
+experiment under the tag they already have:
+
+| entry | `run.experiment` | also serves |
+|---|---|---|
+| `megatron-glm5-tri-pp13-ep8-n13-gbs256` | `A-G` (`10_ag.sh 13`) | `B-G-weak`, 13 nodes |
+| `megatron-glm5-tri-pp13-ep8-n52-gbs1024` | `A-G` (`10_ag.sh 52`) | `B-G-weak`, 52 nodes |
+| `megatron-glm5-tri-pp13-ep8-n39-gbs768` | `B-G-weak` (`20_bg.sh 39`) | `B-G-strong`, 39 nodes |
+
+Everything else has one experiment: `megatron-glm5-tri-pp13-ep8-n26-gbs512` is `B-G-weak`; n13 / n26 / n52 at 768 are
+`B-G-strong`. C-speed runs its own BF16 baselines (`30_c.sh speed`, same entries as the first two rows, tagged `C-speed`).
+
 ## What the runs record (run data, `scripts/analysis/FORMAT.md` + `scripts/trillium/FORMAT.md`)
 
 - `run_start` / `summary`: `run.experiment` (A-G, B-G-weak, B-G-strong, C-speed, C-loss, F1), `parallelism.layout`
@@ -58,6 +72,9 @@ with these differences, to check on the first B200 node:
   `benchmarks/slime/benchfile.py` puts the wheels' `nvcc` first; check `which nvcc` inside a run if a build fails.
 - **Caches**: `$HOME` is read-only from the compute nodes: `job.sbatch` points `XDG_CACHE_HOME`, `TRITON_CACHE_DIR`,
   `TILELANG_CACHE_DIR` at `$MILABENCH_BASE/cache` (scratch). Install with `UV_CACHE_DIR` on scratch too.
+- **Failed builds**: `milabench install` only logs a failed `pip install`. After the builds the pack imports
+  `transformer_engine` in the venv and stops if it can't; `torch_memory_saver` is optional for this pack (a `WARNING`
+  in the install log, and `.slime_installed` then reads `ok, missing: torch_memory_saver`). Check that file after installing.
 - **Megatron's dataset helpers**: rank 0 runs `make` in `Megatron-LM/megatron/core/datasets` at every start, with
   the `python3` on `PATH`, which under milabench's launcher is the milabench CLI's (`MILABENCH_VENV`): install
   `pybind11` there (`uv pip install pybind11`). The checkout must be writable; a failed build stops the run.
@@ -71,3 +88,8 @@ with these differences, to check on the first B200 node:
   it with MXFP8-style scales). The Trillium entries do not set it.
 - **wandb**: no `httpproxy` module on Trillium so far: the job falls back to `WANDB_MODE=offline`; `wandb sync` from a
   login node afterwards (the job prints the command).
+
+## Known broken entry
+
+`megatron-glm5-g1-ep8-aligned-pp5` (a Rorqual fallback, left as it is) fails the layout check before launch: global batch 256
+is not divisible by data parallel 40.
