@@ -207,8 +207,10 @@ def _mxfp8(model, opts: Options):
 
         converter = MXFP8LinearConverter.Config(fqns=targets).build()
     except (ImportError, ValueError) as exc:
-        capability = ".".join(map(str, torch.cuda.get_device_capability()))
-        instrument.FATAL = f"precision=mxfp8 unavailable (GPU sm_{capability}): {exc}"
+        gpu = "no GPU"
+        if torch.cuda.is_available():
+            gpu = "GPU sm_{}{}".format(*torch.cuda.get_device_capability())
+        instrument.FATAL = f"precision=mxfp8 unavailable ({gpu}): {exc}"
         return model
     model = converter.convert(model)
     instrument.RUN_DESCRIPTION["mxfp8_targets"] = targets
