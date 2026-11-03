@@ -1,0 +1,6 @@
+# Written by analysis/analyze.py (plot, report): regenerated, never edited.
+report/generated/
+report/*.aux
+report/*.log
+report/*.out
+report/main.pdf
