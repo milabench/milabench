@@ -6,26 +6,32 @@
   but not the network: does the gain measured on one node survive at 52 nodes? Does the loss follow BF16?
 \end{question}
 
-\paragraph{Speed (C-speed).} Recipes: BF16; FP8 with tensorwise scaling; FP8 with rowwise (Qwen) or
-blockwise (GLM-5) scaling; MXFP8. Each runs on the best layout, at 1 node (Qwen) or 13 nodes (GLM-5),
-and at 52 nodes.
+\paragraph{Speed (C-speed).} Recipes: BF16 and MXFP8 for Qwen3.8-27B (the pinned TorchTitan has no other
+FP8 recipe); BF16, FP8 tensorwise, FP8 blockwise and MXFP8 for GLM-5. Each runs on the best layout, at 1
+node (Qwen) or 13 nodes (GLM-5), and at 52 nodes. For Qwen, \TriQwenFpBestRecipe{} speeds up training by
+$\times$\TriQwenFpSpeedupSmall{} on 1 node and $\times$\TriQwenFpSpeedupFull{} on 52 nodes. For GLM-5, the
+best recipe, \TriGlmFpBestRecipe, gives $\times$\TriGlmFpSpeedupSmall{} on 13 nodes and
+$\times$\TriGlmFpSpeedupFull{} on 52 nodes.
 
 \begin{figure}[h]
   \centering\fig{precision_speed}
-  \caption{Speedup over BF16 by recipe, at 1 node (13 for GLM-5) and at 52 nodes, for both workloads.
-    \syntheticnote{precision_speed}}
+  \caption{Speedup over BF16 (ratio of tokens/s) by recipe, at small scale (1 node for Qwen3.8-27B, 13
+    for GLM-5) and on the whole machine (52 nodes). \syntheticnote{precision_speed}}
   \label{fig:precision_speed}
 \end{figure}
 
-\placeholder{speedup per recipe at small scale and at 52 nodes; how much the network takes back.}
+\placeholder{how much of the matmul gain survives in a training step, and how much the network takes
+back at 52 nodes.}
 
-\paragraph{Loss (C-loss).} The same recipes train for 500 steps from the same seed and data at 13 nodes.
-The difference to the BF16 loss at each step measures the effect of the recipe.
-\placeholder{data used for C-loss (random tokens do not give a meaningful loss).}
+\paragraph{Loss (C-loss).} The same recipes train for 500 steps at 13 nodes, from the same seed, on the
+same FineWeb data, with a realistic learning rate. The difference to the BF16 loss at each step measures
+the effect of the recipe.
 
 \begin{figure}[h]
   \centering\fig{precision_loss}
-  \caption{Loss difference to BF16 vs.\ step, by recipe, at 13 nodes. \syntheticnote{precision_loss}}
+  \caption{Loss difference to BF16 vs.\ step, by recipe, at 13 nodes: Qwen3.8-27B (left), GLM-5 (right).
+    Thick lines: 25-step mean; thin lines: per step; legend: mean over the last 100 steps.
+    \syntheticnote{precision_loss}}
   \label{fig:precision_loss}
 \end{figure}
 

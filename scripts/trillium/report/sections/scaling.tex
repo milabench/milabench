@@ -13,25 +13,31 @@ trains the full Qwen model, so it serves as the 100\,\% efficiency reference.
 
 \paragraph{Qwen3.8-27B (B-Q).} Weak scaling at 1, 2, 4, 8, 13, 26 and 52 nodes with fixed tokens per GPU,
 for the best layout and the \texttt{fsdp} baseline (B-Q-weak). Strong scaling keeps the global batch of
-the full partition ($52\times8\times24$k tokens) at 13, 26 and 52 nodes (B-Q-strong).
+the full partition ($52\times8\times24$k tokens) at 13, 26 and 52 nodes (B-Q-strong). With the best
+layout, weak-scaling efficiency from 1 to \TriNNodes{} nodes is \TriQwenWeakEff\,\%.
 
 \begin{figure}[h]
   \centering\fig{qwen_scaling}
-  \caption{Qwen3.8-27B tokens/s per GPU and scaling efficiency vs.\ number of GPUs (8--416), best layout
-    vs.\ \texttt{fsdp}; strong scaling in a separate panel. \syntheticnote{qwen_scaling}}
+  \caption{Qwen3.8-27B tokens/s per GPU vs.\ number of GPUs. Left: weak scaling (24k tokens per GPU), best
+    layout vs.\ \texttt{fsdp}, with the efficiency at 416 GPUs. Right: strong scaling (fixed global
+    batch), labelled with the efficiency relative to the fewest GPUs. \syntheticnote{qwen_scaling}}
   \label{fig:qwen_scaling}
 \end{figure}
 
-\placeholder{efficiency at 52 nodes for both layouts; where the curve bends; strong-scaling efficiency.}
+\placeholder{where the curve bends; gap between the best layout and \texttt{fsdp}; strong-scaling
+efficiency.}
 
-\paragraph{GLM-5 (B-G).} 1, 2, 3 and 4 model copies (13, 26, 39 and 52 nodes), with 64 sequences per
-copy (weak scaling) and 64 sequences in total (strong scaling).
+\paragraph{GLM-5 (B-G).} \texttt{pp13-ep8} with 1, 2, 3 and 4 model copies (13, 26, 39 and 52 nodes), with
+256 sequences per copy (weak scaling) and 256 sequences in total (strong scaling). In weak scaling, 4
+copies reach \TriGlmCopiesEff\,\% of the throughput per GPU of one copy.
 
 \begin{figure}[h]
-  \centering\fig{glm_scaling}
-  \caption{GLM-5 tokens/s per GPU vs.\ number of model copies (1--4), weak vs.\ strong batch.
+  \centering\fig[0.72\linewidth]{glm_scaling}
+  \caption{GLM-5 (\texttt{pp13-ep8}) tokens/s per GPU vs.\ number of model copies (13 nodes each), with
+    256 sequences per copy (weak) and 256 in total (strong); efficiency at 4 copies written on each line.
     \syntheticnote{glm_scaling}}
   \label{fig:glm_scaling}
 \end{figure}
 
-\placeholder{whether copies interfere through the shared fabric; strong-scaling efficiency.}
+\placeholder{whether copies interfere through the shared fabric; how much the strong-scaling loss comes
+from the pipeline bubble of a smaller batch per copy.}

@@ -11,26 +11,28 @@
 \paragraph{Interference (E1).} The Qwen best guess (HSDP within a node, 24k tokens per GPU) runs on 4
 disjoint random sets of 13 nodes: each set alone, then the 4 together. This is repeated twice with new
 random sets. If the slowdown together is below 2\,\%, runs of up to 26 nodes are packed in parallel for
-the layout, scaling, precision and operations experiments.
+the layout, scaling, precision and operations experiments. The median change together vs.\ alone is
+\TriInterferencePct\,\%.
 
 \begin{figure}[h]
-  \centering\fig{interference}
-  \caption{Tokens/s per GPU of each 13-node set, alone and with the 3 others running.
-    \syntheticnote{interference}}
+  \centering\fig[0.72\linewidth]{interference}
+  \caption{Tokens/s per GPU of each 13-node set (2 draws of 4 sets), alone (circles) and with the 3
+    others running (squares). \syntheticnote{interference}}
   \label{fig:interference}
 \end{figure}
 
-\placeholder{slowdown together vs.\ alone, per set and repetition; decision on packing.}
+\placeholder{whether any set slows down beyond the run-to-run spread; decision on packing.}
 
 \paragraph{Reference drift (R).} The reference run (\cref{sec:method}) is repeated about every 3 hours.
 Its spread bounds the differences between configurations that can be attributed to the configurations
-themselves.
+themselves: the fastest reference run is \TriDriftPct\,\% faster than the slowest.
 
 \begin{figure}[h]
-  \centering\fig{reference_drift}
+  \centering\fig[0.72\linewidth]{reference_drift}
   \caption{Throughput of the reference run (Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens per GPU) vs.\ time
-    in the window. \syntheticnote{reference_drift}}
+    since the first reference run. Band: median $\pm1\,\%$; the linear trend over the window is written
+    on top. \syntheticnote{reference_drift}}
   \label{fig:reference_drift}
 \end{figure}
 
-\placeholder{spread of the reference runs; correlation with time of day or with other users' load.}
+\placeholder{correlation with time of day or with other users' load.}

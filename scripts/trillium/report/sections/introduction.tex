@@ -15,12 +15,16 @@ access.
     \toprule
     & Known & Source \\
     \midrule
-    Nodes & 52 (\texttt{trig0101}--\texttt{trig0152}), exclusive access during the window & SciNet talk 2026-10-21; \texttt{/etc/hosts} \\
+    Nodes & 52 (\texttt{trig0101}--\texttt{trig0152}), exclusive access during the window; 5 of them & SciNet talk 2026-10-21; \texttt{/etc/hosts}; \\
+          & (\texttt{trig0148}--\texttt{trig0152}) reserved for SciNet's inference service: perhaps only 47 & \texttt{scontrol show reservation} \\
     Per node & 8 B200 180\,GB on NVLink, 2 $\times$ 48-core Intel CPUs, 2\,TB RAM, liquid cooled & SciNet talk \\
     GPUs & 416 in total & \\
     Network & InfiniBand, 800\,Gb/s per node, ``non-blocking''; number of HCAs unknown & user; SciNet \\
     Switch layout & unknown; \texttt{/etc/hosts} puts the nodes in 8 subnets of 7, 7, 7, 7, 4, 7, 7, 6 nodes & \texttt{/etc/hosts} \\
     Shared with others & distributed filesystem and interconnect (CPU and H100 nodes stay in production) & user \\
+    Storage & \texttt{/scratch}, \texttt{/project}: VAST over NFS (65\,PB); diskless nodes (2\,GB \texttt{TmpDisk}), & \texttt{df}, \texttt{scontrol show node} \\
+            & no local NVMe, only \texttt{/dev/shm} in host memory & \\
+    Slurm & partition \texttt{compute\_b200\_full\_node}, 1-day limit; no topology plugin & \texttt{sinfo}, \texttt{scontrol show topology} \\
     Software & \texttt{module load cuda/12.9}, \texttt{--gpus-per-node=b200:8} & SciNet talk \\
     Matmul ($8192^2$) & B200: BF16 1{,}668, FP8 3{,}041\,TFLOP/s; H100: BF16 785\,TFLOP/s & SciNet (their measurement) \\
     Window & a few days \est{}, date unknown & user \\
@@ -39,10 +43,10 @@ access.
   \item \textbf{FP8 and MXFP8.} Low precision doubles the matmul rate (3{,}041\,TFLOP/s in FP8, SciNet's
         measurement) but not the network. What is network-bound in BF16 becomes more so.
   \item \textbf{Memory.} 180\,GB per GPU, 73\,TB in total. Qwen3.8-27B (about 430\,GB of training state
-        \est{}) fits on one node; GLM-5 fits on about 13 nodes \est{}, so up to 4 copies run at once.
+        \est{}) fits on one node; GLM-5 fits on about 13 nodes \est{}, so up to 4 copies run at once (if all 52 nodes are available).
         Activation checkpointing can be reduced.
   \item \textbf{Unknown topology, shared fabric.} The switch layout is not known, and the filesystem
-        and interconnect carry other users' traffic. Placement enters the design only if the pairwise
+        and interconnect carry other users' traffic, and Slurm has no topology information. Placement enters the design only if the pairwise
         measurements show a structure (\cref{sec:network}); a reference run repeated through the window
         separates our configurations from background load (\cref{sec:interference}).
 \end{enumerate}
@@ -56,4 +60,7 @@ access.
 (\cref{sec:operations}) what do checkpoints, startup and energy cost, and is throughput stable?
 
 \paragraph{Declared deviations} from the reference training recipes, valid for every result unless noted:
-\placeholder{list once the B200 configurations are fixed (optimizer, multi-token prediction, data).}
+GLM-5's indexer (DSA) shares its index across layers in the reference model; this sharing is turned off, as
+on Rorqual, because it only allows some pipeline-stage boundaries.
+\placeholder{the rest once the B200 configurations are fixed (optimizer, multi-token prediction, data for the
+throughput runs).}

@@ -2,7 +2,8 @@
 \label{app:plan}
 
 The experiment groups run in the order of \cref{tab:plan}. Every time and count in this appendix is an
-estimate made before access.
+estimate made before access. If the 5 nodes reserved for SciNet's inference service are not
+released, 47 nodes are available and the 52-node runs shrink accordingly (39 nodes for 3 GLM-5 copies).
 
 \begin{table}[h]
   \caption{Experiments. Times are estimates.}
@@ -23,16 +24,16 @@ estimate made before access.
     R  & Reference: Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens/GPU, 10\,min, every $\sim$3\,h & 4 & 10\,min each \\
     \midrule
     A-Q & Qwen layouts $\times$ tokens per GPU $\times$ reduction dtype $\times$ checkpointing (\cref{tab:aq}); $\sim$45 runs $\times$ 2 $\times$ $\sim$10\,min & 1--52 & see \cref{tab:budget} \\
-    A-G & GLM-5 layouts (\cref{tab:ag}), recompute, micro-batch; $\sim$14 runs $\times$ 2 $\times$ $\sim$25\,min & 13, 52 & see \cref{tab:budget} \\
+    A-G & GLM-5 layouts (\cref{tab:ag}), 256 sequences per copy; recompute, micro-batch, 64 sequences per copy; $\sim$14 runs $\times$ 2 $\times$ $\sim$25\,min & 12--52 & see \cref{tab:budget} \\
     \midrule
     B-Q-weak & Qwen, best layout and \texttt{fsdp}, fixed tokens per GPU & 1--52 & \\
     B-Q-strong & Qwen, fixed global batch ($52\times8\times24$k tokens) & 13, 26, 52 & \\
-    B-G & GLM-5, 1--4 copies, 64 sequences per copy (weak) and in total (strong) & 13--52 & \\
+    B-G & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 256 sequences per copy (weak) and in total (strong) & 13--52 & \\
     \midrule
-    C-speed & BF16 / FP8 tensorwise / FP8 rowwise (Qwen) or blockwise (GLM-5) / MXFP8, best layout & 1 or 13, and 52 & \\
-    C-loss & Same recipes, 500 steps, same seed and data & 13 & \\
+    C-speed & Qwen: BF16 / MXFP8; GLM-5: BF16 / FP8 tensorwise / FP8 blockwise / MXFP8; best layout & 1 or 13, and 52 & \\
+    C-loss & Same recipes, 500 steps, same seed and FineWeb data, realistic learning rate & 13 & \\
     \midrule
-    F1 & Checkpoint save / load, sync vs.\ async, 3 repetitions; escalation agreed with the administrators & 1--52 & \\
+    F1 & Checkpoint save / load, sync vs.\ async (staging in host memory: no local disk), 3 repetitions; escalation agreed with the administrators & 1--52 & \\
     F2 & Long run: best Qwen layout, $\geq$1\,h & 52 & \\
     F3 & Startup, from every run & -- & -- \\
     F4 & Energy, from every run & -- & -- \\
@@ -66,3 +67,15 @@ estimate made before access.
 
 \paragraph{Priorities if the window is short.} Tier 0: bring-up, D1. Tier 1: A-Q at 13 nodes, B-Q-weak,
 A-G at 13 and 52 nodes, B-G. Tier 2: D2--D4, E1, C, F1. Tier 3: F2, B-Q-strong, the rest of A.
+
+\section{Run ledger}
+\label{app:ledger}
+
+\begin{table}[h]
+  \caption{Run ledger: every attempt on Trillium, including failures.}
+  \label{tab:ledger}
+  \centering
+  \begin{adjustbox}{max width=\linewidth}
+    \IfFileExists{generated/tables/ledger.tex}{\input{generated/tables/ledger}}{\textit{No runs yet.}}
+  \end{adjustbox}
+\end{table}

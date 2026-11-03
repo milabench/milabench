@@ -21,7 +21,7 @@ pipeline parallelism at 1 node. About 45 runs, each repeated twice, about 10 min
     \toprule
     Factor & Levels \\
     \midrule
-    Layout & \texttt{fsdp} / \texttt{hsdp8} / \texttt{hsdp16} / \texttt{tp2-fsdp} / \texttt{tp8-fsdp} /
+    Layout & \texttt{fsdp} / \texttt{hsdp8} / \texttt{hsdp16} / \texttt{tp2-fsdp} / \texttt{tp4-fsdp} /
              \texttt{pp2-fsdp} / \texttt{pp4-fsdp} \\
     Tokens per GPU & 12k ($4096\times3$) / 24k ($4096\times6$) / 48k ($4096\times12$) \\
     Gradient reduction & FP32 / BF16 (on the 2 best layouts) \\
@@ -32,67 +32,91 @@ pipeline parallelism at 1 node. About 45 runs, each repeated twice, about 10 min
   \end{adjustbox}
 \end{table}
 
+At 13 nodes, the fastest configuration is \texttt{\TriQwenBestLayout} at \TriQwenBestTokens{} tokens per
+GPU: \TriQwenBestTokS{} tokens/s per GPU, \TriQwenBestMFU\,\% MFU (\cref{fig:qwen_layouts,tab:qwen_layouts}).
+
 \begin{figure}[h]
   \centering\fig{qwen_layouts}
-  \caption{Qwen3.8-27B throughput (tokens/s per GPU, or MFU) by layout (rows) and tokens per GPU
-    (columns), at 2, 13 and 52 nodes (panels). \syntheticnote{qwen_layouts}}
+  \caption{Qwen3.8-27B tokens/s per GPU by layout (rows) and tokens per GPU per step (color), at 2, 13 and
+    52 nodes (panels); the MFU of the fastest configuration of each panel is written next to it.
+    \syntheticnote{qwen_layouts}}
   \label{fig:qwen_layouts}
 \end{figure}
 
-\placeholder{best layout and batch at each scale; whether keeping the shards in a node (\texttt{hsdp8},
-\texttt{tp8-fsdp}) wins as expected.}
+\begin{table}[h]
+  \caption{Qwen3.8-27B at 13 nodes (FP32 gradient reduction, full recomputation, BF16): tokens/s per GPU
+    (MFU, \%) by layout and tokens per GPU.}
+  \label{tab:qwen_layouts}
+  \centering\small
+  \IfFileExists{generated/tables/qwen_layouts.tex}{\input{generated/tables/qwen_layouts}}{\textit{No data yet.}}
+\end{table}
+
+\placeholder{whether keeping the shards in a node (\texttt{hsdp8}, \texttt{tp4-fsdp}) wins as expected,
+and how the ranking changes from 2 to 52 nodes.}
 
 \begin{figure}[h]
   \centering\fig{qwen_levers}
-  \caption{Throughput change of each lever (batch, gradient-reduction dtype, pipeline parallelism,
-    activation checkpointing) relative to \texttt{fsdp} at 12k tokens per GPU, at 13 nodes.
-    \syntheticnote{qwen_levers}}
+  \caption{Throughput change of each lever (tokens per GPU, layout, gradient-reduction dtype,
+    recomputation) relative to \texttt{fsdp} at 12k tokens per GPU, FP32 reduction and full
+    recomputation, at 13 nodes; the last bar combines the best choices. \syntheticnote{qwen_levers}}
   \label{fig:qwen_levers}
 \end{figure}
 
 \placeholder{ranking of the levers; comparison with the network arithmetic of \cref{sec:method}.}
 
-\paragraph{Where the step time goes.} \Cref{fig:step_decomposition} splits the step time into compute,
-taken from 1-node runs at the same batch per GPU, and exposed communication, the remainder of the
-measured step time. With 8 GPUs on NVLink, the 1-node runs train the full model, so the compute part is
-measured, not scaled from a truncated model.
+\paragraph{Where the step time goes.} \Cref{fig:step_decomposition} splits the step time into compute and
+the rest. The compute part is an estimate: the step time of a 1-node \texttt{fsdp} run at the same tokens
+per GPU, applied to every layout. It ignores what a layout changes in the compute itself (smaller matrices
+under TP, pipeline bubbles under PP). The rest of the measured step time is exposed communication, plus
+the pipeline bubble for PP layouts; it is an estimate as well. With \texttt{fsdp} at 13 nodes and 24k
+tokens per GPU, exposed communication is \TriQwenFsdpCommPct\,\% of the step \est{}.
 
 \begin{figure}[h]
   \centering\fig[0.85\linewidth]{step_decomposition}
-  \caption{Step time of Qwen3.8-27B split into compute (1-node step time) and exposed communication, by
-    layout and number of nodes. \syntheticnote{step_decomposition}}
+  \caption{Step time of Qwen3.8-27B (24k tokens per GPU) by layout and number of nodes. Hatched: compute
+    (est., 1-node \texttt{fsdp} step); shaded: exposed communication and pipeline bubble (est., the
+    remainder of the measured step). \syntheticnote{step_decomposition}}
   \label{fig:step_decomposition}
 \end{figure}
 
 \placeholder{share of exposed communication by layout at 13 and 52 nodes.}
 
-\paragraph{GLM-5 (A-G).} The global batch is 64 sequences per model copy. The layouts differ in where
-the expert groups lie (\cref{tab:ag}). Recomputation (full vs.\ selective) and micro-batch size (1 vs.\
-2) are varied on the best layout. Each runs at 13 nodes (1 copy) and 52 nodes (4 copies). About 14 runs,
-each repeated twice, about 25 minutes each \est{}, including about 15 minutes of startup at scale \est{}.
+\paragraph{GLM-5 (A-G).} The global batch is 256 sequences per model copy. A copy is $P\times E$ GPUs
+and expert groups can only use the GPUs of one stage (\cref{sec:method}), so the smallest run differs
+between layouts (\cref{tab:ag}). The expert-parallel comparison (EP 8, 16, 32) is made at 52 nodes;
+\texttt{pp13-ep8} and \texttt{pp6-ep16} also run at 13 and 12 nodes. On the best layout, recomputation
+(full vs.\ selective), micro-batch size (1 vs.\ 2) and a small global batch (64 sequences per copy: 8
+micro-batches for 13 stages, a pipeline bubble of about 60\,\% \est{}) are varied. About 14 runs, each
+repeated twice, about 25 minutes each \est{}, including about 15 minutes of startup at scale \est{}.
 
 \begin{table}[h]
-  \caption{GLM-5 layouts (A-G).}
+  \caption{GLM-5 layouts (A-G). Smallest run: one model copy.}
   \label{tab:ag}
   \centering\small
+  \begin{adjustbox}{max width=\linewidth}
   \begin{tabular}{llll}
     \toprule
-    Layout & Expert group & Nodes per copy & Copies on 52 nodes \\
+    Layout & Expert group & Smallest run (copies) & At 52 nodes \\
     \midrule
-    \texttt{pp13-ep8}  & in a node (NVLink) & 13 & 4 \\
-    \texttt{pp13-ep16} & across 2 nodes & 13 & 4 \\
-    \texttt{pp13-ep32} & across 4 nodes & 13 & 4 \\
-    \texttt{pp26-ep8}  & in a node & 26 & 2 \\
-    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 & 4 (48 nodes), if it fits \\
+    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1) & 4 copies \\
+    \texttt{pp13-ep16} & across 2 nodes & 26 nodes (1) & 2 copies \\
+    \texttt{pp13-ep32} & across 4 nodes & 52 nodes (1) & 1 copy \\
+    \texttt{pp26-ep8}  & in a node & 26 nodes (1) & 2 copies \\
+    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1) & 48 nodes, 4 copies (416 GPUs don't split in 6) \\
     \bottomrule
   \end{tabular}
+  \end{adjustbox}
 \end{table}
+
+On the whole machine, the fastest layout is \texttt{\TriGlmBestLayout}: \TriGlmBestTokS{} tokens/s per
+GPU, \TriGlmBestMFU\,\% MFU.
 
 \begin{figure}[h]
   \centering\fig{glm_layouts}
-  \caption{GLM-5 throughput (tokens/s per GPU) and all-to-all time by layout, at 13 and 52 nodes.
-    \syntheticnote{glm_layouts}}
+  \caption{GLM-5 by layout and variant: tokens/s per GPU (left) and expert all-to-all time per step
+    (right, median over expert groups), for one model copy and for the whole machine (52 nodes, or the
+    most that fit). \syntheticnote{glm_layouts}}
   \label{fig:glm_layouts}
 \end{figure}
 
-\placeholder{cost of expert groups crossing nodes; best layout, recomputation and micro-batch.}
+\placeholder{cost of expert groups crossing nodes; effect of recomputation, micro-batch and batch size.}

@@ -18,6 +18,7 @@
 \usepackage{enumitem}
 \usepackage[most]{tcolorbox}
 \usepackage[capitalise,noabbrev]{cleveref}
+\usepackage[section]{placeins}  % floats stay in their section
 
 % Macros written by the analysis pipeline. Fallbacks so that the report compiles before it has run.
 \IfFileExists{generated/tables/macros.tex}{\input{generated/tables/macros}}{}
@@ -25,6 +26,20 @@
 \providecommand{\NRunsReal}{0}
 \providecommand{\NRunsFailed}{0}
 \providecommand{\NRunsSynthetic}{0}
+% Key numbers (tables.py: key_numbers); "??" until the pipeline has written them.
+\providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}
+\providecommand{\TriNNodes}{52}
+\newcommand{\triunset}[1]{\providecommand{#1}{??}}
+\triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
+\triunset{\TriPairBw}\triunset{\TriPairBwMin}\triunset{\TriPairLat}\triunset{\TriAllReduceFull}
+\triunset{\TriAlltoallFull}\triunset{\TriBisection}\triunset{\TriInterferencePct}\triunset{\TriDriftPct}
+\triunset{\TriQwenBestLayout}\triunset{\TriQwenBestTokens}\triunset{\TriQwenBestTokS}\triunset{\TriQwenBestMFU}
+\triunset{\TriQwenFsdpCommPct}\triunset{\TriQwenWeakEff}\triunset{\TriGlmBestLayout}\triunset{\TriGlmBestTokS}
+\triunset{\TriGlmBestMFU}\triunset{\TriGlmCopiesEff}\triunset{\TriQwenFpBestRecipe}
+\triunset{\TriQwenFpSpeedupSmall}\triunset{\TriQwenFpSpeedupFull}\triunset{\TriGlmFpBestRecipe}
+\triunset{\TriGlmFpSpeedupSmall}\triunset{\TriGlmFpSpeedupFull}\triunset{\TriCkptQwenSave}
+\triunset{\TriCkptGlmFullSave}\triunset{\TriCkptGlmFullBlocked}\triunset{\TriCkptWriteGBs}
+\triunset{\TriStartupQwen}\triunset{\TriStartupGlm}\triunset{\TriEnergyBest}
 
 % Question box at the top of each analysis section.
 \newtcolorbox{question}{enhanced, breakable, colback=white, colframe=black!35,
@@ -64,14 +79,21 @@
   Two workloads are used: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM).
   We report node and fabric health, interference between jobs running side by side, the choice of
   parallel layout for each workload, scaling to the full partition, the gain of FP8 and MXFP8, and
-  operational aspects (checkpointing, stability, startup, energy).
-  \placeholder{key numbers once the window is analyzed.}
+  operational costs (checkpointing, stability, startup, energy).
+  On 13 nodes, Qwen3.8-27B is fastest with \texttt{\TriQwenBestLayout} at \TriQwenBestTokens{} tokens per
+  GPU: \TriQwenBestTokS{} tokens/s per GPU (\TriQwenBestMFU\,\% MFU). Its weak-scaling efficiency at
+  \TriNNodes{} nodes is \TriQwenWeakEff\,\%. GLM-5 is fastest with \texttt{\TriGlmBestLayout}
+  (\TriGlmBestTokS{} tokens/s per GPU, \TriGlmBestMFU\,\% MFU), and 4 model copies run at
+  \TriGlmCopiesEff\,\% of the throughput per GPU of one. MXFP8 speeds up Qwen by $\times$\TriQwenFpSpeedupFull{}
+  on the whole partition. Four 13-node jobs run side by side change throughput by
+  \TriInterferencePct\,\%.
 \end{abstract}
 
 \begin{tcolorbox}[colback=red!4, colframe=red!50!black, boxrule=0.4pt, arc=0pt, fontupper=\small]
   \textbf{Draft generated \DataGenerated.} \NRunsReal{} runs measured on Trillium
   (\NRunsFailed{} failed), and \NRunsSynthetic{} synthetic runs standing in for experiments not run yet.
-  Every figure with synthetic data says so and draws it with hollow markers.
+  Every figure with synthetic data says so and draws it with hollow markers or dashed lines; every number
+  taken from synthetic data is shown as \TriSyn{1.0}. ``??'': not computed yet.
 \end{tcolorbox}
 
 \input{sections/introduction}
