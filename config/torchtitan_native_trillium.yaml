@@ -523,8 +523,9 @@ tri-closs-mxfp8:
 
 # --- F1: checkpoint save / load (after a short measurement) ------------------
 # Folder: $TT_CKPT_ROOT/<run name> ($SCRATCH/trillium/checkpoints, set by the launcher), deleted after the load
-# is timed. full = model + optimizer + data loader state (~16 B/param, ~0.43 TB);
-# model = weights only in bf16 (~54 GB), synchronous only.
+# is timed. full = fp32 weights + AdamW moments + data loader state: 12 B/param
+# (measured on a truncated model, Rorqual), ~0.32 TB for 26.9e9 params (est.);
+# model = weights only in bf16, 2 B/param (~54 GB, est.), synchronous only.
 
 tri-ckpt-full-sync:
   inherits: _tri
