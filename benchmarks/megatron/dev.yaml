@@ -1057,3 +1057,21 @@ megatron-glm5-tri-test-ckpt-full-load:
   inherits: _tri_test_ckpt
   checkpoint: {content: full, op: load}
   argv: {<<: *tri_ckpt_load}
+# Full load on 80 GB GPUs: it holds the loaded and the current optimizer state at once, PP2 x EP4 runs out of memory (Fir
+# 2302534). Same model at half the state per GPU: PP2 x EP8, 4 nodes, one copy.
+_tri_test_ckpt_ep8:
+  inherits: _tri_test_ckpt
+  num_machines: 4
+  argv:
+    --expert-model-parallel-size: 8
+    --global-batch-size: 32
+megatron-glm5-tri-test-ckpt-ep8-full-sync-save:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full}
+megatron-glm5-tri-test-ckpt-ep8-full-async-save:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-test-ckpt-ep8-full-load:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}

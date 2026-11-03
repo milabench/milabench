@@ -1045,8 +1045,18 @@ def gather_checksums(model) -> list:
     return every
 
 
+def gather_peak_gib() -> float:
+    """The largest peak GPU memory over the ranks so far, a collective: a full load holds the loaded and the current
+    optimizer state at once (it ran out of memory on an H100 at ~2x the training peak)."""
+    import torch.distributed as dist
+
+    every = [None] * dist.get_world_size()
+    dist.all_gather_object(every, torch.cuda.max_memory_allocated() / 2**30)
+    return max(every)
+
+
 def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, checksum_match=None,
-                     saved_by=None):
+                     saved_by=None, peak_gib=None):
     """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md, "Checkpoint events")."""
     if LOG is None:
         return
@@ -1056,7 +1066,7 @@ def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, ste
         "op": ck["op"], "step": step,
         "repetition": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
         "mode": ck["mode"] if ck["op"] == "save" else "sync", "content": ck["content"], "format": "torch_dist",
-        "bytes": size, "files": files, "params_total": RUN["params_total"],
+        "bytes": size, "files": files, "params_total": RUN["params_total"], "peak_allocated_gib": peak_gib,
         "blocked_s": blocked_end - start, "total_s": end - start,
         "path": ck["dir"], "filesystem": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end,
         "checksum_match": checksum_match,
@@ -1124,6 +1134,7 @@ def patch_checkpointing(steps):
             result = load(model, *args, **kwargs)
             dist.barrier()
             end = time.time()
+            peak = gather_peak_gib()
             checksums = gather_checksums(model)
             match, step, saved_by = None, ck.get("step"), None
             try:
@@ -1133,7 +1144,7 @@ def patch_checkpointing(steps):
                 saved_by = {"mode": saved.get("mode"), "run": saved.get("run")}
             except OSError:
                 debug(f"no {CHECKSUM_FILE} in {ck['dir']}: the load cannot be checked")
-            checkpoint_event(ck, start, end, end, step, match, saved_by)
+            checkpoint_event(ck, start, end, end, step, match, saved_by, peak)
             if match is False:
                 raise RuntimeError("the loaded weights differ from the saved ones (checksum): a partial load?")
             return result
