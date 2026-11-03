@@ -16,7 +16,9 @@ set -uo pipefail
 if [ -n "${CUDA_MODULE:-}" ]; then
     module load "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
 fi
-export PATH=$MILABENCH_VENV/bin:$PATH
+# the benchmark venv first: Megatron builds its dataset helpers at startup with the `python3` on PATH (pybind11); the
+# milabench CLI comes from MILABENCH_VENV (the benchmark venv has none)
+export PATH=$MILABENCH_BASE/venv/torch/bin:$MILABENCH_VENV/bin:$PATH
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
@@ -24,8 +26,9 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$MILABENCH_BASE/cache}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$XDG_CACHE_HOME/triton}
 export TILELANG_CACHE_DIR=${TILELANG_CACHE_DIR:-$XDG_CACHE_HOME/tilelang}
-# wandb: through the cluster's HTTP proxy if there is one, else offline (`wandb sync` from a login node afterwards)
-if [ "${BENCHMATE_WANDB:-0}" = 1 ]; then
+# wandb (the GLM entries turn it on): through the cluster's HTTP proxy if there is one, else offline (`wandb sync`
+# from a login node afterwards). An explicit WANDB_MODE is kept
+if [ -z "${WANDB_MODE:-}" ]; then
     if command -v module >/dev/null && module load httpproxy 2>/dev/null; then
         export WANDB_BASE_URL=${WANDB_BASE_URL:-https://api.wandb.ai}
     else
@@ -34,7 +37,7 @@ if [ "${BENCHMATE_WANDB:-0}" = 1 ]; then
 fi
 export WANDB_DIR=${WANDB_DIR:-$MILABENCH_BASE/wandb}/$RUN_PREFIX.$SLURM_JOB_ID
 mkdir -p "$WANDB_DIR"
-echo "[$RUN_PREFIX] wandb: BENCHMATE_WANDB=${BENCHMATE_WANDB:-0} mode=${WANDB_MODE:-online} proxy=${https_proxy:-${HTTPS_PROXY:-none}} dir=$WANDB_DIR"
+echo "[$RUN_PREFIX] wandb: mode=${WANDB_MODE:-online} proxy=${https_proxy:-${HTTPS_PROXY:-none}} dir=$WANDB_DIR"
 read -ra entries <<< "$ENTRIES"   # ENTRY or ENTRY@EXPERIMENT (run.experiment of that run, else TT_EXPERIMENT)
 select=$(IFS=,; echo "${entries[*]%@*}")
 system=$MILABENCH_BASE/slurm/system.$SLURM_JOB_ID.yaml

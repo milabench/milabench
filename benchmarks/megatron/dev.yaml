@@ -818,10 +818,10 @@ megatron-glm5-tri-pp13-ep8-n52-gbs1024-mb2:
   argv: {--micro-batch-size: 2}
 megatron-glm5-tri-pp13-ep8-n13-gbs256-sel:
   inherits: _tri_glm5
-  argv: *tri_sel
+  argv: {<<: *tri_sel}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-sel:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
-  argv: *tri_sel
+  argv: {<<: *tri_sel}
 # expert groups across nodes: EP16 (2 nodes), EP32 (4 nodes)
 megatron-glm5-tri-pp13-ep16-n26-gbs256:
   inherits: _tri_glm5
@@ -839,7 +839,7 @@ megatron-glm5-tri-pp13-ep32-n52-gbs256:
 megatron-glm5-tri-pp26-ep8-n26-gbs256:
   inherits: _tri_glm5
   num_machines: 26
-  argv: *tri_pp26
+  argv: {<<: *tri_pp26}
 megatron-glm5-tri-pp26-ep8-n52-gbs512:
   inherits: _tri_glm5
   num_machines: 52
@@ -872,22 +872,22 @@ _tri_mxfp8: &tri_mxfp8
 
 megatron-glm5-tri-pp13-ep8-n13-gbs256-fp8-tensorwise:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
-  argv: *tri_fp8_tensorwise
+  argv: {<<: *tri_fp8_tensorwise}
 megatron-glm5-tri-pp13-ep8-n13-gbs256-fp8-blockwise:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
-  argv: *tri_fp8_blockwise
+  argv: {<<: *tri_fp8_blockwise}
 megatron-glm5-tri-pp13-ep8-n13-gbs256-mxfp8:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
-  argv: *tri_mxfp8
+  argv: {<<: *tri_mxfp8}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-fp8-tensorwise:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
-  argv: *tri_fp8_tensorwise
+  argv: {<<: *tri_fp8_tensorwise}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-fp8-blockwise:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
-  argv: *tri_fp8_blockwise
+  argv: {<<: *tri_fp8_blockwise}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-mxfp8:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
-  argv: *tri_mxfp8
+  argv: {<<: *tri_mxfp8}
 
 # C-loss: 500 steps from the same seed and data, a realistic learning rate (warm-up 50, cosine to 1/10). The loss of
 # every step comes from the last pipeline stage (`loss` events with `step`). Duration: not measured on B200
@@ -902,16 +902,16 @@ _tri_loss: &tri_loss
 megatron-glm5-tri-loss-bf16-n13:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
   max_duration: 21600
-  argv: *tri_loss
+  argv: {<<: *tri_loss}
 megatron-glm5-tri-loss-fp8-tensorwise-n13:
   inherits: megatron-glm5-tri-loss-bf16-n13
-  argv: *tri_fp8_tensorwise
+  argv: {<<: *tri_fp8_tensorwise}
 megatron-glm5-tri-loss-fp8-blockwise-n13:
   inherits: megatron-glm5-tri-loss-bf16-n13
-  argv: *tri_fp8_blockwise
+  argv: {<<: *tri_fp8_blockwise}
 megatron-glm5-tri-loss-mxfp8-n13:
   inherits: megatron-glm5-tri-loss-bf16-n13
-  argv: *tri_mxfp8
+  argv: {<<: *tri_mxfp8}
 
 # --- F1: checkpoint save then load (main.py `checkpoint:`), torch_dist format, into $TT_CKPT_DIR (set by the launcher,
 # which deletes it after the load: one checkpoint on disk at a time). The save runs at step 10 of 20, so an async
@@ -937,7 +937,7 @@ megatron-glm5-tri-ckpt-weights-async-save-n13:
 megatron-glm5-tri-ckpt-weights-load-n13:
   inherits: _tri_ckpt
   checkpoint: {op: load}
-  argv: *tri_ckpt_load
+  argv: {<<: *tri_ckpt_load}
 megatron-glm5-tri-ckpt-full-sync-save-n13:
   inherits: _tri_ckpt
   checkpoint: {content: full}
@@ -947,7 +947,7 @@ megatron-glm5-tri-ckpt-full-async-save-n13:
 megatron-glm5-tri-ckpt-full-load-n13:
   inherits: _tri_ckpt
   checkpoint: {content: full, op: load}
-  argv: *tri_ckpt_load
+  argv: {<<: *tri_ckpt_load}
 megatron-glm5-tri-ckpt-weights-sync-save-n52:
   inherits: megatron-glm5-tri-ckpt-weights-sync-save-n13
   num_machines: 52
@@ -1010,26 +1010,26 @@ megatron-glm5-tri-test-n2-gbs16-mb2:
   argv: {--micro-batch-size: 2}
 megatron-glm5-tri-test-n2-gbs16-sel:
   inherits: _tri_test
-  argv: *tri_sel
+  argv: {<<: *tri_sel}
 # FP8 on H100: blockwise needs FP32 block scales there (as the Rorqual _fp8 entries); mxfp8 must stop at once
 megatron-glm5-tri-test-n2-gbs16-fp8-tensorwise:
   inherits: _tri_test
-  argv: *tri_fp8_tensorwise
+  argv: {<<: *tri_fp8_tensorwise}
 megatron-glm5-tri-test-n2-gbs16-fp8-blockwise:
   inherits: _tri_test
   env:
     NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
-  argv: *tri_fp8_blockwise
+  argv: {<<: *tri_fp8_blockwise}
 megatron-glm5-tri-test-n2-gbs16-mxfp8:
   inherits: _tri_test
-  argv: *tri_mxfp8
+  argv: {<<: *tri_mxfp8}
 # C-loss in small: 50 steps, warm-up 5
 megatron-glm5-tri-test-loss-bf16:
   inherits: _tri_test
   argv: {<<: *tri_loss, --train-iters: 50, --lr-warmup-iters: 5}
 megatron-glm5-tri-test-loss-fp8-tensorwise:
   inherits: megatron-glm5-tri-test-loss-bf16
-  argv: *tri_fp8_tensorwise
+  argv: {<<: *tri_fp8_tensorwise}
 # F1 in small
 _tri_test_ckpt:
   inherits: _tri_test
@@ -1048,7 +1048,7 @@ megatron-glm5-tri-test-ckpt-weights-async-save:
 megatron-glm5-tri-test-ckpt-weights-load:
   inherits: _tri_test_ckpt
   checkpoint: {op: load}
-  argv: *tri_ckpt_load
+  argv: {<<: *tri_ckpt_load}
 megatron-glm5-tri-test-ckpt-full-sync-save:
   inherits: _tri_test_ckpt
   checkpoint: {content: full}
@@ -1058,4 +1058,4 @@ megatron-glm5-tri-test-ckpt-full-async-save:
 megatron-glm5-tri-test-ckpt-full-load:
   inherits: _tri_test_ckpt
   checkpoint: {content: full, op: load}
-  argv: *tri_ckpt_load
+  argv: {<<: *tri_ckpt_load}
