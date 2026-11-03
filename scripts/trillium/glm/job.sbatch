@@ -16,9 +16,7 @@ set -uo pipefail
 if [ -n "${CUDA_MODULE:-}" ]; then
     module load "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
 fi
-# the benchmark venv first: Megatron builds its dataset helpers at startup with the `python3` on PATH (pybind11); the
-# milabench CLI comes from MILABENCH_VENV (the benchmark venv has none)
-export PATH=$MILABENCH_BASE/venv/torch/bin:$MILABENCH_VENV/bin:$PATH
+export PATH=$MILABENCH_VENV/bin:$PATH
 export MILABENCH_GPU_ARCH=cuda
 export PYTHONUNBUFFERED=1
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
