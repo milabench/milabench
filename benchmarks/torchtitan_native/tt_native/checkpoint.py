@@ -116,7 +116,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
                 "step": step,
                 "content": content,
                 "format": "torch.dcp",
-                "path": path,
+                "path": ckpt.folder,  # the step is in step-<step>/
                 "filesystem": fs_type,
                 "ranks": len(rows),
                 "start_epoch": min(r[0] for r in rows),
