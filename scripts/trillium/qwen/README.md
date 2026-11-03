@@ -65,5 +65,11 @@ the same day (MXFP8 kernels), both from `download.pytorch.org/whl/nightly/cu130`
 - `/tmp` is in RAM on the diskless nodes (2 TB): the compile cache, the local datasets copy
   and (for `async_with_pinned_mem`) checkpoint staging all live in host memory.
 
+Checkpoint entries (`tri-ckpt-*`, F1) save and load twice per run (`repetition` 1 and 2 in
+the events). For `async_with_pinned_mem`, the first save's `blocked_s` also includes
+allocating the pinned host buffers: it is an upper bound; use repetition 2 for the steady
+state. Loads are timed after the step directory's pages are dropped on every node
+(`cache_drop: posix_fadvise_dontneed`).
+
 Smoke order for the bring-up: `tri-smoke` (1 node, 16 layers), `tri-smoke-mxfp8` and
 `tri-smoke-mxfp8-tt`, then `tri-ref` (4 nodes).

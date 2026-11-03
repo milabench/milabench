@@ -528,6 +528,9 @@ tri-closs-mxfp8:
 # is timed. full = fp32 weights + AdamW moments + data loader state: 12 B/param
 # (measured on a truncated model, Rorqual), ~0.32 TB for 26.9e9 params (est.);
 # model = weights only in bf16, 2 B/param (~54 GB, est.), synchronous only.
+# Two save / load repetitions per run: the first async_with_pinned_mem save also
+# allocates the pinned host buffers (its blocked_s is an upper bound), the
+# second reuses them.
 
 tri-ckpt-full-sync:
   inherits: _tri
@@ -540,6 +543,7 @@ tri-ckpt-full-sync:
     --layout: fsdp
     --checkpoint: full
     --checkpoint-async: disabled
+    --checkpoint-repeats: 2
 
 tri-ckpt-full-async:
   inherits: _tri
@@ -552,6 +556,7 @@ tri-ckpt-full-async:
     --layout: fsdp
     --checkpoint: full
     --checkpoint-async: async
+    --checkpoint-repeats: 2
 
 tri-ckpt-full-pinned:
   inherits: _tri
@@ -564,6 +569,7 @@ tri-ckpt-full-pinned:
     --layout: fsdp
     --checkpoint: full
     --checkpoint-async: async_with_pinned_mem
+    --checkpoint-repeats: 2
 
 tri-ckpt-model-sync:
   inherits: _tri
@@ -576,6 +582,7 @@ tri-ckpt-model-sync:
     --layout: fsdp
     --checkpoint: model
     --checkpoint-async: disabled
+    --checkpoint-repeats: 2
 
 # --- R: reference run (4 nodes, FSDP, 12k, every ~3 h through the window) ----
 

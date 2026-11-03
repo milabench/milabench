@@ -14,7 +14,10 @@ clock, every rank): ``blocked_s`` / ``total_s`` are the maximum over ranks,
 
 - save ``blocked_s``: until ``save()`` returns, plus the device-to-host staging
   for ``async_with_pinned_mem`` (what training would wait for); ``total_s``:
-  until the write has completed (the save future resolves).
+  until the write has completed (the save future resolves). The first
+  ``async_pinned`` save of a process also allocates the pinned host buffers, so
+  its ``blocked_s`` is an upper bound (event ``pinned_buffers_allocated``);
+  later repetitions reuse them.
 - load: until ``load()`` returns (synchronous).
 
 Page cache: every rank reads back the shards it wrote seconds earlier, so a
@@ -207,6 +210,8 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         t_total = time.time()
         dist.barrier()
         event: dict[str, Any] = {"op": "save", "repetition": rep, "mode": mode}
+        if mode == "async_pinned":
+            event["pinned_buffers_allocated"] = rep == 1
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
         record(event, [t0, t_blocked, t_total])
