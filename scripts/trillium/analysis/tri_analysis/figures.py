@@ -10,12 +10,15 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import FuncFormatter, LogLocator
+from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
 from .machine import GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
+from .select import completed, drift, qwen_base, with_energy
 
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
 GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
@@ -24,11 +27,7 @@ REF = {"layout": "fsdp", "tokens_per_gpu": 12288, "grad_reduce": "fp32", "ac": "
 
 
 def _runs(t, *experiments) -> pd.DataFrame:
-    r = t["runs"]
-    if r.empty:
-        return r
-    r = r[r.status == "completed"]
-    return r[r.experiment.isin(experiments)] if experiments else r
+    return completed(t["runs"], *experiments)
 
 
 def _median(r: pd.DataFrame, keys, col="tok_s_gpu") -> pd.DataFrame:
@@ -43,18 +42,30 @@ def _pt(ax, x, y, color, synthetic, marker="o", ms=4.5, **kw):
     ax.plot(x, y, ls="", marker=marker, ms=ms, zorder=3, color=color, **style_kw, **kw)
 
 
+def _handle(color, label, synthetic, marker="o", ls="", **kw):
+    """Legend entry drawn like the data it names: hollow when that data is synthetic."""
+    return plt.Line2D([], [], ls=ls, marker=marker, color=color, label=label, **marker_kw(color, bool(synthetic)),
+                      **kw)
+
+
+def _subnets():
+    """(subnet of each node position, positions where a subnet starts, tick centres)."""
+    groups = pd.Series(SUBNET_OF).reindex(NODES)
+    edges = [i for i in range(1, len(NODES)) if groups.iloc[i] != groups.iloc[i - 1]]
+    bounds = [0, *edges, len(NODES)]
+    return groups, edges, [(a + b - 1) / 2 for a, b in zip(bounds, bounds[1:])], bounds[:-1]
+
+
 def _subnet_axis(axes) -> None:
     """x = node position in host order; light lines separate the subnets, the ticks (last axis) name them."""
     axes = list(np.ravel(axes))
-    groups = pd.Series(SUBNET_OF).reindex(NODES)
-    edges = [i for i in range(1, len(NODES)) if groups.iloc[i] != groups.iloc[i - 1]]
+    groups, edges, centers, starts = _subnets()
     for a in axes:
         for e in edges:
             a.axvline(e - 0.5, color=LIGHT, lw=0.5, zorder=0)
     ax = axes[-1]
-    bounds = [0, *edges, len(NODES)]
-    ax.set_xticks([(a + b - 1) / 2 for a, b in zip(bounds, bounds[1:])])
-    ax.set_xticklabels([groups.iloc[a] for a in bounds[:-1]])
+    ax.set_xticks(centers)
+    ax.set_xticklabels([groups.iloc[a] for a in starts])
     ax.set_xlim(-0.8, len(NODES) - 0.2)
     ax.tick_params(axis="x", length=0)
 
@@ -94,7 +105,7 @@ def health_gpus(t):
         ax.text(-0.5, med, f"median {med:,.0f}", fontsize=6, color=INK2, ha="left", va="bottom",
                 bbox={"fc": "white", "ec": "none", "pad": 0.3}, zorder=5)
         ax.text(-0.5, 0.95 * med, "−5 %", fontsize=6, color=CRITICAL, ha="left", va="bottom")
-        _label_outliers(ax, d, "x", "value", 0.97 * med, lambda r: f"{r.host} GPU{int(r.gpu)}")
+        _label_outliers(ax, d, "x", "value", 0.95 * med, lambda r: f"{r.host} GPU{int(r.gpu)}")
         ax.set_ylim(0.9 * med, 1.03 * med)
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
@@ -152,8 +163,7 @@ def pair_matrix(t):
     p = p[(p.status == "ok") & p.a.isin(POS) & p.b.isin(POS)]
     n = len(NODES)
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.75))
-    groups = pd.Series(SUBNET_OF).reindex(NODES)
-    edges = [i for i in range(1, n) if groups.iloc[i] != groups.iloc[i - 1]]
+    groups, edges, centers, starts = _subnets()
     for ax, col, label in ((axes[0], "bw_gbs", "bandwidth (GB/s, one direction)"),
                            (axes[1], "lat_us", "latency (µs, 8 B)")):
         m = np.full((n, n), np.nan)
@@ -164,12 +174,10 @@ def pair_matrix(t):
         for e in edges:
             ax.axhline(e - 0.5, color="white", lw=0.6)
             ax.axvline(e - 0.5, color="white", lw=0.6)
-        bounds = [0, *edges, n]
-        centers = [(a + b - 1) / 2 for a, b in zip(bounds, bounds[1:])]
         ax.set_xticks(centers)
-        ax.set_xticklabels([groups.iloc[a] for a in bounds[:-1]], fontsize=6)
+        ax.set_xticklabels([groups.iloc[a] for a in starts], fontsize=6)
         ax.set_yticks(centers)
-        ax.set_yticklabels([groups.iloc[a] for a in bounds[:-1]], fontsize=6)
+        ax.set_yticklabels([groups.iloc[a] for a in starts], fontsize=6)
         ax.tick_params(length=0)
         for s in ax.spines.values():
             s.set_visible(False)
@@ -203,21 +211,22 @@ def collectives_scale(t):
     for y, text in ((NODE_NET_GBS, "800 Gb/s per node"), (NODE_NET_GBS / GPUS_PER_NODE, "its share per GPU")):
         ax.axhline(y, color=MUTED, lw=0.7, ls=(0, (4, 3)), zorder=1)
         ax.text(1, y, text, fontsize=6, color=INK2, va="bottom")
-    handles = [plt.Line2D([], [], color=COLLECTIVE_COLOR[k], marker=COLLECTIVE_MARKER[k], ms=3.5,
-                          label=k.replace("_", "-")) for k in COLLECTIVE_COLOR if k in set(d3.collective)]
-    if not d4.empty:
-        for _, row in d4.iterrows():
-            ax.plot(row.nodes * 1.25, row.busbw_gbs, "X", ms=5, color=INK2,
-                    markerfacecolor="white" if row.synthetic else INK2, zorder=4)
-        handles.append(plt.Line2D([], [], ls="", marker="X", color=INK2, markerfacecolor="white",
-                                  label=f"bisection, per node ({len(d4)} cuts)"))
+    handles = [_handle(COLLECTIVE_COLOR[k], k.replace("_", "-"), d3[d3.collective == k].synthetic.any(),
+                       COLLECTIVE_MARKER[k], "-", ms=3.5) for k in COLLECTIVE_COLOR if k in set(d3.collective)]
     ax.legend(handles=handles, loc="upper right", fontsize=6)
+    if not d4.empty:  # not a bus bandwidth: median node-pair bandwidth across the cut, per node
+        x = d4.nodes.max() * 1.6
+        for _, row in d4.iterrows():
+            _pt(ax, x, row.busbw_gbs, INK2, row.synthetic, "X", ms=5)
+        ax.annotate(f"bisection: pair BW\nper node, {len(d4)} cuts\n{d4.busbw_gbs.median():.0f} GB/s",
+                    (x, d4.busbw_gbs.min()), xytext=(0, -6), textcoords="offset points", fontsize=6, color=INK2,
+                    ha="center", va="top")
     ax.set_xscale("log", base=2)
     ticks = sorted(d3.nodes.unique())
     ax.set_xticks(ticks)
     ax.set_xticklabels([str(int(x)) for x in ticks])
     ax.minorticks_off()
-    ax.set_xlim(0.8, max(ticks) * 2.2)
+    ax.set_xlim(0.8, max(ticks) * 2.4)
     ax.set_yscale("log")
     ax.set_xlabel("nodes (8 GPUs each), 1 GiB messages")
     ax.set_ylabel("bus bandwidth (GB/s)")
@@ -267,8 +276,8 @@ def interference(t):
             _pt(ax, i, row.value, color[cond], row.synthetic, "o" if cond == "alone" else "s")
     ax.set_xticks(range(len(sets)))
     ax.set_xticklabels([s.replace("d", "draw ").replace("-s", "\nset ") for s in sets], fontsize=6)
-    handles = [plt.Line2D([], [], ls="", marker="o" if c == "alone" else "s", color=color[c],
-                          label=f"{c}" + (" (4 jobs at once)" if c == "together" else "")) for c in color]
+    handles = [_handle(color[c], c + (" (4 jobs at once)" if c == "together" else ""),
+                       m[m.condition == c].synthetic.any(), "o" if c == "alone" else "s") for c in color]
     ax.legend(handles=handles, loc="lower left", ncol=2)
     if changes:
         ax.set_title(f"median change together vs alone: {np.median(changes):+.1f} %".replace("-", "−"))
@@ -286,7 +295,8 @@ def reference_drift(t):
     r = _runs(t, "R")
     if r.empty:
         return None
-    r = r.assign(h=(pd.to_datetime(r.started) - pd.to_datetime(r.started).min()).dt.total_seconds() / 3600)
+    hours, trend = drift(r)
+    r = r.assign(h=hours)
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.75, 2.0))
     med = r.tok_s_gpu.median()
     ax.axhspan(0.99 * med, 1.01 * med, color=LIGHT, alpha=0.35, lw=0, zorder=0)
@@ -294,10 +304,8 @@ def reference_drift(t):
     ax.plot(r.h, r.tok_s_gpu, color=SERIES[0], lw=0.7, zorder=2)
     for _, row in r.iterrows():
         _pt(ax, row.h, row.tok_s_gpu, SERIES[0], row.synthetic)
-    if len(r) > 2:
-        slope, icpt = np.polyfit(r.h, r.tok_s_gpu, 1)
-        span = 100 * slope * (r.h.max() - r.h.min()) / med
-        ax.set_title(f"linear trend over the window: {span:+.1f} %".replace("-", "−"))
+    if not np.isnan(trend):
+        ax.set_title(f"linear trend over the window: {trend:+.1f} %".replace("-", "−"))
     ax.set_ylim(0.96 * r.tok_s_gpu.min(), 1.03 * r.tok_s_gpu.max())
     ax.set_xlabel("hours since the first reference run")
     ax.set_ylabel("tokens/s per GPU")
@@ -309,14 +317,9 @@ def reference_drift(t):
 
 # -- A-Q. Qwen layouts ---------------------------------------------------------
 
-def _qwen_base(t) -> pd.DataFrame:
-    r = _runs(t, "A-Q")
-    return r[(r.grad_reduce == "fp32") & (r.ac == "full") & (r.precision == "bf16")] if not r.empty else r
-
-
 def qwen_layouts(t):
     """Throughput per GPU by layout and tokens per GPU, at 2, 13 and all nodes (A-Q)."""
-    r = _qwen_base(t)
+    r = qwen_base(t["runs"])
     if r.empty:
         return None
     scales = [n for n in sorted(r.nodes.unique()) if n > 1]
@@ -344,7 +347,7 @@ def qwen_layouts(t):
     ax.set_yticks(range(len(layouts)))
     ax.set_yticklabels(layouts)
     ax.invert_yaxis()
-    handles = [plt.Line2D([], [], ls="", marker="o", color=c, label=f"{k // 1024}k")
+    handles = [_handle(c, f"{k // 1024}k", m[m.tokens_per_gpu == k].synthetic.any())
                for k, c in TOKENS_COLOR.items() if k in set(m.tokens_per_gpu)]
     fig.legend(handles=handles, title="tokens per GPU per step", loc="upper center", ncol=3,
                bbox_to_anchor=(0.5, 1.0 + 0.02), fontsize=6, title_fontsize=6)
@@ -371,13 +374,14 @@ def qwen_levers(t):
     ref = m.loc[ref_key]
     rows = []
     names = {"layout": "{}", "tokens_per_gpu": "{} tokens per GPU", "ac": "recompute: {}",
-             "grad_reduce": "{} reduction"}
+             "grad_reduce": "BF16 reduction"}
     for key, row in m.iterrows():
         diff = [k for k, a, b in zip(REF, key, ref_key) if a != b]
         if len(diff) == 1:
             v = key[list(REF).index(diff[0])]
             v = f"{int(v) // 1024}k" if diff[0] == "tokens_per_gpu" else v
-            rows.append({"group": diff[0], "label": names[diff[0]].format(v),
+            label = "BF16 reduction (fsdp, vs FP32)" if diff[0] == "grad_reduce" else names[diff[0]].format(v)
+            rows.append({"group": diff[0], "label": label,
                          "pct": 100 * (row.value / ref.value - 1), "synthetic": row.synthetic or ref.synthetic})
         if key[list(REF).index("grad_reduce")] == "bf16" and key[0] != "fsdp":  # vs FP32, same layout
             base = tuple("fp32" if k == "grad_reduce" else v for k, v in zip(REF, key))
@@ -418,7 +422,7 @@ def qwen_levers(t):
 def step_decomposition(t):
     """Step = compute (est.: the 1-node fsdp step, same tokens per GPU) + exposed communication
     (and pipeline bubble), by layout and scale, 24k tokens per GPU (A-Q)."""
-    r = _qwen_base(t)
+    r = qwen_base(t["runs"])
     if r.empty:
         return None
     r = r[r.tokens_per_gpu == 24576]
@@ -459,8 +463,10 @@ def _glm_label(row) -> str:
         extra.append(f"{row.ac} recompute")
     if row.mb_seqs and row.mb_seqs > 1:
         extra.append(f"micro-batch {int(row.mb_seqs)}")
-    if row.global_batch_tokens / row.copies / row.seq_len < 256:
-        extra.append(f"batch {int(row.global_batch_tokens / row.copies / row.seq_len)}")
+    copies = row.copies if pd.notna(row.copies) else row.gpus / (row.pp * row.ep)
+    per_copy = row.global_batch_tokens / copies / row.seq_len
+    if per_copy < 256:
+        extra.append(f"batch {int(per_copy)}")
     return row.layout + (f" ({', '.join(extra)})" if extra else "")
 
 
@@ -493,9 +499,9 @@ def glm_layouts(t):
     axes[1].set_xlim(0, None)
     for ax in axes:
         style.finish(ax, trim=False)
-    handles = [plt.Line2D([], [], ls="", marker="o", color=SCALE_COLOR["small"], label="one model copy"),
-               plt.Line2D([], [], ls="", marker="o", color=SCALE_COLOR["large"],
-                          label=f"whole machine ({int(r.nodes.max())} nodes, or the most that fit)")]
+    handles = [_handle(SCALE_COLOR["small"], "one model copy", m.synthetic.any()),
+               _handle(SCALE_COLOR["large"], f"whole machine ({int(r.nodes.max())} nodes, or the most that fit)",
+                       m.synthetic.any())]
     fig.legend(handles=handles, loc="lower center", ncol=2, fontsize=6)
     style.synthetic_mark(fig, m.synthetic.any())
     fig.tight_layout(rect=(0, 0.07, 1, 1))
@@ -601,8 +607,9 @@ def precision_speed(t):
     syn = False
     for ax, model in zip(axes[0], models):
         d = _median(r[r.model == model], ["nodes", "precision"])
-        base = d[d.precision == "bf16"].set_index("nodes").value
-        d = d[d.precision != "bf16"].assign(speedup=lambda x: x.value / x.nodes.map(base))
+        base = d[d.precision == "bf16"].set_index("nodes")
+        d = d[d.precision != "bf16"].assign(speedup=lambda x: x.value / x.nodes.map(base.value),
+                                            synthetic=lambda x: x.synthetic | x.nodes.map(base.synthetic).fillna(False))
         recipes = [p for p in RECIPE_COLOR if p in set(d.precision)]
         small, large = d.nodes.min(), d.nodes.max()
         for i, rec in enumerate(recipes):
@@ -622,8 +629,7 @@ def precision_speed(t):
         ax.set_title(f"{WORKLOAD_LABEL[model]}: {int(small)} vs {int(large)} nodes")
         ax.set_xlabel("speedup over BF16 (tokens/s)")
         style.finish(ax, trim=False)
-    handles = [plt.Line2D([], [], ls="", marker="o", color=SCALE_COLOR["small"], label="small scale"),
-               plt.Line2D([], [], ls="", marker="o", color=SCALE_COLOR["large"], label="whole machine")]
+    handles = [_handle(SCALE_COLOR["small"], "small scale", syn), _handle(SCALE_COLOR["large"], "whole machine", syn)]
     axes[0][0].legend(handles=handles, loc="lower left")
     style.synthetic_mark(fig, syn)
     fig.tight_layout()
@@ -671,8 +677,8 @@ def checkpoint(t):
     if c.empty:
         return None
     c = c.merge(t["runs"][["run_id", "model", "nodes"]], on="run_id")
-    cases = [(m, k) for m, k in ((QWEN, "full"), (GLM, "weights"), (GLM, "full"))
-             if len(c[(c.model == m) & (c.content == k)])]
+    cases = sorted(set(zip(c.model, c.content)), key=lambda mk: (mk[0] != QWEN, mk[0], mk[1] != "weights"))
+    case_color = {mk: SERIES[4 + i % 3] for i, mk in enumerate(cases)}
     series = [("save", "sync", "total_s", "save, sync", SERIES[0], "o", "-"),
               ("save", "async", "total_s", "save, async: total", SERIES[1], "s", "-"),
               ("save", "async", "blocked_s", "save, async: blocked", SERIES[1], "s", (0, (3, 2))),
@@ -693,6 +699,8 @@ def checkpoint(t):
         ax.set_title(f"{WORKLOAD_LABEL[model]}, {content} ({size:.2g} TB)", fontsize=7)
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.yaxis.set_major_locator(LogLocator(subs=(1, 2, 5)))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
         ax.set_xticks(sorted(d.nodes.unique()))
         ax.set_xticklabels([str(int(n)) for n in sorted(d.nodes.unique())])
         ax.minorticks_off()
@@ -700,26 +708,32 @@ def checkpoint(t):
         style.finish(ax, trim=False)
     axes[0].set_ylabel("time (s)")
     ax = axes[-1]
-    for op, color, marker in (("save", SERIES[0], "o"), ("load", SERIES[3], "D")):
-        g = c[(c.op == op) & ((c["mode"] == "sync") | (op == "load"))]
-        for _, row in g.iterrows():
-            _pt(ax, row.nodes, row.gb_s, color, row.synthetic, marker, ms=3)
-        med = g.groupby("nodes").gb_s.median()
-        ax.plot(med.index, med.values, color=color, lw=0.9)
+    for (model, content), color in case_color.items():
+        for op, marker, ls in (("save", "o", "-"), ("load", "D", (0, (3, 2)))):
+            g = c[(c.model == model) & (c.content == content) & (c.op == op) & (c["mode"] == "sync")]
+            if g.empty:
+                continue
+            for _, row in g.iterrows():
+                _pt(ax, row.nodes, row.gb_s, color, row.synthetic, marker, ms=3)
+            med = g.groupby("nodes").gb_s.median()
+            ax.plot(med.index, med.values, color=color, lw=0.9, ls=ls)
     ax.set_xscale("log")
     ax.set_xticks(sorted(c.nodes.unique()))
     ax.set_xticklabels([str(int(n)) for n in sorted(c.nodes.unique())])
     ax.minorticks_off()
     ax.set_ylim(0, None)
-    ax.set_title("filesystem: sync save, load", fontsize=7)
+    ax.set_title("filesystem: write (solid), read (dashed)", fontsize=7)
     ax.set_xlabel("nodes")
     ax.set_ylabel("GB/s")
     style.finish(ax, trim=False)
-    handles = [plt.Line2D([], [], color=color, ls=ls, marker=marker, ms=3, label=label)
+    syn = c.synthetic.any()
+    handles = [_handle(color, label, syn, marker, ls, ms=3)
                for op, mode, col, label, color, marker, ls in series if len(c[(c.op == op) & (c["mode"] == mode)])]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=6, bbox_to_anchor=(0.5, 0.0))
+    handles += [_handle(color, f"GB/s: {WORKLOAD_LABEL[m]}, {k}", syn, "o", "-", ms=3)
+                for (m, k), color in case_color.items()]
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=6, bbox_to_anchor=(0.5, 0.0))
     style.synthetic_mark(fig, c.synthetic.any())
-    fig.tight_layout(rect=(0, 0.12, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.16, 1, 0.97))
     return fig
 
 
@@ -738,14 +752,14 @@ def stability(t):
     if run is None or mon.empty:
         return None
     s = t["steps"][t["steps"].run_id == run.run_id].sort_values("t_s")
-    fig, axes = plt.subplots(3, 1, figsize=(TEXT_WIDTH, 3.6), sharex=True, gridspec_kw={"height_ratios": [1.3, 1, 1]})
+    fig, axes = plt.subplots(3, 1, figsize=(TEXT_WIDTH, 4.0), sharex=True, gridspec_kw={"height_ratios": [1.3, 1, 1]})
     ax = axes[0]
     ax.plot(s.t_s / 60, s.tok_s_gpu, color=LIGHT, lw=0.5)
     ax.plot(s.t_s / 60, s.tok_s_gpu.rolling(15, center=True).median(), color=SERIES[0], lw=1.1,
             ls=(0, (4, 2)) if run.synthetic else "-")
     ax.set_ylabel("tokens/s per GPU")
     ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), 15-step median")
-    t0 = run.measure_start - s.t_s.iloc[0] + s.step_s.iloc[0] if not s.empty else mon.time.min()
+    t0 = run.measure_start if pd.notna(run.get("measure_start")) else mon.time.min()
     for ax, metric, label in ((axes[1], "sm_clock_mhz", "SM clock (MHz)"), (axes[2], "power_w", "GPU power (W)")):
         m = mon[mon.metric == metric].assign(minute=lambda d: (d.time - t0) / 60, gid=lambda d: d.host + " GPU"
                                              + d.gpu.astype(str))
@@ -761,12 +775,14 @@ def stability(t):
                     textcoords="offset points", fontsize=6, color=CRITICAL, va="center")
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
-    axes[1].text(0.995, 0.05, f"band: all {int(run.gpus)} GPUs; line: median", transform=axes[1].transAxes,
-                 fontsize=6, color=INK2, ha="right")
+    fig.legend(handles=[plt.Line2D([], [], color=LIGHT, lw=5, alpha=0.6, label=f"range, all {int(run.gpus)} GPUs"),
+                            plt.Line2D([], [], color=INK2, lw=0.8, label="median GPU"),
+                            plt.Line2D([], [], color=CRITICAL, lw=0.9, label="lowest GPU (named)")],
+               loc="lower center", ncol=3, fontsize=6, title="SM clock and power:", title_fontsize=6)
     style.finish(axes[0], trim=False)
     axes[-1].set_xlabel("minutes since the start of the measurement")
     style.synthetic_mark(fig, bool(run.synthetic) or mon.synthetic.any())
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
     return fig
 
 
@@ -776,11 +792,8 @@ def stragglers(t):
     run, mon = _long_run(t)
     if run is None or mon.empty:
         return None
-    util = mon[mon.metric == "tensor_util"]
-    activity = "tensor-pipe activity"
-    if util.empty:
-        util, activity = mon[mon.metric == "util_mean"], "GPU busy fraction"
-    if util.empty:
+    util, activity = _activity(mon)  # sharpest signal available (Rorqual helper)
+    if util is None:
         return None
     util = util.assign(win=((util.time - util.time.min()) // 600).astype(int))
     peak = util.groupby(["host", "gpu", "win"]).value.median().groupby(["host", "gpu"]).max().reset_index()
@@ -795,13 +808,12 @@ def stragglers(t):
     ax.plot(out.x, out.value, "o", color=CRITICAL, ms=3.5)
     ax.annotate(f"{out.host} GPU{int(out.gpu)}", (out.x, out.value), xytext=(5, -2), textcoords="offset points",
                 fontsize=6, color=CRITICAL)
-    ax.set_ylabel(f"{activity}\n(busiest 10 min)")
+    ax.set_ylim(None, peak.value.min() + 1.3 * (peak.value.max() - peak.value.min()))  # room under the tag
+    ax.set_ylabel(f"{activity.splitlines()[0]}\n(busiest 10 min)")
     style.finish(ax, trim=False)
     if len(cpu):
         ax = axes[1][0]
-        c = cpu.assign(minute=((cpu.time - cpu.time.min()) // 60).astype(int))
-        per = c.groupby(["host", "minute"]).value.median().reset_index().sort_values("minute")
-        drop = (100 * (per.groupby("host").value.min() / per.groupby("host").value.first() - 1)).reset_index()
+        drop = _cpu_drop(cpu).rename(columns={"cpu_drop_pct": "value"})  # Rorqual helper
         drop["x"] = drop.host.map(POS)
         _pt(ax, drop.x, drop.value, INK2, bool(cpu.synthetic.any()), ms=3)
         worst = drop.loc[drop.value.idxmin()]
@@ -853,14 +865,12 @@ def startup(t):
 def energy(t):
     """Tokens per kWh of GPU energy (nodemon power over the measurement), by Qwen layout at 13
     nodes, by precision on the whole machine, and by scale (F4)."""
-    r, p = _runs(t), t["run_power"]
-    if r.empty or p.empty:
+    e = with_energy(_runs(t), t["run_power"])
+    if e.empty:
         return None
-    e = r.merge(p.drop(columns="synthetic"), on="run_id")
-    e["mtok_kwh"] = e.tok_s_gpu * e.gpus / e.power_w_total * 3.6e6 / 1e6
+    base = e[e.run_id.isin(qwen_base(t["runs"]).run_id)]
     panels = [
-        ("Qwen layouts, 13 nodes, 24k", e[(e.experiment == "A-Q") & (e.nodes == 13) & (e.tokens_per_gpu == 24576)
-                                          & (e.grad_reduce == "fp32") & (e.ac == "full")], "layout"),
+        ("Qwen layouts, 13 nodes, 24k", base[(base.nodes == 13) & (base.tokens_per_gpu == 24576)], "layout"),
         ("precision, whole machine", e[(e.experiment == "C-speed") & (e.nodes >= 0.9 * e.nodes.max())], "prec"),
         ("Qwen scale (B-Q-weak)", e[e.experiment == "B-Q-weak"], "scale"),
     ]
@@ -876,8 +886,10 @@ def energy(t):
                 ax.plot(med.index, med.values, color=col, lw=0.9)
                 for _, row in g.iterrows():
                     _pt(ax, row.nodes, row.mtok_kwh, col, row.synthetic, ms=3)
-                ax.annotate(layout, (med.index[-1], med.values[-1]), xytext=(-2, 4), textcoords="offset points",
-                            fontsize=6, color=INK2, ha="right")
+                top = med.values[-1] >= d.groupby("layout").mtok_kwh.median().max() - 1e-9
+                ax.annotate(layout, (med.index[-1], med.values[-1]), xytext=(-2, 5 if top else -6),
+                            textcoords="offset points", fontsize=6, color=INK2, ha="right",
+                            va="bottom" if top else "top")
             ax.set_xscale("log", base=2)
             ticks = [n for n in sorted(d.nodes.unique()) if n in (1, 4, 13, d.nodes.max())]
             ax.set_xticks(ticks)
@@ -901,7 +913,7 @@ def energy(t):
         ax.set_title(title, fontsize=7)
         if kind == "scale":
             ax.set_ylabel("M tokens per kWh")
-            ax.set_ylim(0, None)
+            ax.set_ylim(0, 1.25 * d.mtok_kwh.max())
         else:
             ax.set_xlim(0.9 * d.mtok_kwh.min(), 1.05 * d.mtok_kwh.max())
         style.finish(ax, trim=False)

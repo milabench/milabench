@@ -32,14 +32,15 @@ def parse_health(run: Path, synthetic=False) -> list[dict]:
     for path in sorted((run / "nodes").glob("*.json")):
         d = json.loads(path.read_text())
         host = d.get("host", path.stem)
-        for g in ((d.get("matmul") or {}).get("data") or {}).get("gpus", []):
+        matmul, hca = d.get("matmul") or {}, d.get("hca") or {}
+        for g in (matmul.get("data") or {}).get("gpus", []):
             for dtype in ("bf16", "fp8"):
                 if g.get(f"{dtype}_tflops") is not None:
-                    nodes.append({**base, "host": host, "gpu": g["gpu"], "metric": f"matmul_{dtype}_tflops",
-                                  "value": g[f"{dtype}_tflops"]})
-        for h in ((d.get("hca") or {}).get("data") or {}).get("hcas", []):
-            nodes.append({**base, "host": host, "gpu": None, "hca": h["hca"], "rate_gbps": h.get("rate_gbps"),
-                          "metric": "hca_loopback_gbs", "value": h["loopback_gbs"]})
+                    nodes.append({**base, "status": matmul.get("status", "ok"), "host": host, "gpu": g["gpu"],
+                                  "metric": f"matmul_{dtype}_tflops", "value": g[f"{dtype}_tflops"]})
+        for h in (hca.get("data") or {}).get("hcas", []):
+            nodes.append({**base, "status": hca.get("status", "ok"), "host": host, "gpu": None, "hca": h["hca"],
+                          "rate_gbps": h.get("rate_gbps"), "metric": "hca_loopback_gbs", "value": h["loopback_gbs"]})
     for n in nodes:
         n["leaf"] = SUBNET_OF.get(n["host"], "?")
     return nodes

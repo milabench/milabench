@@ -13,6 +13,9 @@ import pandas as pd
 from tt_analysis.tables import ledger
 
 from .machine import N_NODES
+from .select import completed as _completed
+from .select import drift, qwen_base, with_energy
+from .style import GLM, QWEN
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
 MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "TriPairBw", "TriPairBwMin",
@@ -26,14 +29,9 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
 SYN_DEF = r"\providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}"
 
 
-def _completed(runs, *experiments):
-    if runs.empty:
-        return runs
-    r = runs[runs.status == "completed"]
-    return r[r.experiment.isin(experiments)] if experiments else r
-
-
 def _value(v, fmt, synthetic) -> str:
+    if v is None or (not isinstance(v, str) and pd.isna(v)):
+        return "??"  # never "nan" in the text
     text = format(v, fmt) if not isinstance(v, str) else v
     return rf"\TriSyn{{{text}}}" if synthetic else text
 
@@ -74,10 +72,10 @@ def key_numbers(t) -> dict[str, tuple]:
             out["TriInterferencePct"] = ((100 * (m.together / m.alone - 1)).median(), "+.1f", e1.synthetic.any())
     rr = _completed(runs, "R")
     if len(rr) > 1:
-        out["TriDriftPct"] = (100 * (rr.tok_s_gpu.max() / rr.tok_s_gpu.min() - 1), ".1f", rr.synthetic.any())
+        out["TriDriftPct"] = (drift(rr)[1], "+.1f", rr.synthetic.any())  # linear trend over the window
     aq = _completed(runs, "A-Q")
-    base = aq[(aq.nodes == 13) & (aq.grad_reduce == "fp32") & (aq.ac == "full") & (aq.precision == "bf16")] \
-        if len(aq) else aq
+    base = qwen_base(runs)
+    base = base[base.nodes == 13] if len(base) else base
     if len(base):
         m = base.groupby(["layout", "tokens_per_gpu"]).agg(v=("tok_s_gpu", "median"), mfu=("mfu_pct", "median"),
                                                            syn=("synthetic", "any"))
@@ -111,7 +109,7 @@ def key_numbers(t) -> dict[str, tuple]:
         med = bg.groupby("copies").tok_s_gpu.median()
         out["TriGlmCopiesEff"] = (100 * med.iloc[-1] / med.iloc[0], ".0f", bg.synthetic.any())
     cs = _completed(runs, "C-speed")
-    for model, prefix in (("qwen3_8-27B", "TriQwen"), ("glm5", "TriGlm")):
+    for model, prefix in ((QWEN, "TriQwen"), (GLM, "TriGlm")):
         d = cs[cs.model == model] if len(cs) else cs
         if d.empty:
             continue
@@ -129,9 +127,9 @@ def key_numbers(t) -> dict[str, tuple]:
     if not ck.empty:
         ck = ck.merge(runs[["run_id", "model", "nodes"]], on="run_id")
         for model, content, col, mode, name in (
-                ("qwen3_8-27B", "full", "total_s", "sync", "TriCkptQwenSave"),
-                ("glm5", "full", "total_s", "sync", "TriCkptGlmFullSave"),
-                ("glm5", "full", "blocked_s", "async", "TriCkptGlmFullBlocked")):
+                (QWEN, "full", "total_s", "sync", "TriCkptQwenSave"),
+                (GLM, "full", "total_s", "sync", "TriCkptGlmFullSave"),
+                (GLM, "full", "blocked_s", "async", "TriCkptGlmFullBlocked")):
             d = ck[(ck.model == model) & (ck.content == content) & (ck.op == "save") & (ck["mode"] == mode)]
             d = d[d.nodes == d.nodes.max()]
             if len(d):
@@ -140,7 +138,7 @@ def key_numbers(t) -> dict[str, tuple]:
         if len(s):
             out["TriCkptWriteGBs"] = (s.groupby(["model", "content", "nodes"]).gb_s.median().max(), ".0f",
                                       s.synthetic.any())
-    for model, name in (("qwen3_8-27B", "TriStartupQwen"), ("glm5", "TriStartupGlm")):
+    for model, name in ((QWEN, "TriStartupQwen"), (GLM, "TriStartupGlm")):
         d = _completed(runs)
         d = d[(d.model == model)].dropna(subset=["first_step_total_s"]) if len(d) else d
         if len(d):
@@ -148,10 +146,9 @@ def key_numbers(t) -> dict[str, tuple]:
             out[name] = (d.first_step_total_s.median() / 60, ".0f", d.synthetic.any())
     pw = t["run_power"]
     if not pw.empty and len(base):
-        e = base.merge(pw.drop(columns="synthetic"), on="run_id")
+        e = with_energy(base, pw)
         if len(e):
-            e = e.assign(m=e.tok_s_gpu * e.gpus / e.power_w_total * 3.6e6 / 1e6)
-            out["TriEnergyBest"] = (e.m.max(), ".0f", e.synthetic.any())
+            out["TriEnergyBest"] = (e.mtok_kwh.max(), ".0f", e.synthetic.any())
     return out
 
 
@@ -177,10 +174,10 @@ def macros(t) -> str:
 
 def qwen_layouts_table(runs: pd.DataFrame) -> str:
     """Qwen at 13 nodes: tokens/s per GPU (MFU %) by layout x tokens per GPU; synthetic in \\TriSyn."""
-    r = _completed(runs, "A-Q")
+    r = qwen_base(runs)
     if r.empty:
         return ""
-    r = r[(r.nodes == 13) & (r.grad_reduce == "fp32") & (r.ac == "full") & (r.precision == "bf16")]
+    r = r[r.nodes == 13]
     m = r.groupby(["layout", "tokens_per_gpu"]).agg(v=("tok_s_gpu", "median"), mfu=("mfu_pct", "median"),
                                                     syn=("synthetic", "any")).reset_index()
     cols = sorted(m.tokens_per_gpu.unique())
@@ -190,6 +187,7 @@ def qwen_layouts_table(runs: pd.DataFrame) -> str:
         rows.append([layout] + [_value(f"{cells.v[c]:,.0f} ({cells.mfu[c]:.0f})", "", cells.syn[c])
                                 if c in cells.index else "" for c in cols])
     df = pd.DataFrame(rows, columns=["layout"] + [f"{int(c) // 1024}k" for c in cols])
+    # Not tt_analysis.tables.tabular: it escapes backslashes, and the cells hold \TriSyn{}.
     lines = [rf"\begin{{tabular}}{{l{'r' * len(cols)}}}", r"\toprule",
              " & ".join(df.columns) + r" \\", r"\midrule"]
     lines += [" & ".join(str(v) for v in row) + r" \\" for row in df.itertuples(index=False)]

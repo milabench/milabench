@@ -3,6 +3,11 @@
 Tables: runs, steps, loss, checkpoints, ep_groups, node_health, pairs, collectives,
 run_power (GPU power per run, for energy), gpu_monitor (node telemetry of the long F2 runs
 only: the other runs keep their per-run power aggregate). Every row carries ``synthetic``.
+
+Synthetic data only fills gaps: a synthetic run is dropped as soon as a measured run has the same
+configuration (CONFIG_KEY), with everything attached to it; a synthetic network check is dropped
+as soon as the same check (D1 metric, D2, D3 or D4) has measured rows. MFU is recomputed for
+every run against the B200 BF16 spec peak (the benchmarks write their own peak, or none).
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from tt_analysis.monitor import parse_nodemon
 from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
-from .machine import CLUSTER, SUBNET_OF
+from .machine import CLUSTER, PEAK_BF16, SUBNET_OF
 from .runs import parse_extras
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "ep_groups", "node_health", "pairs", "collectives",
@@ -24,6 +29,12 @@ FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
 # ... and the metrics kept from it (stability, stragglers).
 MONITOR_METRICS = {"sm_clock_mhz", "clocks_event_reasons", "power_w", "util_mean", "tensor_util",
                    "cpu_mhz_busy_mean"}
+
+
+# Settings that make two runs the same configuration (for replacing synthetic runs by measured ones).
+CONFIG_KEY = ["experiment", "model", "layout", "nodes", "tokens_per_gpu", "global_batch_tokens", "grad_reduce",
+              "ac", "precision", "mb_seqs", "node_set", "condition"]
+RUN_TABLES = ["steps", "loss", "checkpoints", "ep_groups", "run_power", "gpu_monitor"]
 
 
 def _sources(raw: Path, synthetic: Path | None):
@@ -60,7 +71,10 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
             if parsed is None:
                 continue
             row, steps, _, ep = parsed
-            extra, loss, ckpt = parse_extras(f, row["run_id"])
+            extra, loss, ckpt, batch_ids = parse_extras(f, row["run_id"])
+            if len(batch_ids) == len(steps):  # the step index of the rate events, not their position
+                for s, b in zip(steps, batch_ids):
+                    s["step"] = b
             row.update({k: v for k, v in extra.items() if v is not None or k not in row})
             rows["runs"].append(row)
             rows["steps"] += steps
@@ -83,12 +97,47 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
     tables = {name: pd.DataFrame(r) for name, r in rows.items() if name != "gpu_monitor"}
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
-    if not tables["runs"].empty:
-        tables["runs"] = tables["runs"].sort_values("started").reset_index(drop=True)
+    r = tables["runs"]
+    if not r.empty:
+        r["peak_flops_per_gpu"] = PEAK_BF16
+        r["mfu_pct"] = 100 * r.flops_per_token * r.tok_s_gpu / PEAK_BF16
+        tables["runs"] = r.sort_values("started").reset_index(drop=True)
+    _prefer_measured(tables)
     out.mkdir(parents=True, exist_ok=True)
     for name, df in tables.items():
         df.to_csv(out / f"{name}.csv", index=False)
     return tables
+
+
+def _drop_synthetic(df: pd.DataFrame, key) -> pd.DataFrame:
+    """Synthetic rows whose key has measured rows -> dropped."""
+    if df.empty or not df.synthetic.any() or df.synthetic.all():
+        return df
+    cols = df[key if isinstance(key, list) else [key]].astype(object)
+    k = cols.where(cols.notna(), "").map(str).agg("|".join, axis=1)
+    measured = set(k[~df.synthetic])
+    return df[~(df.synthetic & k.isin(measured))].reset_index(drop=True)
+
+
+def _prefer_measured(t: dict[str, pd.DataFrame]) -> None:
+    runs = t["runs"]
+    if not runs.empty:
+        kept = _drop_synthetic(runs, [c for c in CONFIG_KEY if c in runs.columns])
+        gone = set(runs.run_id) - set(kept.run_id)
+        if gone:
+            print(f"[build] {len(gone)} synthetic runs replaced by measured ones")
+            for name in RUN_TABLES:
+                if not t[name].empty and "run_id" in t[name]:
+                    t[name] = t[name][~t[name].run_id.isin(gone)].reset_index(drop=True)
+            if not t["gpu_monitor"].empty:
+                names = set(runs[runs.run_id.isin(gone)].run_name)
+                t["gpu_monitor"] = t["gpu_monitor"][~t["gpu_monitor"].source.isin(names)]
+        t["runs"] = kept
+    t["node_health"] = _drop_synthetic(t["node_health"], "metric")  # D1, per check
+    if not t["pairs"].empty:  # D2: one sweep
+        t["pairs"] = t["pairs"].assign(check="D2")
+        t["pairs"] = _drop_synthetic(t["pairs"], "check").drop(columns="check")
+    t["collectives"] = _drop_synthetic(t["collectives"], "experiment")  # D3, D4
 
 
 def load(out: Path) -> dict[str, pd.DataFrame]:

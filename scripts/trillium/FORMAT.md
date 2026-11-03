@@ -60,15 +60,19 @@ The `run_start` event and the `summary` (`milabench.pretrain.v1`, additive: same
   "params_total": 26.9e9, "params_active": 26.9e9,  // exist
   "seed": 1234                  // add: C-loss compares recipes from the same seed and data order
 },
-"mfu_inputs": {"peak_flops_per_gpu": 2.25e15}   // B200 dense BF16 spec, for every recipe (MFU in BF16 units)
+"mfu_inputs": {"flops_per_token": 159258915840}   // required; the analysis recomputes MFU against the B200
+                                                 // dense BF16 spec (2.25e15) for every run and recipe,
+                                                 // whatever peak_flops_per_gpu says (or if it is null)
 ```
 
 `microbatch_sequences`, `grad_accum`, `tokens_per_gpu_per_step` and `global_batch_tokens` keep their
 Rorqual meaning; with gradient accumulation `tokens_per_gpu_per_step` includes it.
 
-### Loss events (add for GLM-5; exists for Qwen)
+### Loss events (add, both workloads)
 
-One event per logged step, **every step** in C-loss runs (500 steps, `measurement.warmup_steps: 0`):
+Today the Qwen pack logs `{loss, task}` every 10 steps with no step index, and Megatron logs no
+step index either: neither can be joined. **Add**: one event **per step, from step 1, measured or
+not** (warm-up included), carrying the step index:
 
 ```jsonc
 {"loss": 7.412, "batch_id": 31, "task": "train", "time": 1795...}   // TorchTitan: batch_id
@@ -76,7 +80,9 @@ One event per logged step, **every step** in C-loss runs (500 steps, `measuremen
 ```
 
 `batch_id` / `step` is the same index as the `rate` events' `batch_id`; the loss is the global
-mean over data-parallel ranks (rank 0, after the reduction). The analysis joins on it.
+mean over data-parallel ranks (rank 0, after the reduction). The analysis joins on it; a loss
+event without it is kept with an empty step, counted (`runs.loss_events_no_step`) and reported by
+`analyze.py build`, and unusable for C-loss.
 
 ### Checkpoint events (add, F1)
 
@@ -163,7 +169,7 @@ Unchanged format (Rorqual FORMAT.md section 3), but **every training run** sets
 | # | change | where | for |
 |---|---|---|---|
 | T1 | `run.experiment`, `node_set`, `condition`; `parallelism.layout`, `pp_schedule`, `expert_dp`, `copies`, `microbatches_per_pipeline`; `workload.grad_reduce_dtype`, `seed`; the extended `precision` values | launchers, both summaries | every figure |
-| T2 | loss events with `step` from Megatron | GLM-5 pack | `precision_loss` |
+| T2 | loss event every step from step 1 with its index: `batch_id` (TorchTitan, today every 10 steps without it), `step` (Megatron) | both packs | `precision_loss` |
 | T3 | checkpoint events in the shape above | both packs | `checkpoint` |
 | T4 | `matmul` and `hca` checks in srygaard `nodes/<host>.json` | slurm-healthcheck | `health_gpus`, `health_links` |
 | T5 | pair and collective sweep scripts writing the two JSONL files | `scripts/trillium/` | `pair_matrix`, `collectives_scale` |

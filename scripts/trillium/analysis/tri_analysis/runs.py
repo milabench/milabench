@@ -7,6 +7,7 @@ parser (``tt_analysis.runs.parse_run``); this module only reads what it does not
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from tt_analysis.runs import read_events
@@ -32,15 +33,19 @@ def normalize_checkpoint(c: dict) -> dict:
 
 
 def parse_extras(path: Path, run_id: str):
-    """One data file -> (run columns, loss rows, checkpoint rows)."""
-    summary, run_start, losses, ckpts = None, None, [], []
+    """One data file -> (run columns, loss rows, checkpoint rows, batch_id of each rate event)."""
+    summary, run_start, losses, ckpts, batch_ids = None, None, [], [], []
+    no_step = 0
     for e in read_events(path):
         if e.get("event") != "data":
             continue
         d = e.get("data") or {}
-        if d.get("loss") is not None and d.get("task", "train") == "train":
+        if "rate" in d and d.get("task") == "train":
+            batch_ids.append(d.get("batch_id", d.get("step")))
+        if d.get("loss") is not None and d.get("task", "train") == "train" and "rate" not in d:
             # Own event (FORMAT.md); TorchTitan numbers the step batch_id, Megatron step.
             step = d.get("batch_id", d.get("step"))
+            no_step += step is None
             losses.append({"run_id": run_id, "step": step, "loss": d["loss"], "time": d.get("time")})
         elif "checkpoint" in d:
             ckpts.append({"run_id": run_id, **normalize_checkpoint(d["checkpoint"])})
@@ -76,4 +81,10 @@ def parse_extras(path: Path, run_id: str):
                     "ac": w.get("activation_checkpointing"), "gpus": p.get("gpus")})
     for c in ckpts:  # throughput is derived, never logged
         c["gb_s"] = c["bytes"] / c["total_s"] / 1e9 if c.get("total_s") else None
-    return row, losses, ckpts
+    if no_step:  # kept (step empty) but unusable for C-loss: the event lacks batch_id / step
+        print(f"[build] {path.parent.name}: {no_step} of {len(losses)} loss events without batch_id/step",
+              file=sys.stderr)
+    row["loss_events"], row["loss_events_no_step"] = len(losses), no_step
+    if any(b is None for b in batch_ids):
+        batch_ids = []
+    return row, losses, ckpts, batch_ids
