@@ -66,7 +66,7 @@ export TT_FAMILY=${TT_FAMILY:-slurm}
 
 # login node: the checkout must be the branch's latest; the venvs, data and Megatron-LM must be there
 preflight() {
-    if git -C "$WORKDIR" fetch --quiet origin "$BRANCH"; then
+    if timeout 120 git -C "$WORKDIR" fetch --quiet origin "$BRANCH"; then  # a hung fetch (cvmfs, network) must not block
         local behind
         behind=$(git -C "$WORKDIR" rev-list --count "HEAD..origin/$BRANCH")
         if [ "$behind" != 0 ]; then
