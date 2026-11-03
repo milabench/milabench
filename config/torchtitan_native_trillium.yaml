@@ -12,7 +12,9 @@
 #
 # Layouts (tt_native.configs.parallel_degrees):
 #   fsdp        FSDP over all GPUs
-#   hsdp8/16    shard over 8 / 16 GPUs (1 / 2 nodes), replicate across
+#   hsdp8/16    shard over 8 / 16 GPUs (1 / 2 nodes), replicate across. hsdp16
+#               needs an even node count: not part of the 1-node runs (the
+#               launcher refuses it)
 #   tp2/4-fsdp  TP in a node (at most 4: 4 KV heads), FSDP over the rest. Per DP
 #               rank the microbatch is tp x the per-GPU tokens.
 #   pp2/4-fsdp  1F1B over 2 / 4 stages (stage = contiguous rank block, so a stage
