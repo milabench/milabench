@@ -776,10 +776,11 @@ _tri_pp6: &tri_pp6
   --pipeline-model-parallel-size: 6
   --decoder-first-pipeline-num-layers: 15
   --decoder-last-pipeline-num-layers: 11
-# selective recompute instead of full (activations of the MLA up-projection, MoE activation and norms only)
+# selective recompute instead of full (activations of the MoE activation and the norms only). Not mla_up_proj: the GLM-5
+# plugin's attention never sets the checkpoint it asserts on (AssertionError in its forward, Rorqual 25574783)
 _tri_sel: &tri_sel
   --recompute-granularity: selective
-  --recompute-modules: [mla_up_proj, moe_act, layernorm]
+  --recompute-modules: [moe_act, layernorm]
   --recompute-method: null
   --recompute-num-layers: null
 
