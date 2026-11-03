@@ -80,6 +80,7 @@ class PlacedTorchrunSrun(ForeachSrun):
 
 
 class MegatronGlm5(Slime):
+    memory_saver_required = False  # Megatron's training.py imports it in a try
     base_requirements = "requirements.in"
     prepare_script = "prepare.py"
     main_script = "main.py"

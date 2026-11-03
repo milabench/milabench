@@ -56,6 +56,8 @@ class Slime(Package):
     base_requirements = "requirements.in"
     prepare_script = "prepare.py"
     main_script = "main.py"
+    # slime's Megatron actor imports it (memory offload between train / rollout); the megatron pack can go without
+    memory_saver_required = True
 
     def clone(self):
         # train.py and tools/ are not part of slime's wheel, and megatron.training
@@ -149,9 +151,27 @@ class Slime(Package):
             await self.message("SLIME_DOWNLOAD_ONLY: skipping the TE / torch_memory_saver builds")
             return
         await self.pip_install(TE_REQUIREMENT, build_isolation=False)
-        # imported by slime's Megatron actor (memory offload between train/rollout)
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
-        done.write_text("ok")
+        # pip_install only logs a failed build: the marker must not hide one (later installs return at once)
+        missing = []
+        for module, required in (("transformer_engine", True), ("torch_memory_saver", self.memory_saver_required)):
+            error = self.import_error(module)
+            if error is None:
+                continue
+            if required:
+                raise RuntimeError(f"{module} did not install: {error}")
+            missing.append(module)
+            await self.message(f"WARNING: optional {module} did not install, going on without it: {error}")
+        done.write_text(f"ok, missing: {' '.join(missing)}\n" if missing else "ok\n")
+
+    def import_error(self, module):
+        """The last line of the error when the benchmark venv cannot import ``module``, None if it can."""
+        python = Path(str(self.dirs.venv)) / "bin" / "python"
+        out = subprocess.run([str(python), "-c", f"import {module}"], env={**os.environ, **self.make_env()},
+                             capture_output=True, text=True, check=False)
+        if out.returncode == 0:
+            return None
+        return (out.stderr.strip().splitlines() or [f"exit code {out.returncode}"])[-1]
 
     @property
     def num_machines(self) -> int:
@@ -178,7 +198,8 @@ class Slime(Package):
             env["RAY_ADDRESS"] = "auto"
         self.add_nvidia_wheel_paths(env)
         # torch_memory_saver's build picks its CUDA flavour from this ("130" -> 13)
-        cuda = str(self.config.get("version_overrides", {}).get("cuda", ""))
+        # (same default as toolkit_requirements: without it the build stops on TMS_CUDA_MAJOR not being set)
+        cuda = str(self.config.get("version_overrides", {}).get("cuda", "130"))
         if len(cuda) >= 3:
             env.setdefault("TMS_CUDA_MAJOR", cuda[:-1])
         return env
