@@ -22,12 +22,12 @@ import placement
 
 # (layout, PP, EP, nodes, global batch, micro-batch): the A-G / B-G / C / F1 entries of benchmarks/megatron/dev.yaml
 runs = [("pp13-ep8", 13, 8, n, g, m) for n, g, m in [(13, 256, 1), (26, 512, 1), (39, 768, 1), (52, 1024, 1),
-                                                        (26, 256, 1), (39, 264, 1), (52, 256, 1), (13, 64, 1),
+                                                        (13, 768, 1), (26, 768, 1), (52, 768, 1), (13, 64, 1),
                                                         (13, 256, 2), (52, 1024, 2)]]
-runs += [("pp13-ep16", 13, 16, 26, 256, 1), ("pp13-ep16", 13, 16, 52, 512, 1), ("pp13-ep32", 13, 32, 52, 256, 1),
-         ("pp26-ep8", 26, 8, 26, 256, 1), ("pp26-ep8", 26, 8, 52, 512, 1),
+runs += [("pp13-ep16", 13, 16, 26, 512, 1), ("pp13-ep16", 13, 16, 52, 1024, 1), ("pp13-ep32", 13, 32, 52, 1024, 1),
+         ("pp26-ep8", 26, 8, 26, 512, 1), ("pp26-ep8", 26, 8, 52, 1024, 1),
          ("pp6-ep16", 6, 16, 12, 256, 1), ("pp6-ep16", 6, 16, 48, 1024, 1)]
-print(f"{'layout':<10} {'nodes':>5} {'gbs':>5} {'mbs':>3}  {'copies':>6} {'dp':>3} {'micro-batches':>13}")
+print(f"{'layout':<10} {'nodes':>5} {'gbs':>5} {'mbs':>3}  {'copies':>6} {'dp':>3} {'micro-batches':>13} {'bubble':>6}")
 for layout, pp, ep, nodes, gbs, mbs in runs:
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -37,5 +37,7 @@ for layout, pp, ep, nodes, gbs, mbs in runs:
             print(f"{layout:<10} {nodes:>5} {gbs:>5} {mbs:>3}  INFEASIBLE: {exc}")
             continue
     note = "  (fewer micro-batches than stages)" if w else ""
-    print(f"{layout:<10} {nodes:>5} {gbs:>5} {mbs:>3}  {r['copies']:>6} {r['dp']:>3} {r['microbatches_per_pipeline']:>13}{note}")
+    m = r["microbatches_per_pipeline"]
+    bubble = (pp - 1) / (m + pp - 1)  # 1F1B, no virtual stages
+    print(f"{layout:<10} {nodes:>5} {gbs:>5} {mbs:>3}  {r['copies']:>6} {r['dp']:>3} {m:>13} {bubble:>6.0%}{note}")
 PYEOF

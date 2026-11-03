@@ -732,8 +732,12 @@ megatron-glm5-check-fit-full-offload1-64n:
 # --- Trillium B200 (scripts/trillium/DESIGN.md: A-G, B-G, C, F1) -----------------------------------------------------
 # 8 B200 per node, full training (no frozen parameters), full depth (78 layers), seq 8192, micro-batch 1, no VPP.
 # A model copy is PP x EP GPUs (EP is carved from one stage's data-parallel ranks): world % PP == 0, (world / PP) % EP
-# == 0, checked before launch (placement.check_layout). Global batch: 256 sequences per copy (weak scaling), 64 per copy
-# for the small-batch points. Every entry runs on exactly its num_machines nodes: submit each with that many.
+# == 0, checked before launch (placement.check_layout). Global batch: the pipeline bubble is (PP - 1) / (m + PP - 1)
+# for m micro-batches per data-parallel rank, so the batch is set in micro-batches. Weak scaling (and the layout
+# comparison at a node count): 32 micro-batches per data-parallel rank of pp13-ep8, i.e. 256 x nodes / 13 (256, 512,
+# 768, 1024; bubble 12 / 44 = 27 %); the other layouts take the batch of their node count (12 nodes: 256, 48: 1024).
+# Strong scaling: 768 in total (96 / 48 / 32 / 24 micro-batches at 13 / 26 / 39 / 52 nodes: bubble 11 % to 33 %).
+# 64 per copy is the small-batch point. Every entry runs on exactly its num_machines nodes: submit each with that many.
 # Names: megatron-glm5-tri-<layout>-n<nodes>-gbs<global batch>[-mb2][-sel][-<precision>].
 # Stage splits (first / middle x stages / last, 78 layers; the first stage holds the 3 dense layers, the last the loss):
 #   PP13 7 / 6 x 11 / 5     PP26 4 / 3 x 24 / 2     PP6 15 / 13 x 4 / 11
@@ -778,13 +782,14 @@ _tri_sel: &tri_sel
   --recompute-method: null
   --recompute-num-layers: null
 
-# --- A-G / B-G: layouts and copies (pp13-ep8: B-G weak 256 per copy, strong 256 in total) ---
+# --- A-G / B-G: layouts and copies (pp13-ep8 weak: 32 micro-batches per data-parallel rank; strong: 768 in total) ---
 megatron-glm5-tri-pp13-ep8-n13-gbs256:
   inherits: _tri_glm5
 megatron-glm5-tri-pp13-ep8-n26-gbs512:
   inherits: _tri_glm5
   num_machines: 26
   argv: {--global-batch-size: 512}
+# 39 nodes: weak and strong scaling share this run (768)
 megatron-glm5-tri-pp13-ep8-n39-gbs768:
   inherits: _tri_glm5
   num_machines: 39
@@ -793,18 +798,18 @@ megatron-glm5-tri-pp13-ep8-n52-gbs1024:
   inherits: _tri_glm5
   num_machines: 52
   argv: {--global-batch-size: 1024}
-# strong scaling (256 in total; at 52 nodes it is also the 64-per-copy point). 39 nodes: data parallel 24 does not
-# divide 256, the closest batch is 264 (11 micro-batches per pipeline)
-megatron-glm5-tri-pp13-ep8-n26-gbs256:
+# strong scaling: 768 in total
+megatron-glm5-tri-pp13-ep8-n13-gbs768:
+  inherits: _tri_glm5
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-pp13-ep8-n26-gbs768:
   inherits: _tri_glm5
   num_machines: 26
-megatron-glm5-tri-pp13-ep8-n39-gbs264:
-  inherits: _tri_glm5
-  num_machines: 39
-  argv: {--global-batch-size: 264}
-megatron-glm5-tri-pp13-ep8-n52-gbs256:
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-pp13-ep8-n52-gbs768:
   inherits: _tri_glm5
   num_machines: 52
+  argv: {--global-batch-size: 768}
 # small batch, 64 per copy (8 micro-batches for 13 stages)
 megatron-glm5-tri-pp13-ep8-n13-gbs64:
   inherits: _tri_glm5
@@ -823,27 +828,27 @@ megatron-glm5-tri-pp13-ep8-n52-gbs1024-sel:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
   argv: {<<: *tri_sel}
 # expert groups across nodes: EP16 (2 nodes), EP32 (4 nodes)
-megatron-glm5-tri-pp13-ep16-n26-gbs256:
+megatron-glm5-tri-pp13-ep16-n26-gbs512:
   inherits: _tri_glm5
   num_machines: 26
-  argv: {--expert-model-parallel-size: 16}
-megatron-glm5-tri-pp13-ep16-n52-gbs512:
-  inherits: _tri_glm5
-  num_machines: 52
   argv: {--expert-model-parallel-size: 16, --global-batch-size: 512}
-megatron-glm5-tri-pp13-ep32-n52-gbs256:
+megatron-glm5-tri-pp13-ep16-n52-gbs1024:
   inherits: _tri_glm5
   num_machines: 52
-  argv: {--expert-model-parallel-size: 32}
+  argv: {--expert-model-parallel-size: 16, --global-batch-size: 1024}
+megatron-glm5-tri-pp13-ep32-n52-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {--expert-model-parallel-size: 32, --global-batch-size: 1024}
 # deeper pipeline: PP26 (3 layers per middle stage)
-megatron-glm5-tri-pp26-ep8-n26-gbs256:
+megatron-glm5-tri-pp26-ep8-n26-gbs512:
   inherits: _tri_glm5
   num_machines: 26
-  argv: {<<: *tri_pp26}
-megatron-glm5-tri-pp26-ep8-n52-gbs512:
+  argv: {<<: *tri_pp26, --global-batch-size: 512}
+megatron-glm5-tri-pp26-ep8-n52-gbs1024:
   inherits: _tri_glm5
   num_machines: 52
-  argv: {<<: *tri_pp26, --global-batch-size: 512}
+  argv: {<<: *tri_pp26, --global-batch-size: 1024}
 # shallower pipeline: PP6 x EP16 (12 nodes per copy; 416 GPUs do not split in 6: 48 nodes for 4 copies)
 megatron-glm5-tri-pp6-ep16-n12-gbs256:
   inherits: _tri_glm5
