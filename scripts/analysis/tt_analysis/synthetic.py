@@ -217,7 +217,12 @@ def write_srygaard(root, cluster, job, by_leaf, rng, bad=None, mode="switch", wh
 
 GPU_COLUMNS = ["time_ms", "gpu", "sm_clock_mhz", "clocks_event_reasons", "power_w",
                "temp_c", "util", "util_mean", "util_min", "util_samples", "xid"]
-GPM_COLUMNS = ["time_ms", "gpu", "sm_util", "sm_occupancy", "tensor_util", "dram_bw_util"]
+GPM_COLUMNS = [
+    "time_ms", "gpu", "sm_util", "sm_occupancy", "tensor_util", "dram_bw_util",
+    "fp64_util", "fp32_util", "fp16_util",
+    "hmma_tensor_util", "imma_tensor_util", "dmma_tensor_util",
+    "pcie_tx_mib_s", "pcie_rx_mib_s",
+]
 CPU_COLUMNS = ["time_ms", "package", "busy_cores", "cpu_mhz_busy_mean", "cpu_mhz_min", "cpu_mhz_max",
                "cpu_mhz_mean", "cpu_mhz_cap", "cpu_util", "cpu_temp_c", "thermal_throttle_count",
                "governor"]
@@ -256,7 +261,10 @@ def write_nodemon(root, cluster, run_name, bench, hosts, t0, t1, slow=None, cpu_
                                  f"{(84 if is_slow else 62) + rng.normal(0, 1.5):.6g}", f"{util:.6g}",
                                  f"{busy:.6g}", f"{busy - 0.08:.6g}", 180, ""])
                 tensor = 0.27 if is_slow else (0.19 if dip else 0.21)
-                gpm_rows.append([ms, g, "", "", f"{tensor + rng.normal(0, 0.005):.3f}", ""])
+                gpm_rows.append([
+                    ms, g, "", "", f"{tensor + rng.normal(0, 0.005):.3f}", "",
+                    *([""] * (len(GPM_COLUMNS) - 6)),
+                ])
             low = bool(cpu_slow and h == cpu_slow[0] and cpu_slow[1] <= t - t0 < cpu_slow[2])
             for package in (0, 1):
                 mhz = (2560 if low else 3700) + rng.normal(0, 25)

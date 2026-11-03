@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import ctypes
+import logging
+from types import ModuleType
 from typing import Any, NamedTuple
+
+import pynvml
 
 from ..collector import CollectorMetric, MetricKind, Rate
 from .nvml import Gpu, NvmlCollector
+
+log = logging.getLogger(__name__)
 
 
 class NvlinkBytes(NamedTuple):
@@ -56,8 +62,9 @@ class NvlinkCollector(NvmlCollector):
     #: NVML reports NVLink throughput in KiB.
     unit_bytes = 1024
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, nvml: ModuleType = pynvml) -> None:
+        """`nvml`: already initialized."""
+        super().__init__(nvml)
         self._get_field_values: Any = None
         self._links: dict[int, _Links] = {}
         self._rates = Rate()
@@ -66,24 +73,24 @@ class NvlinkCollector(NvmlCollector):
         try:
             # The raw entry point, so NVML writes into our buffers rather than pynvml's.
             self._get_field_values = self._nvml._nvmlGetFunctionPointer("nvmlDeviceGetFieldValues")
-        except (self._nvml.NVMLError, AttributeError):
+        except (self._nvml.NVMLError, AttributeError) as error:
+            log.debug(f"No NVLink rows: NVML would not give nvmlDeviceGetFieldValues ({error}).")
             return False
         return True
 
     def _open(self, gpu: Gpu) -> bool:
         """Keep a GPU whose counters can be read, with the peak of its active links."""
-        pynvml = self._nvml
-        links = _Links((pynvml.c_nvmlFieldValue_t * self.values_capacity)())
+        links = _Links((self._nvml.c_nvmlFieldValue_t * self.values_capacity)())
         self._links[gpu.index] = links
         if self._bytes(gpu).tx is None:
             del self._links[gpu.index]
             return False
         active = []
-        for link in range(pynvml.NVML_NVLINK_MAX_LINKS):
+        for link in range(self._nvml.NVML_NVLINK_MAX_LINKS):
             try:
-                if pynvml.nvmlDeviceGetNvLinkState(gpu.handle, link) == pynvml.NVML_FEATURE_ENABLED:
+                if self._nvml.nvmlDeviceGetNvLinkState(gpu.handle, link) == self._nvml.NVML_FEATURE_ENABLED:
                     active.append(link)
-            except pynvml.NVMLError:
+            except self._nvml.NVMLError:
                 continue
         links.peak = self._peak(gpu, active)
         return True
@@ -96,11 +103,10 @@ class NvlinkCollector(NvmlCollector):
         """
         if not active:
             return None
-        pynvml = self._nvml
-        common = self._read_fields(gpu, [(pynvml.NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON, 0)])
+        common = self._read_fields(gpu, [(self._nvml.NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON, 0)])
         if common and common[0]:
             return len(active) * common[0] * 1e6
-        field = getattr(pynvml, "NVML_FI_DEV_NVLINK_GET_SPEED", None)  # absent from older bindings
+        field = getattr(self._nvml, "NVML_FI_DEV_NVLINK_GET_SPEED", None)  # absent from older bindings
         if field is None:
             return None
         total = 0.0
@@ -138,12 +144,11 @@ class NvlinkCollector(NvmlCollector):
 
     def _bytes(self, gpu: Gpu) -> NvlinkBytes:
         """Cumulative TX and RX bytes over every link."""
-        pynvml = self._nvml
         counters = self._read_fields(
             gpu,
             [
-                (pynvml.NVML_FI_DEV_NVLINK_THROUGHPUT_DATA_TX, self.all_links),
-                (pynvml.NVML_FI_DEV_NVLINK_THROUGHPUT_DATA_RX, self.all_links),
+                (self._nvml.NVML_FI_DEV_NVLINK_THROUGHPUT_DATA_TX, self.all_links),
+                (self._nvml.NVML_FI_DEV_NVLINK_THROUGHPUT_DATA_RX, self.all_links),
             ],
         )
         if not counters:

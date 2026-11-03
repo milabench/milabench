@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from enum import IntFlag
+from types import ModuleType
 from typing import Any
+
+import pynvml
 
 from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
@@ -15,15 +18,15 @@ class ClockReason(IntFlag):
     The `clocks_event_reasons` column holds them as hex; readers decode it with parse().
     """
 
-    GPU_IDLE = 0x1
-    APPLICATIONS_CLOCKS_SETTING = 0x2
-    SW_POWER_CAP = 0x4
-    HW_SLOWDOWN = 0x8
-    SYNC_BOOST = 0x10
-    SW_THERMAL_SLOWDOWN = 0x20
-    HW_THERMAL_SLOWDOWN = 0x40
-    HW_POWER_BRAKE_SLOWDOWN = 0x80
-    DISPLAY_CLOCK_SETTING = 0x100
+    GPU_IDLE = pynvml.nvmlClocksEventReasonGpuIdle
+    APPLICATIONS_CLOCKS_SETTING = pynvml.nvmlClocksEventReasonApplicationsClocksSetting
+    SW_POWER_CAP = pynvml.nvmlClocksEventReasonSwPowerCap
+    HW_SLOWDOWN = pynvml.nvmlClocksEventReasonHwSlowdown
+    SYNC_BOOST = pynvml.nvmlClocksEventReasonSyncBoost
+    SW_THERMAL_SLOWDOWN = pynvml.nvmlClocksEventReasonSwThermalSlowdown
+    HW_THERMAL_SLOWDOWN = pynvml.nvmlClocksEventReasonHwThermalSlowdown
+    HW_POWER_BRAKE_SLOWDOWN = pynvml.nvmlClocksEventReasonHwPowerBrakeSlowdown
+    DISPLAY_CLOCK_SETTING = pynvml.nvmlClocksEventReasonDisplayClockSetting
 
     @classmethod
     def parse(cls, text: str | None) -> ClockReason:
@@ -59,8 +62,9 @@ class GpuCollector(NvmlCollector):
         CollectorMetric("xid", MetricKind.SAMPLE, "", "XID error codes the driver delivered since the last row, separated by ';'"),
     )
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, nvml: ModuleType = pynvml) -> None:
+        """`nvml`: already initialized."""
+        super().__init__(nvml)
         self._reasons: Any = None
         self._events: Any = None
         #: The last utilization sample already read, per GPU, so each call asks for newer ones only.
