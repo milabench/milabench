@@ -14,7 +14,7 @@ It records:
 | [`pcie.py`](collectors/pcie.py) | 10 s | Link width and speed, AER error counts, for GPUs, HCAs and the bridges above them | `/sys/bus/pci` |
 | [`ecc.py`](collectors/ecc.py) | 60 s | Uncorrected memory errors, pending and failed row remapping | NVML (`pynvml`) |
 | [`edac.py`](collectors/edac.py) | 60 s | Correctable and uncorrectable host memory errors per controller | `/sys/devices/system/edac/mc` |
-| [`gpm.py`](collectors/gpm.py) | 1 s | SM and tensor-pipe activity, warp occupancy, DRAM bandwidth, on Hopper and newer | NVML GPM (`pynvml`) |
+| [`gpm.py`](collectors/gpm.py) | 1 s | SM, pipe and tensor activity, warp occupancy, DRAM bandwidth and PCIe throughput, on Hopper and newer | NVML GPM (`pynvml`) |
 | [`dcgm.py`](collectors/dcgm.py) | disabled | The same SM and tensor-pipe activity, where a dcgm-exporter runs on the host | dcgm-exporter |
 
 The `dcgm` collector is disabled in favor of `gpm`, which needs Hopper or newer.

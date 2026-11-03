@@ -3,15 +3,12 @@ part that could be wrong without crashing."""
 
 from types import SimpleNamespace
 
+import pynvml
 import pytest
 
 from benchmate.nodemon.collectors import GpuCollector
+from benchmate.nodemon.collectors import nvml as nvml_module
 from benchmate.nodemon.collectors.nvml import Gpu
-
-
-class FakeNvmlError(Exception):
-    def __init__(self, value=0):
-        self.value = value
 
 
 def sample(timestamp, value):
@@ -19,26 +16,25 @@ def sample(timestamp, value):
 
 
 def fake_nvml(samples=(), events=()):
-    """Just the NVML surface the collector touches."""
+    """The NVML calls, plus the constants the collector reads off the same module."""
     remaining = list(events)
 
     def wait(event_set, timeout_ms):
         if not remaining:
-            raise FakeNvmlError(7)  # NVML_ERROR_TIMEOUT
+            raise pynvml.NVMLError(pynvml.NVML_ERROR_TIMEOUT)
         return remaining.pop(0)
 
     def get_samples(handle, kind, since):
         newer = [s for s in samples if s.timeStamp > since]
         if not newer:
-            raise FakeNvmlError(6)  # NVML_ERROR_NOT_FOUND
+            raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_FOUND)
         return (0, newer)
 
     return SimpleNamespace(
-        NVMLError=FakeNvmlError,
-        NVML_ERROR_NOT_FOUND=6,
-        NVML_ERROR_NOT_SUPPORTED=3,
-        NVML_GPU_UTILIZATION_SAMPLES=1,
-        nvmlEventTypeXidCriticalError=0x8,
+        NVMLError=pynvml.NVMLError,
+        NVML_ERROR_NOT_FOUND=pynvml.NVML_ERROR_NOT_FOUND,
+        NVML_GPU_UTILIZATION_SAMPLES=pynvml.NVML_GPU_UTILIZATION_SAMPLES,
+        nvmlEventTypeXidCriticalError=pynvml.nvmlEventTypeXidCriticalError,
         nvmlDeviceGetSamples=get_samples,
         nvmlEventSetWait=wait,
         nvmlDeviceGetIndex=lambda device: device,
@@ -61,12 +57,86 @@ def test_the_duty_cycle_averages_the_buffered_samples_and_asks_only_for_newer_on
 def test_xids_are_collected_per_gpu_and_an_empty_queue_is_the_normal_case():
     collector = GpuCollector()
     collector._nvml = fake_nvml(events=[
-        SimpleNamespace(device=0, eventType=0x8, eventData=79),
-        SimpleNamespace(device=1, eventType=0x8, eventData=48),
-        SimpleNamespace(device=0, eventType=0x8, eventData=13),
+        SimpleNamespace(device=0, eventType=pynvml.nvmlEventTypeXidCriticalError, eventData=79),
+        SimpleNamespace(device=1, eventType=pynvml.nvmlEventTypeXidCriticalError, eventData=48),
+        SimpleNamespace(device=0, eventType=pynvml.nvmlEventTypeXidCriticalError, eventData=13),
         SimpleNamespace(device=0, eventType=0x1, eventData=0),  # not an XID
     ])
     collector._events = object()
 
     assert collector._xids() == {0: ["79", "13"], 1: ["48"]}
     assert collector._xids() == {}
+
+
+def _one_gpu(monkeypatch):
+    """NVML answers one GPU and counts init and shutdown, without a driver."""
+    calls = {"init": 0, "shutdown": 0}
+
+    def nvml_init():
+        calls["init"] += 1
+
+    def nvml_shutdown():
+        calls["shutdown"] += 1
+
+    def no_events():
+        raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
+
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlInit", nvml_init)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlShutdown", nvml_shutdown)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetCount", lambda: 1)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetHandleByIndex", lambda index: object())
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetUUID", lambda handle: "GPU-a")
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlEventSetCreate", no_events)
+    return calls
+
+
+def test_nvml_starts_once_and_the_last_close_stops_it(monkeypatch):
+    from benchmate.nodemon.registry import CollectorRegistry
+
+    class OtherGpu(GpuCollector):
+        name = "other"
+
+    calls = _one_gpu(monkeypatch)
+    registry = CollectorRegistry()
+    registry.register(GpuCollector(), 1.0)
+    registry.register(OtherGpu(), 1.0)
+
+    registry.start(now=0.0, wall=0.0)
+    assert calls == {"init": 1, "shutdown": 0}
+    registry.close()
+    assert calls["shutdown"] == 1
+
+    nvml_module.pynvml.nvmlInit()  # the session ended, so this starts NVML again
+    assert calls["init"] == 2
+    nvml_module.pynvml.nvmlShutdown()
+
+
+def test_a_refused_nvml_init_is_not_asked_again(monkeypatch):
+    from benchmate.nodemon.registry import CollectorRegistry
+
+    class OtherGpu(GpuCollector):
+        name = "other"
+
+    calls = {"init": 0, "shutdown": 0}
+
+    def nvml_init():
+        calls["init"] += 1
+        raise pynvml.NVMLError(pynvml.NVML_ERROR_UNKNOWN)
+
+    def nvml_shutdown():
+        calls["shutdown"] += 1
+
+    def no_devices():
+        raise pynvml.NVMLError(pynvml.NVML_ERROR_UNINITIALIZED)
+
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlInit", nvml_init)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlShutdown", nvml_shutdown)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetCount", no_devices)
+    registry = CollectorRegistry()
+    registry.register(GpuCollector(), 1.0)
+    registry.register(OtherGpu(), 1.0)
+
+    registry.start(now=0.0, wall=0.0)
+    registry.close()
+
+    assert calls == {"init": 1, "shutdown": 0}

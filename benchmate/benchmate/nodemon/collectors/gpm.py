@@ -4,6 +4,8 @@ import logging
 from types import ModuleType
 from typing import Any, ClassVar, NamedTuple
 
+import pynvml
+
 from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
 
@@ -26,6 +28,7 @@ class SamplePair:
     """
 
     def __init__(self, nvml: ModuleType) -> None:
+        """`nvml`: already initialized."""
         self._nvml = nvml
         #: Both buffers, NVML's to hand back; which one is spare follows from the samples.
         self.buffers: list[Any] = []
@@ -71,6 +74,8 @@ class GpmCollector(NvmlCollector):
     Hopper and newer only; elsewhere the collector probes false and activity
     comes from ``gpu.util_mean``. A metric is the difference between two
     samples at least 100 ms apart, so the first tick writes empty cells.
+    Pipe columns are fractions. The PCIe columns are MiB/s and stay empty
+    when the bindings do not name the counter.
     """
 
     name = "gpm"
@@ -81,7 +86,19 @@ class GpmCollector(NvmlCollector):
         "sm_occupancy": "NVML_GPM_METRIC_SM_OCCUPANCY",
         "tensor_util": "NVML_GPM_METRIC_ANY_TENSOR_UTIL",
         "dram_bw_util": "NVML_GPM_METRIC_DRAM_BW_UTIL",
+        "fp64_util": "NVML_GPM_METRIC_FP64_UTIL",
+        "fp32_util": "NVML_GPM_METRIC_FP32_UTIL",
+        "fp16_util": "NVML_GPM_METRIC_FP16_UTIL",
+        "hmma_tensor_util": "NVML_GPM_METRIC_HMMA_TENSOR_UTIL",
+        "imma_tensor_util": "NVML_GPM_METRIC_IMMA_TENSOR_UTIL",
+        "dmma_tensor_util": "NVML_GPM_METRIC_DMMA_TENSOR_UTIL",
+        "pcie_tx_mib_s": "NVML_GPM_METRIC_PCIE_TX_PER_SEC",
+        "pcie_rx_mib_s": "NVML_GPM_METRIC_PCIE_RX_PER_SEC",
     }
+    #: NVML reports these in MiB/s. Every other column is a percentage.
+    rates: ClassVar[frozenset[str]] = frozenset({
+        "pcie_tx_mib_s", "pcie_rx_mib_s",
+    })
     #: The row: the GPU, then one cell per metric above, in that order.
     metrics = (
         CollectorMetric("gpu", MetricKind.DEVICE, "", "NVML index of the GPU"),
@@ -89,16 +106,29 @@ class GpmCollector(NvmlCollector):
         CollectorMetric("sm_occupancy", MetricKind.SAMPLE, "fraction", "Resident warps as a share of the most the SMs can hold"),
         CollectorMetric("tensor_util", MetricKind.SAMPLE, "fraction", "Share of time any tensor pipe was active"),
         CollectorMetric("dram_bw_util", MetricKind.SAMPLE, "fraction", "Device memory bandwidth in use as a share of its peak"),
+        CollectorMetric("fp64_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did non-tensor FP64 math"),
+        CollectorMetric("fp32_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did non-tensor FP32 math"),
+        CollectorMetric("fp16_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did non-tensor FP16 math"),
+        CollectorMetric("hmma_tensor_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did HMMA tensor operations (FP16/BF16)"),
+        CollectorMetric("imma_tensor_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did IMMA tensor operations (INT8; FP8 sometimes counts here)"),
+        CollectorMetric("dmma_tensor_util", MetricKind.SAMPLE, "fraction", "Share of time the SMs did DMMA tensor operations"),
+        CollectorMetric("pcie_tx_mib_s", MetricKind.SAMPLE, "MiB/s", "PCIe traffic from this GPU"),
+        CollectorMetric("pcie_rx_mib_s", MetricKind.SAMPLE, "MiB/s", "PCIe traffic to this GPU"),
     )
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, nvml: ModuleType = pynvml) -> None:
+        """`nvml`: already initialized."""
+        super().__init__(nvml)
         self._metric_id: dict[str, int] = {}
         #: One pair of sample buffers per GPU index.
         self._pairs: dict[int, SamplePair] = {}
 
     def _init(self) -> bool:
-        """Resolve the metric identifiers; False when the bindings predate GPM (nvidia-ml-py 11.525)."""
+        """Resolve the metric identifiers; False when GPM cannot be queried or no counter is named.
+
+        A counter the installed bindings do not declare is skipped, and its cell stays empty.
+        The collector stays off only when none of them are declared, or the GPM calls themselves are missing.
+        """
         needed = (
             "nvmlGpmQueryDeviceSupport",
             "nvmlGpmSampleAlloc",
@@ -108,14 +138,21 @@ class GpmCollector(NvmlCollector):
             "c_nvmlGpmMetricsGet_t",
             "NVML_GPM_METRICS_GET_VERSION",
         )
-        try:
-            self._metric_id = {
-                column: getattr(self._nvml, constant)
-                for column, constant in self.metric_names.items()
-            }
-        except AttributeError:
+        missing = [name for name in needed if not hasattr(self._nvml, name)]
+        if missing:
+            log.debug(f"No GPM rows: the bindings do not define {', '.join(missing)}.")
             return False
-        return all(hasattr(self._nvml, name) for name in needed)
+        resolved: dict[str, int] = {}
+        for column, constant in self.metric_names.items():
+            metric_id = getattr(self._nvml, constant, None)
+            if metric_id is None:
+                continue
+            resolved[column] = metric_id
+        if not resolved:
+            log.debug("No GPM rows: the bindings define none of the counters.")
+            return False
+        self._metric_id = resolved
+        return True
 
     def _open(self, gpu: Gpu) -> bool:
         """Keep a GPU only when it supports GPM, and give it the buffers a metric needs."""
@@ -166,20 +203,26 @@ class GpmCollector(NvmlCollector):
             self._nvml.nvmlGpmMetricsGet(request)
         except self._nvml.NVMLError:
             return self._empty()
-        return {
-            column: self._fraction(request.metrics[slot])
-            for slot, column in enumerate(self._metric_id)
-        }
+        readings = self._empty()
+        for slot, column in enumerate(self._metric_id):
+            readings[column] = self._reading(column, request.metrics[slot])
+        return readings
 
-    def _fraction(self, metric: Any) -> float | None:
-        """One metric as a fraction: NVML reports these as percentages, and a failed one is empty."""
+    def _reading(self, column: str, metric: Any) -> float | None:
+        """One metric. A failed one is empty. Percentages become fractions; MiB/s stays MiB/s."""
         if metric.nvmlReturn != self._nvml.NVML_SUCCESS:
             return None
+        if column in self.rates:
+            return metric.value
         return metric.value / 100
 
     def _empty(self) -> dict[str, Any]:
         """A row's metric cells when there is nothing to report: unavailable, not zero."""
-        return {column: None for column in self._metric_id}
+        return {
+            column: None 
+            for column 
+            in self.metric_names
+        }
 
     def close(self) -> None:
         """Free every sample buffer before NVML goes away."""

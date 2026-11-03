@@ -197,7 +197,7 @@ run writes no file, and `status.json` says which.
 | `<host>.pcie.tsv` | 10 s | device | `device driver link_width max_link_width link_speed max_link_speed aer_fatal aer_nonfatal aer_correctable` |
 | `<host>.ecc.tsv` | 60 s | GPU | `gpu ecc_uncorrected remap_pending remap_failure` |
 | `<host>.edac.tsv` | 60 s | memory controller | `mc mc_name ce_count ue_count` |
-| `<host>.gpm.tsv` | 1 s | GPU | `gpu sm_util sm_occupancy tensor_util dram_bw_util` — Hopper and newer only |
+| `<host>.gpm.tsv` | 1 s | GPU | `gpu sm_util sm_occupancy tensor_util dram_bw_util fp64_util fp32_util fp16_util hmma_tensor_util imma_tensor_util dmma_tensor_util pcie_tx_mib_s pcie_rx_mib_s` — Hopper and newer only |
 
 ```
 time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util_min	util_samples	xid
@@ -208,7 +208,8 @@ time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util
 
 Units: `time_ms` is wall-clock epoch milliseconds (the run data's clock); clocks in MHz, power in
 W, temperature in °C, memory in GiB, PCIe speed in GT/s; `util`, `cpu_util`, `*_utilization` and
-the `gpm` columns are fractions in 0–1; `clocks_event_reasons` is the NVML bitmask as hex.
+the `gpm` `*_util` columns are fractions in 0–1; `gpm.pcie_*_mib_s` is MiB/s;
+`clocks_event_reasons` is the NVML bitmask as hex.
 `*_bytes`, `xmit_wait`, `symbol_error`, `link_downed`, `oom_kill`, `aer_*`, `ce_count` and
 `ue_count` are cumulative (the analysis takes deltas); IB bytes are already converted from the
 sysfs 4-byte lanes.
@@ -217,7 +218,10 @@ sysfs 4-byte lanes.
   buffered since the previous tick (`util_samples` says how many, empty when none).
   **`util_mean` is the duty cycle, and the column to compare GPUs with.**
 - `gpm` columns cover the interval since the previous tick, so the first row of a run is empty.
-  `tensor_util` is tensor-pipe occupancy, near 0 on fp32 work.
+  `tensor_util` is any tensor pipe; `hmma_tensor_util` (FP16/BF16), `imma_tensor_util` (INT8)
+  and `dmma_tensor_util` split it. `fp32_util`, `fp16_util` and `fp64_util` are the non-tensor
+  pipes. `pcie_*_mib_s` is host traffic. A counter the installed bindings do not name stays
+  empty too.
 - `xid` is empty on almost every row; a critical XID carries its code (several `;`-joined),
   stamped with the tick that drained the event queue, up to one period late.
 
