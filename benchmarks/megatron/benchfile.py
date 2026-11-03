@@ -104,7 +104,7 @@ class MegatronGlm5(Slime):
         placement = self.config.get("placement") or {}
         # single node: use placement.gpus_per_node GPUs, not every GPU of the machine (torchrun --nproc-per-node=gpu
         # counts the visible ones); otherwise data parallel grows with the node and the global batch no longer divides
-        gpus = int(placement.get("gpus_per_node", 4))
+        gpus = placement_lib.gpus_per_node(placement)
         if self.num_machines == 1 and len(self.config.get("devices") or []) > gpus and "CUDA_VISIBLE_DEVICES" not in os.environ:
             env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(gpus))
         # NCCL / network knobs of the cluster (NCCL_TOPO_FILE, NCCL_CROSS_NIC, NCCL_IB_HCA, ...)
@@ -115,7 +115,7 @@ class MegatronGlm5(Slime):
     def placement(self) -> dict:
         """``placement:`` with the size of an expert group, in nodes (EP size / GPUs per node)."""
         placement = dict(self.config.get("placement") or {})
-        gpus = int(placement.get("gpus_per_node", 4))
+        gpus = placement_lib.gpus_per_node(placement)
         ep = int((self.config.get("argv") or {}).get("--expert-model-parallel-size", 1))
         placement.setdefault("group_nodes", max(1, ep // gpus))
         return placement
@@ -141,7 +141,23 @@ class MegatronGlm5(Slime):
             )
         system["nodes"] = ordered
 
+    def check_layout(self) -> dict:
+        """Fail before launch if Megatron would refuse the layout or the batch on ``num_machines`` x gpus_per_node GPUs."""
+        argv = {**((self.config.get("model") or {}).get("argv") or {}), **(self.config.get("argv") or {})}
+
+        def size(name, default=1):
+            value = argv.get(name)
+            return default if value in (None, False) else int(value)
+
+        world = self.num_machines * placement_lib.gpus_per_node(self.config.get("placement") or {})
+        return placement_lib.check_layout(
+            world, pp=size("--pipeline-model-parallel-size"), ep=size("--expert-model-parallel-size"),
+            gbs=size("--global-batch-size"), mbs=size("--micro-batch-size"), tp=size("--tensor-model-parallel-size"),
+            cp=size("--context-parallel-size"),
+        )
+
     def build_run_plan(self):
+        self.check_layout()
         self.place_nodes()
         # voir main.py ... is not used: main.py reports through benchmate.monitor.setupvoir() (stdout smuggling)
         workload = PackCommand(self, lazy=True)
