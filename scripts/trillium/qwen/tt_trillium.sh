@@ -20,13 +20,20 @@
 #   $SCRATCH/trillium/nodemon/<run>       node telemetry
 #   $SCRATCH/trillium/checkpoints/<run>   tri-ckpt-* checkpoints (deleted after the load)
 #
+# Nodes and time default from the entry (entry_info.py, milabench's config
+# resolution): an entry with a fixed num_machines runs on that many nodes (a
+# different --nodes is refused); an entry using every allocated node
+# (num_machines: 999) needs --nodes. Time = max_duration + 15 min (staging,
+# milabench startup), capped at 24 h.
+#
 # Environment: TRI_ACCOUNT (rrg-bengioy-ad), TRI_PARTITION
-# (compute_b200_full_node), TRI_RESERVATION (sbatch --reservation, if any).
+# (compute_b200_full_node), TRI_RESERVATION (sbatch --reservation, if any),
+# TT_PYTHON (Python with milabench: default $TT_TRI_BASE/env/bin/python).
 
 set -euo pipefail
 
-NODES=1
-TIME=00:30:00
+NODES=
+TIME=
 DRY_RUN=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -49,9 +56,33 @@ BASE=${TT_TRI_BASE:-${SCRATCH:?}/trillium/qwen}
 REPO=$BASE/milabench
 CONFIG=$REPO/config/torchtitan_native_trillium.yaml
 [ -f "$CONFIG" ] || CONFIG=$(cd "$(dirname "$0")/../../.." && pwd)/config/torchtitan_native_trillium.yaml
-if ! grep -q "^$BENCH:" "$CONFIG"; then
-    echo "tt_trillium.sh: no entry '$BENCH' in $CONFIG" >&2
+PY=${TT_PYTHON:-$BASE/env/bin/python}
+[ -x "$PY" ] || PY=python3
+INFO=$(PYTHONPATH="$(dirname "$CONFIG")/..${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$(dirname "$0")/entry_info.py" "$CONFIG" "$BENCH") || {
+    echo "tt_trillium.sh: cannot resolve entry '$BENCH' in $CONFIG" >&2
     exit 2
+}
+eval "$INFO"   # NUM_MACHINES MAX_DURATION LAYOUT
+
+if [ "$NUM_MACHINES" -gt 0 ]; then
+    if [ -n "$NODES" ] && [ "$NODES" != "$NUM_MACHINES" ]; then
+        echo "tt_trillium.sh: $BENCH runs on $NUM_MACHINES nodes (num_machines), not --nodes $NODES" >&2
+        exit 2
+    fi
+    NODES=$NUM_MACHINES
+elif [ -z "$NODES" ]; then
+    echo "tt_trillium.sh: $BENCH runs on every allocated node: pass --nodes" >&2
+    exit 2
+fi
+# HSDP shard groups must divide the GPU count (8 per node).
+if [[ "$LAYOUT" =~ ^hsdp([0-9]+)$ ]] && (( NODES * 8 % BASH_REMATCH[1] )); then
+    echo "tt_trillium.sh: layout $LAYOUT needs a multiple of ${BASH_REMATCH[1]} GPUs, not $((NODES * 8))" >&2
+    exit 2
+fi
+if [ -z "$TIME" ]; then
+    seconds=$((MAX_DURATION + 900))
+    (( seconds > 86400 )) && seconds=86400
+    TIME=$(printf '%02d:%02d:00' $((seconds / 3600)) $((seconds % 3600 / 60)))
 fi
 
 case "$BENCH" in
@@ -62,7 +93,7 @@ case "$BENCH" in
     tri-ckpt-*) EXPERIMENT=F1 ;;
     tri-ref) EXPERIMENT=R ;;
     tri-smoke*) EXPERIMENT=smoke ;;
-    *) EXPERIMENT= ;;
+    *) EXPERIMENT= ;;  # not passed: run.experiment stays null
 esac
 
 TRI=$SCRATCH/trillium
@@ -73,7 +104,7 @@ JOB_ENV=(
     TT_CONFIG=trillium
     TT_MODULES=cuda/12.9
     CC_CLUSTER=trillium
-    TT_EXPERIMENT="$EXPERIMENT"
+    ${EXPERIMENT:+TT_EXPERIMENT="$EXPERIMENT"}
     MILABENCH_DIRS_RUNS="$TRI/runs"
     TT_NODEMON_ROOT="$TRI/nodemon"
     TT_CKPT_ROOT="$TRI/checkpoints"
