@@ -22,11 +22,16 @@ Trillium: `wandb sync` from a login node).
 |---|---|
 | `$SCRATCH/trillium/qwen/env` | venv with milabench (`uv pip install -e milabench`) |
 | `$SCRATCH/trillium/qwen/milabench` | this repository, branch with the Trillium entries |
-| `$SCRATCH/trillium/qwen/output` | `MILABENCH_BASE`: bench venv, FineWeb data, `runs/<run>` |
+| `$SCRATCH/trillium/qwen/output` | `MILABENCH_BASE`: bench venv, FineWeb data |
 | `$SCRATCH/trillium/qwen/logs` | Slurm output, `<bench>-<job>.out` |
-| `$SCRATCH/trillium/qwen/ckpt/<run>` | `tri-ckpt-*` checkpoints, deleted once the load is timed |
 | `$SCRATCH/trillium/qwen/compile-cache` | torch.compile cache archives (per torch / Triton / GPU model) |
+| `$SCRATCH/trillium/runs/<run>` | milabench run data (`MILABENCH_DIRS_RUNS`) |
 | `$SCRATCH/trillium/nodemon/<run>` | node telemetry (benchmate.nodemon) |
+| `$SCRATCH/trillium/checkpoints/<run>` | `tri-ckpt-*` checkpoints, deleted once the load is timed |
+
+Layout and event names: `scripts/trillium/FORMAT.md`. `run.experiment` comes from
+`TT_EXPERIMENT`, derived from the entry name (pass `TT_EXPERIMENT=B-Q-weak` for the A-Q
+entries run at other node counts, and `TT_NODE_SET` / `TT_CONDITION` for E1).
 
 ## Install (login node: it downloads)
 

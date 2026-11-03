@@ -489,8 +489,9 @@ tri-bqs-hsdp8-n52:
 # --- C: precision -----------------------------------------------------------
 # hsdp8 + torchtitan stacked layout, 24k: MXFP8 on every target linear,
 # feed_forward.w13 included. C-speed at 1 and 52 nodes, C-loss at 13 nodes:
-# 500 steps (30 + 470) from seed 1234 on FineWeb, loss pushed every step
-# (lr 3e-4, 10 warm-up steps, AdamW: tt_native.configs).
+# 500 steps from seed 1234 on FineWeb, all measured (no warm-up skipped, as
+# scripts/trillium/FORMAT.md asks), loss pushed every step (lr 3e-4, 10
+# warm-up steps, AdamW: tt_native.configs).
 
 tri-c-bf16:
   inherits: _tri
@@ -509,8 +510,8 @@ tri-closs-bf16:
   max_duration: 5400
   voir:
     options:
-      skip: 30
-      stop: 470
+      skip: 0
+      stop: 500
       stop_seconds: 0
   argv:
     --seed: 1234
@@ -521,7 +522,7 @@ tri-closs-mxfp8:
     --precision: mxfp8
 
 # --- F1: checkpoint save / load (after a short measurement) ------------------
-# Folder: $TT_CKPT_ROOT/<run name> (set by the launcher), deleted after the load
+# Folder: $TT_CKPT_ROOT/<run name> ($SCRATCH/trillium/checkpoints, set by the launcher), deleted after the load
 # is timed. full = model + optimizer + data loader state (~16 B/param, ~0.43 TB);
 # model = weights only in bf16 (~54 GB), synchronous only.
 

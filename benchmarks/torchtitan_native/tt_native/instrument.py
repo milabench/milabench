@@ -174,6 +174,10 @@ def run_block() -> dict[str, Any]:
         "slurm_reservation": os.environ.get("SLURM_JOB_RESERVATION") or None,
         "exclusive_cluster": os.environ.get("TT_EXCLUSIVE_CLUSTER", "0") == "1",
         "run_tag": os.environ.get("TT_RUN_TAG"),
+        # Trillium (scripts/trillium/FORMAT.md): DESIGN.md experiment ID; E1 node set and condition.
+        "experiment": os.environ.get("TT_EXPERIMENT"),
+        "node_set": os.environ.get("TT_NODE_SET"),
+        "condition": os.environ.get("TT_CONDITION"),
     }
 
 
@@ -205,6 +209,7 @@ def workload_block() -> dict[str, Any]:
         "optimizer_state_dtype": d.get("adam_moments"),
         "activation_checkpointing": d.get("activation_checkpointing"),
         "compile": d.get("compile"),
+        "seed": d.get("options", {}).get("seed"),
         "moe": None,
     }
 
@@ -788,7 +793,9 @@ class TrainerInstrument:
                 "ep": 1,
                 "layout": RUN_DESCRIPTION.get("layout"),
                 "pp_schedule": RUN_DESCRIPTION.get("pp_schedule"),
-                "pp_microbatches": RUN_DESCRIPTION.get("pp_microbatches"),
+                "microbatches_per_pipeline": RUN_DESCRIPTION.get("pp_microbatches"),
+                # Groups holding the whole model state (HSDP replicas).
+                "copies": ctx.dp_replicate,
                 "fsdp_shard_group": ctx.dp_shard,
             },
             "placement": placement_block(sorted(set(hosts))),

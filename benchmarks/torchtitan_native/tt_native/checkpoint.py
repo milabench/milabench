@@ -1,13 +1,16 @@
 """Checkpoint save / load timing (Trillium F1), after the measurement.
 
 The trainer's CheckpointManager is built with ``load_only=True`` (tt_native.configs),
-so nothing is saved while training. Once the summary is pushed, every rank runs
-:func:`run_checkpoint`: ``checkpoint_repeats`` times, save the current state
+so nothing is saved while training. Once the measurement is done, every rank
+runs :func:`run_checkpoint`: ``checkpoint_repeats`` times, save the current state
 through TorchTitan (DCP), time it, count what was written, overwrite the model
-weights, load them back, check they are restored, and delete the folder (the
-last one is kept with ``checkpoint_keep``).
+weights, load them back, check they are restored (load event ``restored``), and
+delete the folder (the last one is kept with ``checkpoint_keep``). The summary,
+pushed afterwards, lists the operations in ``summary.checkpoint``.
 
-Times (wall clock, every rank, reported as min / max over ranks):
+Events follow scripts/trillium/FORMAT.md ("Checkpoint events"). Times (wall
+clock, every rank): ``blocked_s`` / ``total_s`` are the maximum over ranks,
+``*_min`` the minimum.
 
 - save ``blocked_s``: until ``save()`` returns, plus the device-to-host staging
   for ``async_with_pinned_mem`` (what training would wait for); ``total_s``:
@@ -84,10 +87,6 @@ def _zero_weights(model_parts) -> None:
                 _local(p).zero_()
 
 
-def _spread(values: list[float]) -> dict[str, float]:
-    return {"min": min(values), "max": max(values)}
-
-
 def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     """Save / load ``checkpoint_repeats`` times; rank 0 pushes one ``checkpoint``
     event per operation and appends it to ``events``."""
@@ -110,19 +109,22 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         rows = _gather_floats(local)
         if _rank() != 0:
             return
-        start = min(r[0] for r in rows)
+        blocked = [r[1] - r[0] for r in rows]
+        total = [r[2] - r[0] for r in rows]
         event.update(
             {
                 "step": step,
                 "content": content,
-                "mode": mode,
+                "format": "torch.dcp",
                 "path": path,
-                "fs_type": fs_type,
+                "filesystem": fs_type,
                 "ranks": len(rows),
-                "start_epoch": start,
+                "start_epoch": min(r[0] for r in rows),
                 "end_epoch": max(r[2] for r in rows),
-                "blocked_s": _spread([r[1] - r[0] for r in rows]),
-                "total_s": _spread([r[2] - r[0] for r in rows]),
+                "blocked_s": max(blocked),
+                "blocked_s_min": min(blocked),
+                "total_s": max(total),
+                "total_s_min": min(total),
             }
         )
         if local[3:]:
@@ -150,7 +152,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         ckpt.maybe_wait_for_saving()
         t_total = time.time()
         dist.barrier()
-        event: dict[str, Any] = {"op": "save", "rep": rep}
+        event: dict[str, Any] = {"op": "save", "repetition": rep, "mode": mode}
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
         record(event, [t0, t_blocked, t_total])
@@ -173,7 +175,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         tolerance = 1e-9 if content == "full" else 1e-2
         ok = abs(restored - reference) <= tolerance * max(abs(reference), 1.0)
         dist.barrier()
-        event = {"op": "load", "rep": rep}
+        event = {"op": "load", "repetition": rep, "mode": "sync"}
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
         record(event, [t0, t1, t1, float(ok)])
