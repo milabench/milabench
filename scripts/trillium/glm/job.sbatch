@@ -22,8 +22,21 @@ export PYTHONUNBUFFERED=1
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 # caches on scratch: $HOME is read-only from Trillium's compute nodes
 export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$MILABENCH_BASE/cache}
-export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$XDG_CACHE_HOME/triton}
-export TILELANG_CACHE_DIR=${TILELANG_CACHE_DIR:-$XDG_CACHE_HOME/tilelang}
+# node-local files in RAM: /tmp holds 2 GB on the B200 nodes (TmpDisk=2048), as the Qwen launcher: TMPDIR (wandb's temporary files
+# among them) and the kernel compile caches, which every rank would otherwise lock on the shared filesystem. Removed at the end
+# (not when the job is killed at its limit: /dev/shm then waits for Slurm's epilog)
+LOCAL_ROOT=${LOCAL_ROOT:-/dev/shm/$USER}
+srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 mkdir -p "$LOCAL_ROOT/tmp" \
+    || echo "[$RUN_PREFIX] WARNING: could not create $LOCAL_ROOT on every node" >&2
+export TMPDIR=$LOCAL_ROOT/tmp
+export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$LOCAL_ROOT/triton}
+export TILELANG_CACHE_DIR=${TILELANG_CACHE_DIR:-$LOCAL_ROOT/tilelang}
+echo "[$RUN_PREFIX] local_root=$LOCAL_ROOT free: $(df -h "$(dirname "$LOCAL_ROOT")" | tail -1)"
+local_cleanup() {
+    echo "[$RUN_PREFIX] local_root before cleanup: $(du -sh "$LOCAL_ROOT" 2>/dev/null | cut -f1) on this node"
+    srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 rm -rf "$LOCAL_ROOT" || true
+}
+trap local_cleanup EXIT
 # wandb (the GLM entries turn it on): through the cluster's HTTP proxy if there is one, else offline (`wandb sync`
 # from a login node afterwards). An explicit WANDB_MODE is kept
 if [ -z "${WANDB_MODE:-}" ]; then
@@ -84,7 +97,7 @@ ckpt_rm() {  # ckpt_rm RUN: delete the checkpoint, timed, one JSON line per dele
         return 1
     fi
 }
-trap 'ckpt_rm end-of-job || true' EXIT
+trap 'ckpt_rm end-of-job || true; local_cleanup' EXIT
 
 peak() {
     grep -rhoE "\"$1\": ?[0-9.]+" "$2" 2>/dev/null | grep -oE '[0-9.]+$' | sort -g | tail -1
