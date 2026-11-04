@@ -58,6 +58,15 @@ Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-s
   it), `path`, `filesystem`, `start_epoch`, `end_epoch`; a load adds `checksum_match` (weights checksum at save vs
   after load; a mismatch fails the run) and `saved_by` (mode and run of the save).
 
+## What `checksum_match` proves (F1)
+
+For every rank and every named model parameter (full: also the Adam moments and master weights of every parameter of the
+optimizer), three float64 numbers: sum, sum of squares, sum weighted by position. They are written beside the checkpoint at
+save time and must be exactly equal after the load; a difference, or a missing file, fails the run. This shows that each rank
+got back the tensors it had, in the same order, on the same layout. It is not a cryptographic hash: a change that keeps all
+three numbers would pass. It does not check the scheduler, the RNG (`--no-load-rng`), a load on another layout, or the data
+loader position, and the save-side numbers are taken from memory before the write, so what it proves is the round trip.
+
 ## Checkpoint memory (F1)
 
 A full load holds the loaded and the current optimizer state on the GPU at once. Measured on a truncated GLM-5 (20.7B

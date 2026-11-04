@@ -916,9 +916,9 @@ def push_summary(log, steps):
 # --- checkpointing (Trillium F1) ----------------------------------------------------------------------------------
 # ``checkpoint: {dir, op: save | load, content: weights | full, mode: sync | async, step}``. One save per run (at
 # ``step``, default the last one), timed on rank 0 with barriers around it: ``blocked_s`` is the time training is
-# stopped, ``total_s`` the time until the write is complete (async: when Megatron finalizes it). A checksum of the
-# model weights is written beside the checkpoint and compared after the load: slime's Megatron patch lets a load
-# skip missing tensors silently.
+# stopped, ``total_s`` the time until the write is complete (async: when Megatron finalizes it). Checksums of every
+# tensor are written beside the checkpoint and compared after the load: slime's Megatron patch lets a load skip missing
+# tensors silently.
 
 CKPT = {"cfg": None, "saved": False}
 CHECKSUM_FILE = "milabench_checksum.json"
@@ -1042,26 +1042,60 @@ def dir_usage(path: str) -> tuple[int, int]:
     return size, files
 
 
-def weights_checksum(model) -> list[float]:
-    """[sum, sum of squares] of this rank's model weights, in float64, in slices (no full-size copy)."""
-    total = torch.zeros(2, dtype=torch.float64, device="cuda")
+def tensor_sums(t) -> list[float]:
+    """[sum, sum of squares, sum weighted by position (order-sensitive)] of a tensor in float64, in slices (no full-size copy)."""
+    out = [0.0, 0.0, 0.0]
+    offset = 0
     with torch.no_grad():
-        for chunk in model:
-            for _, p in sorted(chunk.named_parameters(), key=lambda kv: kv[0]):
-                for part in p.detach().reshape(-1).split(2**26):
-                    part = part.double()
-                    total[0] += part.sum()
-                    total[1] += (part * part).sum()
-    return total.tolist()
+        for part in t.detach().reshape(-1).split(2**26):
+            part = part.double()
+            position = torch.arange(offset + 1, offset + part.numel() + 1, dtype=torch.float64, device=part.device)
+            out[0] += part.sum().item()
+            out[1] += (part * part).sum().item()
+            out[2] += (part * position).sum().item()
+            offset += part.numel()
+    return out
 
 
-def gather_checksums(model) -> list:
+MOMENTS = ("exp_avg", "exp_avg_sq", "master_param")
+
+
+def state_checksums(model, optimizer=None) -> dict:
+    """This rank's tensors -> sums: the model's parameters by name; with ``optimizer`` (content: full) the Adam moments and
+    master weights of each parameter, raw (no unscaled copy on the GPU, the load is short of memory as it is)."""
+    sums = {}
+    for i, chunk in enumerate(model):
+        for name, param in chunk.named_parameters():
+            sums[f"model{i}.{name}"] = tensor_sums(param)
+    if optimizer is not None:
+        chained = getattr(optimizer, "chained_optimizers", [optimizer])
+        for c, opt in enumerate(chained):
+            inner = opt.optimizer
+            for g, group in enumerate(inner.param_groups):
+                for p, param in enumerate(group["params"]):
+                    state = inner.state.get(param) or {}
+                    for name in MOMENTS:
+                        if name in state:
+                            sums[f"optimizer{c}.group{g}.param{p}.{name}"] = tensor_sums(state[name])
+    return sums
+
+
+def gather_checksums(model, optimizer=None) -> list:
+    """Every rank's ``state_checksums``, on rank 0 (None elsewhere)."""
     import torch.distributed as dist
 
-    mine = weights_checksum(model)
-    every = [None] * dist.get_world_size()
-    dist.all_gather_object(every, mine)
+    mine = state_checksums(model, optimizer)
+    every = [None] * dist.get_world_size() if dist.get_rank() == 0 else None
+    dist.gather_object(mine, every, dst=0)
     return every
+
+
+def compare_checksums(saved: list, loaded: list) -> list[str]:
+    """What differs between two ``gather_checksums`` results (exact: same bytes, same reduction order)."""
+    diffs = [] if len(saved) == len(loaded) else [f"{len(saved)} ranks saved, {len(loaded)} loaded"]
+    for r, (a, b) in enumerate(zip(saved, loaded)):
+        diffs += [f"rank {r} {k}" for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
+    return diffs
 
 
 def gather_peak_gib() -> float:
@@ -1130,7 +1164,8 @@ def patch_checkpointing(steps):
                 debug(f"checkpoint already saved: no save at iteration {iteration}")
                 return None
             CKPT["saved"] = True
-            checksums = gather_checksums(model)
+            optimizer = args[0] if args else kwargs.get("optimizer")
+            checksums = gather_checksums(model, optimizer if ck["content"] == "full" else None)
             dist.barrier()
             start = time.time()
             pending.update(step=iteration, start=start, checksums=checksums)
@@ -1157,18 +1192,25 @@ def patch_checkpointing(steps):
             dist.barrier()
             end = time.time()
             peak = gather_peak_gib()
-            checksums = gather_checksums(model)
-            match, step, saved_by = None, ck.get("step"), None
-            try:
-                with open(os.path.join(ck["dir"], CHECKSUM_FILE)) as f:
-                    saved = json.load(f)
-                match, step = saved["ranks"] == checksums, saved["step"]
-                saved_by = {"mode": saved.get("mode"), "run": saved.get("run")}
-            except OSError:
-                debug(f"no {CHECKSUM_FILE} in {ck['dir']}: the load cannot be checked")
-            checkpoint_event(ck, start, end, end, step, match, saved_by, peak, dropped)
-            if match is False:
-                raise RuntimeError("the loaded weights differ from the saved ones (checksum): a partial load?")
+            optimizer = args[0] if args else kwargs.get("optimizer")
+            checksums = gather_checksums(model, optimizer if ck["content"] == "full" else None)
+            # a load that cannot be checked or does not match fails the run, on every rank
+            problem, step, saved_by = None, ck.get("step"), None
+            if dist.get_rank() == 0:
+                try:
+                    with open(os.path.join(ck["dir"], CHECKSUM_FILE)) as f:
+                        saved = json.load(f)
+                    step, saved_by = saved["step"], {"mode": saved.get("mode"), "run": saved.get("run")}
+                    diffs = compare_checksums(saved["ranks"], checksums)
+                    if diffs:
+                        problem = f"{len(diffs)} tensors differ from the save, first: {diffs[:5]}"
+                except (OSError, ValueError, KeyError) as exc:
+                    problem = f"no usable {CHECKSUM_FILE}: {exc!r}"
+                checkpoint_event(ck, start, end, end, step, problem is None, saved_by, peak, dropped)
+            outcome = [problem]
+            dist.broadcast_object_list(outcome, src=0)
+            if outcome[0]:
+                raise RuntimeError(f"the load could not be verified: {outcome[0]}")
             return result
 
         training.load_checkpoint = timed_load
