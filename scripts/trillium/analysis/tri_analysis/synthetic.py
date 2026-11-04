@@ -651,23 +651,24 @@ def generate(out: Path) -> None:
         par = glm_parallelism(layout, nodes, batch)
         common = dict(experiment="F1", tokens_gpu=batch * GLM["seq_len"] // par["gpus"], microbatch=1, grad="bf16",
                       global_tokens=batch * GLM["seq_len"], nodemon=False, warmup=1)
-        where = f"{layout}-n{nodes}" if layout != "pp13-ep8" else f"n{nodes}"
+        where = f"n{nodes}"
+        tag = "-ep16" if layout == "pp13-ep16" else ""
         for rep in reps:
             for mode in ("sync", "async"):
-                save_name = f"syn-f1-glm-{content}-{mode}-save-{where}-r{rep}"
+                save_name = f"syn-f1-glm-{content}{tag}-{mode}-save-{where}-r{rep}"
                 ts = T0 + 30 * 3600 + rep * 8 * 3600 + case * 300
                 case += 1
                 fields = dict(step=10, params_total=GLM["params_total"])
                 save = _checkpoint("save", mode, content, size, nodes, rng, par["gpus"] + 4, "torch_dist", rep, **fields)
                 write_run(root, save_name, "glm5", GLM, par, NODES[:nodes], step, rng, repetition=rep, t_start=ts,
-                          variant=f"megatron-glm5-tri-ckpt-{content}-{mode}-save-{where}", checkpoints=[save],
+                          variant=f"megatron-glm5-tri-ckpt-{content}{tag}-{mode}-save-{where}", checkpoints=[save],
                           n_steps=19, mem=train_mem * (1.5 if content == "full" else 1.0), **common)
                 peak = round(train_mem * (1.54 if content == "full" else 1.0), 1)
                 load = _checkpoint("load", "sync", content, size, nodes, rng, par["gpus"] + 4, "torch_dist", rep,
                                    peak_allocated_gib=peak, checksum_match=True, **fields,
                                    saved_by={"mode": mode, "run": save_name})
-                write_run(root, f"syn-f1-glm-{content}-load-{mode}-{where}-r{rep}", "glm5", GLM, par, NODES[:nodes], step,
-                          rng, repetition=rep, t_start=ts + 900, variant=f"megatron-glm5-tri-ckpt-{content}-load-{where}",
+                write_run(root, f"syn-f1-glm-{content}{tag}-load-{mode}-{where}-r{rep}", "glm5", GLM, par, NODES[:nodes], step,
+                          rng, repetition=rep, t_start=ts + 900, variant=f"megatron-glm5-tri-ckpt-{content}{tag}-load-{where}",
                           checkpoints=[load], n_steps=4, first_loss_step=11, mem=peak, **common)
 
     for content in ("weights", "full"):

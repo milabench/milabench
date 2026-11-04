@@ -4,13 +4,15 @@ Large-scale LLM pre-training on Trillium's B200 partition: what the experiments 
 answers, which figure each feeds, and what they cost. The Rorqual material (`scripts/analysis/`) is a
 separate campaign; nothing here is meant to reproduce it.
 
-Status 2026-11-02: design, before access. Every number marked *(est.)* is an estimate, not a measurement.
+Status 2026-11-03: design, before access, updated with what the code tests on H100 (truncated models, Rorqual
+and Fir) established. Every number marked *(est.)* is an estimate, not a measurement; nothing here is measured on B200
+except what SciNet measured.
 
 ## The machine
 
 | | known | source |
 |---|---|---|
-| Nodes | 52 (`trig0101`-`trig0152`), exclusive access during the window; **5 of them (trig0148-0152) are reserved for SciNet's inference service (`AI_inference-nodes`): we may get only 47** | SciNet talk 2026-10-21; `/etc/hosts`; `scontrol show reservation` |
+| Nodes | 52 (`trig0101`-`trig0152`), exclusive access during the window; **5 of them (trig0148-0152) are reserved for SciNet's inference service (`AI_inference-nodes`): we may get only 47. Open question with SciNet: see "If only 47 nodes"** | SciNet talk 2026-10-21; `/etc/hosts`; `scontrol show reservation` |
 | Per node | 8 x B200 180 GB on NVLink, 2 x 48-core Intel, 2 TB RAM, liquid cooled | SciNet talk |
 | GPUs | 416 in total | |
 | Network | InfiniBand, 800 Gb/s per node, "non-blocking" (user); HCA count unknown | user; SciNet |
@@ -39,10 +41,11 @@ What sets it apart, and drives the design:
 |---|---|---|
 | Framework | TorchTitan (`benchmarks/torchtitan_native`) | Megatron-LM (`benchmarks/megatron`) |
 | Parallelism available today | FSDP, HSDP (`dp_replicate`), TP (`tp`, not with the `rows` layout; **at most 4**: 4 KV heads) | EP, PP, DP; **TP = 1 and CP = 1** (the plugin's RoPE); EP is carved from each stage's data-parallel ranks: 8N % PP = 0 and 8N / PP % EP = 0 |
-| To add | PP, MXFP8, gradient-reduction dtype, TP with the `rows` layout, checkpointing; fix the pushed loss and the token count under PP | 8 GPUs per node, checkpoint save / load, FP8 / MXFP8 entries, B200 layouts, loss from the last pipeline stage |
+| Added for Trillium, tested on H100 | PP, MXFP8 (stops cleanly without a Blackwell GPU), gradient-reduction dtype, TP with the `rows` layout, checkpointing, loss per step (merged) | 8 GPUs per node, checkpoint save / load, FP8 entries (MXFP8 needs a Blackwell GPU: not run), B200 layouts, loss from the last pipeline stage (branch `trillium-glm`) |
 | Precision recipes | `bf16`, `mxfp8` (the pinned TorchTitan removed Float8 tensorwise / rowwise on 2026-10-01) | `bf16`, `fp8-tensorwise`, `fp8-blockwise` (runs as MXFP8 GEMMs on B200), `mxfp8` |
-| Sequence | 4096 x 3 per GPU (12,288 tokens) by default | 8192, micro-batch 1 |
-| Global batch | grows with the GPUs (weak scaling) | **256 sequences per model copy** (weak scaling); 64 per copy as a small-batch point (8 micro-batches against 13 stages: ~60% bubble *(est.)*) |
+| Sequence | 4096 x 3 per GPU (12,288 tokens) by default | 8192, micro-batch 1: **micro-batch 2 is impossible** (the GLM-5 plugin's attention takes THD input only) |
+| Global batch | grows with the GPUs (weak scaling) | 32 micro-batches per data-parallel rank (weak scaling and A-G): **256 / 512 / 768 / 1024 sequences at 13 / 26 / 39 / 52 nodes**, 27% bubble *(est., from the 1F1B formula)*; strong scaling 768 at all four; 64 per copy as a small-batch point at 13 nodes (8 micro-batches against 13 stages: 60% bubble *(est.)*) |
+| Recompute | selective by default; full and none as variants | full by default; selective is `moe_act layernorm` (**`mla_up_proj` is impossible**: the plugin's attention never sets the checkpoint it asserts on) |
 | Training | everything trains | everything trains (no frozen experts: memory allows it) |
 
 Network arithmetic for Qwen *(est.)*: any data-parallel layout (FSDP, HSDP, TP + FSDP) moves ~8 bytes per
@@ -83,32 +86,35 @@ If E1 shows no slowdown (< 2%), runs of <= 26 nodes are packed in parallel for A
 
 ### A. Parallel layout (core of the design)
 
-**A-Q, Qwen** (5-min measurement after 30 warm-up steps, as on Rorqual):
+**A-Q, Qwen** (5-min measurement after 30 warm-up steps, as on Rorqual; the cross runs selective recompute, the
+entries' default):
 
 | factor | levels |
 |---|---|
 | layout | `fsdp` (all GPUs) / `hsdp8` (shard in a node, replicate across) / `hsdp16` / `tp2-fsdp` / `tp4-fsdp` / `pp2-fsdp` / `pp4-fsdp` |
 | tokens per GPU | 12k (4096 x 3) / 24k (4096 x 6) / 48k (4096 x 12) |
 | gradient reduction | fp32 / bf16 (on the 2 best layouts) |
-| activation checkpointing | selective / full / none (1 node and 13 nodes; none only where it fits) |
+| activation checkpointing | selective (default) / full / none (1 node and 13 nodes; none only where it fits) |
 | nodes | 13 (full cross); 2 and 52 for the 3 best; 1 for the non-PP layouts |
 
 ~45 runs x 2 repetitions x ~10 min *(est.)*.
 
-**A-G, GLM-5** (20 iterations, first 5 skipped; startup ~15 min at scale *(est.)*), global batch 256 per
-copy. A model copy is PP x EP GPUs; EP can only use the GPUs of one stage, so the smallest run differs:
+**A-G, GLM-5** (20 iterations, the first left out as warm-up; startup ~15 min at scale *(est.)*). Every layout at a
+node count takes that count's weak-scaling batch. A model copy is PP x EP GPUs; EP can only use the GPUs of one
+stage, so the smallest run differs. Bubble = (PP - 1) / (micro-batches + PP - 1) *(est.: the formula)*:
 
-| layout | EP group | smallest run (copies) | at 52 nodes |
-|---|---|---|---|
-| `pp13-ep8` | in a node (NVLink) | 13 nodes (1) | 4 copies |
-| `pp13-ep16` | across 2 nodes | 26 nodes (1) | 2 copies |
-| `pp13-ep32` | across 4 nodes | 52 nodes (1) | 1 copy |
-| `pp26-ep8` | in a node | 26 nodes (1) | 2 copies |
-| `pp6-ep16` (13 layers per stage) | across 2 nodes | 12 nodes (1) | 48 nodes, 4 copies (416 GPUs don't split in 6) |
+| layout | EP group | smallest run (copies), batch | largest run (copies), batch | micro-batches, bubble |
+|---|---|---|---|---|
+| `pp13-ep8` | in a node (NVLink) | 13 nodes (1), 256 | 52 nodes (4), 1024; 26 nodes (2), 512: B-G-weak's run | 32, 27% |
+| `pp13-ep16` | across 2 nodes | 26 nodes (1), 512 | 52 nodes (2), 1024 | 32, 27% |
+| `pp13-ep32` | across 4 nodes | 52 nodes (1), 1024 | same | 32, 27% |
+| `pp26-ep8` | in a node | 26 nodes (1), 512 | 52 nodes (2), 1024 | 64, 28% |
+| `pp6-ep16` (13 layers per stage) | across 2 nodes | 12 nodes (1), 256 | 48 nodes (4), 1024 (416 GPUs don't split in 6) | 16, 24% |
 
-The EP comparison (8 / 16 / 32) is made at 52 nodes; `pp13-ep8` and `pp6-ep16` also at 13 / 12 nodes. Plus
-recompute full vs selective, micro-batch 1 vs 2, and global batch 64 per copy on the best layout.
-~14 runs x 2 repetitions x ~25 min *(est.)*.
+The EP comparison (8 / 16 / 32) is made at 52 nodes, EP 8 / 16 and PP 13 / 26 also at 26 nodes; `pp13-ep8` and `pp6-ep16`
+also at 13 / 12 nodes. Plus recompute full vs selective (`moe_act layernorm`, at 13 and 52 nodes) and the small batch, 64 at
+13 nodes (60% bubble *(est.)*). No micro-batch comparison: the plugin only takes micro-batch 1.
+~12 runs x 2 repetitions x ~25 min *(est.)*.
 
 ### B. Scaling (with the best layouts from A)
 
@@ -116,23 +122,73 @@ recompute full vs selective, micro-batch 1 vs 2, and global batch 64 per copy on
 |---|---|
 | B-Q-weak | Qwen, 1, 2, 4, 8, 13, 26, 52 nodes, best layout and `fsdp` baseline, fixed tokens per GPU |
 | B-Q-strong | Qwen, fixed global batch (52 x 8 x 24k tokens), 13, 26, 52 nodes |
-| B-G | GLM-5 `pp13-ep8`, 1, 2, 3, 4 copies (13, 26, 39, 52 nodes), batch 256 per copy (weak) and 256 in total (strong) |
+| B-G-weak | GLM-5 `pp13-ep8`, 1, 2, 3, 4 copies (13, 26, 39, 52 nodes), 32 micro-batches per data-parallel rank: global batch 256 / 512 / 768 / 1024, bubble 27% throughout *(est.)* |
+| B-G-strong | same nodes, global batch 768 at all four: 96 / 48 / 32 / 24 micro-batches, bubble 11 / 20 / 27 / 33% *(est.)*, the cost of spreading a fixed batch |
+
+**Runs serving two experiments.** `run.experiment` holds one value, the launcher's tag, and these runs are not repeated;
+the analysis reads them under both (`analysis/tri_analysis/select.py`, one place; `tests/test_series.py` and `analyze.py`
+check that each series has all its node counts):
+
+| entry | `run.experiment` | also serves |
+|---|---|---|
+| `megatron-glm5-tri-pp13-ep8-n13-gbs256` | A-G | B-G-weak, 13 nodes |
+| `megatron-glm5-tri-pp13-ep8-n52-gbs1024` | A-G | B-G-weak, 52 nodes |
+| `megatron-glm5-tri-pp13-ep8-n39-gbs768` | B-G-weak | B-G-strong, 39 nodes |
+| `megatron-glm5-tri-pp13-ep8-n26-gbs512` | B-G-weak | A-G, the pp13-ep8 reference at 26 nodes |
+
+**To look at in weak scaling: a one-off drop from 1 to 2 copies.** The first copy added brings cross-node data parallelism,
+with a cost per step that does not depend on the batch. A truncated GLM-5 on H100 showed this from 2 to 4 nodes: 0.76
+efficiency, from a +0.76 s per-step constant (the constant is measured, **its cause is inferred, not measured**). So one
+efficiency number can mislead: report efficiency against 1 copy **and** against 2 copies (the first run with that traffic),
+and likewise Qwen against 1 node and 2 nodes. A drop from 1 to 2 followed by a flat line is not a scaling limit.
 
 ### C. Precision
 
 | ID | what |
 |---|---|
 | C-speed | Qwen: BF16 / MXFP8; GLM: BF16 / FP8 tensorwise / FP8 blockwise / MXFP8; best layout, at 1 node (Qwen) or 13 nodes (GLM) and at 52 nodes |
-| C-loss | same recipes, 500 steps from the same seed and data (FineWeb, a realistic learning rate) at 13 nodes: loss difference to BF16 |
+| C-loss | same recipes, 500 steps from the same seed and data (FineWeb, a realistic learning rate) at 13 nodes: loss difference to BF16. **Same-recipe repeats**: one more BF16 with the same seed, one with another seed, so that the FP8 vs BF16 gap can be compared with noise |
+
+GLM's loss curve starts with a warm-up: the learning rate starts at 0 (50 warm-up steps), so steps 1 and 2 see the same
+weights, then an early unstable phase. Compare recipes after it, not on the first steps.
 
 ### F. Operations
 
 | ID | what |
 |---|---|
-| F1 | Checkpoint save and load: Qwen (~0.38 TB) at 1, 13, 52 nodes; GLM-5 weights only (~1.5 TB) and full (~10.4 TB) at 13 and 52 nodes; synchronous vs asynchronous (time training is blocked vs total write); 3 repetitions at different times of day. Escalation with the admins' agreement: Qwen 1 node -> Qwen 52 -> GLM weights -> GLM full. **Only one GLM-5 checkpoint on disk at a time**, deleted after the load is timed. No local disk: staging only in host memory (asynchronous mode) |
+| F1 | Checkpoint save and load: Qwen (full ~0.32 TB *(est.)*, weights ~54 GB *(est.)*) at 1, 13, 52 nodes; GLM-5 weights only (~1.5 TB *(est.)*) and full (~8.9 TB *(est.)*) at 13 and 52 nodes; synchronous vs asynchronous (time training is blocked vs total write); 3 repetitions at different times of day. **GLM runs weights first**; fallback for full: `pp13-ep16` on 26 nodes (see below). Escalation with the admins' agreement: Qwen 1 node -> Qwen 52 -> GLM weights -> GLM full. **Only one GLM-5 checkpoint on disk at a time**, deleted after the load is timed. No local disk: staging only in host memory (asynchronous mode) |
 | F2 | Long run: best Qwen layout on 52 nodes, >= 1 h (stability, stragglers, clocks, power) |
 | F3 | Startup: time to an initialized model and to the first step, from every run (no extra runs) |
 | F4 | Energy: tokens per kWh from GPU power (nodemon), from every run (no extra runs) |
+
+**Checkpoint sizes.** Measured on truncated models (H100): full 12.0 B/param, weights 2.0 B/param. The whole-model sizes
+above are estimates from those ratios (GLM-5 744e9 parameters, Qwen 26.9e9).
+
+**Full checkpoints raise GPU memory, on saves too.** Truncated GLM-5 on Fir: at PP2 x EP4, 38.4 GiB in training rose to
+56.5-60.5 GiB on saves, and a load ran out of memory at 79 GiB; at PP2 x EP8, the load peak was 1.54 x the training
+peak. So `full 13` (one copy on 13 nodes) may not fit in 180 GB: ~190 GiB *(est.)*. Hence weights first, and the full checkpoint's
+first load read through `peak_allocated_gib` before the 52-node one. If it does not fit: `pp13-ep16` on 26 nodes (half the
+expert state per GPU), entries `megatron-glm5-tri-ckpt-full-ep16-*-n26`.
+
+### If only 47 nodes
+
+`N_NODES` in `analysis/tri_analysis/machine.py` is the one setting: 52, or 47 if trig0148-0152 stay reserved. The synthetic
+data, figures and scales of the report follow it. What changes at 47 (376 GPUs):
+
+| | 52 nodes | 47 nodes |
+|---|---|---|
+| GLM largest `pp13-ep8` | 52 nodes, 4 copies | **39 nodes, 3 copies** (it serves A-G's top as well) |
+| `pp26-ep8`, `pp13-ep32` | run | **dropped** |
+| `pp13-ep16` | 26 and 52 nodes | 26 nodes: the EP comparison is 8 vs 16 at 26 nodes |
+| `pp6-ep16` | 12 and 48 nodes | 12 nodes only (48 does not fit; 36 is the next valid count, no entry) |
+| B-G | 1-4 copies | 1-3 copies |
+| GLM C-speed, F1 top | 52 nodes | 39 nodes: **needs new entries** (dev.yaml holds n13 and n52) |
+| Qwen and network top (A-Q, B-Q-weak, C-speed, F1, F2, D3) | 52 | **47** |
+| D2 | 26 pairs per round, 51 rounds, 1,326 pairs | 23 pairs per round, 47 rounds, 1,081 pairs |
+| D4 | 26 + 26 | 23 + 23 (one node out) |
+| E1 | 4 sets of 13 | 3 sets of 13 |
+| B-Q-strong | 13, 26, 52 nodes | 13, 26 (`tri-bqs-*-n52` does not fit): a top point needs a new entry |
+| `hsdp16` | 26, 52 | needs an even node count: 26 at most, or 46 with a new run |
 
 ### Budget *(est.)*
 
@@ -144,9 +200,9 @@ recompute full vs selective, micro-batch 1 vs 2, and global batch 64 per copy on
 | A-Q | 15 h | 6 h |
 | A-G | 12 h | 6 h |
 | B | 8 h | 5 h |
-| C | 6 h | 4 h |
+| C (with the BF16 repeats of C-loss) | 10 h | 5 h |
 | F | 6 h | |
-| total | ~55 h | ~35 h |
+| total | ~59 h | ~36 h |
 
 Priorities if the window is short: **tier 0** bring-up, D1; **tier 1** A-Q at 13 nodes, B-Q-weak, A-G at
 13 and 52 nodes, B-G; **tier 2** D2-D4, E1, C, F1; **tier 3** F2, B-Q-strong, the rest of A.
@@ -166,12 +222,12 @@ Figure IDs are the names in `analysis/tri_analysis/figures.py` and `report/gener
 | `qwen_layouts` | Which layout, at which batch? | tokens/s per GPU (or MFU) by layout (rows) x tokens per GPU (columns), panels 2 / 13 / 52 nodes | A-Q |
 | `qwen_levers` | What buys the most: batch, reduction dtype, PP, AC? | throughput change vs the `fsdp` 12k reference at 13 nodes | A-Q |
 | `step_decomposition` | How much of the step is network? | step = compute (1-node) + exposed communication, by layout and scale | A-Q, B-Q |
-| `glm_layouts` | Expert parallelism inside or across nodes? | tokens/s per GPU and all-to-all time by layout, at 13 and 52 nodes | A-G |
+| `glm_layouts` | Expert parallelism inside or across nodes? | tokens/s per GPU and all-to-all time by layout, at 12-13, 26 and 48-52 nodes; recompute, batch 64 | A-G (with B-G-weak's 26-node run) |
 | `qwen_scaling` | How far does Qwen scale? | tokens/s per GPU and efficiency vs GPUs (8-416), best layout vs `fsdp`; strong scaling panel | B-Q |
-| `glm_scaling` | Do model copies scale? | tokens/s per GPU vs copies (1-4), weak vs strong batch | B-G |
+| `glm_scaling` | Do model copies scale? | tokens/s per GPU vs copies (1-4), weak vs strong batch, bubble of each point | B-G (with A-G's 13 and 52 nodes) |
 | `precision_speed` | What does FP8 / MXFP8 buy, and does it hold at scale? | speedup over BF16 by recipe, 1 node vs 52 nodes, both workloads | C-speed |
-| `precision_loss` | Does it train the same? | loss difference to BF16 vs step, by recipe | C-loss |
-| `checkpoint` | What does a checkpoint cost? | save / load time and blocked time vs nodes, sync vs async, full vs weights only; write throughput | F1 |
+| `precision_loss` | Does it train the same, beyond the noise? | loss difference to one BF16 run vs step, by recipe; noise band from the BF16 repeats (same seed, other seed); GLM's lr warm-up marked | C-loss |
+| `checkpoint` | What does a checkpoint cost? | save / load time and blocked time vs nodes, sync vs async, full vs weights only (pinned `blocked_s` from repetition 2 when present); write throughput; load and save peak GPU memory against 180 GB | F1 |
 | `stability` | Does throughput hold over an hour? | tokens/s per step and GPU clocks / power vs time | F2 |
 | `stragglers` | Are some GPUs slower? | per-GPU activity, per-node CPU clock (nodemon) | F2 |
 | `startup` | How long until training? | time to the first step vs nodes, both workloads | F3 |
@@ -183,4 +239,5 @@ Formats: `scripts/analysis/FORMAT.md` (`milabench.pretrain.v1`, health checks, n
 metrics), plus the Trillium additions in `FORMAT.md` here (layout and precision fields, loss per step,
 checkpoint events, collective sweeps). Raw data: `$SCRATCH/trillium/` on Trillium, copied read-only to
 `analysis/data/raw/`. Synthetic data stands in for every experiment not run yet and is drawn hollow and
-labelled as such in the figure itself.
+labelled as such in the figure itself. A measured run replaces the synthetic runs of its configuration; F1 per checkpoint
+operation. Runs written on another cluster stop `analyze.py build`: H100 test runs are not report data.

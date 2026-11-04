@@ -4,10 +4,11 @@ Prescriptive spec of what the Trillium campaign adds to `scripts/analysis/FORMAT
 formats: run data `milabench.pretrain.v1`, srygaard health checks, nodemon telemetry, per-rank
 metrics). Everything there still holds; this file lists only the additions, so that
 `analysis/analyze.py` turns the raw data into the report with no manual step. Status: **draft**
-(2026-11-02).
+(2026-11-03; both packs write it, H100 test runs parse, nothing yet from B200).
 
 Worked examples, written by `analysis/analyze.py synth` under `analysis/data/synthetic/trillium/`:
-`runs/syn-aq-hsdp8-24k-n13-r1/tt-qwen.0.data`, `runs/syn-f1-glm-full-async-n52-r1/glm5.0.data`,
+`runs/syn-aq-hsdp8-24k-n13-r1/tt-qwen.0.data`, `runs/syn-f1-glm-full-async-save-n52-r1/glm5.0.data`,
+`runs/syn-f1-glm-full-load-async-n52-r1/glm5.0.data`,
 `health/3000001/`, `nccl/3000002/pairs.jsonl`, `nccl/3000003/collectives.jsonl`,
 `nodemon/syn-f2-long/`.
 
@@ -26,7 +27,8 @@ Everything under `$SCRATCH/trillium/`, copied read-only to `analysis/data/raw/tr
 | `nodemon/<run_name>/` | node telemetry (Rorqual FORMAT.md section 3), **every run** | benchmate.nodemon |
 | `checkpoints/` | the checkpoints themselves; only `*.json`/`*.jsonl` are ever copied | F1 |
 
-The run name is the join key everywhere (`nodemon/<run_name>` = `runs/<run_name>`).
+The run name is the join key everywhere (`nodemon/<run_name>` = `runs/<run_name>`). `runs/` also holds milabench's
+`install.*` and `prepare.*` directories: not runs, skipped. Runs whose `run.cluster` is not Trillium stop the build.
 
 ## 1. Run data additions
 
@@ -36,8 +38,10 @@ The `run_start` event and the `summary` (`milabench.pretrain.v1`, additive: same
 "run": {
   "experiment": "A-Q",          // add: DESIGN.md ID: D1..D4 | E1 | R | P | A-Q | A-G | B-Q-weak | B-Q-strong
                                 //      | B-G-weak | B-G-strong | C-speed | C-loss | F1 | F2 | smoke
-  "node_set": "d1-s3",          // add, E1 only: <draw>-<set> (4 disjoint sets of 13 nodes per draw)
-  "condition": "alone",         // add, E1 only: alone | together
+                                //      One value: the launcher's tag. Four GLM-5 runs also serve a second
+                                //      experiment (DESIGN.md); the analysis knows them, nothing is written.
+  "node_set": "d1-s3",          // add, E1 only: <draw>-<set> (4 disjoint sets of 13 nodes per draw); Qwen writes null, GLM nothing
+  "condition": "alone",         // add, E1 only: alone | together; same
   "exclusive_cluster": true     // exists
 },
 "parallelism": {
@@ -57,6 +61,7 @@ The `run_start` event and the `summary` (`milabench.pretrain.v1`, additive: same
                                 //    | fp8-blockwise | mxfp8)
   "grad_reduce_dtype": "fp32",  // add: fp32 | bf16 (dtype of the gradient reduction across ranks)
   "activation_checkpointing": "full",  // exists; values fixed: none | selective | full
+  "model": "GLM-5.3",           // exists: as the pack names it; the analysis maps it to one name per workload
   "params_total": 26.9e9, "params_active": 26.9e9,  // exist
   "seed": 1234                  // add: C-loss compares recipes from the same seed and data order
 },
@@ -66,7 +71,12 @@ The `run_start` event and the `summary` (`milabench.pretrain.v1`, additive: same
 ```
 
 `microbatch_sequences`, `grad_accum`, `tokens_per_gpu_per_step` and `global_batch_tokens` keep their
-Rorqual meaning; with gradient accumulation `tokens_per_gpu_per_step` includes it.
+Rorqual meaning; with gradient accumulation `tokens_per_gpu_per_step` includes it. `summary.per_ep_group` is null
+without MoE. A `run_start` of TorchTitan has no `parallelism`; in Megatron's it may hold only the layout, copies and micro-batches.
+
+**Rate events.** TorchTitan's start after the warm-up, `batch_id` from `warmup_steps + 1`. Megatron's include the warm-up,
+`batch_id` from 0. The official value is the median of the measured steps: the analysis drops the first `warmup_steps`
+when a run has `warmup_steps + measured_steps` rates (`measurement` in the summary).
 
 ### Loss events (add, both workloads)
 
@@ -79,10 +89,16 @@ not** (warm-up included), carrying the step index:
 {"loss": 7.415, "step": 31, "task": "train", "time": 1795...}       // Megatron: step
 ```
 
-`batch_id` / `step` is the same index as the `rate` events' `batch_id`; the loss is the global
-mean over data-parallel ranks (rank 0, after the reduction). The analysis joins on it; a loss
-event without it is kept with an empty step, counted (`runs.loss_events_no_step`) and reported by
-`analyze.py build`, and unusable for C-loss.
+The loss is the global mean over data-parallel ranks (rank 0, after the reduction). For TorchTitan, `batch_id` is the same
+index as the `rate` events'. **For GLM it is not: `step` is 1-based and continues over a load (a load run's first steps can
+be 6, 7, ... while its rates are 0, 1, ...), while the rate's `batch_id` starts at 0.** So loss events join other runs' loss events
+on their own index (the C-loss comparison), never rate events. GLM's also carry `grad_norm`, and are emitted at the end of
+the run with the `time` of their step; TorchTitan's have no `time`. A loss event without an index is kept with an empty
+step, counted (`runs.loss_events_no_step`) and reported by `analyze.py build`, and unusable for C-loss.
+
+GLM's curve starts with a warm-up: the learning rate starts at 0, so steps 1 and 2 see the same weights, then an early
+unstable phase. C-loss repeats: `workload.seed` and `run.repetition` tell the BF16 repeats apart (the reference is the
+BF16 run with the recipes' seed and the lowest repetition).
 
 ### Checkpoint events (add, F1)
 
@@ -90,7 +106,8 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
 
 ```jsonc
 {"op": "save",               // save | load
- "step": 40, "repetition": 1,
+ "step": 40,
+ "repetition": 1,            // TorchTitan: within the run (F1 entries save and load twice); Megatron: run.repetition
  "mode": "async",            // sync | async | async_pinned (load: sync)
  "content": "full",          // full (model + optimizer + scheduler + data loader) | weights
  "format": "torch.dcp",      // torch.dcp (TorchTitan) | torch_dist (Megatron)
@@ -98,14 +115,26 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
  "blocked_s": 18.4,          // training blocked: call -> control back to the training loop (max over ranks)
  "total_s": 81.2,            // until the last byte is written (async: background completion) / all ranks loaded
  "path": "/scratch/<user>/trillium/checkpoints/<run>", "filesystem": "vast-nfs",
- "start_epoch": 1795..., "end_epoch": 1795...}
+ "start_epoch": 1795..., "end_epoch": 1795...,
+ // Optional:
+ "pinned_buffers_allocated": true,  // async_pinned saves: this save also allocated the pinned host buffers (first
+                                    // of a run): its blocked_s is an upper bound
+ "cache_drop": "posix_fadvise_dontneed",  // load: how the checkpoint's page cache was dropped first (+ cache_drop_files_rank0)
+ "peak_allocated_gib": 50.3,  // load: peak GPU memory during the load, max over ranks (Megatron)
+ "checksum_match": true,      // load: weights checksum at save vs after load; a mismatch fails the run. TorchTitan: restored
+ "params_total": 744e9,       // parameters of the model copy (Megatron): size per parameter = bytes / params_total
+ "saved_by": {"mode": "sync", "run": "<run_name>"}}  // load (Megatron): the save that wrote the checkpoint
 ```
+
+A save's peak GPU memory is the run's `memory_gib.peak_allocated`: full checkpoints raise it. The analysis takes pinned
+`blocked_s` from repetition 2 when the run has one. Runs before these fields (H100 tests) lack them and still parse.
+Measured sizes (truncated models): full 12.0 B/param, weights 2.0 B/param.
 
 Times are the maximum over ranks; `{"min": .., "max": ..}` is also accepted (the analysis keeps
 `max`, and `*_min`). Throughput is derived (`bytes / total_s`), not logged. The TorchTitan pack's
-own names are mapped on read (`kind: model` -> `content: weights`, `async_mode: disabled |
+own older names are mapped on read (`kind: model` -> `content: weights`, `async_mode: disabled |
 async_with_pinned_mem` -> `mode: sync | async_pinned`, `fs_type` -> `filesystem`, `rep` ->
-`repetition`; `analysis/tri_analysis/runs.py`), but new code should write the names above. The
+`repetition`, `restored` -> `checksum_match`; `analysis/tri_analysis/runs.py`), but new code should write the names above. The
 nodes are diskless: no local staging.
 
 ## 2. D1 health check: srygaard additions
@@ -164,7 +193,9 @@ Unchanged format (Rorqual FORMAT.md section 3), but **every training run** sets
 `BENCHMATE_NODEMON_DIR=$SCRATCH/trillium/nodemon/<run_name>`: the energy figure (F4) integrates
 `gpu.power_w` over each run's measurement window. On Blackwell the `gpm` collector should be on.
 
-## Changes requested (to route)
+## Changes requested
+
+T1-T3 and T6 are written by both packs (Qwen merged, GLM on branch `trillium-glm`); T5 by `scripts/trillium/net/`.
 
 | # | change | where | for |
 |---|---|---|---|
