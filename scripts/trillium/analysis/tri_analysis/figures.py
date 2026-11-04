@@ -14,7 +14,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
+from .machine import GLM_SEQS_PER_COPY, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
@@ -465,7 +465,7 @@ def _glm_label(row) -> str:
         extra.append(f"micro-batch {int(row.mb_seqs)}")
     copies = row.copies if pd.notna(row.copies) else row.gpus / (row.pp * row.ep)
     per_copy = row.global_batch_tokens / copies / row.seq_len
-    if per_copy < 256:
+    if per_copy < GLM_SEQS_PER_COPY / 2:
         extra.append(f"batch {int(per_copy)}")
     return row.layout + (f" ({', '.join(extra)})" if extra else "")
 

@@ -78,7 +78,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                 continue
             row, steps, _, ep = parsed
             extra, loss, ckpt, batch_ids = parse_extras(f, row["run_id"])
-            if extra["run_cluster"] not in (None, CLUSTER) and not other_clusters:
+            if not str(extra["run_cluster"] or CLUSTER).startswith(CLUSTER) and not other_clusters:
                 raise SystemExit(f"[build] {f}: written on {extra['run_cluster']}, not {CLUSTER}: not report data")
             if len(batch_ids) == len(steps):  # the step index of the rate events, not their position
                 for s, b in zip(steps, batch_ids):

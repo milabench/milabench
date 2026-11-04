@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 from tt_analysis.tables import ledger
 
-from .machine import N_NODES
+from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, N_NODES
 from .select import completed as _completed
 from .select import drift, qwen_base, with_energy
 from .style import GLM, QWEN
@@ -97,7 +97,7 @@ def key_numbers(t) -> dict[str, tuple]:
     ag = _completed(runs, "A-G")
     if len(ag):
         per_copy = ag.global_batch_tokens / ag.copies / ag.seq_len
-        big = ag[(ag.nodes >= 0.9 * ag.nodes.max()) & (ag.ac == "full") & (ag.mb_seqs == 1) & (per_copy == 256)]
+        big = ag[(ag.nodes >= 0.9 * ag.nodes.max()) & (ag.ac == "full") & (per_copy >= GLM_SEQS_PER_COPY / 2)]
         m = big.groupby("layout").agg(v=("tok_s_gpu", "median"), mfu=("mfu_pct", "median"), syn=("synthetic", "any"))
         if len(m):
             best = m.loc[m.v.idxmax()]
