@@ -927,6 +927,9 @@ _tri_ckpt:
     content: weights
     mode: sync
     step: 10
+  argv:
+    # barriers wait for the slowest writer: 10.4 TB does not fit Megatron's default 10 minutes
+    --distributed-timeout-minutes: 120
 _tri_ckpt_load: &tri_ckpt_load
   --train-iters: 5
 
@@ -1038,6 +1041,8 @@ _tri_test_ckpt:
     content: weights
     mode: sync
     step: 5
+  argv:
+    --distributed-timeout-minutes: 120
 megatron-glm5-tri-test-ckpt-weights-sync-save:
   inherits: _tri_test_ckpt
 megatron-glm5-tri-test-ckpt-weights-async-save:
