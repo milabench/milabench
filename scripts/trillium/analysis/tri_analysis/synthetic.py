@@ -8,7 +8,7 @@ Every row built from it carries ``synthetic=True`` and is drawn hollow, under a 
 The numbers come from a toy model. None of them is a measurement; they only exercise the
 pipeline and give the figures a plausible shape. The model:
 
-- Machine: N_NODES nodes (52: trig0101-trig0152; machine.py) x 8 B200, subnets of 7, 7, 7, 7, 4,
+- Machine: N_NODES nodes (machine.py: 52, trig0101-trig0152, or 47) x 8 B200, subnets of 7, 7, 7, 7, 4,
   7, 7, 6 nodes,
   800 Gb/s per node (100 GB/s, 85 GB/s achieved). MFU denominator: 2.25 PFLOP/s, the B200 dense
   BF16 *spec* peak (SciNet measured 1,668 TFLOP/s on a BF16 8192^2 matmul).
@@ -21,10 +21,15 @@ pipeline and give the figures a plausible shape. The model:
   divided by the PP degree, x (n-1)/n; a layout hides at most a fixed share of it behind
   compute (FSDP 45 %, HSDP-8 80 %).
 - GLM-5: Megatron carves EP out of the per-stage data-parallel ranks (8N % PP == 0 and
-  8N/PP % EP == 0), so a model copy is PP x EP GPUs; 256 sequences per copy (64: "small
-  batch"), micro-batch 1, 1F1B bubble (no interleaving: it needs micro-batches >= PP), expert
-  all-to-all over NVLink when the EP group is in a node and over the HCAs otherwise
-  (node-level deduplication halves it), gradient reduce-scatter + all-gather between copies.
+  8N/PP % EP == 0), so a model copy is PP x EP GPUs. Global batches as in benchmarks/megatron/dev.yaml
+  (machine.py): weak 256 / 512 / 768 / 1024 at 13 / 26 / 39 / 52 nodes (32 micro-batches per data-parallel
+  rank), strong 768 at all four (96 / 48 / 32 / 24 micro-batches), 64 as a small-batch point at 13 nodes.
+  Micro-batch 1, 1F1B bubble (PP - 1) / (m + PP - 1), expert all-to-all over NVLink when the EP group is in
+  a node and over the HCAs otherwise (node-level deduplication halves it), gradient reduce-scatter +
+  all-gather between copies, which is what makes the toy lose a step from 1 to 2 copies. The runs are
+  tagged as the launchers tag them, so that the runs serving two experiments (select.SERVES_TWICE) go
+  through the same path as the measured ones. Rate events as Megatron writes them: from batch_id 0,
+  warm-up included; loss events numbered from step 1.
 - Noise: ~0.3 % run to run, ~1 % step to step; one slow GPU (trig0134 GPU 5, -8 %), one slow
   node (trig0147, -4 %), one half-rate HCA (trig0109), one node with low NVLink bandwidth
   (trig0140); E1: ~1.5 % slowdown when the 4 jobs run together; R: a ~1.2 % drift over the
@@ -41,8 +46,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .machine import (CLUSTER, GPUS_PER_NODE, MATMUL_BF16, MATMUL_FP8, NODE_NET_GBS, NODES, PEAK_BF16,
-                      SUBNET_OF)
+from .machine import (CLUSTER, GLM_AG_RUNS, GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_SMALL_SEQS, GLM_STRONG_SEQS,
+                      GLM_TOP_COPIES, GLM_TOP_NODES, GPUS_PER_NODE, MATMUL_BF16, MATMUL_FP8, NODE_NET_GBS, NODES,
+                      PEAK_BF16, SUBNET_OF)
 
 N = len(NODES)
 
@@ -55,9 +61,9 @@ GPU_NET = NET / GPUS_PER_NODE
 QWEN = {"model": "qwen3_8-27B", "framework": "torchtitan", "n_layers": 64, "n_layers_full": 64,
         "params_total": 26.9e9, "params_active": 26.9e9, "flops_per_token": 159258915840,
         "seq_len": 4096, "optimizer": "AdamW", "optimizer_state_dtype": "fp32", "compile": "regions"}
-GLM = {"model": "glm5", "framework": "megatron", "n_layers": 78, "n_layers_full": 78,
+GLM = {"model": "GLM-5.3", "framework": "megatron", "n_layers": 78, "n_layers_full": 78,  # the benchmark's name
        "params_total": 744e9, "params_active": 40e9, "flops_per_token": 6 * 40e9,
-       "seq_len": 8192, "optimizer": "AdamW", "optimizer_state_dtype": "fp32", "compile": None,
+       "seq_len": 8192, "optimizer": "AdamW", "optimizer_state_dtype": "bfloat16", "compile": None,
        "moe": {"n_experts": 256, "top_k": 8, "n_shared_experts": 1, "routing": "aux-loss-free",
                "dispatcher": "alltoall"}}
 DEVIATIONS = [{"id": "optimizer", "text": "AdamW (not Muon)"}, {"id": "mtp", "text": "MTP off"},
@@ -136,36 +142,25 @@ GLM_LAYOUTS = {"pp13-ep8": (13, 8), "pp13-ep16": (13, 16), "pp13-ep32": (13, 32)
                "pp6-ep16": (6, 16)}
 
 
-def glm_valid(layout: str, nodes: int) -> bool:
+def glm_parallelism(layout: str, nodes: int, batch: int) -> dict:
+    """batch: global, in sequences; micro-batch 1, so a data-parallel rank has batch / dp micro-batches."""
     pp, ep = GLM_LAYOUTS[layout]
     gpus = GPUS_PER_NODE * nodes
-    return gpus % pp == 0 and (gpus // pp) % ep == 0
-
-
-def glm_scales(layout: str) -> list[int]:
-    """One model copy (the smallest valid node count) and the machine (the largest)."""
-    valid = [n for n in range(1, N + 1) if glm_valid(layout, n)]
-    return sorted({valid[0], valid[-1]}) if valid else []
-
-
-def glm_parallelism(layout: str, nodes: int, batch_per_copy=256, mb=1) -> dict:
-    pp, ep = GLM_LAYOUTS[layout]
-    gpus = GPUS_PER_NODE * nodes
-    return {"layout": layout, "gpus": gpus, "nodes": nodes, "dp_replicate": 1, "dp_shard": gpus // pp,
+    dp = gpus // pp
+    return {"layout": layout, "gpus": gpus, "nodes": nodes, "dp_replicate": 1, "dp_shard": dp,
             "expert_dp": gpus // (ep * pp), "tp": 1, "pp": pp, "cp": 1, "ep": ep, "pp_schedule": "1F1B",
-            "copies": gpus // (pp * ep), "microbatches_per_pipeline": batch_per_copy // (ep * mb)}
+            "copies": gpus // (pp * ep), "microbatches_per_pipeline": batch // dp}
 
 
-def glm_step(layout, nodes, batch_per_copy=256, mb=1, ac="full", precision="bf16"):
+def glm_step(layout, nodes, batch, ac="full", precision="bf16"):
     """(step s, compute s, all-to-all s): a copy is PP x EP GPUs; copies reduce their gradients."""
     pp, ep = GLM_LAYOUTS[layout]
     gpus_copy = pp * ep
     copies = GPUS_PER_NODE * nodes // gpus_copy
-    tokens_copy = batch_per_copy * GLM["seq_len"]
-    eff = 0.35 * (1.08 if mb == 2 else 1.0)
+    tokens_copy = batch / copies * GLM["seq_len"]
     compute = (tokens_copy * GLM["flops_per_token"] * AC_RECOMPUTE[ac]
-               / (gpus_copy * MATMUL_BF16 * eff * recipe_factor(precision)))
-    m = max(batch_per_copy / ep / mb, 1)
+               / (gpus_copy * MATMUL_BF16 * 0.35 * recipe_factor(precision)))
+    m = max(glm_parallelism(layout, nodes, batch)["microbatches_per_pipeline"], 1)
     bubble = (pp - 1) / (m + pp - 1)
     # Expert all-to-all: dispatch + combine, forward + backward, hidden 6144 in BF16, top-8.
     a2a_bytes = tokens_copy / ep * (78 / pp) * 6144 * 2 * 8 * 2 * 2
@@ -194,7 +189,7 @@ def write_run(root, name, bench, w, par, hosts, step_s, rng, *, experiment, vari
               t_start, tokens_gpu, grad_accum=1, global_tokens=None, grad="fp32", ac="full",
               precision="bf16", warmup=30, n_steps=None, budget=300.0, rc=0, mem=60.0,
               loss_offset=0.0, loss_seed=None, run_extra=None, ep_a2a=None, checkpoints=(),
-              power_busy=0.8, nodemon=True, nodemon_extra=None, microbatch=None):
+              power_busy=0.8, nodemon=True, nodemon_extra=None, microbatch=None, seed=1234, first_loss_step=1):
     """One milabench run directory: run_start, rate and loss events, checkpoint events, summary,
     end. Returns the end time."""
     gpus = par["gpus"]
@@ -212,26 +207,29 @@ def write_run(root, name, bench, w, par, hosts, step_s, rng, *, experiment, vari
                      "microbatch_sequences": microbatch or tokens_gpu // grad_accum // w["seq_len"],
                      "grad_accum": grad_accum, "tokens_per_gpu_per_step": tokens_gpu,
                      "global_batch_tokens": global_tokens, "precision": precision,
-                     "grad_reduce_dtype": grad, "activation_checkpointing": ac, "seed": 1234,
+                     "grad_reduce_dtype": grad, "activation_checkpointing": ac, "seed": seed,
                      "moe": ({**w["moe"], "ep": par["ep"]} if big else None)})
     placement = {"hosts": hosts, "family": "slurm", "excluded_nodes": {}}
     events = [{"event": "config", "data": {"run_name": name}},
               {"event": "start", "data": {"time": t_start}},
               {"event": "data", "data": {"run_start": {"run": run, "workload": workload,
                                                          "parallelism": par, "placement": placement}}}]
-    t = t_start + first + warmup * step_s
-    measure_start = t
+    t = t_start + first
     n_steps = n_steps or max(15, int(budget / step_s))
     lrng = np.random.default_rng(loss_seed) if loss_seed is not None else rng
-    for i in range(n_steps if rc == 0 else 0):  # a failed attempt crashed before measuring
-        s = step_s * (1 + rng.normal(0, 0.01))
-        t += s
-        step = warmup + i + 1
-        loss = loss_at(step, loss_offset) + lrng.normal(0, 0.03) + rng.normal(0, 0.004)
-        events.append({"event": "data", "data": {"rate": global_tokens / s, "units": "tokens/s", "task": "train",
-                                                 "time": t, "elapsed": s, "batch_id": step}})
-        # Loss: its own event; TorchTitan numbers it batch_id, Megatron step.
-        events.append({"event": "data", "data": {"loss": loss, "step" if big else "batch_id": step,
+    measure_start = t + warmup * step_s
+    for i in range(warmup + n_steps if rc == 0 else 0):  # a failed attempt crashed before measuring
+        s = step_s * (1 + rng.normal(0, 0.01)) * (2.5 if i == 0 and warmup else 1.0)
+        if i < warmup:  # the warm-up takes step_s each on the clock (the first step's extra is in `first`)
+            t += step_s
+        else:
+            t += s
+        loss = loss_at(i + first_loss_step, loss_offset) + lrng.normal(0, 0.03) + rng.normal(0, 0.004)
+        if i >= warmup or big:  # Megatron's rate events start at the warm-up, numbered from 0; TorchTitan's after it
+            events.append({"event": "data", "data": {"rate": global_tokens / s, "units": "tokens/s", "task": "train",
+                                                     "time": t, "elapsed": s, "batch_id": i if big else i + 1}})
+        # Loss: its own event from step 1, measured or not; TorchTitan numbers it batch_id, Megatron step.
+        events.append({"event": "data", "data": {"loss": loss, "step" if big else "batch_id": i + first_loss_step,
                                                  "task": "train", "time": t}})
     for c in checkpoints:
         t += c["blocked_s"]
@@ -361,11 +359,11 @@ def write_health(root, job, rng):
 
 
 def _round_robin(nodes):
-    """All pairs in len-1 rounds of disjoint pairs (circle method)."""
-    n = list(nodes)
+    """All pairs in len-1 rounds of disjoint pairs (circle method; an odd count: a bye in every round)."""
+    n = list(nodes) + ([None] if len(nodes) % 2 else [])
     rounds = []
     for _ in range(len(n) - 1):
-        rounds.append([(n[i], n[-1 - i]) for i in range(len(n) // 2)])
+        rounds.append([(n[i], n[-1 - i]) for i in range(len(n) // 2) if None not in (n[i], n[-1 - i])])
         n = [n[0], n[-1], *n[1:-1]]
     return rounds
 
@@ -376,7 +374,7 @@ def _pair_bw(a, b, rng):
 
 
 def write_pairs(root, job, rng, t):
-    """D2: every node pair, N/2 disjoint pairs per round, N-1 rounds (52 nodes: 26 and 51)."""
+    """D2: every node pair, N//2 disjoint pairs per round, N-1 rounds (52 nodes: 26 and 51; 47: 23 and 47)."""
     out = root / "nccl" / job
     out.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -491,11 +489,11 @@ def generate(out: Path) -> None:
                          grad=grad, ac=ac, precision=precision, mem=mem, run_extra=extra,
                          power_busy=min(0.95, compute * accum / step + 0.05), **kw)
 
-    # E1: 4 disjoint random sets of 13 nodes, alone then together; 2 draws.
+    # E1: disjoint random sets of 13 nodes (4 of them, or 3 at 47 nodes), alone then together; 2 draws.
     t = T0 + 2 * 3600
     for draw in (1, 2):
         order = list(np.random.default_rng(100 + draw).permutation(NODES))
-        sets = [sorted(order[13 * i:13 * i + 13]) for i in range(4)]
+        sets = [sorted(order[13 * i:13 * i + 13]) for i in range(N // 13)]
         for cond in ("alone", "together"):
             t_cond = t
             for i, hosts in enumerate(sets, 1):
@@ -545,8 +543,8 @@ def generate(out: Path) -> None:
     for layout in dict.fromkeys([best[0], "fsdp"]):
         for nodes in weak:
             t = qwen(f"syn-bqw-{layout}-n{nodes}", layout, nodes, 24576, experiment="B-Q-weak", rep=1, t=t) + 30
-    for nodes in (n for n in (13, 26, N) if N % n == 0 or n == N):
-        accum = max(1, round(N / nodes))
+    for nodes in (n for n in (13, 26, 52) if n <= N):  # tri-bqs-*: the batch of 52 nodes, 52 / n accumulation steps
+        accum = 52 // nodes
         t = qwen(f"syn-bqs-{best[0]}-n{nodes}", best[0], nodes, 24576 * accum, experiment="B-Q-strong", rep=1,
                  t=t, accum=accum) + 30
 
@@ -561,52 +559,50 @@ def generate(out: Path) -> None:
         t = qwen(f"syn-cl-qwen-{prec}", best[0], 13, 24576, experiment="C-loss", rep=1, t=t, precision=prec,
                  warmup=0, n_steps=500, loss_offset=loss_offset[prec], loss_seed=7, nodemon=False) + 30
 
-    # GLM-5: 256 sequences per copy (64: small batch), first 5 of 20 iterations skipped.
-    def glm(name, layout, nodes, *, experiment, rep, t, batch=256, mb=1, ac="full", precision="bf16", **kw):
-        step, compute, a2a = glm_step(layout, nodes, batch, mb, ac, precision)
-        par = glm_parallelism(layout, nodes, batch, mb)
+    # GLM-5: 20 iterations, the first one is warm-up (main.py WARMUP_STEPS); global batches of machine.py.
+    def glm(name, layout, nodes, batch, *, experiment, rep, t, ac="full", precision="bf16", **kw):
+        step, compute, a2a = glm_step(layout, nodes, batch, ac, precision)
+        par = glm_parallelism(layout, nodes, batch)
         step *= 1 + rng.normal(0, 0.004)
-        global_tokens = batch * GLM["seq_len"] * par["copies"]
-        mem = 168 if layout == "pp6-ep16" else 150
+        global_tokens = batch * GLM["seq_len"]
+        mem = 168 if layout == "pp6-ep16" else 125  # GiB per GPU, toy (Rorqual's 13 TiB on 104 GPUs)
+        suffix = {"selective": "-sel"}.get(ac, "") + ("" if precision == "bf16" else f"-{precision}")
         return write_run(root, name, "glm5", GLM, par, NODES[:nodes], step, rng, experiment=experiment,
-                         variant=f"{layout}-n{nodes}-mb{mb}-{ac}-{precision}-b{batch}", repetition=rep,
+                         variant=f"megatron-glm5-tri-{layout}-n{nodes}-gbs{batch}{suffix}", repetition=rep,
                          t_start=t, tokens_gpu=global_tokens // par["gpus"], global_tokens=global_tokens,
-                         ac=ac, precision=precision, mem=mem, ep_a2a=a2a, microbatch=mb,
-                         power_busy=min(0.95, compute / step + 0.1), **{"warmup": 5, "n_steps": 15, **kw})
+                         ac=ac, precision=precision, mem=mem, ep_a2a=a2a, microbatch=1, grad="bf16",
+                         power_busy=min(0.95, compute / step + 0.1), **{"warmup": 1, "n_steps": 19, **kw})
 
-    # A-G: every layout at one copy and at the machine; on pp13-ep8: selective recompute,
-    # micro-batch 2, and the small batch (64 per copy).
-    copy = glm_scales("pp13-ep8")
-    for layout in GLM_LAYOUTS:
-        for nodes in glm_scales(layout):
-            for rep in (1, 2):
-                t = glm(f"syn-ag-{layout}-n{nodes}-r{rep}", layout, nodes, experiment="A-G", rep=rep, t=t) + 60
-    for nodes in copy:
+    weak_batch = {c * GLM_COPY_NODES: c * GLM_SEQS_PER_COPY for c in range(1, GLM_TOP_COPIES + 1)}
+    # A-G: the layouts at the node counts of machine.py; on pp13-ep8: selective recompute and the small batch.
+    for layout, nodes, batch in GLM_AG_RUNS:
         for rep in (1, 2):
-            t = glm(f"syn-ag-pp13-ep8-sel-n{nodes}-r{rep}", "pp13-ep8", nodes, experiment="A-G", rep=rep, t=t,
-                    ac="selective") + 60
-            t = glm(f"syn-ag-pp13-ep8-mb2-n{nodes}-r{rep}", "pp13-ep8", nodes, experiment="A-G", rep=rep, t=t,
-                    mb=2) + 60
-            t = glm(f"syn-ag-pp13-ep8-b64-n{nodes}-r{rep}", "pp13-ep8", nodes, experiment="A-G", rep=rep, t=t,
-                    batch=64) + 60
-    # B-G: 1 to 4 copies of pp13-ep8, 256 per copy (weak) or 256 in total (strong).
-    for copies in range(1, N // 13 + 1):
-        t = glm(f"syn-bg-weak-c{copies}", "pp13-ep8", 13 * copies, experiment="B-G-weak", rep=1, t=t) + 60
-        t = glm(f"syn-bg-strong-c{copies}", "pp13-ep8", 13 * copies, experiment="B-G-strong", rep=1, t=t,
-                batch=256 // copies) + 60
+            t = glm(f"syn-ag-{layout}-n{nodes}-gbs{batch}-r{rep}", layout, nodes, batch, experiment="A-G", rep=rep,
+                    t=t) + 60
+    for rep in (1, 2):
+        for nodes in (n for n in (13, 52) if n <= N):
+            t = glm(f"syn-ag-pp13-ep8-sel-n{nodes}-r{rep}", "pp13-ep8", nodes, weak_batch[nodes], experiment="A-G",
+                    rep=rep, t=t, ac="selective") + 60
+        t = glm(f"syn-ag-pp13-ep8-small-n13-r{rep}", "pp13-ep8", 13, GLM_SMALL_SEQS, experiment="A-G", rep=rep, t=t) + 60
+    # B-G, tagged as glm/20_bg.sh does: the weak runs at 13 and 52 nodes are A-G's above, 39 nodes is one
+    # run for weak and strong, and 26 nodes also serves A-G (select.SERVES_TWICE).
+    for nodes in (n for n in (26, 39) if n <= N):
+        t = glm(f"syn-bg-weak-n{nodes}", "pp13-ep8", nodes, weak_batch[nodes], experiment="B-G-weak", rep=1, t=t) + 60
+    for nodes in (n for n in (13, 26, 52) if n <= N):
+        t = glm(f"syn-bg-strong-n{nodes}", "pp13-ep8", nodes, GLM_STRONG_SEQS, experiment="B-G-strong", rep=1, t=t) + 60
     # C (GLM): recipes at 1 copy and at the machine; loss over 500 steps at 13 nodes.
-    for nodes in copy:
+    for nodes in (13, GLM_TOP_NODES):
         for prec in GLM_RECIPES:
-            t = glm(f"syn-cs-glm-{prec}-n{nodes}", "pp13-ep8", nodes, experiment="C-speed", rep=1, t=t,
+            t = glm(f"syn-cs-glm-{prec}-n{nodes}", "pp13-ep8", nodes, weak_batch[nodes], experiment="C-speed", rep=1, t=t,
                     precision=prec) + 60
     for prec in GLM_RECIPES:
-        t = glm(f"syn-cl-glm-{prec}", "pp13-ep8", copy[0], experiment="C-loss", rep=1, t=t, precision=prec,
-                warmup=0, n_steps=500, loss_offset=loss_offset[prec], loss_seed=8, nodemon=False) + 60
+        t = glm(f"syn-cl-glm-{prec}", "pp13-ep8", 13, GLM_SEQS_PER_COPY, experiment="C-loss", rep=1, t=t, precision=prec,
+                warmup=1, n_steps=499, loss_offset=loss_offset[prec], loss_seed=8, nodemon=False) + 60
 
     # F1: checkpoint save + load, sync vs async, 3 repetitions at different times of day.
     cases = [("qwen", "full", 0.38e12, n, 832 * n) for n in (1, 13, N)]
     cases += [("glm", content, size, n, 4000) for content, size in (("weights", 1.5e12), ("full", 10.4e12))
-              for n in copy]
+              for n in (13, GLM_TOP_NODES)]
     for case, (model, content, size, nodes, files) in enumerate(cases):
         modes = ("sync", "async", "async_pinned") if model == "qwen" else ("sync", "async")
         for mode in modes:
@@ -623,12 +619,12 @@ def generate(out: Path) -> None:
                               variant=f"ckpt-{content}-{mode}", repetition=rep, t_start=ts, tokens_gpu=24576,
                               n_steps=10, checkpoints=ck, nodemon=False)
                 else:
-                    step, _, a2a = glm_step("pp13-ep8", nodes)
-                    par = glm_parallelism("pp13-ep8", nodes)
+                    step, _, a2a = glm_step("pp13-ep8", nodes, weak_batch[nodes])
+                    par = glm_parallelism("pp13-ep8", nodes, weak_batch[nodes])
                     write_run(root, f"syn-f1-glm-{content}-{mode}-n{nodes}-r{rep}", "glm5", GLM, par,
                               NODES[:nodes], step, rng, experiment="F1", variant=f"ckpt-{content}-{mode}",
-                              repetition=rep, t_start=ts, tokens_gpu=256 * 8192 * par["copies"] // par["gpus"],
-                              global_tokens=256 * 8192 * par["copies"], warmup=5, n_steps=5, checkpoints=ck,
+                              repetition=rep, t_start=ts, tokens_gpu=weak_batch[nodes] * 8192 // par["gpus"],
+                              global_tokens=weak_batch[nodes] * 8192, warmup=1, n_steps=5, checkpoints=ck,
                               nodemon=False, microbatch=1)
 
     # F2: long run, best Qwen layout on every node, 70 min; one GPU throttles for 8 minutes and

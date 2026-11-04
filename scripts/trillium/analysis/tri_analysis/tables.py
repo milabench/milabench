@@ -21,8 +21,8 @@ from .style import GLM, QWEN
 MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "TriPairBw", "TriPairBwMin",
           "TriPairLat", "TriAllReduceFull", "TriAlltoallFull", "TriBisection", "TriInterferencePct",
           "TriDriftPct", "TriQwenBestLayout", "TriQwenBestTokens", "TriQwenBestTokS", "TriQwenBestMFU",
-          "TriQwenFsdpCommPct", "TriQwenWeakEff", "TriGlmBestLayout", "TriGlmBestTokS", "TriGlmBestMFU",
-          "TriGlmCopiesEff", "TriQwenFpBestRecipe", "TriQwenFpSpeedupSmall", "TriQwenFpSpeedupFull",
+          "TriQwenFsdpCommPct", "TriQwenWeakEff", "TriQwenWeakEffFromTwo", "TriGlmBestLayout", "TriGlmBestTokS", "TriGlmBestMFU",
+          "TriGlmCopiesEff", "TriGlmCopiesEffTwo", "TriGlmCopiesEffFromTwo", "TriQwenFpBestRecipe", "TriQwenFpSpeedupSmall", "TriQwenFpSpeedupFull",
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
           "TriEnergyBest"]
@@ -94,6 +94,8 @@ def key_numbers(t) -> dict[str, tuple]:
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
         med = g.groupby("nodes").tok_s_gpu.median()
         out["TriQwenWeakEff"] = (100 * med.iloc[-1] / med.iloc[0], ".0f", g.synthetic.any())
+        if 2 in med.index:  # from the first run with cross-node traffic
+            out["TriQwenWeakEffFromTwo"] = (100 * med.iloc[-1] / med[2], ".0f", g.synthetic.any())
     ag = _completed(runs, "A-G")
     if len(ag):
         per_copy = ag.global_batch_tokens / ag.copies / ag.seq_len
@@ -106,8 +108,14 @@ def key_numbers(t) -> dict[str, tuple]:
             out["TriGlmBestMFU"] = (best.mfu, ".0f", best.syn)
     bg = _completed(runs, "B-G-weak")
     if len(bg) > 1:
+        bg = bg[(bg.layout == "pp13-ep8") & (bg.ac == "full") & (bg.precision == "bf16")]
         med = bg.groupby("copies").tok_s_gpu.median()
-        out["TriGlmCopiesEff"] = (100 * med.iloc[-1] / med.iloc[0], ".0f", bg.synthetic.any())
+        if 1 in med.index and GLM_TOP_COPIES in med.index:  # never a ratio of other copy counts
+            out["TriGlmCopiesEff"] = (100 * med[GLM_TOP_COPIES] / med[1], ".0f", bg.synthetic.any())
+        if 1 in med.index and 2 in med.index:
+            out["TriGlmCopiesEffTwo"] = (100 * med[2] / med[1], ".0f", bg.synthetic.any())
+        if 2 in med.index and GLM_TOP_COPIES in med.index:
+            out["TriGlmCopiesEffFromTwo"] = (100 * med[GLM_TOP_COPIES] / med[2], ".0f", bg.synthetic.any())
     cs = _completed(runs, "C-speed")
     for model, prefix in ((QWEN, "TriQwen"), (GLM, "TriGlm")):
         d = cs[cs.model == model] if len(cs) else cs
@@ -164,6 +172,9 @@ def macros(t) -> str:
         rf"\newcommand{{\NRunsSynthetic}}{{{n_syn}}}",
         rf"\newcommand{{\HasSynthetic}}{{{'1' if n_syn else '0'}}}",
         rf"\newcommand{{\TriNNodes}}{{{N_NODES}}}",
+        rf"\newcommand{{\TriNGpus}}{{{N_NODES * 8}}}",
+        rf"\newcommand{{\TriGlmTopNodes}}{{{GLM_TOP_NODES}}}",
+        rf"\newcommand{{\TriGlmTopCopies}}{{{GLM_TOP_COPIES}}}",
     ]
     numbers = key_numbers(t)
     for name in MACROS:  # always defined: "??" until the data exists

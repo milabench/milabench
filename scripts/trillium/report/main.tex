@@ -29,13 +29,17 @@
 % Key numbers (tables.py: key_numbers); "??" until the pipeline has written them.
 \providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}
 \providecommand{\TriNNodes}{52}
+\providecommand{\TriNGpus}{416}
+\providecommand{\TriGlmTopNodes}{52}
+\providecommand{\TriGlmTopCopies}{4}
 \newcommand{\triunset}[1]{\providecommand{#1}{??}}
 \triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
 \triunset{\TriPairBw}\triunset{\TriPairBwMin}\triunset{\TriPairLat}\triunset{\TriAllReduceFull}
 \triunset{\TriAlltoallFull}\triunset{\TriBisection}\triunset{\TriInterferencePct}\triunset{\TriDriftPct}
 \triunset{\TriQwenBestLayout}\triunset{\TriQwenBestTokens}\triunset{\TriQwenBestTokS}\triunset{\TriQwenBestMFU}
 \triunset{\TriQwenFsdpCommPct}\triunset{\TriQwenWeakEff}\triunset{\TriGlmBestLayout}\triunset{\TriGlmBestTokS}
-\triunset{\TriGlmBestMFU}\triunset{\TriGlmCopiesEff}\triunset{\TriQwenFpBestRecipe}
+\triunset{\TriGlmBestMFU}\triunset{\TriGlmCopiesEff}\triunset{\TriGlmCopiesEffTwo}\triunset{\TriGlmCopiesEffFromTwo}
+\triunset{\TriQwenWeakEffFromTwo}\triunset{\TriQwenFpBestRecipe}
 \triunset{\TriQwenFpSpeedupSmall}\triunset{\TriQwenFpSpeedupFull}\triunset{\TriGlmFpBestRecipe}
 \triunset{\TriGlmFpSpeedupSmall}\triunset{\TriGlmFpSpeedupFull}\triunset{\TriCkptQwenSave}
 \triunset{\TriCkptGlmFullSave}\triunset{\TriCkptGlmFullBlocked}\triunset{\TriCkptWriteGBs}

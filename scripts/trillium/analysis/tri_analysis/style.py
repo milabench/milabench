@@ -26,7 +26,7 @@ COLLECTIVE_MARKER = {"all_reduce": "o", "all_gather": "s", "reduce_scatter": "^"
 RECIPE_COLOR = {"fp8-tensorwise": SERIES[0], "fp8-rowwise": SERIES[1], "fp8-blockwise": SERIES[2],
                 "mxfp8": SERIES[3]}
 TOKENS_COLOR = {12288: BLUE[250], 24576: BLUE[450], 49152: BLUE[650]}  # ordinal: light to dark
-SCALE_COLOR = {"small": BLUE[250], "large": BLUE[650]}
+SCALE_COLOR = {"small": BLUE[250], "mid": BLUE[450], "large": BLUE[650]}
 
 
 def synthetic_mark(fig, any_synthetic: bool, text="includes synthetic data (hollow markers)") -> None:

@@ -14,7 +14,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import GLM_SEQS_PER_COPY, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
+from .machine import GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
@@ -477,12 +477,14 @@ def glm_layouts(t):
     if r.empty:
         return None
     r = r.assign(label=r.apply(_glm_label, axis=1))
-    r["scale"] = np.where(r.nodes >= 0.9 * r.nodes.max(), "large", "small")  # 48 and 52 nodes: the machine
+    # 12-13 nodes, 26, and the machine (48-52, or 39 at 47 nodes): a layout comparison holds at a node count.
+    r["scale"] = np.select([r.nodes >= 0.75 * r.nodes.max(), r.nodes < 20], ["large", "small"], "mid")
     m = _median(r, ["label", "layout", "nodes", "copies", "scale"])
     ep = t["ep_groups"]
     a2a = (ep.merge(r[["run_id", "label", "nodes"]], on="run_id").groupby(["label", "nodes"]).a2a_s.median()
            if not ep.empty else pd.Series(dtype=float))
-    labels = sorted(m.label.unique(), key=lambda s: (GLM_LAYOUTS.index(s.split(" ")[0]), s))
+    order = {l: i for i, l in enumerate(GLM_LAYOUTS)}
+    labels = sorted(m.label.unique(), key=lambda s: (order.get(s.split(" ")[0], len(order)), s))
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 0.7 + 0.22 * len(labels)), sharey=True)
     for i, lab in enumerate(labels):
         for _, row in m[m.label == lab].iterrows():
@@ -499,10 +501,9 @@ def glm_layouts(t):
     axes[1].set_xlim(0, None)
     for ax in axes:
         style.finish(ax, trim=False)
-    handles = [_handle(SCALE_COLOR["small"], "one model copy", m.synthetic.any()),
-               _handle(SCALE_COLOR["large"], f"whole machine ({int(r.nodes.max())} nodes, or the most that fit)",
-                       m.synthetic.any())]
-    fig.legend(handles=handles, loc="lower center", ncol=2, fontsize=6)
+    handles = [_handle(SCALE_COLOR[s], f"{'-'.join(str(int(n)) for n in sorted(set(m[m.scale == s].nodes)))} nodes",
+                       m[m.scale == s].synthetic.any()) for s in ("small", "mid", "large") if (m.scale == s).any()]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=6)
     style.synthetic_mark(fig, m.synthetic.any())
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     return fig
@@ -564,29 +565,37 @@ def qwen_scaling(t):
 
 
 def glm_scaling(t):
-    """GLM-5 model copies: throughput per GPU vs copies, 256 sequences per copy (weak) or 256 in
-    total (strong) (B-G)."""
+    """GLM-5 model copies: throughput per GPU vs copies, 32 micro-batches per data-parallel rank (weak:
+    256 sequences per copy) or 768 sequences in total (strong: the bubble grows), with the 1F1B
+    bubble of each point (B-G, counting the runs that serve two experiments)."""
     r = _runs(t, "B-G-weak", "B-G-strong")
     if r.empty:
         return None
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.7, 2.2))
-    for exp, col, text in (("B-G-weak", SERIES[0], "weak: 256 sequences per copy"),
-                           ("B-G-strong", SERIES[1], "strong: 256 sequences in total")):
-        med = _median(r[r.experiment == exp], ["copies"])
+    r = r[(r.layout == "pp13-ep8") & (r.ac == "full") & (r.precision == "bf16")]
+    handles = []
+    for exp, col, text, above in (("B-G-weak", SERIES[0], f"weak: {GLM_SEQS_PER_COPY} sequences per copy", False),
+                                  ("B-G-strong", SERIES[1], f"strong: {GLM_STRONG_SEQS} sequences in total", True)):
+        g = r[r.experiment == exp]
+        med = _median(g, ["copies"])
         if med.empty:
             continue
         ax.plot(med.copies, med.value, color=col, lw=1.0)
+        bubble = g.groupby("copies").apply(lambda d: (d.pp - 1) / (d.microbatches + d.pp - 1), include_groups=False
+                                           ).groupby("copies").median()
         for _, row in med.iterrows():
             _pt(ax, row.copies, row.value, col, row.synthetic, "o" if exp == "B-G-weak" else "s")
+            ax.annotate(f"{bubble[row.copies]:.0%}", (row.copies, row.value), xytext=(0, 5 if above else -9),
+                        textcoords="offset points", fontsize=6, color=INK2, ha="center")
         eff = 100 * med.value.iloc[-1] / med.value.iloc[0]
-        ax.annotate(f"{text}\n{eff:.0f} % of 1 copy at {int(med.copies.iloc[-1])}",
-                    (med.copies.iloc[-1], med.value.iloc[-1]), xytext=(6, 0), textcoords="offset points",
-                    fontsize=6, color=INK2, va="center")
+        handles.append(_handle(col, f"{text}: {eff:.0f} % of 1 copy at {int(med.copies.iloc[-1])}", med.synthetic.any(),
+                               "o" if exp == "B-G-weak" else "s", "-"))
+    ax.legend(handles=handles, loc="lower left", fontsize=6)
     ax.set_xticks(sorted(r.copies.unique()))
     ax.set_xticklabels([f"{int(c)}\n({int(c) * 13} n.)" for c in sorted(r.copies.unique())], fontsize=6)
-    ax.set_xlim(0.7, r.copies.max() + 2.2)
+    ax.set_xlim(0.7, r.copies.max() + 0.3)
     ax.set_ylim(0, None)
-    ax.set_xlabel("model copies (pp13-ep8, 13 nodes each)")
+    ax.set_xlabel("model copies (pp13-ep8, 13 nodes each); labels: pipeline bubble (1F1B)")
     ax.set_ylabel("tokens/s per GPU")
     style.finish(ax, trim=False)
     style.synthetic_mark(fig, r.synthetic.any())
