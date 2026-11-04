@@ -24,7 +24,7 @@ sys.path.insert(0, str(HERE))
 from tri_analysis import build as build_mod  # noqa: E402
 from tri_analysis import figures, synthetic, tables  # noqa: E402
 from tri_analysis.machine import CLUSTER  # noqa: E402
-from tri_analysis.select import series_gaps  # noqa: E402
+from tri_analysis.select import failed_runs, series_gaps  # noqa: E402
 
 RAW = HERE / "data" / "raw"
 SYN = HERE / "data" / "synthetic"
@@ -82,8 +82,11 @@ def check_series(t) -> None:
     if t["runs"].empty:
         return
     gaps = series_gaps(t["runs"])
-    if gaps and t["runs"].synthetic.any():
-        raise SystemExit(f"[plot] GLM-5 series without some of their node counts: {gaps}")
+    failed = failed_runs(t["runs"], *gaps)  # a failure leaves its node count empty on purpose: the figure marks it
+    known = {(e, n) for e, n in zip(failed.experiment, failed.nodes)} if len(failed) else set()
+    unexplained = {e: [n for n in nodes if (e, n) not in known] for e, nodes in gaps.items()}
+    if any(unexplained.values()) and t["runs"].synthetic.any():
+        raise SystemExit(f"[plot] GLM-5 series without some of their node counts: {unexplained}")
     if gaps:
         print(f"[plot] not run yet, GLM-5 series without these node counts: {gaps}")
 

@@ -12,10 +12,10 @@ from pathlib import Path
 import pandas as pd
 from tt_analysis.tables import ledger
 
-from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, N_NODES
+from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES
 from .select import completed as _completed
-from .select import QWEN_BASE, checkpoints, drift, qwen_base, with_energy
-from .style import GLM, QWEN
+from .select import QWEN_BASE, checkpoints, drift, failed_runs, qwen_base, with_energy
+from .style import GLM, QWEN, WORKLOAD_LABEL
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
 MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "TriPairBw", "TriPairBwMin",
@@ -26,6 +26,36 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
           "TriEnergyBest"]
+FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
+
+
+def failed_note(t) -> str:
+    """Text for the draft box and the ledger: measured failures whose configuration has no successful run."""
+    names = [f"{r.experiment} {WORKLOAD_LABEL.get(r.model, r.model)} {r.layout}, {int(r.nodes)} nodes"
+             for r in failed_runs(t["runs"]).itertuples() if r.experiment != "F1"]
+    f = t["failed_ops"]
+    if not f.empty:
+        names += [f"F1 {WORKLOAD_LABEL.get(r.model, r.model)} {r.content} {r.op}, {int(r.nodes)} nodes" for r in f.itertuples()]
+    if not names:
+        return ""
+    names = sorted(set(names))
+    text = "; ".join(names[:FAILED_SHOWN]) + ("; ..." if len(names) > FAILED_SHOWN else "")
+    return (rf"{{\color{{red!70!black}}\textbf{{{len(names)} configurations failed, with no successful run}} "
+            rf"(no point, or a red cross, in their figures; synthetic data does not stand in): {text}.}}")
+
+
+def over_memory_note(t) -> str:
+    """A synthetic peak above a B200's memory: the placeholder says what a measured run could not reach."""
+    c = checkpoints(t["checkpoints"], t["runs"])
+    if c.empty:
+        return ""
+    over = c[c.synthetic.astype(bool) & (c.peak_allocated_gib > GPU_MEMORY_GIB)]
+    if over.empty:
+        return ""
+    return (rf"The synthetic peaks of {over.peak_allocated_gib.min():.0f}--{over.peak_allocated_gib.max():.0f}\,GiB per GPU are above "
+            rf"180\,GB ({GPU_MEMORY_GIB:.0f}\,GiB): such a run would not fit, it would fail with an out-of-memory error.")
+
+
 SYN_DEF = r"\providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}"
 
 
@@ -185,6 +215,8 @@ def macros(t) -> str:
         rf"\newcommand{{\TriPairRounds}}{{{N_NODES - 1 + N_NODES % 2}}}",
         rf"\newcommand{{\TriPairsAll}}{{{N_NODES * (N_NODES - 1) // 2:,}}}",
     ]
+    lines.append(rf"\newcommand{{\TriFailedNote}}{{{failed_note(t)}}}")
+    lines.append(rf"\newcommand{{\TriCkptOverMemoryNote}}{{{over_memory_note(t)}}}")
     numbers = key_numbers(t)
     for name in MACROS:  # always defined: "??" until the data exists
         v, fmt, syn = numbers.get(name, ("??", "", False))

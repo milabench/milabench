@@ -14,11 +14,11 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
+from .machine import GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
-from .select import checkpoints, completed, drift, pinned_blocked, qwen_base, with_energy
+from .select import checkpoints, completed, drift, failed_runs, pinned_blocked, qwen_base, with_energy
 
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
 GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
@@ -46,6 +46,19 @@ def _handle(color, label, synthetic, marker="o", ls="", **kw):
     """Legend entry drawn like the data it names: hollow when that data is synthetic."""
     return plt.Line2D([], [], ls=ls, marker=marker, color=color, label=label, **marker_kw(color, bool(synthetic)),
                       **kw)
+
+
+def _failed_x(ax, x, label=None):
+    """A failed measured run with no successful one: a red cross on the x axis (it has no value)."""
+    ax.plot(x, 0.04, "x", color=CRITICAL, ms=5, mew=1.2, zorder=6, clip_on=False, transform=ax.get_xaxis_transform())
+    if label:
+        ax.annotate(label, (x, 0.04), xycoords=ax.get_xaxis_transform(), xytext=(0, 5), textcoords="offset points",
+                    fontsize=5.5, color=CRITICAL, ha="center")
+
+
+def _failed_y(ax, y):
+    """Same, for a row of a horizontal plot."""
+    ax.plot(0.02, y, "x", color=CRITICAL, ms=5, mew=1.2, zorder=6, clip_on=False, transform=ax.get_yaxis_transform())
 
 
 def _subnets():
@@ -477,6 +490,8 @@ def glm_layouts(t):
     if r.empty:
         return None
     r = r.assign(label=r.apply(_glm_label, axis=1))
+    failed = failed_runs(t["runs"], "A-G")
+    failed = failed.assign(label=failed.apply(_glm_label, axis=1)) if len(failed) else failed
     # 12-13 nodes, 26, and the machine (48-52, or 39 at 47 nodes): a layout comparison holds at a node count.
     r["scale"] = np.select([r.nodes >= 0.75 * r.nodes.max(), r.nodes < 20], ["large", "small"], "mid")
     m = _median(r, ["label", "layout", "nodes", "copies", "scale"])
@@ -484,7 +499,8 @@ def glm_layouts(t):
     a2a = (ep.merge(r[["run_id", "label", "nodes"]], on="run_id").groupby(["label", "nodes"]).a2a_s.median()
            if not ep.empty else pd.Series(dtype=float))
     order = {l: i for i, l in enumerate(GLM_LAYOUTS)}
-    labels = sorted(m.label.unique(), key=lambda s: (order.get(s.split(" ")[0], len(order)), s))
+    labels = sorted({*m.label, *(failed.label if len(failed) else ())},
+                    key=lambda s: (order.get(s.split(" ")[0], len(order)), s))
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 0.7 + 0.22 * len(labels)), sharey=True)
     for i, lab in enumerate(labels):
         for _, row in m[m.label == lab].iterrows():
@@ -492,6 +508,8 @@ def glm_layouts(t):
             _pt(axes[0], row.value, i, col, row.synthetic)
             if (lab, row.nodes) in a2a.index:
                 _pt(axes[1], a2a[(lab, row.nodes)], i, col, row.synthetic)
+        if len(failed) and (failed.label == lab).any():
+            _failed_y(axes[0], i)
     axes[0].set_yticks(range(len(labels)))
     axes[0].set_yticklabels(labels)
     axes[0].invert_yaxis()
@@ -503,7 +521,9 @@ def glm_layouts(t):
         style.finish(ax, trim=False)
     handles = [_handle(SCALE_COLOR[s], f"{'-'.join(str(int(n)) for n in sorted(set(m[m.scale == s].nodes)))} nodes",
                        m[m.scale == s].synthetic.any()) for s in ("small", "mid", "large") if (m.scale == s).any()]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=6)
+    if len(failed):
+        handles.append(plt.Line2D([], [], ls="", marker="x", color=CRITICAL, label="failed, no successful run"))
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=6)
     style.synthetic_mark(fig, m.synthetic.any())
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     return fig
@@ -573,6 +593,8 @@ def glm_scaling(t):
         return None
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.7, 2.2))
     r = r[(r.layout == "pp13-ep8") & (r.ac == "full") & (r.precision == "bf16")]
+    failed = failed_runs(t["runs"], "B-G-weak", "B-G-strong")
+    failed = failed[(failed.layout == "pp13-ep8") & (failed.ac == "full")] if len(failed) else failed
     handles = []
     for exp, col, text, above in (("B-G-weak", SERIES[0], f"weak: {GLM_SEQS_PER_COPY} sequences per copy", False),
                                   ("B-G-strong", SERIES[1], f"strong: {GLM_STRONG_SEQS} sequences in total", True)):
@@ -581,6 +603,8 @@ def glm_scaling(t):
         if med.empty:
             continue
         ax.plot(med.copies, med.value, color=col, lw=1.0)
+        for n in sorted(set(failed[failed.experiment == exp].nodes) - set(g.nodes)):
+            _failed_x(ax, n / GLM_COPY_NODES, "failed" if exp == "B-G-weak" else None)
         bubble = g.groupby("copies").apply(lambda d: (d.pp - 1) / (d.microbatches + d.pp - 1), include_groups=False
                                            ).groupby("copies").median()
         for _, row in med.iterrows():
@@ -591,8 +615,9 @@ def glm_scaling(t):
         handles.append(_handle(col, f"{text}: {eff:.0f} % of 1 copy at {int(med.copies.iloc[-1])}", med.synthetic.any(),
                                "o" if exp == "B-G-weak" else "s", "-"))
     ax.legend(handles=handles, loc="lower left", fontsize=6)
-    ax.set_xticks(sorted(r.copies.unique()))
-    ax.set_xticklabels([f"{int(c)}\n({int(c) * 13} n.)" for c in sorted(r.copies.unique())], fontsize=6)
+    ticks = sorted({*r.copies, *(failed.nodes / GLM_COPY_NODES if len(failed) else ())})
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{int(c)}\n({int(c) * 13} n.)" for c in ticks], fontsize=6)
     ax.set_xlim(0.7, r.copies.max() + 0.3)
     ax.set_ylim(0, None)
     ax.set_xlabel("model copies (pp13-ep8, 13 nodes each); labels: pipeline bubble (1F1B)")
@@ -721,6 +746,7 @@ def checkpoint(t):
     c = checkpoints(t["checkpoints"], t["runs"])
     if c.empty:
         return None
+    failed = t.get("failed_ops", pd.DataFrame())
     cases = sorted(set(zip(c.model, c.content)), key=lambda mk: (mk[0] != QWEN, mk[0], mk[1] != "weights"))
     case_color = {mk: SERIES[4 + i % 4] for i, mk in enumerate(cases)}
     series = [("save", "sync", "total_s", "save, sync", SERIES[0], "o", "-"),
@@ -738,6 +764,10 @@ def checkpoint(t):
         ax.set_visible(False)
     for ax, (model, content) in zip(axes, cases):
         d = c[(c.model == model) & (c.content == content)]
+        nodes_here = set(d.nodes)
+        if len(failed):
+            here = failed[(failed.model == model) & (failed.content == content)]
+            nodes_here |= set(here.nodes)
         for op, mode, col, label, color, marker, ls in series:
             g = d[(d.op == op) & (d["mode"] == mode)]
             if mode == "async_pinned":
@@ -748,14 +778,17 @@ def checkpoint(t):
             ax.plot(med.index, med.values, color=color, lw=0.9, ls=ls)
             for _, row in g.iterrows():
                 _pt(ax, row.nodes, row[col], color, row.synthetic, marker, ms=3)
+        if len(failed):  # no time to draw: a cross where the operation should be
+            for (n, op), _ in here.groupby(["nodes", "op"]):
+                _failed_x(ax, n, f"{op} failed")
         size = d.bytes.iloc[0] / 1e12
         ax.set_title(f"{WORKLOAD_LABEL[model]}, {content} ({size:.2g} TB)", fontsize=7)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.yaxis.set_major_locator(LogLocator(subs=(1, 2, 5)))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-        ax.set_xticks(sorted(d.nodes.unique()))
-        ax.set_xticklabels([str(int(n)) for n in sorted(d.nodes.unique())])
+        ax.set_xticks(sorted(nodes_here))
+        ax.set_xticklabels([str(int(n)) for n in sorted(nodes_here)])
         ax.minorticks_off()
         ax.set_xlabel("nodes")
         style.finish(ax, trim=False)

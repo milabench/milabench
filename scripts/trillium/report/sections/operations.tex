@@ -31,7 +31,7 @@ At the largest scale, a synchronous save takes \TriCkptQwenSave\,s for Qwen3.8-2
   \caption{Checkpoint time vs.\ number of nodes for Qwen3.8-27B (full state), GLM-5 weights only and GLM-5
     full state: synchronous save, asynchronous save (total and time training is blocked; pinned: its second save, the first also allocates
     the buffers), and load. Last panels: filesystem throughput of saves and loads, and peak GPU memory of loads and of the runs that
-    save, against the 180\,GB of a B200. \syntheticnote{checkpoint}}
+    save, against the 180\,GB of a B200. Red cross: an operation that failed, with no successful run. \TriCkptOverMemoryNote{} \syntheticnote{checkpoint}}
   \label{fig:checkpoint}
 \end{figure}
 

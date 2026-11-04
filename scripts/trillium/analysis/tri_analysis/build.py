@@ -11,6 +11,10 @@ as soon as the same check (D1 metric, D2, D3 or D4) has measured rows. F1 is rep
 operation (model, nodes, content, op, mode): a save and its load can be separate runs. MFU is
 recomputed for every run against the B200 BF16 spec peak (the benchmarks write their own peak, or none).
 
+A failed measured run replaces too: its configuration has no synthetic point left, and the failure is what the
+report shows. ``runs.failed_unresolved`` marks failed runs whose configuration has no successful run; table
+``failed_ops`` lists F1 operations likewise (run data has no event for them: from the entry's name).
+
 Runs another cluster wrote (``run.cluster``) stop the build unless ``other_clusters=True``: the report
 only holds Trillium runs. The directories milabench keeps for install and prepare are not runs.
 """
@@ -26,9 +30,9 @@ from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, SUBNET_OF
-from .runs import canonical_model, drop_warmup, parse_extras
+from .runs import canonical_model, drop_warmup, failed_operation, parse_extras
 
-TABLES = ["runs", "steps", "loss", "checkpoints", "ep_groups", "node_health", "pairs", "collectives",
+TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
           "run_power", "gpu_monitor"]
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
 # ... and the metrics kept from it (stability, stragglers).
@@ -94,6 +98,9 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
             rows["ep_groups"] += ep
             rows["loss"] += [{**r, "synthetic": is_syn} for r in loss]
             rows["checkpoints"] += [{**r, "synthetic": is_syn} for r in ckpt]
+            if row["experiment"] == "F1" and row["status"] != "completed" and not is_syn:
+                if (failed := failed_operation(row, ckpt)) is not None:
+                    rows["failed_ops"].append(failed)
             by_name.setdefault(row["run_name"], []).append(row)  # a job can run several entries in one directory
         for d in sorted((cdir / "nodemon").glob("*")):
             runs = by_name.get(d.name)
@@ -135,15 +142,33 @@ def _drop_synthetic(df: pd.DataFrame, key) -> pd.DataFrame:
 
 def _replace_checkpoints(t: dict[str, pd.DataFrame], runs: pd.DataFrame) -> set:
     """F1: a save and its load can be separate runs, or one run can hold several. A synthetic operation
-    goes as soon as the same operation is measured; a synthetic F1 run goes when it has none left."""
-    ck = t["checkpoints"]
+    goes as soon as the same operation is measured, or failed; a synthetic F1 run goes when it has none left.
+    ``failed_ops`` keeps the failures of operations that never succeeded."""
+    ck, failed = t["checkpoints"], t["failed_ops"]
     if ck.empty:
         return set()
-    merged = ck.merge(runs[["run_id", "model", "nodes"]], on="run_id")
-    kept = _drop_synthetic(merged, CKPT_KEY)
-    t["checkpoints"] = kept[ck.columns]
+    key = runs[["run_id", "model", "nodes"]]
+    merged = ck.merge(key, on="run_id")
+    if not failed.empty:
+        failed = failed.merge(key, on="run_id").assign(synthetic=False)
+        done = {tuple(x) for x in merged[~merged.synthetic.astype(bool)][CKPT_KEY].astype(str).values}
+        failed = failed[[tuple(x) not in done for x in failed[CKPT_KEY].astype(str).values]].reset_index(drop=True)
+    kept = _drop_synthetic(pd.concat([merged, failed.assign(failure=True)], ignore_index=True), CKPT_KEY)
+    if "failure" in kept:
+        kept = kept[kept.failure.isna()]
+    t["checkpoints"] = kept[ck.columns].infer_objects().reset_index(drop=True)
+    t["failed_ops"] = failed
     f1 = runs[(runs.experiment == "F1") & runs.synthetic & runs.run_id.isin(merged.run_id)]
     return set(f1.run_id) - set(kept.run_id)
+
+
+def _failed_unresolved(runs: pd.DataFrame) -> pd.Series:
+    """Measured runs that failed, tagged with an experiment, whose configuration has no measured success."""
+    cols = runs[[c for c in CONFIG_KEY if c in runs.columns]].astype(object)
+    k = cols.where(cols.notna(), "").map(str).agg("|".join, axis=1)
+    measured = ~runs.synthetic.astype(bool)
+    done = set(k[measured & (runs.status == "completed")])
+    return measured & (runs.status != "completed") & runs.experiment.notna() & ~k.isin(done)
 
 
 def _prefer_measured(t: dict[str, pd.DataFrame]) -> None:
@@ -154,6 +179,7 @@ def _prefer_measured(t: dict[str, pd.DataFrame]) -> None:
         kept = _drop_synthetic(others, [c for c in CONFIG_KEY if c in runs.columns or c == "loss_seed"])
         gone = (set(others.run_id) - set(kept.run_id)) | _replace_checkpoints(t, runs)
         kept = runs[~runs.run_id.isin(gone)].reset_index(drop=True)
+        kept["failed_unresolved"] = _failed_unresolved(kept.assign(loss_seed=kept.seed.where(kept.experiment == "C-loss")))
         if gone:
             print(f"[build] {len(gone)} synthetic runs replaced by measured ones")
             for name in RUN_TABLES:

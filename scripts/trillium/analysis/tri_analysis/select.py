@@ -80,7 +80,9 @@ def series_gaps(runs: pd.DataFrame) -> dict[str, list[int]]:
 
 def checkpoints(ck: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     """Checkpoint operations of the completed F1 runs, with the run's model, nodes and peak memory."""
-    f1 = completed(runs, "F1")
+    f1 = runs[runs.experiment == "F1"] if len(runs) else runs  # a failed run's finished operations count too
+    if "full_model" in f1:
+        f1 = f1[f1.full_model.astype(object) != False]  # noqa: E712
     if ck.empty or f1.empty:
         return pd.DataFrame()
     out = ck.merge(f1[["run_id", "model", "nodes", "mem_alloc_gib"]], on="run_id")
@@ -90,6 +92,17 @@ def checkpoints(ck: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     saves = out.op == "save"
     out.loc[saves, "peak_allocated_gib"] = out.peak_allocated_gib[saves].fillna(out.mem_alloc_gib[saves])
     return out
+
+
+def failed_runs(runs: pd.DataFrame, *experiments) -> pd.DataFrame:
+    """Measured runs that failed and whose configuration has no success, under the experiments they serve."""
+    if runs.empty or "failed_unresolved" not in runs:
+        return runs.iloc[0:0]
+    r = runs[runs.failed_unresolved.astype(bool)]
+    if not experiments:
+        return r  # each run once
+    r = with_second_experiments(r)
+    return r[r.experiment.isin(experiments)]
 
 
 def pinned_blocked(saves: pd.DataFrame) -> pd.DataFrame:

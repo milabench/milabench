@@ -27,6 +27,9 @@ Everything under `$SCRATCH/trillium/`, copied read-only to `analysis/data/raw/tr
 | `nodemon/<run_name>/` | node telemetry (Rorqual FORMAT.md section 3), **every run** | benchmate.nodemon |
 | `checkpoints/` | the checkpoints themselves; only `*.json`/`*.jsonl` are ever copied | F1 |
 
+A failed F1 run has no event for what it did not finish: the analysis takes the operation from the entry's name
+(`...-ckpt-<content>-[<sync|async>-save|load]-...`, `tri-ckpt-<full|model>-<sync|async|pinned>`), so keep those names.
+
 The run name is the join key everywhere (`nodemon/<run_name>` = `runs/<run_name>`). `runs/` also holds milabench's
 `install.*` and `prepare.*` directories: not runs, skipped. Runs whose `run.cluster` is not Trillium stop the build.
 

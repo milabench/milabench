@@ -7,12 +7,14 @@ parser (``tt_analysis.runs.parse_run``); this module only reads what it does not
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 import tt_analysis.runs as tt_runs
 from tt_analysis.runs import percentile, read_events
 
+from .machine import GPUS_PER_NODE
 from .style import GLM, QWEN
 
 # Checkpoint events: the TorchTitan pack's older names -> FORMAT.md's, for the test runs that have them.
@@ -42,6 +44,34 @@ def _clean_events(path: Path):
 
 
 tt_runs.read_events = _clean_events  # this process reads Trillium's run data only
+
+
+def expected_operations(entry: str):
+    """(content, [(op, mode), ...]) an F1 entry does, in order, from its name; None if it does not say.
+    Megatron: one operation per run (...-ckpt-full-sync-save-n13, ...-ckpt-weights-load-n13). TorchTitan: a save
+    and its load (tri-ckpt-full-pinned)."""
+    m = re.search(r"(?:^|-)(?:ckpt|ck)(?:-ep\d+)?-(full|weights|model)(?:-ep\d+)?-(sync-save|async-save|load|sync|async|pinned)"
+                  r"(?:-|$)", entry or "")
+    if m is None:
+        return None
+    content = "weights" if m[1] == "model" else m[1]
+    mode = {"pinned": "async_pinned"}.get(m[2], m[2].removesuffix("-save"))
+    if m[2] == "load":
+        return content, [("load", "sync")]
+    return content, [("save", mode)] if m[2].endswith("-save") else [("save", mode), ("load", "sync")]
+
+
+def failed_operation(row: dict, events: list[dict]):
+    """The checkpoint operation a failed F1 run did not finish: the first of its entry's without an event."""
+    expected = expected_operations(row.get("variant")) or expected_operations(row.get("bench"))
+    if expected is None:
+        return None
+    content, ops = expected
+    done = {(e.get("op"), e.get("mode")) for e in events}
+    for op, mode in ops:
+        if (op, mode) not in done:
+            return {"run_id": row["run_id"], "content": content, "op": op, "mode": mode}
+    return None
 
 
 def normalize_checkpoint(c: dict) -> dict:
@@ -110,9 +140,14 @@ def parse_extras(path: Path, run_id: str):
         "first_step_total_s": (st.get("first_step_done") or {}).get("max_s"),
     }
     if not summary and run_start:  # failed run: settings from run_start
+        hosts = (run_start.get("placement") or {}).get("hosts") or []
+        gpus = p.get("gpus") or GPUS_PER_NODE * len(hosts) or None
+        tokens = w.get("tokens_per_gpu_per_step")
         row.update({"model": canonical_model(w.get("model")), "precision": w.get("precision"),
-                    "tokens_per_gpu": w.get("tokens_per_gpu_per_step"),
-                    "ac": w.get("activation_checkpointing"), "gpus": p.get("gpus")})
+                    "tokens_per_gpu": tokens, "ac": w.get("activation_checkpointing"), "gpus": gpus,
+                    "seq_len": w.get("seq_len"), "mb_seqs": w.get("microbatch_sequences"),
+                    "global_batch_tokens": w.get("global_batch_tokens") or (tokens * gpus if tokens and gpus else None),
+                    "full_model": w.get("n_layers") == w.get("n_layers_full")})
     for c in ckpts:  # throughput is derived, never logged
         c["gb_s"] = c["bytes"] / c["total_s"] / 1e9 if c.get("total_s") else None
     if no_step:  # kept (step empty) but unusable for C-loss: the event lacks batch_id / step

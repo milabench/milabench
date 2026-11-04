@@ -147,7 +147,7 @@ and likewise Qwen against 1 node and 2 nodes. A drop from 1 to 2 followed by a f
 | ID | what |
 |---|---|
 | C-speed | Qwen: BF16 / MXFP8; GLM: BF16 / FP8 tensorwise / FP8 blockwise / MXFP8; best layout, at 1 node (Qwen) or 13 nodes (GLM) and at 52 nodes |
-| C-loss | same recipes, 500 steps from the same seed and data (FineWeb, a realistic learning rate) at 13 nodes: loss difference to BF16. **Same-recipe repeats**: one more BF16 with the same seed, one with another seed, so that the FP8 vs BF16 gap can be compared with noise |
+| C-loss | same recipes, 500 steps from the same seed and data (FineWeb, a realistic learning rate) at 13 nodes: loss difference to BF16. **Same-recipe repeats**: one more BF16 with the same seed, one with another seed, so that the FP8 vs BF16 gap can be compared with noise (Qwen: `TT_REPETITION=2 tri-closs-bf16`, `tri-closs-bf16-seed2`; GLM: `-rep2`, `-seed2` entries) |
 
 GLM's loss curve starts with a warm-up: the learning rate starts at 0 (50 warm-up steps), so steps 1 and 2 see the same
 weights, then an early unstable phase. Compare recipes after it, not on the first steps.
@@ -187,8 +187,10 @@ data, figures and scales of the report follow it. What changes at 47 (376 GPUs):
 | D2 | 26 pairs per round, 51 rounds, 1,326 pairs | 23 pairs per round, 47 rounds, 1,081 pairs |
 | D4 | 26 + 26 | 23 + 23 (one node out) |
 | E1 | 4 sets of 13 | 3 sets of 13 |
-| B-Q-strong | 13, 26, 52 nodes | 13, 26 (`tri-bqs-*-n52` does not fit): a top point needs a new entry |
-| `hsdp16` | 26, 52 | needs an even node count: 26 or 46, not 47 |
+| B-Q-strong | 13, 26, 52 nodes | 13, 26 only: **no top point at 47.** The global batch (52 x 8 x 24k tokens, 2,496 sequences) does not divide 376 GPUs (6.64 sequences per GPU), and a batch that does (47 x 8 x 6 = 2,256 sequences) does not divide 104 or 208 GPUs. The largest count holding this batch is 39 nodes (8 sequences per GPU; no entry, and more tokens per GPU than the other points' 24k) |
+| `hsdp16` | 26, 52 | needs a multiple of 16 GPUs: 26 or 46, not 47 (`tt_trillium.sh` refuses it) |
+
+The Qwen entries other than B-Q-strong use every allocated node: `--nodes 47` needs no new entry.
 
 ### Budget *(est.)*
 
@@ -240,4 +242,6 @@ metrics), plus the Trillium additions in `FORMAT.md` here (layout and precision 
 checkpoint events, collective sweeps). Raw data: `$SCRATCH/trillium/` on Trillium, copied read-only to
 `analysis/data/raw/`. Synthetic data stands in for every experiment not run yet and is drawn hollow and
 labelled as such in the figure itself. A measured run replaces the synthetic runs of its configuration; F1 per checkpoint
-operation. Runs written on another cluster stop `analyze.py build`: H100 test runs are not report data.
+operation. A failed measured run replaces too: a configuration whose only measured runs failed has no synthetic point; it gets a red
+cross (`checkpoint`, `glm_layouts`, `glm_scaling`) and is named in the report's draft box and ledger. Runs written on another cluster stop
+`analyze.py build`: H100 test runs are not report data.
