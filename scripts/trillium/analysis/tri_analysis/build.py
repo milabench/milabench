@@ -35,9 +35,11 @@ MONITOR_METRICS = {"sm_clock_mhz", "clocks_event_reasons", "power_w", "util_mean
                    "cpu_mhz_busy_mean"}
 
 
-# Settings that make two runs the same configuration (for replacing synthetic runs by measured ones).
+# Settings that make two runs the same configuration (for replacing synthetic runs by measured ones). The seed
+# counts in C-loss only (loss_seed): its repeats differ by seed. F1 goes per checkpoint operation (CKPT_KEY).
 CONFIG_KEY = ["experiment", "model", "layout", "nodes", "tokens_per_gpu", "global_batch_tokens", "grad_reduce",
-              "ac", "precision", "mb_seqs", "node_set", "condition"]
+              "ac", "precision", "mb_seqs", "node_set", "condition", "loss_seed"]
+CKPT_KEY = ["model", "nodes", "content", "op", "mode"]
 RUN_TABLES = ["steps", "loss", "checkpoints", "ep_groups", "run_power", "gpu_monitor"]
 
 
@@ -130,11 +132,27 @@ def _drop_synthetic(df: pd.DataFrame, key) -> pd.DataFrame:
     return df[~(df.synthetic & k.isin(measured))].reset_index(drop=True)
 
 
+def _replace_checkpoints(t: dict[str, pd.DataFrame], runs: pd.DataFrame) -> set:
+    """F1: a save and its load can be separate runs, or one run can hold several. A synthetic operation
+    goes as soon as the same operation is measured; a synthetic F1 run goes when it has none left."""
+    ck = t["checkpoints"]
+    if ck.empty:
+        return set()
+    merged = ck.merge(runs[["run_id", "model", "nodes"]], on="run_id")
+    kept = _drop_synthetic(merged, CKPT_KEY)
+    t["checkpoints"] = kept[ck.columns]
+    f1 = runs[(runs.experiment == "F1") & runs.synthetic & runs.run_id.isin(merged.run_id)]
+    return set(f1.run_id) - set(kept.run_id)
+
+
 def _prefer_measured(t: dict[str, pd.DataFrame]) -> None:
     runs = t["runs"]
     if not runs.empty:
-        kept = _drop_synthetic(runs, [c for c in CONFIG_KEY if c in runs.columns])
-        gone = set(runs.run_id) - set(kept.run_id)
+        keyed = runs.assign(loss_seed=runs.seed.where(runs.experiment == "C-loss"))
+        others = keyed[keyed.experiment != "F1"]
+        kept = _drop_synthetic(others, [c for c in CONFIG_KEY if c in runs.columns or c == "loss_seed"])
+        gone = (set(others.run_id) - set(kept.run_id)) | _replace_checkpoints(t, runs)
+        kept = runs[~runs.run_id.isin(gone)].reset_index(drop=True)
         if gone:
             print(f"[build] {len(gone)} synthetic runs replaced by measured ones")
             for name in RUN_TABLES:

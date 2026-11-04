@@ -47,7 +47,7 @@ from pathlib import Path
 import numpy as np
 
 from .machine import (CLUSTER, GLM_AG_RUNS, GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_SMALL_SEQS, GLM_STRONG_SEQS,
-                      GLM_TOP_COPIES, GLM_TOP_NODES, GPUS_PER_NODE, MATMUL_BF16, MATMUL_FP8, NODE_NET_GBS, NODES,
+                      GLM_TOP_COPIES, GLM_TOP_NODES, GPUS_PER_NODE, CKPT_FULL_B_PER_PARAM, CKPT_WEIGHTS_B_PER_PARAM, MATMUL_BF16, MATMUL_FP8, NODE_NET_GBS, NODES,
                       PEAK_BF16, SUBNET_OF)
 
 N = len(NODES)
@@ -183,7 +183,11 @@ def _uuid(host: str, gpu: int) -> str:
     return f"GPU-{h:08x}-0000-0000-0000-{h:012x}"
 
 
-def loss_at(step: int, offset=0.0) -> float:
+def loss_at(step: int, offset=0.0, lr_warmup=0) -> float:
+    """With a warm-up (GLM: lr from 0): steps 1 and 2 see the same weights, then the lr ramps up."""
+    if lr_warmup:
+        x = max(step - 2, 0)
+        step = x * x / (2 * lr_warmup) if x < lr_warmup else x - lr_warmup / 2
     return 2.3 + 8.6 * math.exp(-step / 45) + 0.7 * math.exp(-step / 400) + offset
 
 
@@ -191,7 +195,7 @@ def write_run(root, name, bench, w, par, hosts, step_s, rng, *, experiment, vari
               t_start, tokens_gpu, grad_accum=1, global_tokens=None, grad="fp32", ac="full",
               precision="bf16", warmup=30, n_steps=None, budget=300.0, rc=0, mem=60.0,
               loss_offset=0.0, loss_seed=None, run_extra=None, ep_a2a=None, checkpoints=(),
-              power_busy=0.8, nodemon=True, nodemon_extra=None, microbatch=None, seed=1234, first_loss_step=1):
+              power_busy=0.8, nodemon=True, nodemon_extra=None, microbatch=None, seed=1234, first_loss_step=1, lr_warmup=0):
     """One milabench run directory: run_start, rate and loss events, checkpoint events, summary,
     end. Returns the end time."""
     gpus = par["gpus"]
@@ -226,12 +230,15 @@ def write_run(root, name, bench, w, par, hosts, step_s, rng, *, experiment, vari
             t += step_s
         else:
             t += s
-        loss = loss_at(i + first_loss_step, loss_offset) + lrng.normal(0, 0.03) + rng.normal(0, 0.004)
+        step = i + first_loss_step
+        loss = loss_at(step, loss_offset, lr_warmup) + lrng.normal(0, 0.03) + rng.normal(0, 0.004)
+        if lr_warmup:  # the early unstable phase, different in every run
+            loss += rng.normal(0, 0.15 * math.exp(-step / 15))
         if i >= warmup or big:  # Megatron's rate events start at the warm-up, numbered from 0; TorchTitan's after it
             events.append({"event": "data", "data": {"rate": global_tokens / s, "units": "tokens/s", "task": "train",
                                                      "time": t, "elapsed": s, "batch_id": i if big else i + 1}})
         # Loss: its own event from step 1, measured or not; TorchTitan numbers it batch_id, Megatron step.
-        events.append({"event": "data", "data": {"loss": loss, "step" if big else "batch_id": i + first_loss_step,
+        events.append({"event": "data", "data": {"loss": loss, "step" if big else "batch_id": step,
                                                  "task": "train", "time": t}})
     for c in checkpoints:
         t += c["blocked_s"]
@@ -438,22 +445,27 @@ def write_collectives(root, job, rng, t):
     (out / "collectives.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
 
-def _checkpoint(op, mode, content, nbytes, nodes, rng, files, fmt, rep):
+def _checkpoint(op, mode, content, nbytes, nodes, rng, files, fmt, rep, **extra):
     """F1 toy model: VAST over NFS (the nodes are diskless) at <= 5 GB/s write per node, 100 GB/s
     in total; reads <= 8 GB/s per node, 150 GB/s; async blocks while the state is staged to host
-    memory (20 GB/s per node, 40 pinned). x1.0-1.3: time of day (other users' load)."""
+    memory (20 GB/s per node, 40 pinned; the first pinned save also allocates the buffers, 10 GB/s).
+    x1.0-1.3: time of day (other users' load)."""
     tod = rng.uniform(1.0, 1.3)
     if op == "save":
         total = (nbytes / 1e9 / min(5 * nodes, 100) + 5) * tod
         staging = {"sync": None, "async": 20, "async_pinned": 40}[mode]
         blocked = total if staging is None else nbytes / 1e9 / (staging * nodes) + 1
         total = total * (1.08 if staging else 1.0)
+        if mode == "async_pinned":
+            extra["pinned_buffers_allocated"] = rep == 1
+            blocked += nbytes / 1e9 / (10 * nodes) if rep == 1 else 0
     else:
         total = (nbytes / 1e9 / min(8 * nodes, 150) + 10) * tod
         blocked = total
+        extra["cache_drop"] = "posix_fadvise_dontneed"
     return {"op": op, "step": 40, "repetition": rep, "mode": mode, "content": content, "format": fmt,
             "bytes": nbytes, "files": files, "blocked_s": round(blocked, 2), "total_s": round(total, 2),
-            "path": "/scratch/<user>/trillium/checkpoints/<run>", "filesystem": "vast-nfs"}
+            "path": "/scratch/<user>/trillium/checkpoints/<run>", "filesystem": "vast-nfs", **extra}
 
 
 # -- experiments ---------------------------------------------------------------
@@ -557,9 +569,14 @@ def generate(out: Path) -> None:
                 t = qwen(f"syn-cs-qwen-{prec}-n{nodes}-r{rep}", "fsdp" if nodes == 1 else best[0], nodes, 24576,
                          experiment="C-speed", rep=rep, t=t, precision=prec) + 30
     loss_offset = {"bf16": 0.0, "fp8-tensorwise": 0.012, "fp8-blockwise": 0.004, "mxfp8": 0.008}
+    # Same-recipe repeats, for the noise band of precision_loss: BF16 again with the same seed, and with another seed.
+    repeats = [("r2", 2, 1234, 0), ("seed2", 1, 4321, 1)]
     for prec in QWEN_RECIPES:
         t = qwen(f"syn-cl-qwen-{prec}", best[0], 13, 24576, experiment="C-loss", rep=1, t=t, precision=prec,
                  warmup=0, n_steps=500, loss_offset=loss_offset[prec], loss_seed=7, nodemon=False) + 30
+    for tag, rep, seed, other in repeats:
+        t = qwen(f"syn-cl-qwen-bf16-{tag}", best[0], 13, 24576, experiment="C-loss", rep=rep, t=t, seed=seed, warmup=0,
+                 n_steps=500, loss_offset=0.003 * other, loss_seed=7 + other * 100, nodemon=False) + 30
 
     # GLM-5: 20 iterations, the first one is warm-up (main.py WARMUP_STEPS); global batches of machine.py.
     def glm(name, layout, nodes, batch, *, experiment, rep, t, ac="full", precision="bf16", **kw):
@@ -599,35 +616,65 @@ def generate(out: Path) -> None:
                     precision=prec) + 60
     for prec in GLM_RECIPES:
         t = glm(f"syn-cl-glm-{prec}", "pp13-ep8", 13, GLM_SEQS_PER_COPY, experiment="C-loss", rep=1, t=t, precision=prec,
-                warmup=1, n_steps=499, loss_offset=loss_offset[prec], loss_seed=8, nodemon=False) + 60
+                warmup=1, n_steps=499, loss_offset=loss_offset[prec], loss_seed=8, lr_warmup=50, nodemon=False) + 60
+    for tag, rep, seed, other in repeats:
+        t = glm(f"syn-cl-glm-bf16-{tag}", "pp13-ep8", 13, GLM_SEQS_PER_COPY, experiment="C-loss", rep=rep, t=t, seed=seed,
+                warmup=1, n_steps=499, loss_offset=0.003 * other, loss_seed=8 + other * 100, lr_warmup=50,
+                nodemon=False) + 60
 
-    # F1: checkpoint save + load, sync vs async, 3 repetitions at different times of day.
-    cases = [("qwen", "full", 0.38e12, n, 832 * n) for n in (1, 13, N)]
-    cases += [("glm", content, size, n, 4000) for content, size in (("weights", 1.5e12), ("full", 10.4e12))
-              for n in (13, GLM_TOP_NODES)]
-    for case, (model, content, size, nodes, files) in enumerate(cases):
-        modes = ("sync", "async", "async_pinned") if model == "qwen" else ("sync", "async")
-        for mode in modes:
+    # F1: 12.0 B/param full, 2.0 B/param weights (machine.py), 3 repetitions at different times of day.
+    # Qwen: one run per entry, each saves and loads twice (tri-ckpt-*, always fsdp).
+    case = 0
+    for nodes in (1, 13, N):
+        step, _, _ = qwen_step("fsdp", nodes, 12288)
+        for content, mode in (("full", "sync"), ("full", "async"), ("full", "async_pinned"), ("weights", "sync")):
+            size = QWEN["params_total"] * (CKPT_FULL_B_PER_PARAM if content == "full" else CKPT_WEIGHTS_B_PER_PARAM)
             for rep in (1, 2, 3):
-                fmt = "torch.dcp" if model == "qwen" else "torch_dist"
-                ck = [_checkpoint("save", mode, content, size, nodes, rng, files, fmt, rep),
-                      _checkpoint("load", "sync", content, size, nodes, rng, files, fmt, rep)]
-                ts = T0 + 30 * 3600 + rep * 8 * 3600 + case * 900 + modes.index(mode) * 300
-                if model == "qwen":
-                    layout = "fsdp" if nodes == 1 else best[0]
-                    step, compute, mem = qwen_step(layout, nodes, 24576)
-                    write_run(root, f"syn-f1-qwen-{content}-{mode}-n{nodes}-r{rep}", "tt-qwen", QWEN,
-                              qwen_parallelism(layout, nodes), NODES[:nodes], step, rng, experiment="F1",
-                              variant=f"ckpt-{content}-{mode}", repetition=rep, t_start=ts, tokens_gpu=24576,
-                              n_steps=10, checkpoints=ck, nodemon=False)
-                else:
-                    step, _, a2a = glm_step("pp13-ep8", nodes, weak_batch[nodes])
-                    par = glm_parallelism("pp13-ep8", nodes, weak_batch[nodes])
-                    write_run(root, f"syn-f1-glm-{content}-{mode}-n{nodes}-r{rep}", "glm5", GLM, par,
-                              NODES[:nodes], step, rng, experiment="F1", variant=f"ckpt-{content}-{mode}",
-                              repetition=rep, t_start=ts, tokens_gpu=weak_batch[nodes] * 8192 // par["gpus"],
-                              global_tokens=weak_batch[nodes] * 8192, warmup=1, n_steps=5, checkpoints=ck,
-                              nodemon=False, microbatch=1)
+                ck = []
+                for r in (1, 2):
+                    ck += [_checkpoint("save", mode, content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r),
+                           _checkpoint("load", "sync", content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r,
+                                       restored=True)]
+                write_run(root, f"syn-f1-qwen-{content}-{mode}-n{nodes}-r{rep}", "tt-qwen", QWEN,
+                          qwen_parallelism("fsdp", nodes), NODES[:nodes], step, rng, experiment="F1",
+                          variant=f"tri-ckpt-{'full' if content == 'full' else 'model'}-{mode.replace('async_', '')}",
+                          repetition=rep, t_start=T0 + 30 * 3600 + rep * 8 * 3600 + case * 300, tokens_gpu=12288,
+                          warmup=10, n_steps=10, checkpoints=ck, nodemon=False)
+                case += 1
+
+    # GLM-5: separate runs, as glm/40_f1.sh: save (sync), load, save (async), load, the checkpoint deleted after each
+    # load. Memory: a full save and a load hold more than training (toy: x1.5 and x1.54, from the Fir ratios).
+    def glm_f1(content, nodes, layout, batch, reps, train_mem):
+        nonlocal case
+        size = GLM["params_total"] * (CKPT_FULL_B_PER_PARAM if content == "full" else CKPT_WEIGHTS_B_PER_PARAM)
+        step, _, _ = glm_step(layout, nodes, batch)
+        par = glm_parallelism(layout, nodes, batch)
+        common = dict(experiment="F1", tokens_gpu=batch * GLM["seq_len"] // par["gpus"], microbatch=1, grad="bf16",
+                      global_tokens=batch * GLM["seq_len"], nodemon=False, warmup=1)
+        where = f"{layout}-n{nodes}" if layout != "pp13-ep8" else f"n{nodes}"
+        for rep in reps:
+            for mode in ("sync", "async"):
+                save_name = f"syn-f1-glm-{content}-{mode}-save-{where}-r{rep}"
+                ts = T0 + 30 * 3600 + rep * 8 * 3600 + case * 300
+                case += 1
+                fields = dict(step=10, params_total=GLM["params_total"])
+                save = _checkpoint("save", mode, content, size, nodes, rng, par["gpus"] + 4, "torch_dist", rep, **fields)
+                write_run(root, save_name, "glm5", GLM, par, NODES[:nodes], step, rng, repetition=rep, t_start=ts,
+                          variant=f"megatron-glm5-tri-ckpt-{content}-{mode}-save-{where}", checkpoints=[save],
+                          n_steps=19, mem=train_mem * (1.5 if content == "full" else 1.0), **common)
+                peak = round(train_mem * (1.54 if content == "full" else 1.0), 1)
+                load = _checkpoint("load", "sync", content, size, nodes, rng, par["gpus"] + 4, "torch_dist", rep,
+                                   peak_allocated_gib=peak, checksum_match=True, **fields,
+                                   saved_by={"mode": mode, "run": save_name})
+                write_run(root, f"syn-f1-glm-{content}-load-{mode}-{where}-r{rep}", "glm5", GLM, par, NODES[:nodes], step,
+                          rng, repetition=rep, t_start=ts + 900, variant=f"megatron-glm5-tri-ckpt-{content}-load-{where}",
+                          checkpoints=[load], n_steps=4, first_loss_step=11, mem=peak, **common)
+
+    for content in ("weights", "full"):
+        for nodes in (13, GLM_TOP_NODES):
+            glm_f1(content, nodes, "pp13-ep8", weak_batch[nodes], (1, 2, 3), 125)
+    # Fallback if a full checkpoint does not fit at 13 nodes: half the state per GPU.
+    glm_f1("full", 26, "pp13-ep16", 512, (1,), 70)
 
     # F2: long run, best Qwen layout on every node, 70 min; one GPU throttles for 8 minutes and
     # one node's CPU clock drops for 10 (the step slows by ~6 % meanwhile).

@@ -14,11 +14,11 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
+from .machine import GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
-from .select import completed, drift, qwen_base, with_energy
+from .select import checkpoints, completed, drift, pinned_blocked, qwen_base, with_energy
 
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
 GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
@@ -645,33 +645,69 @@ def precision_speed(t):
     return fig
 
 
+GLM_LR_WARMUP = 50  # --lr-warmup-iters of the C-loss entries (benchmarks/megatron/dev.yaml)
+
+
 def precision_loss(t):
-    """Loss difference to BF16 over 500 steps from the same seed and data, 13 nodes (C-loss)."""
+    """Loss difference to one BF16 run over 500 steps from the same seed and data, 13 nodes (C-loss); the
+    band is the same difference for the BF16 repeats (same seed, other seed), the noise to compare with.
+    Joined on the loss events' own step, across runs; never with the rate events' batch_id."""
     r = _runs(t, "C-loss")
     loss = t["loss"]
     if r.empty or loss.empty:
         return None
-    d = loss.merge(r[["run_id", "model", "precision"]], on="run_id")
+    d = loss.dropna(subset=["step"]).merge(r[["run_id", "model", "precision", "seed", "repetition", "started"]],
+                                           on="run_id")
     models = [m for m in (QWEN, GLM) if m in set(d.model)]
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH, 2.0), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH, 2.3), sharey=True, squeeze=False)
+    limit = 0.0
     for ax, model in zip(axes[0], models):
-        g = d[d.model == model].pivot_table(index="step", columns="precision", values="loss")
-        if "bf16" not in g:
+        g = d[d.model == model]
+        runs = r[r.model == model]
+        base = runs[runs.precision == "bf16"]
+        if base.empty:
             continue
+        seed = runs[runs.precision != "bf16"].seed.mode()  # the recipes' seed: BF16's reference has the same
+        ref_run = base[base.seed == seed.iloc[0]] if len(seed) and (base.seed == seed.iloc[0]).any() else base
+        ref_run = ref_run.sort_values(["repetition", "started"]).iloc[0]
+        curve = lambda run_id: g[g.run_id == run_id].groupby("step").loss.mean()  # noqa: E731
+        ref = curve(ref_run.run_id)
+
+        def difference(run_id):
+            diff = (curve(run_id) - ref).dropna()
+            return diff, diff.rolling(25, center=True, min_periods=5).mean()
+
+        repeats = [difference(x.run_id) + (x.seed == ref_run.seed,) for x in base.itertuples()
+                   if x.run_id != ref_run.run_id]
+        smoothed = [s for _, s, _ in repeats]
+        if repeats:  # noise: everything the BF16 repeats reach, around 0
+            band = pd.concat([s for _, s, _ in repeats], axis=1)
+            ax.fill_between(band.index, band.min(axis=1).clip(upper=0), band.max(axis=1).clip(lower=0), color=LIGHT,
+                            alpha=0.6, lw=0, zorder=0,
+                            label="BF16 repeats: " + ", ".join(f"{'same' if same else 'other'} seed {diff.iloc[-100:].mean():+.3f}"
+                                                               for diff, _, same in repeats))
         ax.axhline(0, color=INK2, lw=0.6)
-        for rec in [p for p in RECIPE_COLOR if p in g]:
-            diff = g[rec] - g["bf16"]
+        for rec in [p for p in RECIPE_COLOR if p in set(runs.precision)]:
+            run = runs[runs.precision == rec].sort_values(["repetition", "started"]).iloc[0]
+            diff, smooth = difference(run.run_id)
+            smoothed.append(smooth)
             ax.plot(diff.index, diff, color=RECIPE_COLOR[rec], lw=0.3, alpha=0.15)
-            smooth = diff.rolling(25, center=True, min_periods=5).mean()
-            syn = d[(d.model == model) & (d.precision == rec)].synthetic.any()
-            ax.plot(smooth.index, smooth, color=RECIPE_COLOR[rec], lw=1.2, ls=(0, (4, 2)) if syn else "-",
+            ax.plot(smooth.index, smooth, color=RECIPE_COLOR[rec], lw=1.2, ls=(0, (4, 2)) if run.synthetic else "-",
                     label=f"{rec}: {diff.iloc[-100:].mean():+.3f}")
-        ax.legend(loc="upper right", fontsize=6)
-        ax.set_xlim(0, g.index.max())
+        if model == GLM:  # the lr starts at 0: steps 1-2 see the same weights, then an early unstable phase
+            ax.axvline(GLM_LR_WARMUP, color=MUTED, lw=0.6, ls=(0, (1, 2)))
+            ax.annotate("lr warm-up ends", (GLM_LR_WARMUP, 0), xycoords=("data", "axes fraction"), xytext=(2, 2),
+                        textcoords="offset points", fontsize=6, color=INK2, va="bottom")
+        ax.legend(loc="upper right", fontsize=5.5)
+        ax.set_xlim(0, ref.index.max())
+        settled = [abs(s[s.index > 2 * GLM_LR_WARMUP]).max() for s in smoothed]
+        spread = max([x for x in settled if pd.notna(x)] + [0.01])
+        limit = max(limit, 2.5 * spread)
         ax.set_title(WORKLOAD_LABEL[model])
         ax.set_xlabel("step (legend: mean of the last 100 steps)")
         style.finish(ax, trim=False)
-    axes[0][0].set_ylabel("loss − BF16 loss\n(25-step mean; thin: per step)")
+    axes[0][0].set_ylim(-limit, limit)  # the settled part; the early unstable phase runs off the axis
+    axes[0][0].set_ylabel("loss − BF16 loss\n(25-step mean; thin: per step;\nband: BF16 repeats)")
     style.synthetic_mark(fig, d.synthetic.any(), "includes synthetic data (dashed)")
     fig.tight_layout()
     return fig
@@ -681,23 +717,31 @@ def precision_loss(t):
 
 def checkpoint(t):
     """Checkpoint save and load: total time and time training is blocked vs nodes, sync vs async,
-    per workload and content; filesystem throughput (F1)."""
-    c = t["checkpoints"]
+    per workload and content; filesystem throughput; peak GPU memory of loads and saves (F1)."""
+    c = checkpoints(t["checkpoints"], t["runs"])
     if c.empty:
         return None
-    c = c.merge(t["runs"][["run_id", "model", "nodes"]], on="run_id")
     cases = sorted(set(zip(c.model, c.content)), key=lambda mk: (mk[0] != QWEN, mk[0], mk[1] != "weights"))
-    case_color = {mk: SERIES[4 + i % 3] for i, mk in enumerate(cases)}
+    case_color = {mk: SERIES[4 + i % 4] for i, mk in enumerate(cases)}
     series = [("save", "sync", "total_s", "save, sync", SERIES[0], "o", "-"),
               ("save", "async", "total_s", "save, async: total", SERIES[1], "s", "-"),
               ("save", "async", "blocked_s", "save, async: blocked", SERIES[1], "s", (0, (3, 2))),
               ("save", "async_pinned", "blocked_s", "save, async pinned: blocked", SERIES[2], "^", (0, (3, 2))),
               ("load", "sync", "total_s", "load", SERIES[3], "D", "-")]
-    fig, axes = plt.subplots(1, len(cases) + 1, figsize=(TEXT_WIDTH, 2.6))
+    has_mem = c.peak_allocated_gib.notna().any() or (c.op == "save") & c.mem_alloc_gib.notna().any()
+    n_panels = len(cases) + 1 + bool(has_mem)
+    n_rows = 1 + (n_panels > 3)
+    n_cols = (n_panels + n_rows - 1) // n_rows
+    fig, grid = plt.subplots(n_rows, n_cols, figsize=(TEXT_WIDTH, 2.4 * n_rows + 0.4), squeeze=False)
+    axes = list(grid.ravel())
+    for ax in axes[n_panels:]:
+        ax.set_visible(False)
     for ax, (model, content) in zip(axes, cases):
         d = c[(c.model == model) & (c.content == content)]
         for op, mode, col, label, color, marker, ls in series:
             g = d[(d.op == op) & (d["mode"] == mode)]
+            if mode == "async_pinned":
+                g = pinned_blocked(g)  # the first save also allocates the buffers: an upper bound
             if g.empty:
                 continue
             med = g.groupby("nodes")[col].median()
@@ -715,8 +759,10 @@ def checkpoint(t):
         ax.minorticks_off()
         ax.set_xlabel("nodes")
         style.finish(ax, trim=False)
-    axes[0].set_ylabel("time (s)")
-    ax = axes[-1]
+    for ax in grid[:, 0]:
+        if ax.get_visible():
+            ax.set_ylabel("time (s)")
+    ax = axes[len(cases)]
     for (model, content), color in case_color.items():
         for op, marker, ls in (("save", "o", "-"), ("load", "D", (0, (3, 2)))):
             g = c[(c.model == model) & (c.content == content) & (c.op == op) & (c["mode"] == "sync")]
@@ -735,6 +781,27 @@ def checkpoint(t):
     ax.set_xlabel("nodes")
     ax.set_ylabel("GB/s")
     style.finish(ax, trim=False)
+    if has_mem:
+        ax = axes[len(cases) + 1]
+        ax.axhline(GPU_MEMORY_GIB, color=CRITICAL, lw=0.7, ls=(0, (1, 2)))
+        ax.annotate("180 GB", (0, GPU_MEMORY_GIB), xycoords=("axes fraction", "data"), xytext=(2, 2),
+                    textcoords="offset points", fontsize=6, color=CRITICAL)
+        for (model, content), color in case_color.items():
+            d = c[(c.model == model) & (c.content == content)]
+            for col, op, marker in (("peak_allocated_gib", "load", "D"), ("mem_alloc_gib", "save", "o")):
+                g = d[d.op == op].dropna(subset=[col])
+                for _, row in g.iterrows():
+                    _pt(ax, row.nodes, row[col], color, row.synthetic, marker, ms=3)
+        ax.set_xscale("log")
+        ticks = sorted(c.dropna(subset=["peak_allocated_gib"]).nodes.unique())
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([str(int(n)) for n in ticks])
+        ax.minorticks_off()
+        ax.set_ylim(0, None)
+        ax.set_title("peak GPU memory: load (diamond), save run (circle)", fontsize=7)
+        ax.set_xlabel("nodes")
+        ax.set_ylabel("GiB per GPU (max over ranks)")
+        style.finish(ax, trim=False)
     syn = c.synthetic.any()
     handles = [_handle(color, label, syn, marker, ls, ms=3)
                for op, mode, col, label, color, marker, ls in series if len(c[(c.op == op) & (c["mode"] == mode)])]
@@ -742,7 +809,7 @@ def checkpoint(t):
                 for (m, k), color in case_color.items()]
     fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=6, bbox_to_anchor=(0.5, 0.0))
     style.synthetic_mark(fig, c.synthetic.any())
-    fig.tight_layout(rect=(0, 0.16, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.11 if n_rows > 1 else 0.16, 1, 0.97))
     return fig
 
 

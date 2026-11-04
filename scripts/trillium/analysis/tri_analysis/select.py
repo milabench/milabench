@@ -78,6 +78,25 @@ def series_gaps(runs: pd.DataFrame) -> dict[str, list[int]]:
     return gaps
 
 
+def checkpoints(ck: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
+    """Checkpoint operations of the completed F1 runs, with the run's model, nodes and peak memory."""
+    f1 = completed(runs, "F1")
+    if ck.empty or f1.empty:
+        return pd.DataFrame()
+    out = ck.merge(f1[["run_id", "model", "nodes", "mem_alloc_gib"]], on="run_id")
+    return out if "peak_allocated_gib" in out else out.assign(peak_allocated_gib=np.nan)
+
+
+def pinned_blocked(saves: pd.DataFrame) -> pd.DataFrame:
+    """Pinned async saves, for ``blocked_s``: in a run with a repetition 2, only that one on. Its first
+    save also allocates the pinned buffers (``pinned_buffers_allocated``), an upper bound; it stays only
+    when the run has nothing else (FORMAT.md)."""
+    if saves.empty or "repetition" not in saves:
+        return saves
+    later = saves.groupby("run_id").repetition.transform("max") >= 2
+    return saves[~later | (saves.repetition >= 2)]
+
+
 def qwen_base(runs: pd.DataFrame) -> pd.DataFrame:
     """A-Q runs of the layout x tokens cross: FP32 reduction, selective recompute, BF16."""
     r = completed(runs, "A-Q")

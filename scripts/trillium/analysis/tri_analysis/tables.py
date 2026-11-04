@@ -14,7 +14,7 @@ from tt_analysis.tables import ledger
 
 from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, N_NODES
 from .select import completed as _completed
-from .select import QWEN_BASE, drift, qwen_base, with_energy
+from .select import QWEN_BASE, checkpoints, drift, qwen_base, with_energy
 from .style import GLM, QWEN
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
@@ -24,7 +24,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriQwenFsdpCommPct", "TriQwenWeakEff", "TriQwenWeakEffFromTwo", "TriGlmBestLayout", "TriGlmBestTokS", "TriGlmBestMFU",
           "TriGlmCopiesEff", "TriGlmCopiesEffTwo", "TriGlmCopiesEffFromTwo", "TriQwenFpBestRecipe", "TriQwenFpSpeedupSmall", "TriQwenFpSpeedupFull",
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
-          "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
+          "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
           "TriEnergyBest"]
 SYN_DEF = r"\providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}"
 
@@ -132,9 +132,12 @@ def key_numbers(t) -> dict[str, tuple]:
         out[f"{prefix}FpBestRecipe"] = (recipe, "", d.synthetic.any())
         out[f"{prefix}FpSpeedupSmall"] = (speed[recipe].iloc[0], ".2f", d.synthetic.any())
         out[f"{prefix}FpSpeedupFull"] = (speed[recipe].iloc[-1], ".2f", d.synthetic.any())
-    ck = t["checkpoints"]
+    ck = checkpoints(t["checkpoints"], runs)
     if not ck.empty:
-        ck = ck.merge(runs[["run_id", "model", "nodes"]], on="run_id")
+        p = ck[(ck.model == GLM) & (ck.content == "full") & (ck.op == "load")].dropna(subset=["peak_allocated_gib"])
+        if len(p):
+            p = p[p.nodes == p.nodes.min()]
+            out["TriCkptGlmLoadPeak"] = (p.peak_allocated_gib.median(), ".0f", p.synthetic.any())
         for model, content, col, mode, name in (
                 (QWEN, "full", "total_s", "sync", "TriCkptQwenSave"),
                 (GLM, "full", "total_s", "sync", "TriCkptGlmFullSave"),
