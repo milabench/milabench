@@ -57,20 +57,34 @@ if [ "${PREPARE:-1}" = 1 ]; then
         || echo "[$RUN_PREFIX] prepare failed, see above" >&2
 fi
 
-# F1: one checkpoint directory for the job, deleted at the end whatever happens
+# F1: one checkpoint directory for the job, deleted at the end whatever happens. A job that saves refuses to start beside
+# anything already in CKPT_ROOT (a stale or concurrent checkpoint would double 10 TB on VAST)
 export TT_CKPT_DIR=${CKPT_ROOT:?}/$RUN_PREFIX.$SLURM_JOB_ID
-ckpt_rm() {  # ckpt_rm RUN: delete the checkpoint, timed, one JSON line per deletion
+case " ${ENTRIES} " in
+    *-save*)
+        if [ -n "$(ls -A "$CKPT_ROOT" 2>/dev/null)" ]; then
+            echo "[$RUN_PREFIX] REFUSED: $CKPT_ROOT is not empty, delete what is there or wait for its job:" >&2
+            ls -la "$CKPT_ROOT" >&2
+            exit 3
+        fi ;;
+esac
+ckpt_rm() {  # ckpt_rm RUN: delete the checkpoint, timed, one JSON line per deletion; fails if it is still there
     [ -d "$TT_CKPT_DIR" ] || return 0
-    local bytes start end
+    local bytes start end ok=true
     bytes=$(du -sb "$TT_CKPT_DIR" 2>/dev/null | cut -f1)
     start=$(date +%s.%N)
-    rm -rf "$TT_CKPT_DIR"
+    rm -rf "$TT_CKPT_DIR" || ok=false
     end=$(date +%s.%N)
-    printf '{"run": "%s", "path": "%s", "bytes": %s, "rm_s": %s, "start_epoch": %s, "end_epoch": %s}\n' \
-        "$1" "$TT_CKPT_DIR" "${bytes:-null}" "$(python3 -c "print(round($end - $start, 3))")" "$start" "$end" \
+    [ -e "$TT_CKPT_DIR" ] && ok=false
+    printf '{"run": "%s", "path": "%s", "bytes": %s, "rm_s": %s, "start_epoch": %s, "end_epoch": %s, "ok": %s}\n' \
+        "$1" "$TT_CKPT_DIR" "${bytes:-null}" "$(python3 -c "print(round($end - $start, 3))")" "$start" "$end" "$ok" \
         | tee -a "$MILABENCH_BASE/slurm/ckpt-rm.$SLURM_JOB_ID.jsonl" | sed "s/^/[$RUN_PREFIX] checkpoint deleted: /"
+    if [ "$ok" != true ]; then
+        echo "[$RUN_PREFIX] ERROR: could not delete $TT_CKPT_DIR" >&2
+        return 1
+    fi
 }
-trap 'ckpt_rm end-of-job' EXIT
+trap 'ckpt_rm end-of-job || true' EXIT
 
 peak() {
     grep -rhoE "\"$1\": ?[0-9.]+" "$2" 2>/dev/null | grep -oE '[0-9.]+$' | sort -g | tail -1
@@ -91,7 +105,15 @@ for item in "${entries[@]}"; do
     export MILABENCH_RUN_NAME=$run
     export BENCHMATE_NODEMON_DIR=${NODEMON_ROOT:?}/$run
     mkdir -p "$BENCHMATE_NODEMON_DIR" || echo "[$RUN_PREFIX] WARNING: could not create $BENCHMATE_NODEMON_DIR" >&2
-    case $entry in *-save*) ckpt_rm "before $entry"; mkdir -p "$TT_CKPT_DIR" ;; esac
+    case $entry in
+        *-save*)
+            if ! ckpt_rm "before $entry"; then  # never a second checkpoint beside one that could not be deleted
+                status_all=1
+                summary+=("$entry: NOT RUN, the previous checkpoint is still there")
+                continue
+            fi
+            mkdir -p "$TT_CKPT_DIR" ;;
+    esac
     echo "[$RUN_PREFIX] === $entry   (run $run)  nodemon=$BENCHMATE_NODEMON_DIR"
     start=$(date +%s)
     export TT_VARIANT=${VARIANT:-$entry}
@@ -103,7 +125,7 @@ for item in "${entries[@]}"; do
     line+="  peak allocated $(peak peak_memory_allocated "$rundir") / reserved $(peak peak_memory_reserved "$rundir") GiB"
     echo "[$RUN_PREFIX] $line"
     summary+=("$line")
-    case $entry in *-load*) ckpt_rm "$run" ;; esac
+    case $entry in *-load*) ckpt_rm "$run" || status_all=1 ;; esac
 done
 
 echo "[$RUN_PREFIX] ===== summary (runs in $MILABENCH_BASE/runs/$RUN_PREFIX.$SLURM_JOB_ID.*)"

@@ -87,6 +87,16 @@ preflight() {
     fi
 }
 
+# refuse a checkpoint job while CKPT_ROOT holds something (job.sbatch checks again when it starts)
+ckpt_root_empty() {
+    [ -n "${DRY_RUN:-}" ] && return 0
+    if [ -n "$(ls -A "$CKPT_ROOT" 2>/dev/null)" ]; then
+        echo "$CKPT_ROOT is not empty: delete what is there or wait for its job" >&2
+        ls -la "$CKPT_ROOT" >&2
+        exit 3
+    fi
+}
+
 # job id from submit's output ("submitted job N")
 job_id() {
     printf '%s\n' "$1" | sed -n 's/^submitted job \([0-9]*\).*/\1/p' | tail -1
@@ -102,13 +112,16 @@ submit() {
     [ $# -gt 0 ] && shift
     [ ${#entries[@]} -gt 0 ] || { echo "submit: no entry" >&2; exit 2; }
 
-    local args=(--job-name="$name" --account="$ACCOUNT" --nodes="$nodes" --ntasks-per-node=1 --exclusive
+    # JOB_NAME + SINGLETON=1: at most one job of that name runs at a time (F1: one checkpoint on disk)
+    local dep=${AFTER:+afterany:$AFTER}
+    [ -n "${SINGLETON:-}" ] && dep=${dep:+$dep,}singleton
+    local args=(--job-name="${JOB_NAME:-$name}" --account="$ACCOUNT" --nodes="$nodes" --ntasks-per-node=1 --exclusive
                 --gpus-per-node="$GPUS" --time="$time" --output="$MILABENCH_BASE/slurm/$name-%j.out" --export=ALL)
     [ -n "$PARTITION" ]        && args+=(--partition="$PARTITION")
     [ -n "$RESERVATION" ]      && args+=(--reservation="$RESERVATION")
     [ -n "${EXCLUDE:-}" ]      && args+=(--exclude="$EXCLUDE")
     [ -n "${NODELIST:-}" ]     && args+=(--nodelist="$NODELIST")
-    [ -n "${AFTER:-}" ]        && args+=(--dependency="afterany:$AFTER")
+    [ -n "$dep" ]              && args+=(--dependency="$dep")
     [ -n "${TEST_ONLY:-}" ]    && args+=(--test-only)
 
     export ENTRIES="${entries[*]}" RUN_PREFIX=$name PREPARE=${PREPARE:-1}
