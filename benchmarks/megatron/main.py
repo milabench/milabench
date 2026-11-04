@@ -1358,16 +1358,28 @@ def main():
             monitor.stop()
 
 
+KILL_PATTERN = "megatron/main.py|multiprocessing.spawn|multiprocessing.resource_tracker"
+
+
 def kill_everywhere():
     """An exception on one rank leaves the others blocked in a receive until the job's time limit (seen with the first
-    forward failing on one stage): stop the benchmark on every node of the allocation, the job goes on to its next entry."""
+    forward failing on one stage): stop the benchmark on every node of the allocation, the job goes on to its next entry.
+    The first failing rank of a node does it (not one srun per rank when all of them fail at once). The pattern includes
+    the spawned processes (the persistent checkpoint worker): none may still be writing when the job deletes the checkpoint.
+    The nodes are exclusive. A segfault or an external kill does not come through here (see the README)."""
     import subprocess
 
     nodes = os.environ.get("SLURM_JOB_NUM_NODES")
-    if nodes and int(nodes) > 1:
-        time.sleep(15)  # the launcher forwards this rank's stderr with a delay: pkill would lose the traceback
-        subprocess.run(["srun", "--overlap", f"--nodes={nodes}", f"--ntasks={nodes}", "--ntasks-per-node=1", "pkill", "-KILL",
-                        "-f", "megatron/main.py"], timeout=120, check=False)
+    if not nodes or int(nodes) <= 1:
+        return
+    marker = os.path.join(os.environ.get("TMPDIR", "/tmp"), f"megatron-kill.{os.environ.get('MILABENCH_RUN_NAME', 'run')}")
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        return
+    time.sleep(15)  # the launcher forwards this rank's stderr with a delay: pkill would lose the traceback
+    subprocess.run(["srun", "--overlap", f"--nodes={nodes}", f"--ntasks={nodes}", "--ntasks-per-node=1", "pkill", "-KILL",
+                    "-f", KILL_PATTERN], timeout=120, check=False)
 
 
 if __name__ == "__main__":

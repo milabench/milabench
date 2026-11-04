@@ -48,7 +48,7 @@ Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-s
 ## MFU
 
 `mfu_inputs.flops_per_token` is Megatron's `num_floating_point_operations` with the attention term per packed slot (8 slots of
-1024 tokens, about 22 % lower than treating a sequence as 8192 long). GLM-5's DSA sparsity is not modelled: attention counts as
+1024 tokens; treating a sequence as 8192 long is too high, by about 22 % according to a review's estimate, not measured here). GLM-5's DSA sparsity is not modelled: attention counts as
 dense, so the FLOPs, and the MFU, are still overestimates.
 
 ## Data to stage on Trillium
@@ -83,6 +83,13 @@ save time and must be exactly equal after the load; a difference, or a missing f
 got back the tensors it had, in the same order, on the same layout. It is not a cryptographic hash: a change that keeps all
 three numbers would pass. It does not check the scheduler, the RNG (`--no-load-rng`), a load on another layout, or the data
 loader position, and the save-side numbers are taken from memory before the write, so what it proves is the round trip.
+
+## When a rank fails
+
+An uncaught Python exception stops the benchmark on every node (`kill_everywhere` in `main.py`, the first failing rank of each node
+runs it, it also stops the checkpoint worker), its traceback is in the rank's metrics file as `kind: exception`. A segfault or an
+external kill does not go through it: the other ranks stay blocked until Megatron's `--distributed-timeout-minutes` where it applies, or
+the entry's `max_duration`, or the job's limit. `job.sbatch` then kills what is left on the nodes before the next entry.
 
 ## Checkpoint memory (F1)
 

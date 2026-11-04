@@ -119,7 +119,12 @@ for item in "${entries[@]}"; do
     export TT_VARIANT=${VARIANT:-$entry}
     milabench run --config "$CONFIG" --system "$system" --select "$entry" --run-name "$run"
     status=$?
-    [ $status = 0 ] || status_all=$status
+    if [ $status != 0 ]; then
+        status_all=$status
+        # a segfault or a kill leaves other ranks and the checkpoint worker behind: none may write during the next steps
+        srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 \
+            pkill -KILL -f 'megatron/main.py|multiprocessing.spawn|multiprocessing.resource_tracker' || true
+    fi
     rundir=$MILABENCH_BASE/runs/$run
     line="$entry: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)")  $(( $(date +%s) - start ))s"
     line+="  peak allocated $(peak peak_memory_allocated "$rundir") / reserved $(peak peak_memory_reserved "$rundir") GiB"
