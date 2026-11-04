@@ -97,7 +97,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
             rows["steps"] += steps
             rows["ep_groups"] += ep
             rows["loss"] += [{**r, "synthetic": is_syn} for r in loss]
-            rows["checkpoints"] += [{**r, "synthetic": is_syn} for r in ckpt]
+            # A load that restored the wrong data is a failure, not a measurement.
+            rows["checkpoints"] += [{**r, "synthetic": is_syn} for r in ckpt if r.get("checksum_match") is not False]
             if row["experiment"] == "F1" and row["status"] != "completed" and not is_syn:
                 if (failed := failed_operation(row, ckpt)) is not None:
                     rows["failed_ops"].append(failed)

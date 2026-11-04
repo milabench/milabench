@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tri_analysis import build, figures, style, synthetic, tables  # noqa: E402
+from tri_analysis.runs import failed_operation  # noqa: E402
 from tri_analysis.select import failed_runs  # noqa: E402
 
 
@@ -31,6 +32,16 @@ def crashed_copy(syn: Path, raw: Path, name: str) -> None:
             continue
         keep.append(json.dumps(e))
     (out / src.name).write_text("\n".join(keep) + "\n")
+
+
+def test_checksum_mismatch_is_a_failure():
+    row = {"run_id": "r", "variant": "tri-ckpt-full-sync"}
+    ok = {"op": "save", "mode": "sync", "content": "full"}
+    good = {"op": "load", "mode": "sync", "content": "full", "checksum_match": True}
+    bad = {"op": "load", "mode": "sync", "content": "full", "checksum_match": False}
+    assert failed_operation(row, [ok, good]) is None
+    assert failed_operation(row, [ok, good, bad])["op"] == "load"
+    assert failed_operation(row, [ok])["op"] == "load"
 
 
 def test_failed_runs():
@@ -87,5 +98,6 @@ def test_measured_checkpoint_without_failure():
 if __name__ == "__main__":
     test_measured_checkpoint_without_failure()
     print("ok test_measured_checkpoint_without_failure")
+    test_checksum_mismatch_is_a_failure()
     test_failed_runs()
     print("ok test_failed_runs")

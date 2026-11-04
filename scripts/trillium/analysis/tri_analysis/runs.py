@@ -62,11 +62,15 @@ def expected_operations(entry: str):
 
 
 def failed_operation(row: dict, events: list[dict]):
-    """The checkpoint operation a failed F1 run did not finish: the first of its entry's without an event."""
+    """The checkpoint operation a failed F1 run did not finish: a load that restored the wrong data, or the first of
+    its entry's without an event."""
     expected = expected_operations(row.get("variant")) or expected_operations(row.get("bench"))
     if expected is None:
         return None
     content, ops = expected
+    for e in events:
+        if e.get("checksum_match") is False:
+            return {"run_id": row["run_id"], "content": e.get("content", content), "op": e.get("op"), "mode": e.get("mode")}
     done = {(e.get("op"), e.get("mode")) for e in events}
     for op, mode in ops:
         if (op, mode) not in done:

@@ -132,7 +132,7 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
  "saved_by": {"mode": "sync", "run": "<run_name>"}}  // load (Megatron): the save that wrote the checkpoint
 ```
 
-Full checkpoints raise GPU memory, on saves too. A Megatron save's peak is its run's `memory_gib.peak_allocated`. TorchTitan's
+Megatron full checkpoints raise GPU memory, on saves too (H100, truncated model); one TorchTitan H100 test showed no such rise (full save 20.8 GiB, weights save 23.4, training 32.0). A Megatron save's peak is its run's `memory_gib.peak_allocated`. TorchTitan's
 `memory_gib` is gathered before the first save, so it stays the training peak, and the events hold the peaks. The analysis takes pinned
 `blocked_s` from repetition 2 when the run has one. Runs before these fields (H100 tests) lack them and still parse.
 Measured sizes (truncated models): full 12.0 B/param, weights 2.0 B/param.
