@@ -84,7 +84,12 @@ def checkpoints(ck: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     if ck.empty or f1.empty:
         return pd.DataFrame()
     out = ck.merge(f1[["run_id", "model", "nodes", "mem_alloc_gib"]], on="run_id")
-    return out if "peak_allocated_gib" in out else out.assign(peak_allocated_gib=np.nan)
+    if "peak_allocated_gib" not in out:
+        out = out.assign(peak_allocated_gib=np.nan)
+    # A save without its own peak (Megatron): one run per save, so the run's peak holds it.
+    saves = out.op == "save"
+    out.loc[saves, "peak_allocated_gib"] = out.peak_allocated_gib[saves].fillna(out.mem_alloc_gib[saves])
+    return out
 
 
 def pinned_blocked(saves: pd.DataFrame) -> pd.DataFrame:

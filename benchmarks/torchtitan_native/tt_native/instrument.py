@@ -201,6 +201,7 @@ def workload_block() -> dict[str, Any]:
         "seq_len": d.get("seq_len"),
         "microbatch_sequences": d.get("microbatch_sequences_per_gpu"),
         "grad_accum": d.get("grad_accum", 1),
+        "tokens_per_gpu_per_step": d.get("tokens_per_gpu_per_step"),
         "precision": d.get("precision"),
         "quantized_linears": d.get("quantized_linears", 0),
         "grad_reduce_dtype": d.get("grad_reduce_dtype"),
@@ -459,6 +460,12 @@ class TrainerInstrument:
                 "schema": SCHEMA,
                 "run": run_block(),
                 "workload": workload_block(),
+                # What identifies the configuration even if the run fails before the summary.
+                "parallelism": {
+                    "layout": RUN_DESCRIPTION.get("layout"),
+                    "pp_schedule": RUN_DESCRIPTION.get("pp_schedule"),
+                    "microbatches_per_pipeline": RUN_DESCRIPTION.get("pp_microbatches"),
+                },
                 "placement": placement_block(_launch_hosts()),
                 "process_start_epoch": _process_start(),
             }

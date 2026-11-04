@@ -450,7 +450,9 @@ tri-aq-pp4-fsdp-48k-acnone:
 
 # --- B-Q-strong: fixed global batch of 52 x 8 x 24k tokens (10.2M) ----------
 # Gradient accumulation of 24k microbatches: 4 at 13 nodes, 2 at 26, 1 at 52.
-# B-Q-weak uses the A-Q entries at 1-52 nodes.
+# B-Q-weak uses the A-Q entries at 1-52 nodes. At 47 nodes the A-Q, C and F1 entries run as they are
+# (--nodes 47; hsdp16 needs an even count), but this batch does not divide: 2496 sequences on 376 GPUs is
+# 6.64 per GPU. No n47 entry (scripts/trillium/DESIGN.md, "If only 47 nodes").
 
 tri-bqs-fsdp-n13:
   inherits: tri-aq-fsdp-24k
@@ -522,6 +524,13 @@ tri-closs-mxfp8:
   inherits: tri-closs-bf16
   argv:
     --precision: mxfp8
+
+# BF16 again, to compare the MXFP8 vs BF16 gap with the noise. Another seed:
+tri-closs-bf16-seed2:
+  inherits: tri-closs-bf16
+  argv:
+    --seed: 4321
+# The same seed: tri-closs-bf16 again with TT_REPETITION=2 (a leading argument of tt_trillium.sh).
 
 # --- F1: checkpoint save / load (after a short measurement) ------------------
 # Folder: $TT_CKPT_ROOT/<run name> ($SCRATCH/trillium/checkpoints, set by the launcher), deleted after the load

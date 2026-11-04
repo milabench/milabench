@@ -728,7 +728,7 @@ def checkpoint(t):
               ("save", "async", "blocked_s", "save, async: blocked", SERIES[1], "s", (0, (3, 2))),
               ("save", "async_pinned", "blocked_s", "save, async pinned: blocked", SERIES[2], "^", (0, (3, 2))),
               ("load", "sync", "total_s", "load", SERIES[3], "D", "-")]
-    has_mem = c.peak_allocated_gib.notna().any() or (c.op == "save") & c.mem_alloc_gib.notna().any()
+    has_mem = c.peak_allocated_gib.notna().any()
     n_panels = len(cases) + 1 + bool(has_mem)
     n_rows = 1 + (n_panels > 3)
     n_cols = (n_panels + n_rows - 1) // n_rows
@@ -788,17 +788,16 @@ def checkpoint(t):
                     textcoords="offset points", fontsize=6, color=CRITICAL)
         for (model, content), color in case_color.items():
             d = c[(c.model == model) & (c.content == content)]
-            for col, op, marker in (("peak_allocated_gib", "load", "D"), ("mem_alloc_gib", "save", "o")):
-                g = d[d.op == op].dropna(subset=[col])
-                for _, row in g.iterrows():
-                    _pt(ax, row.nodes, row[col], color, row.synthetic, marker, ms=3)
+            for op, marker in (("load", "D"), ("save", "o")):
+                for _, row in d[d.op == op].dropna(subset=["peak_allocated_gib"]).iterrows():
+                    _pt(ax, row.nodes, row.peak_allocated_gib, color, row.synthetic, marker, ms=3)
         ax.set_xscale("log")
         ticks = sorted(c.dropna(subset=["peak_allocated_gib"]).nodes.unique())
         ax.set_xticks(ticks)
         ax.set_xticklabels([str(int(n)) for n in ticks])
         ax.minorticks_off()
         ax.set_ylim(0, None)
-        ax.set_title("peak GPU memory: load (diamond), save run (circle)", fontsize=7)
+        ax.set_title("peak GPU memory: load (diamond), save (circle)", fontsize=7)
         ax.set_xlabel("nodes")
         ax.set_ylabel("GiB per GPU (max over ranks)")
         style.finish(ax, trim=False)

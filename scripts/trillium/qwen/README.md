@@ -33,6 +33,17 @@ Layout and event names: `scripts/trillium/FORMAT.md`. `run.experiment` comes fro
 `TT_EXPERIMENT`, derived from the entry name (pass `TT_EXPERIMENT=B-Q-weak` for the A-Q
 entries run at other node counts, and `TT_NODE_SET` / `TT_CONDITION` for E1).
 
+C-loss runs at 13 nodes. The BF16 repeats give the noise to compare the MXFP8 gap with:
+
+```bash
+scripts/trillium/qwen/tt_trillium.sh --nodes 13 tri-closs-bf16                   # reference, seed 1234
+scripts/trillium/qwen/tt_trillium.sh --nodes 13 tri-closs-mxfp8                  # seed 1234
+scripts/trillium/qwen/tt_trillium.sh --nodes 13 TT_REPETITION=2 tri-closs-bf16   # same seed again
+scripts/trillium/qwen/tt_trillium.sh --nodes 13 tri-closs-bf16-seed2             # another seed
+```
+
+`TT_REPETITION` only sets `run.repetition`: the run name holds the job id, so repeats do not overwrite each other.
+
 ## Install (login node: it downloads)
 
 ```bash

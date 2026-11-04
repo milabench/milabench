@@ -383,6 +383,9 @@ def qwen38() -> Trainer.Config:
         "seq_len": opts.seq_len,
         "microbatch_sequences_per_gpu": opts.microbatch_sequences,
         "grad_accum": opts.grad_accum,
+        # TP and PP ranks share their data-parallel rank's tokens; the summary recomputes it from the trainer.
+        "tokens_per_gpu_per_step": opts.microbatch_sequences * opts.seq_len * opts.grad_accum
+        * (pp_microbatches if degrees["pp"] > 1 else 1) // (degrees["tp"] * degrees["pp"]),
         "data": (
             "random tokens (packed, fixed length)"
             if opts.dataset == "random"

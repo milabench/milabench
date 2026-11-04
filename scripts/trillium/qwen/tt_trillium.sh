@@ -7,6 +7,7 @@
 #
 #   scripts/trillium/qwen/tt_trillium.sh --nodes 13 --time 00:30:00 tri-aq-hsdp8-24k
 #   scripts/trillium/qwen/tt_trillium.sh --dry-run TT_CAMPAIGN=window-1 tri-smoke
+#   scripts/trillium/qwen/tt_trillium.sh --nodes 13 TT_REPETITION=2 tri-closs-bf16    # C-loss, same seed again
 #
 # The job runs scripts/slurm/tt_native.sh with TT_CONFIG=trillium. Leading
 # NAME=value arguments are exported for the job (TT_CAMPAIGN, TT_VARIANT,

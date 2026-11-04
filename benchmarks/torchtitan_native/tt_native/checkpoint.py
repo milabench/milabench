@@ -4,8 +4,8 @@ The trainer's CheckpointManager is built with ``load_only=True`` (tt_native.conf
 so nothing is saved while training. Once the measurement is done, every rank
 runs :func:`run_checkpoint`: ``checkpoint_repeats`` times, save the current state
 through TorchTitan (DCP), time it, count what was written, overwrite the model
-weights, load them back, check they are restored (load event ``restored``), and
-delete the folder (the last one is kept with ``checkpoint_keep``). The summary,
+weights, load them back, check they are restored (load event ``checksum_match``),
+and delete the folder (the last one is kept with ``checkpoint_keep``). The summary,
 pushed afterwards, lists the operations in ``summary.checkpoint``.
 
 Events follow scripts/trillium/FORMAT.md ("Checkpoint events"). Times (wall
@@ -19,6 +19,10 @@ clock, every rank): ``blocked_s`` / ``total_s`` are the maximum over ranks,
   its ``blocked_s`` is an upper bound (event ``pinned_buffers_allocated``);
   later repetitions reuse them.
 - load: until ``load()`` returns (synchronous).
+
+``peak_allocated_gib``: peak GPU memory during the operation, maximum over ranks
+(peak counters reset just before it; the summary's ``memory_gib``, gathered before
+the first save, keeps the training peak). ``params_total``: parameters of the model.
 
 Page cache: every rank reads back the shards it wrote seconds earlier, so a
 load could be served from the client's page cache instead of the filesystem.
@@ -131,6 +135,10 @@ def _zero_weights(model_parts) -> None:
                 _local(p).zero_()
 
 
+def _peak_gib() -> float:
+    return torch.cuda.max_memory_allocated() / 2**30
+
+
 def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     """Save / load ``checkpoint_repeats`` times; rank 0 pushes one ``checkpoint``
     event per operation and appends it to ``events``."""
@@ -159,7 +167,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         dist.set_timeout(timeout, ckpt.pg)
 
     def record(event: dict[str, Any], local: list[float]) -> None:
-        # Every rank's [start, end_blocked, end_total, ok] -> spreads on rank 0.
+        # Every rank's [start, end_blocked, end_total, peak GiB, ok] -> spreads on rank 0.
         rows = _gather_floats(local)
         if _rank() != 0:
             return
@@ -180,10 +188,12 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
                 "blocked_s_min": min(blocked),
                 "total_s": max(total),
                 "total_s_min": min(total),
+                "params_total": getattr(engine, "model_param_count", None),
+                "peak_allocated_gib": max(r[3] for r in rows),
             }
         )
-        if local[3:]:
-            event["restored"] = all(r[3] > 0 for r in rows)
+        if local[4:]:
+            event["checksum_match"] = all(r[4] > 0 for r in rows)
         events.append(event)
         push(checkpoint=event, task="train")
         print(f"[tt-native] checkpoint {event}", flush=True)
@@ -194,6 +204,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
         # Weights-only checkpoints hold bf16 weights: the loaded fp32 weights
         # must equal the bf16-rounded ones (same values, same summation order).
         reference = _checksum(params, torch.bfloat16 if content == "weights" else None)
+        torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         ckpt.load_only = False
         try:
@@ -214,7 +225,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
             event["pinned_buffers_allocated"] = rep == 1
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
-        record(event, [t0, t_blocked, t_total])
+        record(event, [t0, t_blocked, t_total, _peak_gib()])
 
         # Load into overwritten weights: the checksum shows they come back.
         _zero_weights(params)
@@ -223,6 +234,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
             dropped = _drop_page_cache(path)
         torch.cuda.synchronize()
         dist.barrier()
+        torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
         if content == "full":
             ckpt.load(step=step)
@@ -232,6 +244,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
             )
         torch.cuda.synchronize()
         t1 = time.time()
+        peak = _peak_gib()  # before the checksum's own allocations
         restored = _checksum(params)
         ok = abs(restored - reference) <= 1e-12 * max(abs(reference), 1.0)
         dist.barrier()
@@ -240,7 +253,7 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
             event["cache_drop_files_rank0"] = dropped
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
-        record(event, [t0, t1, t1, float(ok)])
+        record(event, [t0, t1, t1, peak, float(ok)])
 
         if _rank() == 0 and not (keep and rep == repeats):
             shutil.rmtree(path, ignore_errors=True)

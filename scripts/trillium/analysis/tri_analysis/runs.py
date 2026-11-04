@@ -15,7 +15,7 @@ from tt_analysis.runs import percentile, read_events
 
 from .style import GLM, QWEN
 
-# Checkpoint events: the TorchTitan pack's names -> FORMAT.md's (one shape for both workloads).
+# Checkpoint events: the TorchTitan pack's older names -> FORMAT.md's, for the test runs that have them.
 CKPT_RENAME = {"kind": "content", "async_mode": "mode", "fs_type": "filesystem", "rep": "repetition",
                "restored": "checksum_match"}
 CKPT_VALUES = {"content": {"model": "weights"},

@@ -72,7 +72,9 @@ The `run_start` event and the `summary` (`milabench.pretrain.v1`, additive: same
 
 `microbatch_sequences`, `grad_accum`, `tokens_per_gpu_per_step` and `global_batch_tokens` keep their
 Rorqual meaning; with gradient accumulation `tokens_per_gpu_per_step` includes it. `summary.per_ep_group` is null
-without MoE. A `run_start` of TorchTitan has no `parallelism`; in Megatron's it may hold only the layout, copies and micro-batches.
+without MoE. `parallelism` in a `run_start` may hold only the layout, schedule and micro-batches (copies too in Megatron's). A
+`run_start` has what identifies the configuration of a run that fails before its summary: `layout`, `tokens_per_gpu_per_step`,
+and the rest of `workload` (older TorchTitan runs lack the first two).
 
 **Rate events.** TorchTitan's start after the warm-up, `batch_id` from `warmup_steps + 1`. Megatron's include the warm-up,
 `batch_id` from 0. The official value is the median of the measured steps: the analysis drops the first `warmup_steps`
@@ -120,13 +122,15 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
  "pinned_buffers_allocated": true,  // async_pinned saves: this save also allocated the pinned host buffers (first
                                     // of a run): its blocked_s is an upper bound
  "cache_drop": "posix_fadvise_dontneed",  // load: how the checkpoint's page cache was dropped first (+ cache_drop_files_rank0)
- "peak_allocated_gib": 50.3,  // load: peak GPU memory during the load, max over ranks (Megatron)
- "checksum_match": true,      // load: weights checksum at save vs after load; a mismatch fails the run. TorchTitan: restored
- "params_total": 744e9,       // parameters of the model copy (Megatron): size per parameter = bytes / params_total
+ "peak_allocated_gib": 50.3,  // load: peak GPU memory, max over ranks. TorchTitan: during the operation, saves too;
+                              // Megatron: since the process started, null on saves
+ "checksum_match": true,      // load: weights checksum at save vs after load. Megatron: a mismatch fails the run; TorchTitan records it
+ "params_total": 744e9,       // parameters of the model copy: size per parameter = bytes / params_total
  "saved_by": {"mode": "sync", "run": "<run_name>"}}  // load (Megatron): the save that wrote the checkpoint
 ```
 
-A save's peak GPU memory is the run's `memory_gib.peak_allocated`: full checkpoints raise it. The analysis takes pinned
+Full checkpoints raise GPU memory, on saves too. A Megatron save's peak is its run's `memory_gib.peak_allocated`. TorchTitan's
+`memory_gib` is gathered before the first save, so it stays the training peak, and the events hold the peaks. The analysis takes pinned
 `blocked_s` from repetition 2 when the run has one. Runs before these fields (H100 tests) lack them and still parse.
 Measured sizes (truncated models): full 12.0 B/param, weights 2.0 B/param.
 

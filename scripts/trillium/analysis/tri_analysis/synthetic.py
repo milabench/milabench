@@ -626,15 +626,17 @@ def generate(out: Path) -> None:
     # Qwen: one run per entry, each saves and loads twice (tri-ckpt-*, always fsdp).
     case = 0
     for nodes in (1, 13, N):
-        step, _, _ = qwen_step("fsdp", nodes, 12288)
+        step, _, train_mem = qwen_step("fsdp", nodes, 12288)
         for content, mode in (("full", "sync"), ("full", "async"), ("full", "async_pinned"), ("weights", "sync")):
             size = QWEN["params_total"] * (CKPT_FULL_B_PER_PARAM if content == "full" else CKPT_WEIGHTS_B_PER_PARAM)
             for rep in (1, 2, 3):
                 ck = []
+                extra = 1.5 if content == "full" else 1.0  # toy, as GLM below
+                fields = dict(params_total=QWEN["params_total"], peak_allocated_gib=round(train_mem * extra, 1))
                 for r in (1, 2):
-                    ck += [_checkpoint("save", mode, content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r),
+                    ck += [_checkpoint("save", mode, content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r, **fields),
                            _checkpoint("load", "sync", content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r,
-                                       restored=True)]
+                                       checksum_match=True, **fields)]
                 write_run(root, f"syn-f1-qwen-{content}-{mode}-n{nodes}-r{rep}", "tt-qwen", QWEN,
                           qwen_parallelism("fsdp", nodes), NODES[:nodes], step, rng, experiment="F1",
                           variant=f"tri-ckpt-{'full' if content == 'full' else 'model'}-{mode.replace('async_', '')}",
