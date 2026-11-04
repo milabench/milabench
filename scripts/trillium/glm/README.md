@@ -31,6 +31,12 @@ Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, accou
 `trillium-MMDD`, `REPETITION`). Node telemetry under `$SCRATCH/trillium/nodemon/<run>`, checkpoints under
 `$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there), checkpoint deletions in `$MILABENCH_BASE/slurm/ckpt-rm.<job>.jsonl`.
 
+## C-loss noise
+
+`./30_c.sh loss` runs 6 jobs: bf16, bf16 again with the same seed (`bf16-rep2`), bf16 with another seed (`bf16-seed2`), and the three FP8
+recipes. The two extra runs give the size of the differences between BF16 runs, against which the FP8 vs BF16 gap can be read. Budget: 2 more
+runs of 13 nodes x 500 steps, +50 % on C-loss (limit 6 h each, step time on B200 not measured). To drop them: `./30_c.sh loss "bf16 fp8-tensorwise ..."`.
+
 ## Runs that serve two experiments
 
 `run.experiment` holds one value, the tag the launcher gives. Four entries are not run a second time, and serve a second

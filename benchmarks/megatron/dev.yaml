@@ -913,6 +913,13 @@ megatron-glm5-tri-loss-bf16-n13:
     samples: 4200000
     doc_stride: 4
   argv: {<<: *tri_loss}
+# the same recipe again, to compare the FP8 vs BF16 gap with the noise: the same seed (scheduling, reduction order), another
+# seed (initialization; the data order stays the same)
+megatron-glm5-tri-loss-bf16-rep2-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+megatron-glm5-tri-loss-bf16-seed2-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+  argv: {--seed: 4321}
 megatron-glm5-tri-loss-fp8-tensorwise-n13:
   inherits: megatron-glm5-tri-loss-bf16-n13
   argv: {<<: *tri_fp8_tensorwise}
