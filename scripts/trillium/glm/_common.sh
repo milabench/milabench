@@ -79,6 +79,9 @@ preflight() {
     fi
     [ -x "$MILABENCH_VENV/bin/milabench" ] || { echo "no milabench in $MILABENCH_VENV (README: install)" >&2; exit 1; }
     [ -d "$MILABENCH_BASE/venv/torch" ] || { echo "no $MILABENCH_BASE/venv/torch (README: install)" >&2; exit 1; }
+    # written by the install once the venv imports TransformerEngine (a build that failed leaves no marker)
+    [ -f "$MILABENCH_BASE/venv/torch/.slime_installed" ] || { echo "no $MILABENCH_BASE/venv/torch/.slime_installed: the install did not finish, see its log" >&2; exit 1; }
+    echo "install: $(cat "$MILABENCH_BASE/venv/torch/.slime_installed")"
     [ -d "$MILABENCH_BASE/data/megatron" ] || { echo "no $MILABENCH_BASE/data/megatron (README: install)" >&2; exit 1; }
     [ -d "$WORKDIR/benchmarks/megatron/Megatron-LM" ] || { echo "no Megatron-LM in $WORKDIR/benchmarks/megatron" >&2; exit 1; }
     # the run data where the analysis copies it from (milabench writes to $MILABENCH_BASE/runs)

@@ -109,13 +109,14 @@ with these differences, to check on the first B200 node:
   `milabench install ... --set cuda=129` (cu129 wheels and the matching nvcc wheels).
 - **TransformerEngine build**: `NVTE_CUDA_ARCHS="100"` (sm_100 only, much shorter build); the build runs on a GPU node
   (it needs libcuda), from a job.
+- **`TMPDIR` for the build**: set it to `/dev/shm/$USER/tmp` in that job: compiling TE does not fit `/tmp` (2 GB on these nodes).
 - **CUDA module**: the job loads `cuda/12.9` (SciNet's recommendation), but the venv's own toolkit (torch / nvcc wheels)
   must win: the module's `nvcc` and headers must not come first on `PATH` / `CPATH` when TE or TileLang compile.
   `benchmarks/slime/benchfile.py` puts the wheels' `nvcc` first; check `which nvcc` inside a run if a build fails.
 - **Caches**: `$HOME` is read-only from the compute nodes: `job.sbatch` points `XDG_CACHE_HOME`, `TRITON_CACHE_DIR`,
   `TILELANG_CACHE_DIR` at `$MILABENCH_BASE/cache` (scratch). Install with `UV_CACHE_DIR` on scratch too.
 - **Failed builds**: `milabench install` only logs a failed `pip install`. After the builds the pack imports
-  `transformer_engine` in the venv and stops if it can't; `torch_memory_saver` is optional for this pack (a `WARNING`
+  `transformer_engine.pytorch` in the venv and stops if it can't (the launchers also refuse a venv without the marker); `torch_memory_saver` is optional for this pack (a `WARNING`
   in the install log, and `.slime_installed` then reads `ok, missing: torch_memory_saver`). Check that file after installing.
   On Fir it fails at link time (`cannot find -lcuda`, no `libcuda.so` on the linker path; Fir job 2302534): the GLM runs there
   go without it. `TMS_CUDA_MAJOR` defaults to 13 like the toolkit wheels, so `--set cuda=130` is not needed for it (not run).

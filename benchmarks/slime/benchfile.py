@@ -154,7 +154,8 @@ class Slime(Package):
         await self.pip_install(TMS_REQUIREMENT, build_isolation=False)
         # pip_install only logs a failed build: the marker must not hide one (later installs return at once)
         missing = []
-        for module, required in (("transformer_engine", True), ("torch_memory_saver", self.memory_saver_required)):
+        # transformer_engine alone imports whatever happened: its .pytorch fails on a bad build (Megatron swallows that error)
+        for module, required in (("transformer_engine.pytorch", True), ("torch_memory_saver", self.memory_saver_required)):
             error = self.import_error(module)
             if error is None:
                 continue
