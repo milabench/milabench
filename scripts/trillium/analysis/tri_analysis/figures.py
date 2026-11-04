@@ -23,7 +23,7 @@ from .select import completed, drift, qwen_base, with_energy
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
 GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
 POS = {h: i for i, h in enumerate(NODES)}
-REF = {"layout": "fsdp", "tokens_per_gpu": 12288, "grad_reduce": "fp32", "ac": "full", "precision": "bf16"}
+REF = {"layout": "fsdp", "tokens_per_gpu": 12288, "grad_reduce": "fp32", "ac": "selective", "precision": "bf16"}
 
 
 def _runs(t, *experiments) -> pd.DataFrame:
@@ -362,7 +362,7 @@ def _key(row) -> tuple:
 
 def qwen_levers(t):
     """Throughput change of one lever at a time, at 13 nodes, vs the fsdp / 12k / FP32 reduction /
-    full recomputation reference; BF16 reduction vs FP32 on the same layout (A-Q)."""
+    selective recomputation reference; BF16 reduction vs FP32 on the same layout (A-Q)."""
     r = _runs(t, "A-Q")
     if r.empty:
         return None
@@ -411,7 +411,7 @@ def qwen_levers(t):
     ax.invert_yaxis()
     lim = max(abs(b.pct).max() * 1.25, 5)
     ax.set_xlim(min(b.pct.min() * 1.4, -2), lim)
-    ax.set_xlabel(f"throughput change vs fsdp, 12k tokens, FP32 reduction, full recompute "
+    ax.set_xlabel(f"throughput change vs fsdp, 12k tokens, FP32 reduction, selective recompute "
                   f"({ref.value:,.0f} tokens/s per GPU), 13 nodes (%)")
     style.finish(ax, trim=False)
     style.synthetic_mark(fig, b.synthetic.any(), "includes synthetic data (hollow bars)")

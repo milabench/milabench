@@ -79,7 +79,9 @@ HCAS = [f"mlx5_{i}" for i in range(4)]  # 4 x 200 Gb/s per node: a guess (HCA co
 # -- Qwen toy model ------------------------------------------------------------
 
 AC_RECOMPUTE = {"none": 1.0, "selective": 1.1, "full": 4 / 3}
-AC_ACT_GB_PER_TOKEN = {"none": 11e-3, "selective": 6e-3, "full": 0.65e-3}
+# Activations, GiB per token per GPU (the estimates of config/torchtitan_native_trillium.yaml: at 48k, selective
+# AC on hsdp8 is an OOM risk, no AC fits at 12k only).
+AC_ACT_GB_PER_TOKEN = {"none": 6e-3, "selective": 2.9e-3, "full": 0.65e-3}
 # Matmul speedup of each recipe over BF16 (on the 70 % of compute that is matmul).
 RECIPE_SPEEDUP = {"bf16": 1.0, "fp8-tensorwise": 1.55, "fp8-blockwise": 1.35, "mxfp8": 1.60}
 # Recipes each framework offers (TorchTitan's pin has no Float8; Megatron through Transformer Engine).
@@ -111,7 +113,7 @@ def qwen_valid(layout: str, nodes: int) -> bool:
     return not (layout == "hsdp16" and nodes % 2) and nodes >= pp
 
 
-def qwen_step(layout, nodes, tokens, grad="fp32", ac="full", precision="bf16"):
+def qwen_step(layout, nodes, tokens, grad="fp32", ac="selective", precision="bf16"):
     """(step s, compute s, peak GiB per GPU); step is None when it does not fit in memory."""
     tp, pp, eff, hide = QWEN_LAYOUTS[layout]
     p = QWEN["params_total"]
@@ -471,7 +473,7 @@ def generate(out: Path) -> None:
     write_pairs(root, "3000002", rng, T0 + 1800)
     write_collectives(root, "3000003", rng, T0 + 3600)
 
-    def qwen(name, layout, nodes, tokens, *, experiment, rep, t, grad="fp32", ac="full", precision="bf16",
+    def qwen(name, layout, nodes, tokens, *, experiment, rep, t, grad="fp32", ac="selective", precision="bf16",
              accum=1, hosts=None, extra=None, factor=1.0, **kw):
         if not qwen_valid(layout, nodes):
             return t
@@ -518,7 +520,7 @@ def generate(out: Path) -> None:
                 t = qwen(f"syn-aq-{layout}-{tok // 1024}k-n13-r{rep}", layout, 13, tok, experiment="A-Q", rep=rep,
                          t=t) + 30
     best = sorted((l for l in QWEN_LAYOUTS if qwen_valid(l, 13)),
-                  key=lambda l: min(qwen_step(l, 13, k)[0] / k for k in tokens))
+                  key=lambda l: min(qwen_step(l, 13, k)[0] / k for k in tokens if qwen_step(l, 13, k)[0]))
     for layout in best[:2]:
         for tok in tokens:
             for rep in (1, 2):
@@ -526,7 +528,7 @@ def generate(out: Path) -> None:
                          rep=rep, t=t, grad="bf16") + 30
     for nodes in (1, 13):
         for layout in ("fsdp", best[0]) if nodes == 13 else ("fsdp",):
-            for ac in ("selective", "none"):
+            for ac in ("full", "none"):
                 for rep in (1, 2):
                     t = qwen(f"syn-aq-{layout}-12k-ac{ac}-n{nodes}-r{rep}", layout, nodes, 12288, experiment="A-Q",
                              rep=rep, t=t, ac=ac) + 30

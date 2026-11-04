@@ -8,7 +8,8 @@ import pandas as pd
 from .machine import GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GLM_TOP_COPIES, GLM_TOP_NODES
 from .style import GLM
 
-QWEN_BASE = {"grad_reduce": "fp32", "ac": "full", "precision": "bf16"}  # A-Q cross: every other lever fixed
+# A-Q cross: every other lever fixed, at the defaults of config/torchtitan_native_trillium.yaml
+QWEN_BASE = {"grad_reduce": "fp32", "ac": "selective", "precision": "bf16"}
 
 # GLM-5 runs that serve two experiments. run.experiment holds one value, the launcher's tag, and these
 # runs are not repeated: (layout, nodes, global batch in sequences) -> (tag, experiment also served).
@@ -78,7 +79,7 @@ def series_gaps(runs: pd.DataFrame) -> dict[str, list[int]]:
 
 
 def qwen_base(runs: pd.DataFrame) -> pd.DataFrame:
-    """A-Q runs of the layout x tokens cross: FP32 reduction, full recompute, BF16."""
+    """A-Q runs of the layout x tokens cross: FP32 reduction, selective recompute, BF16."""
     r = completed(runs, "A-Q")
     for k, v in QWEN_BASE.items():
         r = r[r[k] == v] if not r.empty else r

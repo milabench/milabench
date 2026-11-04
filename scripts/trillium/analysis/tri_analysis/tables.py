@@ -14,7 +14,7 @@ from tt_analysis.tables import ledger
 
 from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, N_NODES
 from .select import completed as _completed
-from .select import drift, qwen_base, with_energy
+from .select import QWEN_BASE, drift, qwen_base, with_energy
 from .style import GLM, QWEN
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
@@ -84,7 +84,8 @@ def key_numbers(t) -> dict[str, tuple]:
         out["TriQwenBestTokens"] = (f"{int(tokens) // 1024}k", "", best.syn)
         out["TriQwenBestTokS"] = (best.v, ",.0f", best.syn)
         out["TriQwenBestMFU"] = (best.mfu, ".0f", best.syn)
-        one = aq[(aq.nodes == 1) & (aq.layout == "fsdp") & (aq.tokens_per_gpu == 24576) & (aq.ac == "full")]
+        one = aq[(aq.nodes == 1) & (aq.layout == "fsdp") & (aq.tokens_per_gpu == 24576)
+                 & (aq.ac == QWEN_BASE["ac"]) & (aq.grad_reduce == QWEN_BASE["grad_reduce"])]
         f13 = base[(base.layout == "fsdp") & (base.tokens_per_gpu == 24576)]
         if len(one) and len(f13):
             share = 100 * (1 - one.step_s.median() / f13.step_s.median())
@@ -184,7 +185,7 @@ def macros(t) -> str:
 
 
 def qwen_layouts_table(runs: pd.DataFrame) -> str:
-    """Qwen at 13 nodes: tokens/s per GPU (MFU %) by layout x tokens per GPU; synthetic in \\TriSyn."""
+    """Qwen at 13 nodes, selective recompute: tokens/s per GPU (MFU %) by layout x tokens per GPU; synthetic in \\TriSyn."""
     r = qwen_base(runs)
     if r.empty:
         return ""
