@@ -5,8 +5,10 @@ so nothing is saved while training. Once the measurement is done, every rank
 runs :func:`run_checkpoint`: ``checkpoint_repeats`` times, save the current state
 through TorchTitan (DCP), time it, count what was written, overwrite the model
 weights, load them back, check they are restored (load event ``checksum_match``),
-and delete the folder (the last one is kept with ``checkpoint_keep``). The summary,
-pushed afterwards, lists the operations in ``summary.checkpoint``.
+and delete the folder (the last one is kept with ``checkpoint_keep``). A load whose
+check is false or missing fails the run, once its event is recorded and the folder
+dealt with. The summary, pushed afterwards, even after that failure, lists the
+operations in ``summary.checkpoint``.
 
 Events follow scripts/trillium/FORMAT.md ("Checkpoint events"). Times (wall
 clock, every rank): ``blocked_s`` / ``total_s`` are the maximum over ranks,
@@ -141,7 +143,8 @@ def _peak_gib() -> float:
 
 def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     """Save / load ``checkpoint_repeats`` times; rank 0 pushes one ``checkpoint``
-    event per operation and appends it to ``events``."""
+    event per operation and appends it to ``events``. Raises ``RuntimeError``, on every
+    rank, when a load's checksum does not match or is missing."""
     from torchtitan.components.checkpointer.base import MODEL
 
     opts = instrument.RUN_DESCRIPTION.get("options", {})
@@ -166,11 +169,13 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
     if getattr(ckpt, "pg", None) is not None:  # async saves' gloo group
         dist.set_timeout(timeout, ckpt.pg)
 
-    def record(event: dict[str, Any], local: list[float]) -> None:
+    def record(event: dict[str, Any], local: list[float]) -> bool | None:
         # Every rank's [start, end_blocked, end_total, peak GiB, ok] -> spreads on rank 0.
+        # Returns, on every rank, whether all the ranks' checksums match (None: no check).
         rows = _gather_floats(local)
+        matched = all(r[4] > 0 for r in rows) if local[4:] else None
         if _rank() != 0:
-            return
+            return matched
         blocked = [r[1] - r[0] for r in rows]
         total = [r[2] - r[0] for r in rows]
         event.update(
@@ -192,11 +197,12 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
                 "peak_allocated_gib": max(r[3] for r in rows),
             }
         )
-        if local[4:]:
-            event["checksum_match"] = all(r[4] > 0 for r in rows)
+        if matched is not None:
+            event["checksum_match"] = matched
         events.append(event)
         push(checkpoint=event, task="train")
         print(f"[tt-native] checkpoint {event}", flush=True)
+        return matched
 
     for rep in range(1, repeats + 1):
         torch.cuda.synchronize()
@@ -253,10 +259,16 @@ def run_checkpoint(trainer, push, events: list[dict[str, Any]]) -> None:
             event["cache_drop_files_rank0"] = dropped
         if _rank() == 0:
             event["bytes"], event["files"] = _usage(path)
-        record(event, [t0, t1, t1, peak, float(ok)])
+        matched = record(event, [t0, t1, t1, peak, float(ok)])
 
         if _rank() == 0 and not (keep and rep == repeats):
             shutil.rmtree(path, ignore_errors=True)
             if not os.listdir(ckpt.folder):
                 os.rmdir(ckpt.folder)
         dist.barrier()
+        if matched is not True:
+            raise RuntimeError(
+                f"checkpoint load {rep}/{repeats} of step {step} ({content}): "
+                f"checksum_match={matched}, the weights did not come back (rank {_rank()}: "
+                f"{restored!r} loaded, {reference!r} saved)"
+            )

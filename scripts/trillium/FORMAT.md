@@ -127,7 +127,7 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
  "cache_drop": "posix_fadvise_dontneed",  // load: how the checkpoint's page cache was dropped first (+ cache_drop_files_rank0)
  "peak_allocated_gib": 50.3,  // load: peak GPU memory, max over ranks. TorchTitan: during the operation, saves too;
                               // Megatron: since the process started, null on saves
- "checksum_match": true,      // load: weights checksum at save vs after load. Megatron: a mismatch fails the run; TorchTitan records it
+ "checksum_match": true,      // load: weights checksum at save vs after load; a mismatch or a missing check fails the run, after this event
  "params_total": 744e9,       // parameters of the model copy: size per parameter = bytes / params_total
  "saved_by": {"mode": "sync", "run": "<run_name>"}}  // load (Megatron): the save that wrote the checkpoint
 ```
