@@ -300,6 +300,7 @@ PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep
 RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None, "params_total": None,
        "params_active": None}
 WARMUP_STEPS = 1  # left out of the summary's step statistics (NCCL communicators, allocator growth)
+LOSS_EVERY = 10  # steps between two flushes of the loss events
 # the loss per step, kept by one rank of the last pipeline stage (``loss_reporter``): (step, loss tensor, grad norm, time)
 LOSS = {"reporter": False, "steps": []}
 
@@ -715,6 +716,9 @@ def patch_train_step(log):
         if state["step"] == 1:
             RUN["first_step_done"] = time.time()
             report_peak_memory(rank_log)  # every rank
+        if state["step"] % LOSS_EVERY == 0:
+            flush_losses(log)  # reads the tensors (a sync) and runs a collective: not part of the step time
+            steps.restart_clock()
         if PLACEMENT["ep_group"] is not None and PLACEMENT["timing"]:
             if state["step"] == 1:
                 PLACEMENT["events"] = []  # warm-up: NCCL creates the expert communicator at its first collective
@@ -734,6 +738,20 @@ def patch_train_step(log):
 def percentile(values, q):
     values = sorted(values)
     return values[min(len(values) - 1, max(0, math.ceil(q * len(values)) - 1))] if values else None
+
+
+def flush_losses(log):
+    """The steps the loss reporter kept since the last flush, as events on rank 0. A collective, every LOSS_EVERY steps and at
+    the end, so that a run that times out loses little: the caller keeps it out of the step time."""
+    import torch.distributed as dist
+
+    mine = [(step, float(loss), None if grad is None else float(grad), t) for step, loss, grad, t in LOSS["steps"]]
+    LOSS["steps"] = []
+    every = [None] * dist.get_world_size() if dist.get_rank() == 0 else None
+    dist.gather_object(mine, every, dst=0)
+    if log is not None:
+        for step, loss, grad_norm, t in sorted(item for items in every for item in items):
+            log({"loss": loss, "grad_norm": grad_norm, "step": step, "task": "train", "time": t})
 
 
 def rank_summary(rows):
@@ -771,8 +789,6 @@ def rank_summary(rows):
         "_first_step_done": RUN["first_step_done"],
         "_data_wait_median": statistics.median(waits) if waits else None,
         "_measured": (measured[0]["time"], measured[-1]["time"], len(measured)) if measured else None,
-        # the loss reporter's steps (end of the run: the device is done, reading the tensors costs nothing)
-        "_losses": [(step, float(loss), None if grad is None else float(grad), t) for step, loss, grad, t in LOSS["steps"]],
     }
 
 
@@ -814,6 +830,7 @@ def push_summary(log, steps):
     from megatron.training import get_args
 
     args = get_args()  # Megatron's own, with the derived sizes
+    flush_losses(log)
     try:
         local = rank_summary(steps.rows)
     except Exception as exc:  # every rank must reach the gather
@@ -907,9 +924,6 @@ def push_summary(log, steps):
             {"id": "dsa_index_share", "text": "DSA index sharing off: every layer computes its own top-k"}],
         "estimates": [],
     }
-    # the loss per step, from the last pipeline stage (one rank keeps it, see loss_reporter)
-    for step, loss, grad_norm, t in sorted(item for r in ranks for item in r.get("_losses") or []):
-        log({"loss": loss, "grad_norm": grad_norm, "step": step, "task": "train", "time": t})
     log({"summary": summary, "task": "train", "time": time.time()})
 
 

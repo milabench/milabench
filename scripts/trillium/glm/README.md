@@ -51,8 +51,9 @@ Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-s
   (`pp13-ep8`), `pp_schedule`, `expert_dp`, `copies`, `pp_split` (layers per stage), `microbatches_per_pipeline`;
   `workload.precision` (`bf16`, `fp8-tensorwise`, `fp8-blockwise`, `mxfp8`), `precision_detail`,
   `grad_reduce_dtype`, `seed`; `mfu_inputs.peak_flops_per_gpu` (dense BF16 spec).
-- `loss` events with `step` and `grad_norm`, from the last pipeline stage (emitted by rank 0 at the end of the run;
-  the same values are in that rank's per-step rows as they happen).
+- `loss` events with `step` and `grad_norm`, from the last pipeline stage, emitted by rank 0 every 10 steps and at the end
+  (a run that times out loses at most 10 steps; the same values are in that rank's step rows). `step` counts from 1: the first
+  step's loss has `step` 1, the first step's `rate` event has `batch_id` 0.
 - F1: one `checkpoint` event per save / load: `op`, `step`, `repetition`, `mode`, `content`, `format`, `bytes`,
   `files`, `blocked_s` (training stopped), `total_s` (until the write is complete; async: until Megatron finalizes
   it), `path`, `filesystem`, `start_epoch`, `end_epoch`; a load adds `checksum_match` (weights checksum at save vs
