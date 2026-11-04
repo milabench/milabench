@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 from tri_analysis import build as build_mod  # noqa: E402
 from tri_analysis import figures, synthetic, tables  # noqa: E402
 from tri_analysis.machine import CLUSTER  # noqa: E402
+from tri_analysis.select import series_gaps  # noqa: E402
 
 RAW = HERE / "data" / "raw"
 SYN = HERE / "data" / "synthetic"
@@ -32,7 +33,7 @@ REPORT = HERE.parent / "report"
 GENERATED = REPORT / "generated"
 HOST = "trillium-gpu"
 # Directories under $SCRATCH/trillium copied into data/raw/trillium/. Checkpoints: only their
-# JSON metadata, never the checkpoint files themselves (up to 10 TB).
+# JSON metadata, never the checkpoint files themselves (up to ~9 TB).
 REMOTE = ["runs", "health", "nccl", "nodemon"]
 CHECKPOINT_FILTER = ["--include", "*/", "--include", "*.json", "--include", "*.jsonl", "--exclude", "*",
                      "--prune-empty-dirs"]
@@ -76,7 +77,17 @@ def build(use_synthetic: bool):
     return t
 
 
+def check_series(t) -> None:
+    """Each GLM-5 series holds all its node counts: always true with the synthetic data filling the gaps."""
+    gaps = series_gaps(t["runs"])
+    if gaps and t["runs"].synthetic.any():
+        raise SystemExit(f"[plot] GLM-5 series without some of their node counts: {gaps}")
+    if gaps:
+        print(f"[plot] not run yet, GLM-5 series without these node counts: {gaps}")
+
+
 def plot(t) -> None:
+    check_series(t)
     done = figures.render_all(t, GENERATED / "figures")
     missing = [k for k, ok in done.items() if not ok]
     print(f"[plot] {sum(done.values())} figures -> {GENERATED / 'figures'}"

@@ -2,7 +2,8 @@
 
 Tables: runs, steps, loss, checkpoints, ep_groups, node_health, pairs, collectives,
 run_power (GPU power per run, for energy), gpu_monitor (node telemetry of the long F2 runs
-only: the other runs keep their per-run power aggregate). Every row carries ``synthetic``.
+only: the other runs keep their per-run power aggregate). Every row carries ``synthetic``, except
+steps and ep_groups (through their run).
 
 Synthetic data only fills gaps: a synthetic run is dropped as soon as a measured run has the same
 configuration (CONFIG_KEY), with everything attached to it; a synthetic network check is dropped

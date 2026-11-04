@@ -179,6 +179,9 @@ def macros(t) -> str:
         rf"\newcommand{{\TriNGpus}}{{{N_NODES * 8}}}",
         rf"\newcommand{{\TriGlmTopNodes}}{{{GLM_TOP_NODES}}}",
         rf"\newcommand{{\TriGlmTopCopies}}{{{GLM_TOP_COPIES}}}",
+        rf"\newcommand{{\TriPairsPerRound}}{{{N_NODES // 2}}}",
+        rf"\newcommand{{\TriPairRounds}}{{{N_NODES - 1 + N_NODES % 2}}}",
+        rf"\newcommand{{\TriPairsAll}}{{{N_NODES * (N_NODES - 1) // 2:,}}}",
     ]
     numbers = key_numbers(t)
     for name in MACROS:  # always defined: "??" until the data exists
