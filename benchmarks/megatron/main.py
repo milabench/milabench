@@ -825,7 +825,11 @@ def mfu_inputs(args):
         from megatron.training.training import num_floating_point_operations
 
         tokens = args.global_batch_size * args.seq_length
-        flops = num_floating_point_operations(args, args.global_batch_size) / tokens
+        # THD: attention runs inside each packed slot, so its L^2 term is per slot, not per sequence
+        docs = int((config().get("data") or {}).get("docs_per_sample", 8))
+        squared = args.global_batch_size * docs * (args.seq_length // docs) ** 2
+        flops = num_floating_point_operations(args, args.global_batch_size, seqlen_squared_sum_in_batch=squared,
+                                              total_real_tokens_in_batch=tokens) / tokens
     except Exception as exc:
         debug("flops per token failed:", exc)
         flops = None
@@ -834,8 +838,9 @@ def mfu_inputs(args):
         "peak_flops_per_gpu": peak_flops(),
         "formula": (
             "Megatron's num_floating_point_operations (megatron/training/training.py) for one global batch / "
-            "global batch tokens. It assumes every weight gets its gradient: frozen parameters skip theirs, so it "
-            "overestimates the FLOPs of frozen runs (params_trainable_fraction < 1). "
+            "global batch tokens, attention per packed slot. It assumes every weight gets its gradient: frozen "
+            "parameters skip theirs, so it overestimates the FLOPs of frozen runs (params_trainable_fraction < 1). "
+            "DSA sparsity is not modelled: attention counts as dense, an overestimate. "
             "mfu = flops_per_token * tokens_per_s / (peak * gpus)"
         ),
     }

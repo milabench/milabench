@@ -45,6 +45,12 @@ experiment under the tag they already have:
 
 Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-speed runs its own BF16 baselines (`30_c.sh speed`, same entries as the first two rows, tagged `C-speed`).
 
+## MFU
+
+`mfu_inputs.flops_per_token` is Megatron's `num_floating_point_operations` with the attention term per packed slot (8 slots of
+1024 tokens, about 22 % lower than treating a sequence as 8192 long). GLM-5's DSA sparsity is not modelled: attention counts as
+dense, so the FLOPs, and the MFU, are still overestimates.
+
 ## Data to stage on Trillium
 
 Compute nodes have no internet: stage FineWeb from a login node, once, before the window, with the largest entry:
