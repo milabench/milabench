@@ -132,6 +132,11 @@ class RankRows:
                 ranked_push(**row)
         self.current = {"start": _event(), "fwd": [], "bwd": [], "fwd_bwd": [], "opt": []}
 
+    def set_loss(self, loss, grad_norm):
+        """The step's loss (a device tensor, read when the row is written: its events have completed) and grad norm."""
+        if self.current is not None:
+            self.current.update(loss=loss, grad_norm=grad_norm)
+
     def time_optimizer(self, optimizer):
         """Time this optimizer's ``step`` (the instance's, once: a ChainedOptimizer's inner ones are not counted again)."""
         if optimizer is not None and not getattr(optimizer, "_rank_rows_timed", False):
@@ -208,6 +213,9 @@ def _row(step):
             row["bwd_ms"] = ms(step["bwd"])
     if step["opt"]:
         row["optimizer_ms"] = ms(step["opt"])
+    if step.get("loss") is not None:  # last pipeline stage, first data-parallel rank only
+        row["loss"] = float(step["loss"])
+        row["grad_norm"] = step.get("grad_norm")
     return {k: v for k, v in row.items() if v is not None}
 
 
