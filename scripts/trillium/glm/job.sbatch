@@ -123,7 +123,7 @@ for item in "${entries[@]}"; do
         status_all=$status
         # a segfault or a kill leaves other ranks and the checkpoint worker behind: none may write during the next steps
         srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 \
-            pkill -KILL -f 'megatron/main.py|multiprocessing.spawn|multiprocessing.resource_tracker' || true
+            pkill -KILL -f '[m]egatron/main.py|[m]ultiprocessing.spawn|[m]ultiprocessing.resource_tracker' || true
     fi
     rundir=$MILABENCH_BASE/runs/$run
     line="$entry: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)")  $(( $(date +%s) - start ))s"

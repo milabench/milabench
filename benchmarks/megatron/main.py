@@ -1358,7 +1358,8 @@ def main():
             monitor.stop()
 
 
-KILL_PATTERN = "megatron/main.py|multiprocessing.spawn|multiprocessing.resource_tracker"
+# the brackets: the srun and pkill command lines must not match it
+KILL_PATTERN = "[m]egatron/main.py|[m]ultiprocessing.spawn|[m]ultiprocessing.resource_tracker"
 
 
 def kill_everywhere():
