@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A-G: GLM-5 layouts (DESIGN.md), one job per node count, its entries one after the other (20 steps each).
-#   ./10_ag.sh 13|26|52|12|48 [-- extra sbatch args]
+#   ./10_ag.sh 13|26|52|12|48|36 [-- extra sbatch args]
 #     13: pp13-ep8 (256), small batch (64 per copy), selective recompute
 #     26: pp13-ep16, pp26-ep8 (one copy each), 512
 #     52: pp13-ep8 x 4 copies, sel; pp13-ep16 x 2, pp13-ep32 x 1, pp26-ep8 x 2; all at 1024
@@ -22,6 +22,7 @@ case $nodes in
                  $e-pp13-ep16-n52-gbs1024 $e-pp13-ep32-n52-gbs1024 $e-pp26-ep8-n52-gbs1024) time=03:00:00 ;;
     12) entries=($e-pp6-ep16-n12-gbs256) time=00:45:00 ;;
     48) entries=($e-pp6-ep16-n48-gbs1024) time=00:45:00 ;;
-    *) echo "no A-G entries on $nodes nodes (13, 26, 52, 12, 48)" >&2; exit 2 ;;
+    36) entries=($e-pp6-ep16-n36-gbs768) time=00:45:00 ;;  # a 47-node window, instead of 48
+    *) echo "no A-G entries on $nodes nodes (13, 26, 52, 12, 48; 36 in a 47-node window)" >&2; exit 2 ;;
 esac
 submit "glm5-ag-n$nodes-r$TT_REPETITION" "${TIME:-$time}" "$nodes" "${entries[@]}" -- "$@"

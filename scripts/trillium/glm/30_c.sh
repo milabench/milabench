@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # C: precision. TransformerEngine FP8 recipes against BF16 on pp13-ep8.
-#   ./30_c.sh speed 13|52 [-- extra sbatch args]     C-speed: bf16, fp8-tensorwise, fp8-blockwise, mxfp8, 20 steps each
+#   ./30_c.sh speed 13|52|39 [-- extra sbatch args]     C-speed: bf16, fp8-tensorwise, fp8-blockwise, mxfp8, 20 steps each
 #   ./30_c.sh loss [RECIPES] [-- extra sbatch args]  C-loss: 500 steps from seed 1234 at 13 nodes, one job per recipe
 #                                                    (default "bf16 bf16-rep2 bf16-seed2 fp8-tensorwise fp8-blockwise
 #                                                    mxfp8": the two extra bf16 runs measure the noise, 6 jobs instead of 4)
@@ -20,7 +20,8 @@ case $mode in
         case $nodes in
             13) base=megatron-glm5-tri-pp13-ep8-n13-gbs256 time=02:00:00 ;;
             52) base=megatron-glm5-tri-pp13-ep8-n52-gbs1024 time=02:30:00 ;;
-            *) echo "C-speed runs on 13 or 52 nodes" >&2; exit 2 ;;
+            39) base=megatron-glm5-tri-pp13-ep8-n39-gbs768 time=02:30:00 ;;  # a 47-node window
+            *) echo "C-speed runs on 13 or 52 nodes (39 in a 47-node window)" >&2; exit 2 ;;
         esac
         submit "glm5-c-speed-n$nodes-r$TT_REPETITION" "${TIME:-$time}" "$nodes" \
             "$base" "$base-fp8-tensorwise" "$base-fp8-blockwise" "$base-mxfp8" -- "$@"

@@ -31,6 +31,12 @@ Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, accou
 `trillium-MMDD`, `REPETITION`). Node telemetry under `$SCRATCH/trillium/nodemon/<run>`, checkpoints under
 `$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there), checkpoint deletions in `$MILABENCH_BASE/slurm/ckpt-rm.<job>.jsonl`.
 
+## If only 47 nodes are available
+
+Five nodes may stay reserved for SciNet. Nothing below runs by default; each is selected by its node count, with the same `run.experiment`:
+`./30_c.sh speed 39` (C-speed), `./40_f1.sh 39` (F1), `./10_ag.sh 36` (pp6-ep16, 3 copies, 768, the substitute for n48: 288 GPUs, 48 per stage). 52-node A-G
+and B-G runs have no substitute beyond pp13-ep8 at 39 nodes (`./20_bg.sh 39`).
+
 ## C-loss noise
 
 `./30_c.sh loss` runs 6 jobs: bf16, bf16 again with the same seed (`bf16-rep2`), bf16 with another seed (`bf16-seed2`), and the three FP8
@@ -106,6 +112,8 @@ PP2 x EP4 (38.4 GiB in training) it ran out of the H100's 79 GiB (job 2302534). 
 not been measured: read `peak_allocated_gib` in the load's `checkpoint` event at the first 13-node full load, and treat a full
 load as needing about twice the training peak (from the two points above, an estimate) before starting the 52-node one.
 Weights-only loads have no optimizer state to hold.
+
+Size of a full GLM-5 checkpoint: ~8.9 TB, 12.0 B/param measured on the truncated model x 744B parameters, an estimate; weights ~1.5 TB.
 
 A full save raises GPU memory too: 38.4 to 56.5-60.5 GiB on Fir (job 2302534). At `full 13` this may not fit: ~190 GiB against 180 GB
 (a review's estimate, not measured). So `40_f1.sh` runs weights first, and full afterwards: an out-of-memory run costs little.

@@ -853,6 +853,11 @@ megatron-glm5-tri-pp6-ep16-n12-gbs256:
   inherits: _tri_glm5
   num_machines: 12
   argv: {<<: *tri_pp6, --expert-model-parallel-size: 16}
+# if only 47 nodes are available (5 reserved for SciNet): the n48 substitute, 288 GPUs, 48 per stage, 3 copies
+megatron-glm5-tri-pp6-ep16-n36-gbs768:
+  inherits: _tri_glm5
+  num_machines: 36
+  argv: {<<: *tri_pp6, --expert-model-parallel-size: 16, --global-batch-size: 768}
 megatron-glm5-tri-pp6-ep16-n48-gbs1024:
   inherits: _tri_glm5
   num_machines: 48
@@ -891,6 +896,17 @@ megatron-glm5-tri-pp13-ep8-n52-gbs1024-fp8-blockwise:
   argv: {<<: *tri_fp8_blockwise}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-mxfp8:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
+  argv: {<<: *tri_mxfp8}
+
+# 39 nodes: for a 47-node window, in place of 52 (not run by default)
+megatron-glm5-tri-pp13-ep8-n39-gbs768-fp8-tensorwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-pp13-ep8-n39-gbs768-fp8-blockwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-pp13-ep8-n39-gbs768-mxfp8:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
   argv: {<<: *tri_mxfp8}
 
 # C-loss: 500 steps from the same seed and data, a realistic learning rate (warm-up 50, cosine to 1/10). The loss of
@@ -937,7 +953,7 @@ megatron-glm5-tri-loss-mxfp8-n13:
 _tri_ckpt:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
   tags: [trillium, full, checkpoint]
-  # a 10.4 TB write at 5.8 GB/s (worst case, estimate) is 30 min, with startup and steps around it
+  # an 8.9 TB write (12.0 B/param measured on a truncated model x 744B) at 5.8 GB/s (worst case), an estimate: 26 min, with startup and steps around it
   max_duration: 7200
   checkpoint:
     dir: $TT_CKPT_DIR
@@ -946,7 +962,7 @@ _tri_ckpt:
     mode: sync
     step: 10
   argv:
-    # barriers wait for the slowest writer: 10.4 TB does not fit Megatron's default 10 minutes
+    # barriers wait for the slowest writer: 8.9 TB (estimate) does not fit Megatron's default 10 minutes
     --distributed-timeout-minutes: 120
 _tri_ckpt_load: &tri_ckpt_load
   --train-iters: 5
@@ -970,6 +986,31 @@ megatron-glm5-tri-ckpt-full-load-n13:
   inherits: _tri_ckpt
   checkpoint: {content: full, op: load}
   argv: {<<: *tri_ckpt_load}
+# 39 nodes: for a 47-node window, in place of 52 (not run by default)
+megatron-glm5-tri-ckpt-weights-sync-save-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-sync-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-weights-async-save-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-async-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-weights-load-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-load-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-sync-save-n39:
+  inherits: megatron-glm5-tri-ckpt-full-sync-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-async-save-n39:
+  inherits: megatron-glm5-tri-ckpt-full-async-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-load-n39:
+  inherits: megatron-glm5-tri-ckpt-full-load-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
 # Fallback if the full checkpoint does not fit at 13 nodes (a full save raised the training peak 1.5 x on H100, ~190 GiB
 # against 180 GB, an estimate): the expert state over twice the GPUs, pp13-ep16, one copy on 26 nodes
 _tri_ckpt_ep16:
