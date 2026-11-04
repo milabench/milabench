@@ -58,6 +58,15 @@ Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-s
   it), `path`, `filesystem`, `start_epoch`, `end_epoch`; a load adds `checksum_match` (weights checksum at save vs
   after load; a mismatch fails the run) and `saved_by` (mode and run of the save).
 
+## Checkpoint memory (F1)
+
+A full load holds the loaded and the current optimizer state on the GPU at once. Measured on a truncated GLM-5 (20.7B
+parameters, Fir): at PP2 x EP8 the peak was 50.3 GiB against 32.7 GiB in training with the same layout (1.54 x, jobs 2304131); at
+PP2 x EP4 (38.4 GiB in training) it ran out of the H100's 79 GiB (job 2302534). Whether full GLM-5 loads fit on a B200 (180 GB) has
+not been measured: read `peak_allocated_gib` in the load's `checkpoint` event at the first 13-node full load, and treat a full
+load as needing about twice the training peak (from the two points above, an estimate) before starting the 52-node one.
+Weights-only loads have no optimizer state to hold.
+
 ## Install on Trillium (not done yet: notes for the bring-up)
 
 Same pack as Rorqual (`milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-tri-pp13-ep8-n13-gbs256`),
