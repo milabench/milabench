@@ -71,7 +71,7 @@ if [ "${PREPARE:-1}" = 1 ]; then
 fi
 
 # F1: one checkpoint directory for the job, deleted at the end whatever happens. A job that saves refuses to start beside
-# anything already in CKPT_ROOT (a stale or concurrent checkpoint would double 10 TB on VAST)
+# anything already in CKPT_ROOT (a stale or concurrent checkpoint would double ~9 TB on VAST)
 export TT_CKPT_DIR=${CKPT_ROOT:?}/$RUN_PREFIX.$SLURM_JOB_ID
 case " ${ENTRIES} " in
     *-save*)
