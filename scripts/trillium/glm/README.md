@@ -78,8 +78,9 @@ speed, and C-loss needs the distinct text.
   step's loss has `step` 1, the first step's `rate` event has `batch_id` 0.
 - F1: one `checkpoint` event per save / load: `op`, `step`, `repetition`, `mode`, `content`, `format`, `bytes`,
   `files`, `blocked_s` (training stopped), `total_s` (until the write is complete; async: until Megatron finalizes
-  it), `path`, `filesystem`, `start_epoch`, `end_epoch`; a load adds `checksum_match` (weights checksum at save vs
-  after load; a mismatch fails the run) and `saved_by` (mode and run of the save).
+  it), `path`, `filesystem` (`vast-nfs` on Trillium), `filesystem_source`, `start_epoch`, `end_epoch`, `params_total`; a load
+  adds `checksum_match`, `saved_by` (mode and run of the save), `peak_allocated_gib`, and `cache_drop`: every node evicts the
+  checkpoint from its page cache (`posix_fadvise(DONTNEED)`) before the load, so the load time is the filesystem's.
 
 ## What `checksum_match` proves (F1)
 
