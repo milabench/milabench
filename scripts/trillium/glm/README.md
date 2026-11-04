@@ -11,7 +11,7 @@ following, not the job). `DRY_RUN=1` prints what would be submitted.
 | A-G | `./10_ag.sh 13\|26\|52\|12\|48` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16; selective recompute, 64 per copy |
 | B-G | `./20_bg.sh 13\|26\|39\|52` | pp13-ep8 with 1-4 copies: 256 per copy (weak) and 768 in total (strong) |
 | C | `./30_c.sh speed 13\|52`, `./30_c.sh loss [recipes]` | bf16 / fp8-tensorwise / fp8-blockwise / mxfp8; 500-step loss runs from seed 1234 |
-| F1 | `./40_f1.sh weights\|full 13\|52` | save sync, load, save async, load; the checkpoint is deleted after each load (timed) |
+| F1 | `./40_f1.sh 13\|52 [all\|weights\|full]`, `./40_f1.sh 26` | weights then full: save sync, load, save async, load; the checkpoint is deleted after each load (timed). 26: full at pp13-ep16, the fallback |
 
 Global batch: with PP stages and m micro-batches per data-parallel rank, the 1F1B pipeline bubble is
 (PP - 1) / (m + PP - 1), so the batch is chosen in micro-batches. Weak scaling, and the layout comparison at a node count
@@ -105,6 +105,10 @@ PP2 x EP4 (38.4 GiB in training) it ran out of the H100's 79 GiB (job 2302534). 
 not been measured: read `peak_allocated_gib` in the load's `checkpoint` event at the first 13-node full load, and treat a full
 load as needing about twice the training peak (from the two points above, an estimate) before starting the 52-node one.
 Weights-only loads have no optimizer state to hold.
+
+A full save raises GPU memory too: 38.4 to 56.5-60.5 GiB on Fir (job 2302534). At `full 13` this may not fit: ~190 GiB against 180 GB
+(a review's estimate, not measured). So `40_f1.sh` runs weights first, and full afterwards: an out-of-memory run costs little.
+The fallback if it happens is `./40_f1.sh 26`: full, pp13-ep16, one copy, with the expert state over twice the GPUs.
 
 ## Install on Trillium (not done yet: notes for the bring-up)
 

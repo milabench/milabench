@@ -937,6 +937,8 @@ megatron-glm5-tri-loss-mxfp8-n13:
 _tri_ckpt:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
   tags: [trillium, full, checkpoint]
+  # a 10.4 TB write at 5.8 GB/s (worst case, estimate) is 30 min, with startup and steps around it
+  max_duration: 7200
   checkpoint:
     dir: $TT_CKPT_DIR
     op: save
@@ -966,6 +968,24 @@ megatron-glm5-tri-ckpt-full-async-save-n13:
   checkpoint: {content: full, mode: async}
 megatron-glm5-tri-ckpt-full-load-n13:
   inherits: _tri_ckpt
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
+# Fallback if the full checkpoint does not fit at 13 nodes (a full save raised the training peak 1.5 x on H100, ~190 GiB
+# against 180 GB, an estimate): the expert state over twice the GPUs, pp13-ep16, one copy on 26 nodes
+_tri_ckpt_ep16:
+  inherits: _tri_ckpt
+  num_machines: 26
+  argv:
+    --expert-model-parallel-size: 16
+    --global-batch-size: 512
+megatron-glm5-tri-ckpt-full-ep16-sync-save-n26:
+  inherits: _tri_ckpt_ep16
+  checkpoint: {content: full}
+megatron-glm5-tri-ckpt-full-ep16-async-save-n26:
+  inherits: _tri_ckpt_ep16
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-ckpt-full-ep16-load-n26:
+  inherits: _tri_ckpt_ep16
   checkpoint: {content: full, op: load}
   argv: {<<: *tri_ckpt_load}
 megatron-glm5-tri-ckpt-weights-sync-save-n52:
