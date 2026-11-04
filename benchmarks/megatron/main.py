@@ -994,6 +994,25 @@ def checkpoint_argv(cfg: dict, argv: list[str]) -> list[str]:
     return argv
 
 
+CACHE_DROP = "posix_fadvise_dontneed"
+
+
+def drop_page_cache(path: str) -> int:
+    """Drop this node's cached pages of every file under ``path``, returns the file count. A load in the same job reads the
+    shards this node wrote: without this it may time the client's page cache, not the filesystem (as TorchTitan's F1)."""
+    count = 0
+    for root, _, names in os.walk(path):
+        for name in names:
+            fd = os.open(os.path.join(root, name), os.O_RDONLY)
+            try:
+                os.fsync(fd)  # DONTNEED only drops clean pages
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                count += 1
+            finally:
+                os.close(fd)
+    return count
+
+
 def fs_type(path: str) -> str | None:
     """Filesystem type of ``path`` (longest mount point of /proc/mounts that contains it)."""
     best, kind = "", None
@@ -1056,7 +1075,7 @@ def gather_peak_gib() -> float:
 
 
 def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, checksum_match=None,
-                     saved_by=None, peak_gib=None):
+                     saved_by=None, peak_gib=None, dropped=None):
     """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md, "Checkpoint events")."""
     if LOG is None:
         return
@@ -1070,6 +1089,7 @@ def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, ste
         "blocked_s": blocked_end - start, "total_s": end - start,
         "path": ck["dir"], "filesystem": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end,
         "checksum_match": checksum_match,
+        **({"cache_drop": CACHE_DROP, "cache_drop_files_rank0": dropped} if dropped is not None else {}),
         "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
     }
     debug("checkpoint:", json.dumps(event))
@@ -1129,6 +1149,8 @@ def patch_checkpointing(steps):
         load = training.load_checkpoint
 
         def timed_load(model, *args, **kwargs):
+            # one rank per node, on every node, out of the timing
+            dropped = drop_page_cache(ck["dir"]) if int(os.environ.get("LOCAL_RANK", 0)) == 0 else 0
             dist.barrier()
             start = time.time()
             result = load(model, *args, **kwargs)
@@ -1144,7 +1166,7 @@ def patch_checkpointing(steps):
                 saved_by = {"mode": saved.get("mode"), "run": saved.get("run")}
             except OSError:
                 debug(f"no {CHECKSUM_FILE} in {ck['dir']}: the load cannot be checked")
-            checkpoint_event(ck, start, end, end, step, match, saved_by, peak)
+            checkpoint_event(ck, start, end, end, step, match, saved_by, peak, dropped)
             if match is False:
                 raise RuntimeError("the loaded weights differ from the saved ones (checksum): a partial load?")
             return result
