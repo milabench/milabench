@@ -6,8 +6,12 @@ only: the other runs keep their per-run power aggregate). Every row carries ``sy
 
 Synthetic data only fills gaps: a synthetic run is dropped as soon as a measured run has the same
 configuration (CONFIG_KEY), with everything attached to it; a synthetic network check is dropped
-as soon as the same check (D1 metric, D2, D3 or D4) has measured rows. MFU is recomputed for
-every run against the B200 BF16 spec peak (the benchmarks write their own peak, or none).
+as soon as the same check (D1 metric, D2, D3 or D4) has measured rows. F1 is replaced per checkpoint
+operation (model, nodes, content, op, mode): a save and its load can be separate runs. MFU is
+recomputed for every run against the B200 BF16 spec peak (the benchmarks write their own peak, or none).
+
+Runs another cluster wrote (``run.cluster``) stop the build unless ``other_clusters=True``: the report
+only holds Trillium runs. The directories milabench keeps for install and prepare are not runs.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, SUBNET_OF
-from .runs import parse_extras
+from .runs import canonical_model, drop_warmup, parse_extras
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "ep_groups", "node_health", "pairs", "collectives",
           "run_power", "gpu_monitor"]
@@ -56,7 +60,7 @@ def _power(mon: pd.DataFrame, run: dict) -> dict | None:
             "power_w_total": per_gpu.sum(), "synthetic": bool(p.synthetic.any())}
 
 
-def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFrame]:
+def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) -> dict[str, pd.DataFrame]:
     rows = {name: [] for name in TABLES}
     for cdir, is_syn in _sources(raw, synthetic):
         for hdir in sorted(d for d in (cdir / "health").glob("*") if (d / "report.json").exists()):
@@ -67,32 +71,39 @@ def build(raw: Path, synthetic: Path | None, out: Path) -> dict[str, pd.DataFram
             rows["collectives"] += parse_collectives(f, synthetic=is_syn)
         by_name = {}
         for f in data_files(cdir):
+            if f.parent.name.startswith(("install.", "prepare.")):
+                continue
             parsed = parse_run(f, CLUSTER, SUBNET_OF, synthetic=is_syn)
             if parsed is None:
                 continue
             row, steps, _, ep = parsed
             extra, loss, ckpt, batch_ids = parse_extras(f, row["run_id"])
+            if extra["run_cluster"] not in (None, CLUSTER) and not other_clusters:
+                raise SystemExit(f"[build] {f}: written on {extra['run_cluster']}, not {CLUSTER}: not report data")
             if len(batch_ids) == len(steps):  # the step index of the rate events, not their position
                 for s, b in zip(steps, batch_ids):
                     s["step"] = b
             row.update({k: v for k, v in extra.items() if v is not None or k not in row})
+            row["model"] = canonical_model(row.get("model"))
+            steps = drop_warmup(row, steps)
             rows["runs"].append(row)
             rows["steps"] += steps
             rows["ep_groups"] += ep
             rows["loss"] += [{**r, "synthetic": is_syn} for r in loss]
             rows["checkpoints"] += [{**r, "synthetic": is_syn} for r in ckpt]
-            by_name[row["run_name"]] = row
+            by_name.setdefault(row["run_name"], []).append(row)  # a job can run several entries in one directory
         for d in sorted((cdir / "nodemon").glob("*")):
-            run = by_name.get(d.name)
-            if run is None:
+            runs = by_name.get(d.name)
+            if runs is None:
                 continue
             mon = parse_nodemon(d, CLUSTER, synthetic=is_syn)
             if mon.empty:
                 continue
-            if (p := _power(mon, run)) is not None:
-                rows["run_power"].append(p)
-            if run.get("experiment") in FULL_TELEMETRY:
-                rows["gpu_monitor"].append(mon[mon.metric.isin(MONITOR_METRICS)].drop(columns="text"))
+            for run in runs:
+                if (p := _power(mon, run)) is not None:
+                    rows["run_power"].append(p)
+                if run.get("experiment") in FULL_TELEMETRY:
+                    rows["gpu_monitor"].append(mon[mon.metric.isin(MONITOR_METRICS)].drop(columns="text"))
 
     tables = {name: pd.DataFrame(r) for name, r in rows.items() if name != "gpu_monitor"}
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
