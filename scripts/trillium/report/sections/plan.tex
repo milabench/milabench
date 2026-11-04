@@ -2,8 +2,11 @@
 \label{app:plan}
 
 The experiment groups run in the order of \cref{tab:plan}. Every time and count in this appendix is an
-estimate made before access. If the 5 nodes reserved for SciNet's inference service are not
-released, 47 nodes are available and the 52-node runs shrink accordingly (39 nodes for 3 GLM-5 copies).
+estimate made before access, and the table describes 52 nodes. The 5 nodes reserved for SciNet's inference service
+are an open question. If they are not released, 47 nodes are available: GLM-5's largest \texttt{pp13-ep8} run drops from 52
+nodes to 39 (3 copies), \texttt{pp26-ep8} and \texttt{pp13-ep32} are dropped, \texttt{pp13-ep16} and \texttt{pp6-ep16} keep only their 26-
+and 12-node runs, and the top scale of Qwen and of the network tests becomes 47. The figures and the scales in the text follow one
+setting (\texttt{N\_NODES}).
 
 \begin{table}[h]
   \caption{Experiments. Times are estimates.}
@@ -24,16 +27,17 @@ released, 47 nodes are available and the 52-node runs shrink accordingly (39 nod
     R  & Reference: Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens/GPU, 10\,min, every $\sim$3\,h & 4 & 10\,min each \\
     \midrule
     A-Q & Qwen layouts $\times$ tokens per GPU $\times$ reduction dtype $\times$ checkpointing (\cref{tab:aq}); $\sim$45 runs $\times$ 2 $\times$ $\sim$10\,min & 1--52 & see \cref{tab:budget} \\
-    A-G & GLM-5 layouts (\cref{tab:ag}), 256 sequences per copy; recompute, micro-batch, 64 sequences per copy; $\sim$14 runs $\times$ 2 $\times$ $\sim$25\,min & 12--52 & see \cref{tab:budget} \\
+    A-G & GLM-5 layouts (\cref{tab:ag}), weak-scaling batch of each node count; recompute; 64 sequences at 13 nodes; $\sim$12 runs $\times$ 2 $\times$ $\sim$25\,min & 12--52 & see \cref{tab:budget} \\
     \midrule
     B-Q-weak & Qwen, best layout and \texttt{fsdp}, fixed tokens per GPU & 1--52 & \\
     B-Q-strong & Qwen, fixed global batch ($52\times8\times24$k tokens) & 13, 26, 52 & \\
-    B-G & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 256 sequences per copy (weak) and in total (strong) & 13--52 & \\
+    B-G-weak & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 256 / 512 / 768 / 1{,}024 sequences in total & 13--52 & \\
+    B-G-strong & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 768 sequences in total & 13--52 & \\
     \midrule
     C-speed & Qwen: BF16 / MXFP8; GLM-5: BF16 / FP8 tensorwise / FP8 blockwise / MXFP8; best layout & 1 or 13, and 52 & \\
-    C-loss & Same recipes, 500 steps, same seed and FineWeb data, realistic learning rate & 13 & \\
+    C-loss & Same recipes, 500 steps, same seed and FineWeb data, realistic learning rate; BF16 repeats: same seed, another seed & 13 & \\
     \midrule
-    F1 & Checkpoint save / load, sync vs.\ async (staging in host memory: no local disk), 3 repetitions; escalation agreed with the administrators & 1--52 & \\
+    F1 & Checkpoint save / load, sync vs.\ async (staging in host memory: no local disk), 3 repetitions; GLM-5 weights first, fallback for full at 26 nodes; escalation agreed with the administrators & 1--52 & \\
     F2 & Long run: best Qwen layout, $\geq$1\,h & 52 & \\
     F3 & Startup, from every run & -- & -- \\
     F4 & Energy, from every run & -- & -- \\
@@ -57,10 +61,10 @@ released, 47 nodes are available and the 52-node runs shrink accordingly (39 nod
     A-Q & 15\,h & 6\,h \\
     A-G & 12\,h & 6\,h \\
     B & 8\,h & 5\,h \\
-    C & 6\,h & 4\,h \\
+    C (with the BF16 repeats of C-loss) & 10\,h & 5\,h \\
     F & 6\,h & \\
     \midrule
-    Total & $\sim$55\,h & $\sim$35\,h \\
+    Total & $\sim$59\,h & $\sim$36\,h \\
     \bottomrule
   \end{tabular}
 \end{table}

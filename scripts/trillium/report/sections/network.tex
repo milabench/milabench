@@ -2,9 +2,9 @@
 \label{sec:network}
 
 \begin{question}
-  \textbf{Are all GPUs and links alike, and does the fabric have a structure?} Do all 416 B200 deliver the
+  \textbf{Are all GPUs and links alike, and does the fabric have a structure?} Do all \TriNGpus{} B200 deliver the
   same matmul rate? Does every node reach its NVLink and InfiniBand bandwidth? Do some node pairs
-  communicate faster than others? Does collective bandwidth hold up to 52 nodes?
+  communicate faster than others? Does collective bandwidth hold up to \TriNNodes{} nodes?
 \end{question}
 
 This group runs first: it excludes faulty nodes, and it decides whether node placement is a factor of
@@ -38,15 +38,15 @@ affinity. \Cref{fig:health_gpus} compares every GPU with the median: \TriMatmulB
 
 \placeholder{number of HCAs per node and their rate; outlier nodes or links.}
 
-\paragraph{Pairs (D2).} Every pair of nodes is measured: 26 disjoint pairs at a time, 51 rounds, all
-1{,}326 pairs. The median pair reaches \TriPairBw{}\,GB/s (lowest \TriPairBwMin{}\,GB/s), with a median
+\paragraph{Pairs (D2).} Every pair of nodes is measured: \TriPairsPerRound{} disjoint pairs at a time, \TriPairRounds{} rounds, all
+\TriPairsAll{} pairs. The median pair reaches \TriPairBw{}\,GB/s (lowest \TriPairBwMin{}\,GB/s), with a median
 latency of \TriPairLat\,\textmu s. If the matrix shows groups of nodes (latency or bandwidth clusters,
 for example along the 8 subnets of \texttt{/etc/hosts}), a placement experiment is added (Qwen and GLM-5
 at 13 nodes inside one group vs.\ spread over groups). Otherwise placement is dropped from the design.
 
 \begin{figure}[h]
   \centering\fig{pair_matrix}
-  \caption{Pairwise bandwidth (left) and latency (right) between the 52 nodes, ordered by subnet; white
+  \caption{Pairwise bandwidth (left) and latency (right) between the \TriNNodes{} nodes, ordered by subnet; white
     lines separate the subnets. \syntheticnote{pair_matrix}}
   \label{fig:pair_matrix}
 \end{figure}
@@ -54,8 +54,8 @@ at 13 nodes inside one group vs.\ spread over groups). Otherwise placement is dr
 \placeholder{whether the matrix has a structure, and the decision on placement.}
 
 \paragraph{Collectives at scale (D3, D4).} NCCL all-reduce, all-gather, reduce-scatter and all-to-all
-with 1\,GiB messages at 1, 2, 4, 8, 13, 26 and 52 nodes, and a message-size sweep at 2 and 52 nodes. The
-bisection test (D4) splits the nodes into two random halves of 26 that exchange data all-to-all, for
+with 1\,GiB messages at 1, 2, 4, 8, 13, 26 and \TriNNodes{} nodes, and a message-size sweep at 2 and \TriNNodes{} nodes. The
+bisection test (D4) splits the nodes into two random halves that exchange data all-to-all, for
 3 random cuts. A non-blocking fabric keeps the per-node bandwidth constant as nodes are added. At the
 largest scale, the all-reduce bus bandwidth is \TriAllReduceFull{}\,GB/s and the all-to-all
 \TriAlltoallFull{}\,GB/s; the bisection test reaches \TriBisection{}\,GB/s of bus bandwidth.
@@ -64,8 +64,8 @@ largest scale, the all-reduce bus bandwidth is \TriAllReduceFull{}\,GB/s and the
   \centering\fig{collectives_scale}
   \caption{Left: bus bandwidth vs.\ number of nodes (1\,GiB messages), one line per collective, with the
     800\,Gb/s line rate of a node and its share per GPU; squares: bisection (D4). Right: bus bandwidth vs.\
-    message size at 2 and 52 nodes. \syntheticnote{collectives_scale}}
+    message size at 2 and \TriNNodes{} nodes. \syntheticnote{collectives_scale}}
   \label{fig:collectives_scale}
 \end{figure}
 
-\placeholder{bandwidth at 52 nodes as a share of the line rate; whether the fabric behaves as non-blocking.}
+\placeholder{bandwidth at \TriNNodes{} nodes as a share of the line rate; whether the fabric behaves as non-blocking.}

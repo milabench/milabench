@@ -79,6 +79,8 @@ def build(use_synthetic: bool):
 
 def check_series(t) -> None:
     """Each GLM-5 series holds all its node counts: always true with the synthetic data filling the gaps."""
+    if t["runs"].empty:
+        return
     gaps = series_gaps(t["runs"])
     if gaps and t["runs"].synthetic.any():
         raise SystemExit(f"[plot] GLM-5 series without some of their node counts: {gaps}")

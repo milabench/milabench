@@ -21,7 +21,7 @@ from .style import GLM, QWEN
 MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "TriPairBw", "TriPairBwMin",
           "TriPairLat", "TriAllReduceFull", "TriAlltoallFull", "TriBisection", "TriInterferencePct",
           "TriDriftPct", "TriQwenBestLayout", "TriQwenBestTokens", "TriQwenBestTokS", "TriQwenBestMFU",
-          "TriQwenFsdpCommPct", "TriQwenWeakEff", "TriQwenWeakEffFromTwo", "TriGlmBestLayout", "TriGlmBestTokS", "TriGlmBestMFU",
+          "TriQwenFsdpCommPct", "TriQwenWeakEff", "TriQwenWeakEffFromTwo", "TriQwenWeakTwoNodes", "TriGlmBestLayout", "TriGlmBestTokS", "TriGlmBestMFU",
           "TriGlmCopiesEff", "TriGlmCopiesEffTwo", "TriGlmCopiesEffFromTwo", "TriQwenFpBestRecipe", "TriQwenFpSpeedupSmall", "TriQwenFpSpeedupFull",
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
@@ -95,8 +95,10 @@ def key_numbers(t) -> dict[str, tuple]:
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
         med = g.groupby("nodes").tok_s_gpu.median()
         out["TriQwenWeakEff"] = (100 * med.iloc[-1] / med.iloc[0], ".0f", g.synthetic.any())
-        if 2 in med.index:  # from the first run with cross-node traffic
-            out["TriQwenWeakEffFromTwo"] = (100 * med.iloc[-1] / med[2], ".0f", g.synthetic.any())
+        multi = med[med.index > 1]  # the first run with cross-node traffic (2 nodes, or 4 with four PP stages)
+        if len(multi):
+            out["TriQwenWeakEffFromTwo"] = (100 * med.iloc[-1] / multi.iloc[0], ".0f", g.synthetic.any())
+            out["TriQwenWeakTwoNodes"] = (int(multi.index[0]), "d", False)
     ag = _completed(runs, "A-G")
     if len(ag):
         per_copy = ag.global_batch_tokens / ag.copies / ag.seq_len

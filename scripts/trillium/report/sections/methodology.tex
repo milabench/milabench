@@ -5,7 +5,7 @@
 parameter (memory allows it; no frozen experts in GLM-5).
 
 \begin{table}[h]
-  \caption{Workloads. ``To add'' is work planned before or during bring-up.}
+  \caption{Workloads. The Trillium additions were tested on other clusters' H100 with truncated models, not yet on B200.}
   \label{tab:workloads}
   \centering\small
   \begin{adjustbox}{max width=\linewidth}
@@ -15,12 +15,13 @@ parameter (memory allows it; no frozen experts in GLM-5).
     \midrule
     Framework & TorchTitan & Megatron-LM \\
     Parallelism today & FSDP, HSDP, TP (at most 4: 4 KV heads) & EP, PP, DP; TP $=1$ and CP $=1$ \\
-    To add & PP, MXFP8, gradient-reduction dtype, checkpointing
-           & 8 GPUs per node, checkpoint save / load, FP8 / MXFP8, B200 layouts \\
+    Added for Trillium & PP, MXFP8, gradient-reduction dtype, checkpointing, loss per step
+           & 8 GPUs per node, checkpoint save / load, FP8 / MXFP8, B200 layouts, loss per step \\
     Precision recipes & BF16, MXFP8 & BF16, FP8 tensorwise, FP8 blockwise, MXFP8 \\
-    Sequence & $3\times4{,}096$ per GPU (12{,}288 tokens) by default & 8{,}192, micro-batch 1 \\
-    Global batch & grows with the GPUs (weak scaling) & 256 sequences per model copy (weak scaling); \\
-                 & & 64 per copy as a small-batch point \\
+    Sequence & $3\times4{,}096$ per GPU (12{,}288 tokens) by default & 8{,}192, micro-batch 1 (the only one possible) \\
+    Global batch & grows with the GPUs (weak scaling) & weak: 256 / 512 / 768 / 1{,}024 at 13 / 26 / 39 / 52 nodes; \\
+                 & & strong: 768 at all four; small-batch point: 64 at 13 nodes \\
+    Recompute & selective by default; full, none & full by default; selective (MoE activation and norms) \\
     \bottomrule
   \end{tabular}
   \end{adjustbox}
@@ -28,6 +29,10 @@ parameter (memory allows it; no frozen experts in GLM-5).
 
 The pinned TorchTitan version removed its Float8 tensorwise and rowwise recipes (2026-10-01), so Qwen
 compares BF16 with MXFP8 only. On B200, GLM-5's FP8 blockwise recipe runs as MXFP8 matrix multiplications.
+GLM-5 stays at micro-batch 1: its plugin's attention takes THD input only, so the global batch is chosen in micro-batches.
+With $P$ stages and $m$ micro-batches per data-parallel rank, the 1F1B pipeline bubble is $(P-1)/(m+P-1)$ \est{} (the
+formula, to compare with the runs). Weak scaling keeps 32 micro-batches per data-parallel rank, a bubble of 27\,\%; strong scaling
+keeps 768 sequences in total: 96, 48, 32 and 24 micro-batches, bubbles of 11, 20, 27 and 33\,\%; the small batch of 64 has 8 micro-batches, 60\,\%.
 
 \paragraph{Network arithmetic for Qwen \est{}.} Any data-parallel layout (FSDP, HSDP, TP + FSDP) moves
 about 8 bytes per parameter per node per step: BF16 parameter gathers in the forward and backward
@@ -45,12 +50,12 @@ $P$ pipeline stages and expert groups of $E$ GPUs. Megatron carves the expert gr
 data-parallel ranks: on $N$ nodes, $8N$ must be divisible by $P$, and $8N/P$ by $E$. A model copy is
 therefore $P\times E$ GPUs. With 13 stages (the 78 layers split 7, then 11 stages of 6, then 5: the first
 stage holds the dense layers, the last the loss) and EP8, one copy uses $13\times8=104$ GPUs, 13 nodes,
-so 4 copies fill the 52 nodes (\texttt{pp13-ep8}). Its memory: Rorqual's full GLM-5 run peaked at
+so 4 copies fill 52 nodes (\texttt{pp13-ep8}). Its memory: Rorqual's full GLM-5 run peaked at
 66.6\,GiB on each of 200 GPUs, about 13\,TiB; 13 B200 nodes hold about 17\,TiB \est{}.
 
 \paragraph{Throughput.} Qwen runs skip 30 warm-up steps (compilation, allocator growth), then measure for
-5 minutes. GLM-5 runs measure 20 iterations and skip the first 5. The official throughput is the median
-of the per-step global token rates, reported per GPU (tokens/s per GPU).
+5 minutes. GLM-5 runs train 20 iterations and leave out the first. The official throughput is the median
+of the per-step global token rates of the measured steps, reported per GPU (tokens/s per GPU).
 
 \paragraph{MFU} $= \text{FLOPs per token} \times \text{tokens/s per GPU} / \text{peak}$, with the dense
 BF16 peak of the B200 specification, $2.25\times10^{15}$\,FLOP/s per GPU, for every precision recipe. For
@@ -65,7 +70,9 @@ of the window, and a node is used whole or not at all.
 \paragraph{Reference runs and repetitions.} A reference run (Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens
 per GPU, 10 minutes) is repeated about every 3 hours through the window, to tell changes in our
 configurations from changes in the shared fabric and filesystem (\cref{sec:interference}). Layout
-experiments are repeated twice; checkpoint experiments three times at different times of day.
+experiments are repeated twice; checkpoint experiments three times at different times of day. Four GLM-5 runs are not
+run a second time and serve two experiments: \texttt{pp13-ep8} at 13 and 52 nodes (A-G, also weak scaling), at 39 nodes (weak, also
+strong scaling) and at 26 nodes (weak, also the layout reference at 26 nodes).
 
 \paragraph{Measured, estimated and synthetic values.}
 \begin{itemize}[leftmargin=*, itemsep=1pt]
@@ -83,4 +90,4 @@ experiments they stand in for are run.
 read-only to the analysis machine; every figure, table and number here is regenerated from them by one
 command. Formats: \texttt{scripts/analysis/FORMAT.md}, with the Trillium additions in
 \texttt{scripts/trillium/FORMAT.md} (layout and precision fields, loss per step, checkpoint events,
-collective sweeps). \Cref{tab:ledger} lists every run, including failures.
+collective sweeps). \Cref{tab:ledger} lists every run, including failures. Only runs on Trillium enter the analysis.

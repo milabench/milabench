@@ -137,8 +137,8 @@ check that each series has all its node counts):
 | `megatron-glm5-tri-pp13-ep8-n26-gbs512` | B-G-weak | A-G, the pp13-ep8 reference at 26 nodes |
 
 **To look at in weak scaling: a one-off drop from 1 to 2 copies.** The first copy added brings cross-node data parallelism,
-with a cost per step that does not depend on the batch. A truncated GLM-5 on H100 showed this from 2 to 4 nodes: 0.76
-efficiency, from a +0.76 s per-step constant (the constant is measured, **its cause is inferred, not measured**). So one
+with a cost per step that does not depend on the batch. A truncated GLM-5 on H100 looked like this from 2 to 4 nodes: 0.76
+efficiency, which a +0.76 s per-step constant accounts for (**the cause is inferred, not measured**). So one
 efficiency number can mislead: report efficiency against 1 copy **and** against 2 copies (the first run with that traffic),
 and likewise Qwen against 1 node and 2 nodes. A drop from 1 to 2 followed by a flat line is not a scaling limit.
 
@@ -188,7 +188,7 @@ data, figures and scales of the report follow it. What changes at 47 (376 GPUs):
 | D4 | 26 + 26 | 23 + 23 (one node out) |
 | E1 | 4 sets of 13 | 3 sets of 13 |
 | B-Q-strong | 13, 26, 52 nodes | 13, 26 (`tri-bqs-*-n52` does not fit): a top point needs a new entry |
-| `hsdp16` | 26, 52 | needs an even node count: 26 at most, or 46 with a new run |
+| `hsdp16` | 26, 52 | needs an even node count: 26 or 46, not 47 |
 
 ### Budget *(est.)*
 

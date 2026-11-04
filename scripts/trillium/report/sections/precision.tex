@@ -3,36 +3,39 @@
 
 \begin{question}
   \textbf{What do FP8 and MXFP8 buy, and do they train the same?} Low precision doubles the matmul rate
-  but not the network: does the gain measured on one node survive at 52 nodes? Does the loss follow BF16?
+  but not the network: does the gain measured on one node survive at \TriNNodes{} nodes? Does the loss follow BF16, within its noise?
 \end{question}
 
 \paragraph{Speed (C-speed).} Recipes: BF16 and MXFP8 for Qwen3.8-27B (the pinned TorchTitan has no other
 FP8 recipe); BF16, FP8 tensorwise, FP8 blockwise and MXFP8 for GLM-5. Each runs on the best layout, at 1
-node (Qwen) or 13 nodes (GLM-5), and at 52 nodes. For Qwen, \TriQwenFpBestRecipe{} speeds up training by
-$\times$\TriQwenFpSpeedupSmall{} on 1 node and $\times$\TriQwenFpSpeedupFull{} on 52 nodes. For GLM-5, the
+node (Qwen) or 13 nodes (GLM-5), and at the largest scale (\TriNNodes{} nodes, GLM-5 \TriGlmTopNodes{}). For Qwen, \TriQwenFpBestRecipe{} speeds up training by
+$\times$\TriQwenFpSpeedupSmall{} on 1 node and $\times$\TriQwenFpSpeedupFull{} on \TriNNodes{} nodes. For GLM-5, the
 best recipe, \TriGlmFpBestRecipe, gives $\times$\TriGlmFpSpeedupSmall{} on 13 nodes and
-$\times$\TriGlmFpSpeedupFull{} on 52 nodes.
+$\times$\TriGlmFpSpeedupFull{} on \TriGlmTopNodes{} nodes.
 
 \begin{figure}[h]
   \centering\fig{precision_speed}
   \caption{Speedup over BF16 (ratio of tokens/s) by recipe, at small scale (1 node for Qwen3.8-27B, 13
-    for GLM-5) and on the whole machine (52 nodes). \syntheticnote{precision_speed}}
+    for GLM-5) and on the whole machine. \syntheticnote{precision_speed}}
   \label{fig:precision_speed}
 \end{figure}
 
 \placeholder{how much of the matmul gain survives in a training step, and how much the network takes
-back at 52 nodes.}
+back at scale.}
 
 \paragraph{Loss (C-loss).} The same recipes train for 500 steps at 13 nodes, from the same seed, on the
-same FineWeb data, with a realistic learning rate. The difference to the BF16 loss at each step measures
-the effect of the recipe.
+same FineWeb data, with a realistic learning rate. The difference to a BF16 run at each step measures
+the effect of the recipe, if it stands out of the noise: BF16 runs twice more, once with the same seed and once with another,
+and those repeats give the band of \cref{fig:precision_loss}. GLM-5's learning rate starts at 0 and warms up over 50 steps: steps
+1 and 2 see the same weights, and an unstable phase follows, so its first steps say little about a recipe.
 
 \begin{figure}[h]
   \centering\fig{precision_loss}
-  \caption{Loss difference to BF16 vs.\ step, by recipe, at 13 nodes: Qwen3.8-27B (left), GLM-5 (right).
-    Thick lines: 25-step mean; thin lines: per step; legend: mean over the last 100 steps.
+  \caption{Loss difference to one BF16 run vs.\ step, by recipe, at 13 nodes: Qwen3.8-27B (left), GLM-5 (right).
+    Thick lines: 25-step mean; thin lines: per step; legend: mean over the last 100 steps; gray band: the same difference for the BF16 repeats
+    (same seed, another seed), the noise. Dotted line: end of GLM-5's learning-rate warm-up. The vertical axis fits the settled part.
     \syntheticnote{precision_loss}}
   \label{fig:precision_loss}
 \end{figure}
 
-\placeholder{loss difference at step 500 against the run-to-run noise of BF16.}
+\placeholder{loss difference at step 500 against the band; whether a same-seed repeat is closer than another seed.}

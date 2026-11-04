@@ -43,7 +43,8 @@ access.
   \item \textbf{FP8 and MXFP8.} Low precision doubles the matmul rate (3{,}041\,TFLOP/s in FP8, SciNet's
         measurement) but not the network. What is network-bound in BF16 becomes more so.
   \item \textbf{Memory.} 180\,GB per GPU, 73\,TB in total. Qwen3.8-27B (about 430\,GB of training state
-        \est{}) fits on one node; GLM-5 fits on about 13 nodes \est{}, so up to 4 copies run at once (if all 52 nodes are available).
+        \est{}) fits on one node; GLM-5 fits on about 13 nodes \est{}, so up to 4 copies run at once (3 if only 47 nodes are
+        available, \cref{app:plan}).
         Activation checkpointing can be reduced.
   \item \textbf{Unknown topology, shared fabric.} The switch layout is not known, and the filesystem
         and interconnect carry other users' traffic, and Slurm has no topology information. Placement enters the design only if the pairwise

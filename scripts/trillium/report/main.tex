@@ -32,6 +32,9 @@
 \providecommand{\TriNGpus}{416}
 \providecommand{\TriGlmTopNodes}{52}
 \providecommand{\TriGlmTopCopies}{4}
+\providecommand{\TriPairsPerRound}{26}
+\providecommand{\TriPairRounds}{51}
+\providecommand{\TriPairsAll}{1,326}
 \newcommand{\triunset}[1]{\providecommand{#1}{??}}
 \triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
 \triunset{\TriPairBw}\triunset{\TriPairBwMin}\triunset{\TriPairLat}\triunset{\TriAllReduceFull}
@@ -39,7 +42,7 @@
 \triunset{\TriQwenBestLayout}\triunset{\TriQwenBestTokens}\triunset{\TriQwenBestTokS}\triunset{\TriQwenBestMFU}
 \triunset{\TriQwenFsdpCommPct}\triunset{\TriQwenWeakEff}\triunset{\TriGlmBestLayout}\triunset{\TriGlmBestTokS}
 \triunset{\TriGlmBestMFU}\triunset{\TriGlmCopiesEff}\triunset{\TriGlmCopiesEffTwo}\triunset{\TriGlmCopiesEffFromTwo}
-\triunset{\TriQwenWeakEffFromTwo}\triunset{\TriQwenFpBestRecipe}
+\triunset{\TriQwenWeakEffFromTwo}\triunset{\TriQwenWeakTwoNodes}\triunset{\TriQwenFpBestRecipe}
 \triunset{\TriQwenFpSpeedupSmall}\triunset{\TriQwenFpSpeedupFull}\triunset{\TriGlmFpBestRecipe}
 \triunset{\TriGlmFpSpeedupSmall}\triunset{\TriGlmFpSpeedupFull}\triunset{\TriCkptQwenSave}
 \triunset{\TriCkptGlmFullSave}\triunset{\TriCkptGlmFullBlocked}\triunset{\TriCkptGlmLoadPeak}\triunset{\TriCkptWriteGBs}
@@ -87,7 +90,7 @@
   On 13 nodes, Qwen3.8-27B is fastest with \texttt{\TriQwenBestLayout} at \TriQwenBestTokens{} tokens per
   GPU: \TriQwenBestTokS{} tokens/s per GPU (\TriQwenBestMFU\,\% MFU). Its weak-scaling efficiency at
   \TriNNodes{} nodes is \TriQwenWeakEff\,\%. GLM-5 is fastest with \texttt{\TriGlmBestLayout}
-  (\TriGlmBestTokS{} tokens/s per GPU, \TriGlmBestMFU\,\% MFU), and 4 model copies run at
+  (\TriGlmBestTokS{} tokens/s per GPU, \TriGlmBestMFU\,\% MFU), and \TriGlmTopCopies{} model copies run at
   \TriGlmCopiesEff\,\% of the throughput per GPU of one. MXFP8 speeds up Qwen by $\times$\TriQwenFpSpeedupFull{}
   on the whole partition. Four 13-node jobs run side by side change throughput by
   \TriInterferencePct\,\%.

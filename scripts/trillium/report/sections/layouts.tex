@@ -9,7 +9,7 @@
 \end{question}
 
 \paragraph{Qwen3.8-27B (A-Q).} The factors and levels are in \cref{tab:aq}. The full cross of layouts and
-tokens per GPU runs at 13 nodes; the 3 best layouts also run at 2 and 52 nodes, and the layouts without
+tokens per GPU runs at 13 nodes; the 3 best layouts also run at 2 and \TriNNodes{} nodes, and the layouts without
 pipeline parallelism at 1 node. About 45 runs, each repeated twice, about 10 minutes each \est{}.
 
 \begin{table}[h]
@@ -25,8 +25,8 @@ pipeline parallelism at 1 node. About 45 runs, each repeated twice, about 10 min
              \texttt{pp2-fsdp} / \texttt{pp4-fsdp} \\
     Tokens per GPU & 12k ($4096\times3$) / 24k ($4096\times6$) / 48k ($4096\times12$) \\
     Gradient reduction & FP32 / BF16 (on the 2 best layouts) \\
-    Activation checkpointing & selective / full / none (1 and 13 nodes; none only where it fits) \\
-    Nodes & 13 (full cross); 2 and 52 for the 3 best; 1 for the layouts without PP \\
+    Activation checkpointing & selective (default) / full / none (1 and 13 nodes; none only where it fits) \\
+    Nodes & 13 (full cross); 2 and \TriNNodes{} for the 3 best; 1 for the layouts without PP \\
     \bottomrule
   \end{tabular}
   \end{adjustbox}
@@ -38,13 +38,13 @@ GPU: \TriQwenBestTokS{} tokens/s per GPU, \TriQwenBestMFU\,\% MFU (\cref{fig:qwe
 \begin{figure}[h]
   \centering\fig{qwen_layouts}
   \caption{Qwen3.8-27B tokens/s per GPU by layout (rows) and tokens per GPU per step (color), at 2, 13 and
-    52 nodes (panels); the MFU of the fastest configuration of each panel is written next to it.
+    \TriNNodes{} nodes (panels); the MFU of the fastest configuration of each panel is written next to it.
     \syntheticnote{qwen_layouts}}
   \label{fig:qwen_layouts}
 \end{figure}
 
 \begin{table}[h]
-  \caption{Qwen3.8-27B at 13 nodes (FP32 gradient reduction, full recomputation, BF16): tokens/s per GPU
+  \caption{Qwen3.8-27B at 13 nodes (FP32 gradient reduction, selective recomputation, BF16): tokens/s per GPU
     (MFU, \%) by layout and tokens per GPU.}
   \label{tab:qwen_layouts}
   \centering\small
@@ -52,12 +52,12 @@ GPU: \TriQwenBestTokS{} tokens/s per GPU, \TriQwenBestMFU\,\% MFU (\cref{fig:qwe
 \end{table}
 
 \placeholder{whether keeping the shards in a node (\texttt{hsdp8}, \texttt{tp4-fsdp}) wins as expected,
-and how the ranking changes from 2 to 52 nodes.}
+and how the ranking changes from 2 to \TriNNodes{} nodes.}
 
 \begin{figure}[h]
   \centering\fig{qwen_levers}
   \caption{Throughput change of each lever (tokens per GPU, layout, gradient-reduction dtype,
-    recomputation) relative to \texttt{fsdp} at 12k tokens per GPU, FP32 reduction and full
+    recomputation) relative to \texttt{fsdp} at 12k tokens per GPU, FP32 reduction and selective
     recomputation, at 13 nodes; the last bar combines the best choices. \syntheticnote{qwen_levers}}
   \label{fig:qwen_levers}
 \end{figure}
@@ -81,28 +81,29 @@ tokens per GPU, exposed communication is \TriQwenFsdpCommPct\,\% of the step \es
 
 \placeholder{share of exposed communication by layout at 13 and 52 nodes.}
 
-\paragraph{GLM-5 (A-G).} The global batch is 256 sequences per model copy. A copy is $P\times E$ GPUs
-and expert groups can only use the GPUs of one stage (\cref{sec:method}), so the smallest run differs
-between layouts (\cref{tab:ag}). The expert-parallel comparison (EP 8, 16, 32) is made at 52 nodes;
-\texttt{pp13-ep8} and \texttt{pp6-ep16} also run at 13 and 12 nodes. On the best layout, recomputation
-(full vs.\ selective), micro-batch size (1 vs.\ 2) and a small global batch (64 sequences per copy: 8
-micro-batches for 13 stages, a pipeline bubble of about 60\,\% \est{}) are varied. About 14 runs, each
+\paragraph{GLM-5 (A-G).} Every layout at a node count takes that count's weak-scaling batch (\cref{sec:method}). A
+copy is $P\times E$ GPUs and expert groups can only use the GPUs of one stage, so the smallest run differs between
+layouts (\cref{tab:ag}). The expert-parallel comparison (EP 8, 16, 32) is made at 52 nodes, EP 8 and 16 and
+13 and 26 stages also at 26 nodes; \texttt{pp13-ep8} and \texttt{pp6-ep16} also run at 13 and 12 nodes. On \texttt{pp13-ep8},
+recomputation (full vs.\ selective: MoE activation and norms) and a small global batch (64 sequences at 13 nodes: 8
+micro-batches for 13 stages, a pipeline bubble of 60\,\% \est{}) are varied. About 12 runs, each
 repeated twice, about 25 minutes each \est{}, including about 15 minutes of startup at scale \est{}.
 
 \begin{table}[h]
-  \caption{GLM-5 layouts (A-G). Smallest run: one model copy.}
+  \caption{GLM-5 layouts (A-G). Smallest run: one model copy. Batch: global, in sequences. \texttt{pp13-ep8} also at 26 nodes
+    (2 copies, 512), the weak-scaling run. With 47 nodes, \cref{app:plan}.}
   \label{tab:ag}
   \centering\small
   \begin{adjustbox}{max width=\linewidth}
-  \begin{tabular}{llll}
+  \begin{tabular}{llllr}
     \toprule
-    Layout & Expert group & Smallest run (copies) & At 52 nodes \\
+    Layout & Expert group & Smallest run (copies), batch & Largest run (copies), batch & Bubble \est{} \\
     \midrule
-    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1) & 4 copies \\
-    \texttt{pp13-ep16} & across 2 nodes & 26 nodes (1) & 2 copies \\
-    \texttt{pp13-ep32} & across 4 nodes & 52 nodes (1) & 1 copy \\
-    \texttt{pp26-ep8}  & in a node & 26 nodes (1) & 2 copies \\
-    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1) & 48 nodes, 4 copies (416 GPUs don't split in 6) \\
+    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1), 256 & 52 nodes (4), 1{,}024 & 27\,\% \\
+    \texttt{pp13-ep16} & across 2 nodes & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 27\,\% \\
+    \texttt{pp13-ep32} & across 4 nodes & 52 nodes (1), 1{,}024 & same & 27\,\% \\
+    \texttt{pp26-ep8}  & in a node & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 28\,\% \\
+    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1), 256 & 48 nodes (4), 1{,}024 (416 GPUs don't split in 6) & 24\,\% \\
     \bottomrule
   \end{tabular}
   \end{adjustbox}
@@ -114,9 +115,9 @@ GPU, \TriGlmBestMFU\,\% MFU.
 \begin{figure}[h]
   \centering\fig{glm_layouts}
   \caption{GLM-5 by layout and variant: tokens/s per GPU (left) and expert all-to-all time per step
-    (right, median over expert groups), for one model copy and for the whole machine (52 nodes, or the
-    most that fit). \syntheticnote{glm_layouts}}
+    (right, median over expert groups), at each node count (color); \texttt{pp13-ep8} at 26 nodes is the weak-scaling run.
+    Batch 64: the small-batch point at 13 nodes. \syntheticnote{glm_layouts}}
   \label{fig:glm_layouts}
 \end{figure}
 
-\placeholder{cost of expert groups crossing nodes; effect of recomputation, micro-batch and batch size.}
+\placeholder{cost of expert groups crossing nodes; effect of recomputation and of the small batch.}
