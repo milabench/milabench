@@ -153,10 +153,13 @@ def _replace_checkpoints(t: dict[str, pd.DataFrame], runs: pd.DataFrame) -> set:
         failed = failed.merge(key, on="run_id").assign(synthetic=False)
         done = {tuple(x) for x in merged[~merged.synthetic.astype(bool)][CKPT_KEY].astype(str).values}
         failed = failed[[tuple(x) not in done for x in failed[CKPT_KEY].astype(str).values]].reset_index(drop=True)
-    kept = _drop_synthetic(pd.concat([merged, failed.assign(failure=True)], ignore_index=True), CKPT_KEY)
-    if "failure" in kept:
-        kept = kept[kept.failure.isna()]
-    t["checkpoints"] = kept[ck.columns].infer_objects().reset_index(drop=True)
+    both = merged.assign(failure=False)
+    if not failed.empty:
+        both = pd.concat([both, failed.assign(failure=True)], ignore_index=True)
+    both = both.assign(synthetic=both.synthetic.astype(bool), failure=both.failure.astype(bool))
+    kept = _drop_synthetic(both, CKPT_KEY)
+    kept = kept[~kept.failure]
+    t["checkpoints"] = kept[ck.columns].reset_index(drop=True)
     t["failed_ops"] = failed
     f1 = runs[(runs.experiment == "F1") & runs.synthetic & runs.run_id.isin(merged.run_id)]
     return set(f1.run_id) - set(kept.run_id)

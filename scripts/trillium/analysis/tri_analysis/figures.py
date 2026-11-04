@@ -614,7 +614,7 @@ def glm_scaling(t):
         eff = 100 * med.value.iloc[-1] / med.value.iloc[0]
         handles.append(_handle(col, f"{text}: {eff:.0f} % of 1 copy at {int(med.copies.iloc[-1])}", med.synthetic.any(),
                                "o" if exp == "B-G-weak" else "s", "-"))
-    ax.legend(handles=handles, loc="lower left", fontsize=6)
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 0.16), fontsize=6)  # room for a failure's cross
     ticks = sorted({*r.copies, *(failed.nodes / GLM_COPY_NODES if len(failed) else ())})
     ax.set_xticks(ticks)
     ax.set_xticklabels([f"{int(c)}\n({int(c) * 13} n.)" for c in ticks], fontsize=6)

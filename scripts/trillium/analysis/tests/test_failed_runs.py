@@ -72,6 +72,20 @@ def test_failed_runs():
         assert tables.over_memory_note(base)  # the synthetic 192 GiB says it would not fit
 
 
+def test_measured_checkpoint_without_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        synthetic.generate(tmp / "syn")
+        ok = tmp / "raw" / "trillium" / "runs" / "real-ok"
+        shutil.copytree(tmp / "syn" / "trillium" / "runs" / "syn-f1-glm-full-sync-save-n13-r1", ok)
+        t = build.build(tmp / "raw", tmp / "syn", tmp / "t")
+        names = set(t["runs"].run_name)
+        assert "syn-f1-glm-full-sync-save-n13-r1" not in names and "syn-f1-glm-full-load-sync-n13-r1" in names
+        assert t["failed_ops"].empty and t["checkpoints"].synthetic.dtype == bool
+
+
 if __name__ == "__main__":
+    test_measured_checkpoint_without_failure()
+    print("ok test_measured_checkpoint_without_failure")
     test_failed_runs()
     print("ok test_failed_runs")
