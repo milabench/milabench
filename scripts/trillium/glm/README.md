@@ -45,6 +45,16 @@ experiment under the tag they already have:
 
 Everything else has one experiment: n13 / n26 / n52 at 768 are `B-G-strong`. C-speed runs its own BF16 baselines (`30_c.sh speed`, same entries as the first two rows, tagged `C-speed`).
 
+## Data to stage on Trillium
+
+Compute nodes have no internet: stage FineWeb from a login node, once, before the window, with the largest entry:
+`milabench prepare --config benchmarks/megatron/dev.yaml --select megatron-glm5-tri-loss-bf16-n13`. That is 4.2 M documents of
+`sample-10BT` (about 5.7 GB of parquet, extrapolated from 27 MB per 20,000 documents, plus its Arrow cache) and the model's HF
+config and tokenizer. The summary's `data_loading` records `docs_available`, `doc_stride`, `slots_read`, `docs_read`,
+`slots_over_stride` (slots that needed more documents than the stride: those overlap the next slot), `max_doc_index` and
+`wrapped`, read loaders' prefetching included. The speed entries read 200,000 documents at most and need no stride: they measure
+speed, and C-loss needs the distinct text.
+
 ## What the runs record (run data, `scripts/analysis/FORMAT.md` + `scripts/trillium/FORMAT.md`)
 
 - `run_start` / `summary`: `run.experiment` (A-G, B-G-weak, B-G-strong, C-speed, C-loss, F1), `parallelism.layout`

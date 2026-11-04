@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
 import os
 import re
 import socket
@@ -205,6 +206,12 @@ class FineWebPackedDataset(torch.utils.data.Dataset):
         self.samples, self.seq, self.docs = samples, seq_length, docs
         self.doc_len = seq_length // docs
         self.dataset = load_fineweb(fineweb_dir(data))
+        # data.doc_stride: documents between the starts of two slots. 1 = a short document is read again by the next slot;
+        # larger = no document read twice, as long as a slot needs at most that many
+        self.stride = int(data.get("doc_stride", 1))
+        # shared with the loader's forked workers: reported in the summary
+        self.reads = {name: multiprocessing.Value("q", 0) for name in ("slots", "docs", "over_stride")}
+        self.max_doc = multiprocessing.Value("q", -1)
         self.tokenizer = AutoTokenizer.from_pretrained(hf_path, trust_remote_code=True)
         eos = self.tokenizer.eos_token_id
         self.eos = 0 if eos is None else eos
@@ -220,10 +227,20 @@ class FineWebPackedDataset(torch.utils.data.Dataset):
             text = self.dataset[i % len(self.dataset)]["text"]
             tokens += self.tokenizer(text[: 8 * self.doc_len], add_special_tokens=False)["input_ids"] + [self.eos]
             i += 1
+        for name, value in (("slots", 1), ("docs", i - first_doc), ("over_stride", int(i - first_doc > self.stride))):
+            with self.reads[name].get_lock():
+                self.reads[name].value += value
+        with self.max_doc.get_lock():
+            self.max_doc.value = max(self.max_doc.value, i - 1)
         return tokens[: self.doc_len + 1]
 
+    def read_stats(self) -> dict:
+        """What this rank's loader has read so far (its workers included), prefetching included."""
+        return {"docs_available": len(self.dataset), "doc_stride": self.stride, "max_doc_index": self.max_doc.value,
+                **{name: value.value for name, value in self.reads.items()}}
+
     def __getitem__(self, idx):
-        slots = [self.slot(idx * self.docs + j) for j in range(self.docs)]
+        slots = [self.slot((idx * self.docs + j) * self.stride) for j in range(self.docs)]
         # inputs and labels are shifted inside each slot: no label crosses a document boundary
         tokens = torch.tensor([t for s in slots for t in s[:-1]], dtype=torch.int64)
         labels = torch.tensor([t for s in slots for t in s[1:]], dtype=torch.int64)
@@ -245,6 +262,7 @@ def build_dataset_provider(docs: int, hf_path: str, data: dict):
     def provider(train_val_test_num_samples, vp_stage=None):
         args = get_args()
         train = FineWebPackedDataset(train_val_test_num_samples[0], args.seq_length, docs, hf_path, data)
+        RUN["dataset"] = train
         return train, None, None
 
     provider.is_distributed = True
@@ -298,7 +316,7 @@ PLACEMENT = {"group_of_rank": {}, "groups": [], "crosses": [], "events": [], "ep
              "every": 10, "steps": 0, "a2a_ms": [], "a2a_steps": 0}
 # for the run summary: when each phase ended on this rank (epoch seconds)
 RUN = {"trainable_fraction": None, "model_initialized": None, "first_step_done": None, "params_total": None,
-       "params_active": None}
+       "params_active": None, "dataset": None}
 WARMUP_STEPS = 1  # left out of the summary's step statistics (NCCL communicators, allocator growth)
 LOSS_EVERY = 10  # steps between two flushes of the loss events
 # the loss per step, kept by one rank of the last pipeline stage (``loss_reporter``): (step, loss tensor, grad norm, time)
@@ -784,6 +802,7 @@ def rank_summary(rows):
         "data_wait_sum_s": round(sum(waits), 6) if waits else None,
         "data_wait_max_s": round(max(waits), 6) if waits else None,
         # not in per_rank: startup and data loading are summarized across the ranks
+        "_data_read": RUN["dataset"].read_stats() if RUN["dataset"] is not None else None,
         "_process_start": STARTED,
         "_model_initialized": RUN["model_initialized"],
         "_first_step_done": RUN["first_step_done"],
@@ -857,6 +876,10 @@ def push_summary(log, steps):
     waits = [r["_data_wait_median"] for r in ranks if r.get("_data_wait_median") is not None]
     window = local.get("_measured")
     a2a_steps = PLACEMENT["a2a_steps"]
+    # only the first and last stages load data, each data-parallel rank reads its own samples; the two stages read the same
+    # documents, so the distinct count is one stage's
+    reads = [r["_data_read"] for r in ranks if r.get("_data_read")]
+    first_stage = [r["_data_read"] for r in ranks if r.get("_data_read") and r.get("pp_stage") == 0] or reads
     summary = {
         "schema": "milabench.pretrain.v1",
         "run": info["run"],
@@ -906,6 +929,13 @@ def push_summary(log, steps):
                 "host time blocked in the train loader's next, measured steps; median per rank, worst rank "
                 "reported. Only the first and last pipeline stages have a loader"
             ),
+            **({
+                "docs_available": reads[0]["docs_available"], "doc_stride": reads[0]["doc_stride"],
+                "slots_read": sum(r["slots"] for r in first_stage), "docs_read": sum(r["docs"] for r in first_stage),
+                "slots_over_stride": sum(r["over_stride"] for r in first_stage),
+                "max_doc_index": max(r["max_doc_index"] for r in reads),
+                "wrapped": max(r["max_doc_index"] for r in reads) >= reads[0]["docs_available"],
+            } if reads else {}),
         },
         "per_rank": [{k: v for k, v in r.items() if not k.startswith("_")} for r in sorted(ranks, key=lambda r: r["rank"])],
         "per_ep_group": [

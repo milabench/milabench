@@ -747,6 +747,9 @@ megatron-glm5-check-fit-full-offload1-64n:
 _tri_glm5:
   inherits: _megatron_glm5
   tags: [trillium, full]
+  data:
+    # 20 steps x 1024 sequences x 8 slots (the 52-node entries), with a margin: no wrap in the speed runs
+    samples: 200000
   num_machines: 13
   max_duration: 3600
   frozen:
@@ -904,6 +907,11 @@ megatron-glm5-tri-loss-bf16-n13:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
   # 5 h 30, 30 minutes under the job's limit (30_c.sh, 06:00:00): milabench stops the run itself and the job ends cleanly
   max_duration: 19800
+  # 500 steps x 256 sequences x 8 slots = 1,024,000 slots. A slot takes ~2 documents (1024 tokens, ~700 per document): with a
+  # stride of 4, 4.1 M documents and very few read twice. `data_loading` in the summary says how many, and if it wrapped
+  data:
+    samples: 4200000
+    doc_stride: 4
   argv: {<<: *tri_loss}
 megatron-glm5-tri-loss-fp8-tensorwise-n13:
   inherits: megatron-glm5-tri-loss-bf16-n13
