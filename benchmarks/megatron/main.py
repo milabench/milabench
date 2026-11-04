@@ -1062,20 +1062,24 @@ def drop_page_cache(path: str) -> int:
     return count
 
 
-def fs_type(path: str) -> str | None:
-    """Filesystem type of ``path`` (longest mount point of /proc/mounts that contains it)."""
-    best, kind = "", None
+def filesystem(path: str) -> tuple[str | None, str | None]:
+    """(filesystem, mount source) of ``path``: the longest mount point of /proc/mounts holding it. NFS from a VAST server
+    (Trillium) is ``vast-nfs``, another NFS names its server, as the TorchTitan pack does."""
+    best, kind, source = "", None, None
     real = os.path.realpath(path)
     try:
         with open("/proc/mounts") as f:
             for line in f:
                 parts = line.split()
                 mount = parts[1]
-                if (real == mount or real.startswith(mount.rstrip("/") + "/")) and len(mount) > len(best):
-                    best, kind = mount, parts[2]
+                if (real == mount or real.startswith(mount.rstrip("/") + "/")) and len(mount) >= len(best):
+                    best, kind, source = mount, parts[2], parts[0]
     except OSError:
         pass
-    return kind
+    if kind and kind.startswith("nfs") and source:
+        server = source.split(":", 1)[0]
+        kind = "vast-nfs" if "vast" in server.lower() else f"{kind}:{server}"
+    return kind, source
 
 
 def dir_usage(path: str) -> tuple[int, int]:
@@ -1163,6 +1167,7 @@ def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, ste
     if LOG is None:
         return
     size, files = dir_usage(ck["dir"])
+    fs, fs_source = filesystem(ck["dir"])
     # times on rank 0 between barriers: the slowest rank's
     event = {
         "op": ck["op"], "step": step,
@@ -1170,7 +1175,7 @@ def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, ste
         "mode": ck["mode"] if ck["op"] == "save" else "sync", "content": ck["content"], "format": "torch_dist",
         "bytes": size, "files": files, "params_total": RUN["params_total"], "peak_allocated_gib": peak_gib,
         "blocked_s": blocked_end - start, "total_s": end - start,
-        "path": ck["dir"], "filesystem": fs_type(ck["dir"]), "start_epoch": start, "end_epoch": end,
+        "path": ck["dir"], "filesystem": fs, "filesystem_source": fs_source, "start_epoch": start, "end_epoch": end,
         "checksum_match": checksum_match,
         **({"cache_drop": CACHE_DROP, "cache_drop_files_rank0": dropped} if dropped is not None else {}),
         "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
