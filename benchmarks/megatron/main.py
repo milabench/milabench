@@ -1265,5 +1265,11 @@ if __name__ == "__main__":
 
         traceback.print_exc()
         sys.stderr.flush()
+        try:  # only the first rank of a node reaches the job log: every rank's goes to its rank file
+            from benchmate.rankstore import ranked_push
+
+            ranked_push(kind="exception", time=time.time(), traceback=traceback.format_exc())
+        except Exception as exc:
+            print(f"[megatron-glm5] could not record the exception: {exc!r}", flush=True)
         kill_everywhere()
         raise
