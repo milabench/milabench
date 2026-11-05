@@ -12,7 +12,7 @@
 #   ACCOUNT / PARTITION / GPUS / RESERVATION / QOS                  (default rrg-bengioy-ad / compute_b200_full_node /
 #                                                                    b200:8 / b200-friendly-users / bump)
 #   CUDA_MODULE      module loaded by the job (default cuda/12.9; empty: none)
-#   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist
+#   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist (EXCLUDE default trig0122; empty: none)
 #   AFTER            job id to wait for (afterany)
 #   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default trillium); UPDATE=1
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
@@ -40,6 +40,7 @@ ACCOUNT=${ACCOUNT:-rrg-bengioy-ad}
 PARTITION=${PARTITION-compute_b200_full_node}
 GPUS=${GPUS:-b200:8}
 RESERVATION=${RESERVATION-b200-friendly-users}
+EXCLUDE=${EXCLUDE-trig0122}  # mlx5_1 firmware, 14% slower pairs: until the admins update it and a health check passes
 QOS=${QOS-bump}  # normal stops at 100 GPUs per user, 12 nodes
 BRANCH=${BRANCH:-trillium}
 UPDATE=${UPDATE:-1}

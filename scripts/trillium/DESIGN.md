@@ -78,7 +78,7 @@ spread over groups. Otherwise placement is dropped.
 **Health checks, measured on 2026-11-04** (51 nodes, jobs 1238238, 1238239, 1238240, 1238571; 25 nodes per job; srygaard's tool, not the matmul / per-HCA checks D1 lists, which it does not have):
 
 - All GPUs pass DCGM, with no Xid or uncorrected ECC. Medians: 727 GB/s intra-node, 337 GB/s pair, 14.5 GB/s loopback, about 1,295 TFLOPS (FP16 diagnostic).
-- `trig0122`: excluded. `mlx5_1` firmware 28.35.2000 (others 28.47.1026), pairs 289-292 GB/s against 337; 25-node all-reduce 165 GB/s with it, 177 without.
+- `trig0122`: excluded in the launchers until the admins confirm the firmware update, then rerun the health check. `mlx5_1` firmware 28.35.2000 (others 28.47.1026), pairs 289-292 GB/s against 337; 25-node all-reduce 165 GB/s with it, 177 without.
 - `trig0109` GPU 7: 177,903 corrected ECC and 2 corrected remapped rows, unchanged over two runs. Kept; watch nodemon's ECC.
 - **CPU clocks at full GPU power (~8 kW), 50 of 51 nodes:** mean 1,640-2,270 MHz against ~3,150 before, a quarter of samples at 200 MHz on the median node, cause unknown; `trig0114` holds ~3,190. Measured under DCGM's power test with CPU load, not training: check in the first runs (`stragglers`, nodemon's CPU collector).
 

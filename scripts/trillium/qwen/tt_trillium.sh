@@ -28,7 +28,7 @@
 # milabench startup), capped at 24 h.
 #
 # Environment: TRI_ACCOUNT (rrg-bengioy-ad), TRI_PARTITION
-# (compute_b200_full_node), TRI_RESERVATION (b200-friendly-users), TRI_QOS (bump),
+# (compute_b200_full_node), TRI_RESERVATION (b200-friendly-users), TRI_QOS (bump), TRI_EXCLUDE (trig0122),
 # TT_PYTHON (Python with milabench: default $TT_TRI_BASE/env/bin/python).
 
 set -euo pipefail
@@ -130,6 +130,7 @@ CMD=(
     --output="$BASE/logs/%x-%j.out"
     --reservation="${TRI_RESERVATION-b200-friendly-users}"
     --qos="${TRI_QOS-bump}"
+    --exclude="${TRI_EXCLUDE-trig0122}"  # mlx5_1 firmware, 14% slower pairs: until updated and a health check passes
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"
