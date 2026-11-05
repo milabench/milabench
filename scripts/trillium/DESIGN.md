@@ -172,8 +172,8 @@ weights, then an early unstable phase. Compare recipes after it, not on the firs
 above are estimates from those ratios (GLM-5 744e9 parameters, Qwen 26.9e9).
 
 **Full checkpoints raise GPU memory, on saves too.** Truncated GLM-5 on Fir: at PP2 x EP4, 38.4 GiB in training rose to
-56.5-60.5 GiB on saves, and a load ran out of memory at 79 GiB; at PP2 x EP8, the load peak was 1.54 x the training
-peak. So `full 13` (one copy on 13 nodes) may not fit in 180 GB: ~190 GiB *(est.)*. Hence weights first, and the full checkpoint's
+56.5-60.5 GiB on saves, and a load ran out of memory at 79 GiB; at PP2 x EP8 on B200, the load peak was 1.95 x the training
+peak (50.28 against 25.85 GiB, job 1239618). So `full 13` (one copy on 13 nodes) may not fit in 180 GB: ~190 GiB *(est.)*. Hence weights first, and the full checkpoint's
 first load read through `peak_allocated_gib` before the 52-node one. If it does not fit: `pp13-ep16` on 26 nodes (half the
 expert state per GPU), entries `megatron-glm5-tri-ckpt-full-ep16-*-n26`.
 

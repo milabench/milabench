@@ -17,7 +17,7 @@ sizes escalate with the administrators' agreement (Qwen 1 node, Qwen at the larg
 and only one GLM-5 checkpoint is on disk at a time, deleted once its load is timed.
 
 Full checkpoints also raise GPU memory, on saves too. On truncated GLM-5 models (H100, not B200), at $2\times4$ GPUs per copy, 38.4\,GiB in
-training rose to 56.5--60.5\,GiB on saves and a load ran out of memory at 79\,GiB; at $2\times8$, the load peak was 1.54 times
+training rose to 56.5--60.5\,GiB on saves and a load ran out of memory at 79\,GiB; at $2\times8$, on B200, the load peak was 1.95 times
 the training peak. A full checkpoint of one copy on 13 nodes may therefore not fit in 180\,GB (about 190\,GiB \est{}): GLM-5 runs weights first,
 and has a fallback for the full checkpoint, \texttt{pp13-ep16} on 26 nodes (half the expert state per GPU). A full load at the smallest scale peaks at
 \TriCkptGlmLoadPeak\,GiB per GPU.

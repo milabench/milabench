@@ -94,29 +94,46 @@ the entry's `max_duration`, or the job's limit. `job.sbatch` then kills what is 
 
 ## Checkpoint memory (F1)
 
-A full load holds the loaded and the current optimizer state on the GPU at once. Measured on a truncated GLM-5 (20.7B
-parameters, Fir): at PP2 x EP8 the peak was 50.3 GiB against 32.7 GiB in training with the same layout (1.54 x, job 2304131); at
-PP2 x EP4 (38.4 GiB in training) it ran out of the H100's 79 GiB (job 2302534). Whether full GLM-5 loads fit on a B200 (180 GB) has
-not been measured: read `peak_allocated_gib` in the load's `checkpoint` event at the first 13-node full load, and treat a full
-load as needing about twice the training peak (from the two points above, an estimate) before starting the 52-node one.
-Weights-only loads have no optimizer state to hold.
+A full load holds the loaded and the current optimizer state on the GPU at once. Measured on a truncated GLM-5 (20.7B parameters,
+PP2 x EP8), on B200 (job 1239618), peak GiB, largest rank: training 25.85, full save 32.66 sync and 36.9 async, full load 50.28
+(1.95 x training). Fir gave the same save and load peaks (job 2304131). At PP2 x EP4 a load ran out of the H100's 79 GiB (job 2302534).
+Whether full GLM-5 loads fit on a B200 (179 GiB) has not been measured: read `peak_allocated_gib` in the load's `checkpoint` event at
+the first 13-node full load, and treat a full load as needing about twice the training peak (from the truncated model, an estimate)
+before starting the 52-node one. Weights-only loads have no optimizer state to hold.
 
 Size of a full GLM-5 checkpoint: ~8.9 TB, 12.0 B/param measured on the truncated model x 744B parameters, an estimate; weights ~1.5 TB.
 
-A full save raises GPU memory too: 38.4 to 56.5-60.5 GiB on Fir (job 2302534). At `full 13` this may not fit: ~190 GiB against 180 GB
-(a review's estimate, not measured). So `40_f1.sh` runs weights first, and full afterwards: an out-of-memory run costs little.
+A full save raises GPU memory too (above, and 38.4 to 56.5-60.5 GiB at PP2 x EP4 on Fir, job 2302534). At `full 13` this may not fit:
+~190 GiB against 179 (a review's estimate, not measured). So `40_f1.sh` runs weights first, and full afterwards: an out-of-memory run costs little.
 The fallback if it happens is `./40_f1.sh 26`: full, pp13-ep16, one copy, with the expert state over twice the GPUs.
 
-## Install on Trillium (not done yet: notes for the bring-up)
+## Install on Trillium
 
-Same pack as Rorqual (`milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-tri-pp13-ep8-n13-gbs256`),
-with these differences, to check on the first B200 node:
+Done once on 2026-11-04 (jobs 1239118, 1239128, 1239150). From a login node, which has internet and an H100 but must stay light:
 
-- **Driver**: the torch cu130 wheels need driver >= 580 (`nvidia-smi`; the job prints it). Older driver:
-  `milabench install ... --set cuda=129` (cu129 wheels and the matching nvcc wheels).
-- **TransformerEngine build**: `NVTE_CUDA_ARCHS="100"` (sm_100 only, much shorter build); the build runs on a GPU node
-  (it needs libcuda), from a job.
-- **`TMPDIR` for the build**: set it to `/dev/shm/$USER/tmp` in that job: Slurm reports `/tmp` as 2 GB (`TmpDisk`), though health checks found ~1.5 TiB of zram.
+```bash
+unset PYTHONPATH PIP_CONFIG_FILE; export PATH=$HOME/.local/bin:$PATH UV_CACHE_DIR=$SCRATCH/uv-cache
+export MILABENCH_BASE=$SCRATCH/trillium/glm MILABENCH_GPU_ARCH=cuda
+mkdir -p $MILABENCH_BASE $SCRATCH/trillium/runs; cd $MILABENCH_BASE
+ln -s $SCRATCH/trillium/runs runs   # first: `milabench install` would create a real directory, and the launchers would not link it
+git clone -b trillium https://github.com/milabench/milabench.git src
+uv venv --python-preference only-managed --python 3.12 --seed src/.venv
+VIRTUAL_ENV=$PWD/src/.venv uv pip install -e ./src pybind11 nvidia-ml-py
+export PATH=$PWD/src/.venv/bin:$PATH E=megatron-glm5-tri-test-n2-gbs16 C=src/benchmarks/megatron/dev.yaml
+SLIME_DOWNLOAD_ONLY=1 milabench install --config $C --select $E
+milabench prepare --config $C --select $E   # the small data; for the runs, the entry named in "Data to stage"
+uv pip install --python venv/torch/bin/python onnxscript onnx nvdlfw-inspect nvidia-cudnn-frontend importlib-metadata   # TE's dependencies
+mkdir wheelhouse   # transformer_engine, transformer_engine_cu13 (x86_64) and transformer_engine_torch 2.18.0, from PyPI's file URLs
+```
+
+Then, on one B200 node, a job (15 min is the partition's minimum; it took 3.5 min) running the same `milabench install` with
+`UV_OFFLINE=1 UV_NO_INDEX=1 UV_FIND_LINKS=$MILABENCH_BASE/wheelhouse NVTE_PYTORCH_FORCE_BUILD=TRUE TMPDIR=/dev/shm/$USER/tmp`. Compute nodes have
+no internet: the force-build flag skips TE's search for a prebuilt wheel. The install returns 1 because `torch_memory_saver`, optional, cannot be
+fetched offline; `.slime_installed` then reads `ok, missing: torch_memory_saver`.
+
+Notes from the bring-up:
+
+- **Driver**: 595.91.07, the torch cu130 wheels work (they need >= 580).
 - **CUDA module**: the job loads none: the venv brings its own toolkit (torch / nvcc wheels). `cuda/12.9` loads only after
   `StdEnv/2023 gcc/12.3`, and its headers on `CPATH` then break TileLang's kernel build with the wheels' nvcc (`cuda/std/utility`,
   "missing binary operator before token", job 1239249).
@@ -132,8 +149,9 @@ with these differences, to check on the first B200 node:
 - **`TMPDIR`**: `job.sbatch` puts `TMPDIR` and the Triton / TileLang caches in `/dev/shm/$USER` (RAM), logs the free space at the start, removes it at the end. Kernels are therefore compiled again per job.
 - **No local disk** (`/tmp` and `/dev/shm` are RAM): unlike Rorqual's `job.sbatch`, nothing is copied to a node-local base; data and
   venv are read from scratch (VAST).
-- **sm_100 kernels to verify** in the 1-node smoke: TileLang DSA indexer and sparse MLA (GLM-5 plugin), SGLang RoPE
-  (`MEGATRON_USE_SGLANG_ROPE=1`), TE grouped GEMM in BF16, FP8 tensorwise / blockwise and MXFP8.
+- **sm_100 kernels**: on 2 nodes of the truncated model (jobs 1239307, 1239405), TileLang's kernels (`-arch=sm_100a`) and SGLang's RoPE (`sm100a`) built
+  and trained, TE's grouped GEMM too, in BF16, FP8 tensorwise / blockwise and MXFP8. Which FP8 kernels ran was not read directly: peak memory
+  (21.6 to 32-34 GiB) and the losses (BF16 repeats to 3 decimals, the recipes do not) changed.
 - **NCCL**: the GLM entries set `NCCL_NVLS_ENABLE=0` and `NCCL_CUMEM_ENABLE=0` (Rorqual workarounds). On B200 NVLink
   SHARP (NVLS) may help the in-node collectives: try a 13-node run without them before A-G.
 - **FP8 blockwise**: on Hopper it needs `NVTE_FP8_BLOCK_SCALING_FP32_SCALES=1`; on B200 it must not be set (TE runs
