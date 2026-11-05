@@ -12,7 +12,7 @@ except what SciNet measured.
 
 | | known | source |
 |---|---|---|
-| Nodes | 52 (`trig0101`-`trig0152`), **50 usable on 2026-11-04**: `trig0146` is in maintenance (7 of 8 GPUs), `trig0122` excluded (see Health checks). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
+| Nodes | 52 (`trig0101`-`trig0152`), **40 used on 2026-11-05**: `trig0146` is in maintenance (7 of 8 GPUs); 8 nodes capped at 200 W, among them `trig0122`, also excluded for firmware (see Health checks); 3 slow nodes excluded (see E). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
 | Per node | 8 x B200, 179.1 GiB each, on NVLink, 1,000 W limit; 2 x 48-core Intel, ~2 TB RAM, liquid cooled | health checks; SciNet talk |
 | GPUs | 416 in total | |
 | Network | InfiniBand. NCCL uses 4 ports at 400 Gb/s, 1,600 Gb/s per node (`mlx5_0`, `1`, `4`, `9`: site `NCCL_IB_HCA`, port counters agree), not the 800 Gb/s first quoted. GPUs 0, 2, 4, 6 each share a PCIe switch with one port; 1, 3, 5, 7 have none. Measured results below | D3, D2 (jobs 1239634, 1239766, 1239768) |
@@ -82,6 +82,8 @@ spread over groups. Otherwise placement is dropped.
 - `trig0109` GPU 7: 177,903 corrected ECC and 2 corrected remapped rows, unchanged over two runs. Kept; watch nodemon's ECC.
 - **CPU clocks at full GPU power (~8 kW), 50 of 51 nodes:** mean 1,640-2,270 MHz against ~3,150 before, a quarter of samples at 200 MHz on the median node, cause unknown; `trig0114` holds ~3,190. Measured under DCGM's power test with CPU load, not training: check in the first runs (`stragglers`, nodemon's CPU collector).
 
+- **8 nodes capped at 200 W** (default 1,000 W, 120 MHz; sweeps at 00:21 and 02:13 on 2026-11-05, same set): `trig0122`, `0123`, `0133`, `0138`, `0140`, `0143`, `0145`, `0152`. Cause unknown, asked to the admins. One capped node takes a 13-node job from ~3 s to 26.7 s per step; `power_check.sh` fails the job at start.
+
 **Network, measured on 2026-11-04** (up to 25 nodes, the job limit):
 
 - D3: all-gather and reduce-scatter hold 174-192 GB/s from 2 to 25 nodes; all-reduce 171-188 from 4 nodes. All-to-all falls to 10.0 GB/s at 2 nodes and 4.3 at 25.
@@ -96,6 +98,12 @@ spread over groups. Otherwise placement is dropped.
 | R  | Reference run: Qwen on 4 fixed nodes, FSDP, 12,288 tokens/GPU, 10 min; **every ~3 h through the window** | 10 min each |
 
 If E1 shows no slowdown (< 2%), runs of <= 26 nodes are packed in parallel for A, B, C, F.
+
+**E1, measured on 2026-11-05** (`tri-aq-fsdp-12k`, not HSDP-8 at 24k: that one is short of memory on B200; 3 sets of 13 nodes, not 4; 2 repetitions, 12 runs, up to 300 s of overlap): together is 0.26% slower than alone on average (-0.51% to +0.65%), so jobs are packed. Step times are throttled by the CPU clock drop. This holds for 13-node Qwen FSDP only: GLM and larger jobs are untested.
+
+- Inside a group or random: 2.999 s against 3.050 s (+1.7%) without slow nodes, one random set only.
+- `trig0134`, `0135`, `0148`: CPU 1,252-1,797 MHz, 36-54% of samples below 500 MHz, against 2,783-3,167 MHz and 0-10% on most peers in the same jobs. Sets with one average 3.28 s, the others 3.02 s (+8.5%). An association; excluded by default.
+- All nodes of a set without a slow node sit lower, ~2,100-2,600 MHz, 12-33% of samples below 500 MHz: the clock depends on the job as well as the node.
 
 ### A. Parallel layout (core of the design)
 

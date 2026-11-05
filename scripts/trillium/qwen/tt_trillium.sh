@@ -132,7 +132,7 @@ CMD=(
     --output="$BASE/logs/%x-%j.out"
     --reservation="${TRI_RESERVATION-b200-friendly-users}"
     --qos="${TRI_QOS-bump}"
-    --exclude="${TRI_EXCLUDE-trig[0122-0123,0133,0138,0140,0143,0145,0152]}"  # GPUs capped at 200 W on 2026-11-05 (power_check.sh); trig0122 also has old mlx5_1 firmware, 14% slower pairs
+    --exclude="${TRI_EXCLUDE-trig[0122-0123,0133-0135,0138,0140,0143,0145,0148,0152]}"  # GPUs capped at 200 W on 2026-11-05 (power_check.sh); trig0122 also has old mlx5_1 firmware, 14% slower pairs; trig0134,0135,0148: lowest CPU clocks, 13-node Qwen ~8.5% slower with one (E1)
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"
