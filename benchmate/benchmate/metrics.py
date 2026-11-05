@@ -57,7 +57,8 @@ def set_wandb_env() -> None:
         "WANDB_NAME": f"{config.get('name') or 'run'}-rank{rank}-{host}",
     }
     if wandb_all_ranks():
-        tags = [config.get("name"), config.get("run_name"), host, f"rank{rank}", f"gpu{local_rank}"]
+        # wandb refuses a tag over 64 characters, and the run with it: the full run name is the group
+        tags = [config.get("name"), (config.get("run_name") or "")[:64], host, f"rank{rank}", f"gpu{local_rank}"]
         defaults["WANDB_TAGS"] = ",".join(t for t in tags if t)
         if local_rank != "0":
             defaults["WANDB__DISABLE_STATS"] = "true"
