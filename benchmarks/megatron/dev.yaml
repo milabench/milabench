@@ -928,6 +928,8 @@ _tri_loss: &tri_loss
   --lr-decay-style: cosine
   --min-lr: 3.0e-5
   --log-interval: 10
+  # the first step's forward crosses 12 stages with cold kernel caches, ~52 s each: past Megatron's default 10 minutes (job 1243941)
+  --distributed-timeout-minutes: 30
 megatron-glm5-tri-loss-bf16-n13:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
   # 8 h, 30 minutes under the job's limit (30_c.sh, 08:30:00): milabench stops the run itself and the job ends cleanly
