@@ -15,7 +15,7 @@ except what SciNet measured.
 | Nodes | 52 (`trig0101`-`trig0152`), **50 usable on 2026-11-04**: `trig0146` is in maintenance (7 of 8 GPUs), `trig0122` excluded (see Health checks). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
 | Per node | 8 x B200, 179.1 GiB each, on NVLink, 1,000 W limit; 2 x 48-core Intel, ~2 TB RAM, liquid cooled | health checks; SciNet talk |
 | GPUs | 416 in total | |
-| Network | InfiniBand, 800 Gb/s per node (user). `trig0152` has 4 ports at 400 Gb/s, 2 at 200 and 4 at 100. Measured all-reduce: 337 GB/s between 2 nodes, 177 GB/s over 25, above the ~160 GB/s that 800 Gb/s predicts *(est., Rorqual's ratio)*. Which ports NCCL uses: not checked | user; health checks |
+| Network | InfiniBand. NCCL uses 4 ports at 400 Gb/s, 1,600 Gb/s per node (`mlx5_0`, `1`, `4`, `9`: site `NCCL_IB_HCA`, port counters agree), not the 800 Gb/s first quoted. GPUs 0, 2, 4, 6 each share a PCIe switch with one port; 1, 3, 5, 7 have none. Measured results below | D3, D2 (jobs 1239634, 1239766, 1239768) |
 | Switch layout | **unknown** (asked to the admins). `/etc/hosts` puts the nodes in 8 subnets of 7, 7, 7, 7, 4, 7, 7, 6 nodes (racks?) | `/etc/hosts` |
 | Shared with others | the distributed filesystem and the interconnect (CPU and H100 nodes stay in production) | user |
 | Storage | `/scratch`, `/project`: VAST over NFS (65 PB), 25 TiB quota on `$SCRATCH`. Nodes are diskless; `/tmp` is ~1.5 TiB of zram, RAM like `/dev/shm`, although Slurm reports `TmpDisk=2048` MB | health checks, `diskusage_report`, `scontrol show node` |
@@ -26,8 +26,8 @@ except what SciNet measured.
 
 What sets it apart, and drives the design:
 
-1. **Network per FLOP like Rorqual, but nodes twice as large.** 100 Gb/s per GPU against 1,668 TFLOP/s
-   BF16, i.e. ~0.060 Gb/s per TFLOP (Rorqual: 50 / 785 = 0.064). A standard DGX B200 has 4x more network.
+1. **About twice Rorqual's network per FLOP for collectives, nodes twice as large.** 200 Gb/s per GPU against 1,668 TFLOP/s
+   BF16, i.e. ~0.12 Gb/s per TFLOP (Rorqual: 50 / 785 = 0.064). Point-to-point traffic is far slower than that: see the measured results.
    The best way to use this machine keeps traffic inside the 8-GPU NVLink domain.
 2. **FP8 / MXFP8 doubles compute, not the network.** Whatever is network-bound in BF16 becomes more so.
 3. **73 TB of GPU memory.** Qwen3.8-27B (~430 GB of training state) fits on one node; GLM-5 (744B) fits on
@@ -50,7 +50,7 @@ What sets it apart, and drives the design:
 
 Network arithmetic for Qwen *(est.)*: any data-parallel layout (FSDP, HSDP, TP + FSDP) moves ~8 bytes per
 parameter per node per step (BF16 gathers forward + backward, FP32 gradient reduction): ~215 GB, so
-**>= 2.2 s per step at 800 Gb/s**, against ~3 s of compute at 12,288 tokens per GPU and ~50% of 1,668
+**>= 1.1 s per step at 1,600 Gb/s**, against ~3 s of compute at 12,288 tokens per GPU and ~50% of 1,668
 TFLOP/s. Levers that change the ratio: tokens per GPU, BF16 reduction (~6 B/param), PP across nodes
 (volume / stages). HSDP vs FSDP changes when the traffic happens, not its volume.
 
@@ -81,6 +81,12 @@ spread over groups. Otherwise placement is dropped.
 - `trig0122`: excluded in the launchers until the admins confirm the firmware update, then rerun the health check. `mlx5_1` firmware 28.35.2000 (others 28.47.1026), pairs 289-292 GB/s against 337; 25-node all-reduce 165 GB/s with it, 177 without.
 - `trig0109` GPU 7: 177,903 corrected ECC and 2 corrected remapped rows, unchanged over two runs. Kept; watch nodemon's ECC.
 - **CPU clocks at full GPU power (~8 kW), 50 of 51 nodes:** mean 1,640-2,270 MHz against ~3,150 before, a quarter of samples at 200 MHz on the median node, cause unknown; `trig0114` holds ~3,190. Measured under DCGM's power test with CPU load, not training: check in the first runs (`stragglers`, nodemon's CPU collector).
+
+**Network, measured on 2026-11-04** (up to 25 nodes, the job limit):
+
+- D3: all-gather and reduce-scatter hold 174-192 GB/s from 2 to 25 nodes; all-reduce 171-188 from 4 nodes. All-to-all falls to 10.0 GB/s at 2 nodes and 4.3 at 25.
+- D2, send/recv: on all 8 GPUs 45 GB/s per node on 2-4 nodes and 10.9 from 13 nodes. On GPUs 0, 2, 4, 6 alone: 148-163 on 2-4 nodes and about 64 within a group from 13 nodes. The drop comes with the job's size, not with traffic; cause unknown. It may affect pipeline stages and EP across nodes.
+- **Two bandwidth groups**, no exception in 600 pairs on GPUs 0, 2, 4, 6: `trig0101-0128` (27 usable nodes) and `trig0129-0152` (23). Within a group 62.9-66.9 GB/s, across 45.0-47.5. Latency shows no groups (~25 us). Pairs across the two 25-node test sets (625 of 1,225) are unmeasured. So experiment P applies.
 
 ### E. Jobs side by side (second: decides whether runs can be packed)
 

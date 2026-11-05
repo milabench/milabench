@@ -47,5 +47,5 @@ for _g, _n in enumerate(SUBNET_SIZES, 1):
 PEAK_BF16 = 2.25e15
 MATMUL_BF16 = 1668e12
 MATMUL_FP8 = 3041e12
-NODE_NET_GBS = 100.0  # 800 Gb/s per node
+NODE_NET_GBS = 200.0  # 4 x 400 Gb/s, the ports NCCL uses (measured 2026-11-04)
 GPU_MEMORY_GIB = 180e9 / 2**30  # 180 GB

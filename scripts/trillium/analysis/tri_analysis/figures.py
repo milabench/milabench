@@ -221,7 +221,7 @@ def collectives_scale(t):
         ax.plot(med.nodes, med.value, color=col, lw=1.0, zorder=2)
         for _, row in med.iterrows():
             _pt(ax, row.nodes, row.value, col, row.synthetic, COLLECTIVE_MARKER[coll], ms=3.5)
-    for y, text in ((NODE_NET_GBS, "800 Gb/s per node"), (NODE_NET_GBS / GPUS_PER_NODE, "its share per GPU")):
+    for y, text in ((NODE_NET_GBS, "1,600 Gb/s per node"), (NODE_NET_GBS / GPUS_PER_NODE, "its share per GPU")):
         ax.axhline(y, color=MUTED, lw=0.7, ls=(0, (4, 3)), zorder=1)
         ax.text(1, y, text, fontsize=6, color=INK2, va="bottom")
     handles = [_handle(COLLECTIVE_COLOR[k], k.replace("_", "-"), d3[d3.collective == k].synthetic.any(),
