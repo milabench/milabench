@@ -31,6 +31,7 @@ export TMPDIR=$LOCAL_ROOT/tmp
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$LOCAL_ROOT/triton}
 export TILELANG_CACHE_DIR=${TILELANG_CACHE_DIR:-$LOCAL_ROOT/tilelang}
 export FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-$LOCAL_ROOT}  # its import creates $HOME/.cache/flashinfer otherwise
+export SGLANG_JIT_CACHE_DIR=${SGLANG_JIT_CACHE_DIR:-$LOCAL_ROOT/sglang-jit}  # the RoPE kernel's build, $HOME/.cache/sglang otherwise
 echo "[$RUN_PREFIX] local_root=$LOCAL_ROOT free: $(df -h "$(dirname "$LOCAL_ROOT")" | tail -1)"
 local_cleanup() {
     echo "[$RUN_PREFIX] local_root before cleanup: $(du -sh "$LOCAL_ROOT" 2>/dev/null | cut -f1) on this node"
