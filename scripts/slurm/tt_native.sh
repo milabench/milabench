@@ -112,7 +112,7 @@ export TT_NATIVE_CACHE_DIR=$LOCAL_CACHE
 CACHE_KEY=$("$TT38/output/venv/torchtitan_native/bin/python" -c "
 import importlib.metadata as m
 print(f'torch{m.version(\"torch\")}-triton{m.version(\"triton\")}'.replace('+', '_'))" 2>/dev/null || echo unknown)
-GPU_KEY=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr -cd '[:alnum:]')
+GPU_KEY=$(nvidia-smi -i 0 --query-gpu=name --format=csv,noheader | tr -cd '[:alnum:]')
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
 mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
