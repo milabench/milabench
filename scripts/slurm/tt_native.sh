@@ -86,6 +86,12 @@ done
 STAGE_NODES=${TT_NODES:-$SLURM_JOB_NODELIST}
 STAGE_N=$(scontrol show hostnames "$STAGE_NODES" | wc -l)
 
+# Trillium B200 only: stop at once if a node's GPUs are power-capped.
+if [ "${TT_CONFIG:-}" = trillium ]; then
+    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash "$TT38/milabench/scripts/trillium/power_check.sh"
+    echo "[tt-native] power_check passed on $STAGE_N nodes"
+fi
+
 # Node-local root of the compile cache, local venv, datasets copy and TMPDIR.
 # Default /tmp/$USER. TT_LOCAL_ROOT moves them (Trillium: /dev/shm/$USER, its
 # /tmp holds 2 GB); TT_LOCAL_CLEANUP=1 removes it from every node at the end

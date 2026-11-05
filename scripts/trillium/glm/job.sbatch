@@ -54,6 +54,9 @@ select=$(IFS=,; echo "${entries[*]%@*}")
 system=$MILABENCH_BASE/slurm/system.$SLURM_JOB_ID.yaml
 echo "[$RUN_PREFIX] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST ($SLURM_JOB_NUM_NODES) experiment=${TT_EXPERIMENT:-} campaign=${TT_CAMPAIGN:-}"
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed "s/^/[$RUN_PREFIX] /"
+# stop at once if a node's GPUs are power-capped
+srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 bash "$WORKDIR/scripts/trillium/power_check.sh" || exit 4
+echo "[$RUN_PREFIX] power_check passed on $SLURM_JOB_NUM_NODES nodes"
 
 # topology at allocation time, when Slurm has one (Trillium: none, `scontrol show topology` is empty)
 export TT_TOPOLOGY=$MILABENCH_BASE/slurm/topology.$SLURM_JOB_ID.txt
