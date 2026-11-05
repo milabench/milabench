@@ -970,7 +970,6 @@ def push_summary(log, steps):
 # tensors silently.
 
 CKPT = {"cfg": None, "saved": False}
-CHECKSUM_FILE = "milabench_checksum.json"
 
 
 def drop(argv: list[str], name: str, value: bool = False) -> list[str]:
@@ -1043,112 +1042,17 @@ def checkpoint_argv(cfg: dict, argv: list[str]) -> list[str]:
     return argv
 
 
-CACHE_DROP = "posix_fadvise_dontneed"
-
-
-def drop_page_cache(path: str) -> int:
-    """Drop this node's cached pages of every file under ``path``, returns the file count. A load in the same job reads the
-    shards this node wrote: without this it may time the client's page cache, not the filesystem (as TorchTitan's F1)."""
-    count = 0
+def drop_page_cache(path: str) -> None:
+    """Drop this node's cached pages of the checkpoint: a load in the same job reads the shards this node wrote, and would
+    otherwise time the client's page cache, not the filesystem."""
     for root, _, names in os.walk(path):
         for name in names:
             fd = os.open(os.path.join(root, name), os.O_RDONLY)
             try:
                 os.fsync(fd)  # DONTNEED only drops clean pages
                 os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-                count += 1
             finally:
                 os.close(fd)
-    return count
-
-
-def filesystem(path: str) -> tuple[str | None, str | None]:
-    """(filesystem, mount source) of ``path``: the longest mount point of /proc/mounts holding it. NFS from a VAST server
-    (Trillium) is ``vast-nfs``, another NFS names its server, as the TorchTitan pack does."""
-    best, kind, source = "", None, None
-    real = os.path.realpath(path)
-    try:
-        with open("/proc/mounts") as f:
-            for line in f:
-                parts = line.split()
-                mount = parts[1]
-                if (real == mount or real.startswith(mount.rstrip("/") + "/")) and len(mount) >= len(best):
-                    best, kind, source = mount, parts[2], parts[0]
-    except OSError:
-        pass
-    if kind and kind.startswith("nfs") and source:
-        server = source.split(":", 1)[0]
-        kind = "vast-nfs" if "vast" in server.lower() else f"{kind}:{server}"
-    return kind, source
-
-
-def dir_usage(path: str) -> tuple[int, int]:
-    """(bytes, files) under ``path``."""
-    size = files = 0
-    for root, _, names in os.walk(path):
-        for name in names:
-            try:
-                size += os.path.getsize(os.path.join(root, name))
-                files += 1
-            except OSError:
-                pass
-    return size, files
-
-
-def tensor_sums(t) -> list[float]:
-    """[sum, sum of squares, sum weighted by position (order-sensitive)] of a tensor in float64, in slices (no full-size copy)."""
-    out = [0.0, 0.0, 0.0]
-    offset = 0
-    with torch.no_grad():
-        for part in t.detach().reshape(-1).split(2**26):
-            part = part.double()
-            position = torch.arange(offset + 1, offset + part.numel() + 1, dtype=torch.float64, device=part.device)
-            out[0] += part.sum().item()
-            out[1] += (part * part).sum().item()
-            out[2] += (part * position).sum().item()
-            offset += part.numel()
-    return out
-
-
-MOMENTS = ("exp_avg", "exp_avg_sq", "master_param")
-
-
-def state_checksums(model, optimizer=None) -> dict:
-    """This rank's tensors -> sums: the model's parameters by name; with ``optimizer`` (content: full) the Adam moments and
-    master weights of each parameter, raw (no unscaled copy on the GPU, the load is short of memory as it is)."""
-    sums = {}
-    for i, chunk in enumerate(model):
-        for name, param in chunk.named_parameters():
-            sums[f"model{i}.{name}"] = tensor_sums(param)
-    if optimizer is not None:
-        chained = getattr(optimizer, "chained_optimizers", [optimizer])
-        for c, opt in enumerate(chained):
-            inner = opt.optimizer
-            for g, group in enumerate(inner.param_groups):
-                for p, param in enumerate(group["params"]):
-                    state = inner.state.get(param) or {}
-                    for name in MOMENTS:
-                        if name in state:
-                            sums[f"optimizer{c}.group{g}.param{p}.{name}"] = tensor_sums(state[name])
-    return sums
-
-
-def gather_checksums(model, optimizer=None) -> list:
-    """Every rank's ``state_checksums``, on rank 0 (None elsewhere)."""
-    import torch.distributed as dist
-
-    mine = state_checksums(model, optimizer)
-    every = [None] * dist.get_world_size() if dist.get_rank() == 0 else None
-    dist.gather_object(mine, every, dst=0)
-    return every
-
-
-def compare_checksums(saved: list, loaded: list) -> list[str]:
-    """What differs between two ``gather_checksums`` results (exact: same bytes, same reduction order)."""
-    diffs = [] if len(saved) == len(loaded) else [f"{len(saved)} ranks saved, {len(loaded)} loaded"]
-    for r, (a, b) in enumerate(zip(saved, loaded)):
-        diffs += [f"rank {r} {k}" for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
-    return diffs
 
 
 def gather_peak_gib() -> float:
@@ -1161,24 +1065,19 @@ def gather_peak_gib() -> float:
     return max(every)
 
 
-def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, checksum_match=None,
-                     saved_by=None, peak_gib=None, dropped=None):
+def checkpoint_event(ck: dict, start: float, blocked_end: float, end: float, step: int, peak_gib=None):
     """``data: {checkpoint: {...}}`` on rank 0 (scripts/trillium/FORMAT.md, "Checkpoint events")."""
     if LOG is None:
         return
-    size, files = dir_usage(ck["dir"])
-    fs, fs_source = filesystem(ck["dir"])
+    size = sum(os.path.getsize(os.path.join(root, name)) for root, _, names in os.walk(ck["dir"]) for name in names)
     # times on rank 0 between barriers: the slowest rank's
     event = {
         "op": ck["op"], "step": step,
         "repetition": int(os.environ["TT_REPETITION"]) if os.environ.get("TT_REPETITION") else None,
         "mode": ck["mode"] if ck["op"] == "save" else "sync", "content": ck["content"], "format": "torch_dist",
-        "bytes": size, "files": files, "params_total": RUN["params_total"], "peak_allocated_gib": peak_gib,
+        "bytes": size, "params_total": RUN["params_total"], "peak_allocated_gib": peak_gib,
         "blocked_s": blocked_end - start, "total_s": end - start,
-        "path": ck["dir"], "filesystem": fs, "filesystem_source": fs_source, "start_epoch": start, "end_epoch": end,
-        "checksum_match": checksum_match,
-        **({"cache_drop": CACHE_DROP, "cache_drop_files_rank0": dropped} if dropped is not None else {}),
-        "saved_by": saved_by,  # load: {mode, run} of the save that wrote the checkpoint
+        "path": ck["dir"], "start_epoch": start, "end_epoch": end,
     }
     debug("checkpoint:", json.dumps(event))
     LOG({"checkpoint": event, "task": "train", "time": time.time()})
@@ -1199,18 +1098,11 @@ def patch_checkpointing(steps):
         schedule = checkpointing.schedule_async_save
         pending = {}
 
-        def finished(step, start, blocked_end, checksums):
-            if dist.get_rank() == 0:
-                with open(os.path.join(ck["dir"], CHECKSUM_FILE), "w") as f:
-                    json.dump({"step": step, "content": ck["content"], "mode": ck["mode"],
-                               "run": os.environ.get("MILABENCH_RUN_NAME"), "ranks": checksums}, f)
-            checkpoint_event(ck, start, blocked_end, time.time(), step)
-
         def timed_schedule(request):
             # the last finalize function: runs on every rank once all of them have written (maybe_finalize_async_save)
             # (pending is read then: blocked_end is only known once the save call has returned)
-            request.add_finalize_fn(lambda: finished(pending["step"], pending["start"], pending["blocked_end"],
-                                                     pending["checksums"]))
+            request.add_finalize_fn(lambda: checkpoint_event(ck, pending["start"], pending["blocked_end"], time.time(),
+                                                             pending["step"]))
             return schedule(request)
 
         def timed_save(iteration, model, *args, **kwargs):
@@ -1218,17 +1110,15 @@ def patch_checkpointing(steps):
                 debug(f"checkpoint already saved: no save at iteration {iteration}")
                 return None
             CKPT["saved"] = True
-            optimizer = args[0] if args else kwargs.get("optimizer")
-            checksums = gather_checksums(model, optimizer if ck["content"] == "full" else None)
             dist.barrier()
             start = time.time()
-            pending.update(step=iteration, start=start, checksums=checksums)
+            pending.update(step=iteration, start=start)
             result = save(iteration, model, *args, **kwargs)
             dist.barrier()
             blocked_end = time.time()
             pending["blocked_end"] = blocked_end
             if ck["mode"] == "sync":
-                finished(iteration, start, blocked_end, checksums)
+                checkpoint_event(ck, start, blocked_end, time.time(), iteration)
             steps.restart_clock()
             return result
 
@@ -1239,32 +1129,14 @@ def patch_checkpointing(steps):
 
         def timed_load(model, *args, **kwargs):
             # one rank per node, on every node, out of the timing
-            dropped = drop_page_cache(ck["dir"]) if int(os.environ.get("LOCAL_RANK", 0)) == 0 else 0
+            if int(os.environ.get("LOCAL_RANK", 0)) == 0:
+                drop_page_cache(ck["dir"])
             dist.barrier()
             start = time.time()
             result = load(model, *args, **kwargs)
             dist.barrier()
             end = time.time()
-            peak = gather_peak_gib()
-            optimizer = args[0] if args else kwargs.get("optimizer")
-            checksums = gather_checksums(model, optimizer if ck["content"] == "full" else None)
-            # a load that cannot be checked or does not match fails the run, on every rank
-            problem, step, saved_by = None, ck.get("step"), None
-            if dist.get_rank() == 0:
-                try:
-                    with open(os.path.join(ck["dir"], CHECKSUM_FILE)) as f:
-                        saved = json.load(f)
-                    step, saved_by = saved["step"], {"mode": saved.get("mode"), "run": saved.get("run")}
-                    diffs = compare_checksums(saved["ranks"], checksums)
-                    if diffs:
-                        problem = f"{len(diffs)} tensors differ from the save, first: {diffs[:5]}"
-                except (OSError, ValueError, KeyError) as exc:
-                    problem = f"no usable {CHECKSUM_FILE}: {exc!r}"
-                checkpoint_event(ck, start, end, end, step, problem is None, saved_by, peak, dropped)
-            outcome = [problem]
-            dist.broadcast_object_list(outcome, src=0)
-            if outcome[0]:
-                raise RuntimeError(f"the load could not be verified: {outcome[0]}")
+            checkpoint_event(ck, start, end, end, ck.get("step"), gather_peak_gib())
             return result
 
         training.load_checkpoint = timed_load

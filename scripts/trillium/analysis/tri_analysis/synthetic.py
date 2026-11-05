@@ -462,10 +462,9 @@ def _checkpoint(op, mode, content, nbytes, nodes, rng, files, fmt, rep, **extra)
     else:
         total = (nbytes / 1e9 / min(8 * nodes, 150) + 10) * tod
         blocked = total
-        extra["cache_drop"] = "posix_fadvise_dontneed"
     return {"op": op, "step": 40, "repetition": rep, "mode": mode, "content": content, "format": fmt,
-            "bytes": nbytes, "files": files, "blocked_s": round(blocked, 2), "total_s": round(total, 2),
-            "path": "/scratch/<user>/trillium/checkpoints/<run>", "filesystem": "vast-nfs", **extra}
+            "bytes": nbytes, "blocked_s": round(blocked, 2), "total_s": round(total, 2),
+            "path": "/scratch/<user>/trillium/checkpoints/<run>", **extra}
 
 
 # -- experiments ---------------------------------------------------------------
@@ -635,8 +634,7 @@ def generate(out: Path) -> None:
                 fields = dict(params_total=QWEN["params_total"], peak_allocated_gib=round(train_mem * extra, 1))
                 for r in (1, 2):
                     ck += [_checkpoint("save", mode, content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r, **fields),
-                           _checkpoint("load", "sync", content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r,
-                                       checksum_match=True, **fields)]
+                           _checkpoint("load", "sync", content, size, nodes, rng, 8 * nodes + 1, "torch.dcp", r, **fields)]
                 write_run(root, f"syn-f1-qwen-{content}-{mode}-n{nodes}-r{rep}", "tt-qwen", QWEN,
                           qwen_parallelism("fsdp", nodes), NODES[:nodes], step, rng, experiment="F1",
                           variant=f"tri-ckpt-{'full' if content == 'full' else 'model'}-{mode.replace('async_', '')}",
@@ -667,8 +665,7 @@ def generate(out: Path) -> None:
                           n_steps=19, mem=train_mem * (1.5 if content == "full" else 1.0), **common)
                 peak = round(train_mem * (1.54 if content == "full" else 1.0), 1)
                 load = _checkpoint("load", "sync", content, size, nodes, rng, par["gpus"] + 4, "torch_dist", rep,
-                                   peak_allocated_gib=peak, checksum_match=True, **fields,
-                                   saved_by={"mode": mode, "run": save_name})
+                                   peak_allocated_gib=peak, **fields)
                 write_run(root, f"syn-f1-glm-{content}{tag}-load-{mode}-{where}-r{rep}", "glm5", GLM, par, NODES[:nodes], step,
                           rng, repetition=rep, t_start=ts + 900, variant=f"megatron-glm5-tri-ckpt-{content}{tag}-load-{where}",
                           checkpoints=[load], n_steps=4, first_loss_step=11, mem=peak, **common)

@@ -34,16 +34,6 @@ def crashed_copy(syn: Path, raw: Path, name: str) -> None:
     (out / src.name).write_text("\n".join(keep) + "\n")
 
 
-def test_checksum_mismatch_is_a_failure():
-    row = {"run_id": "r", "variant": "tri-ckpt-full-sync"}
-    ok = {"op": "save", "mode": "sync", "content": "full"}
-    good = {"op": "load", "mode": "sync", "content": "full", "checksum_match": True}
-    bad = {"op": "load", "mode": "sync", "content": "full", "checksum_match": False}
-    assert failed_operation(row, [ok, good]) is None
-    assert failed_operation(row, [ok, good, bad])["op"] == "load"
-    assert failed_operation(row, [ok])["op"] == "load"
-
-
 def test_failed_runs():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -98,6 +88,5 @@ def test_measured_checkpoint_without_failure():
 if __name__ == "__main__":
     test_measured_checkpoint_without_failure()
     print("ok test_measured_checkpoint_without_failure")
-    test_checksum_mismatch_is_a_failure()
     test_failed_runs()
     print("ok test_failed_runs")

@@ -116,20 +116,17 @@ One event per operation, `data: {checkpoint: {...}, task: "train"}`, same shape 
  "mode": "async",            // sync | async | async_pinned (load: sync)
  "content": "full",          // full (model + optimizer + scheduler + data loader) | weights
  "format": "torch.dcp",      // torch.dcp (TorchTitan) | torch_dist (Megatron)
- "bytes": 3.8e11, "files": 832,
+ "bytes": 3.8e11,
  "blocked_s": 18.4,          // training blocked: call -> control back to the training loop (max over ranks)
  "total_s": 81.2,            // until the last byte is written (async: background completion) / all ranks loaded
- "path": "/scratch/<user>/trillium/checkpoints/<run>", "filesystem": "vast-nfs",
+ "path": "/scratch/<user>/trillium/checkpoints/<run>",
  "start_epoch": 1795..., "end_epoch": 1795...,
  // Optional:
  "pinned_buffers_allocated": true,  // async_pinned saves: this save also allocated the pinned host buffers (first
                                     // of a run): its blocked_s is an upper bound
- "cache_drop": "posix_fadvise_dontneed",  // load: how the checkpoint's page cache was dropped first (+ cache_drop_files_rank0)
  "peak_allocated_gib": 50.3,  // load: peak GPU memory, max over ranks. TorchTitan: during the operation, saves too;
                               // Megatron: since the process started, null on saves
- "checksum_match": true,      // load: weights checksum at save vs after load; a mismatch or a missing check fails the run, after this event
- "params_total": 744e9,       // parameters of the model copy: size per parameter = bytes / params_total
- "saved_by": {"mode": "sync", "run": "<run_name>"}}  // load (Megatron): the save that wrote the checkpoint
+ "params_total": 744e9}       // parameters of the model copy: size per parameter = bytes / params_total
 ```
 
 Megatron full checkpoints raise GPU memory, on saves too (H100, truncated model); one TorchTitan H100 test showed no such rise (full save 20.8 GiB, weights save 23.4, training 32.0). A Megatron save's peak is its run's `memory_gib.peak_allocated`. TorchTitan's
@@ -140,8 +137,7 @@ Measured sizes (truncated models): full 12.0 B/param, weights 2.0 B/param.
 Times are the maximum over ranks; `{"min": .., "max": ..}` is also accepted (the analysis keeps
 `max`, and `*_min`). Throughput is derived (`bytes / total_s`), not logged. The TorchTitan pack's
 own older names are mapped on read (`kind: model` -> `content: weights`, `async_mode: disabled |
-async_with_pinned_mem` -> `mode: sync | async_pinned`, `fs_type` -> `filesystem`, `rep` ->
-`repetition`, `restored` -> `checksum_match`; `analysis/tri_analysis/runs.py`), but new code should write the names above. The
+async_with_pinned_mem` -> `mode: sync | async_pinned`, `rep` -> `repetition`; `analysis/tri_analysis/runs.py`), but new code should write the names above. The
 nodes are diskless: no local staging.
 
 ## 2. D1 health check: srygaard additions

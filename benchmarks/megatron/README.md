@@ -35,7 +35,7 @@ micro-batches than stages. `python placement.py --hosts ... --gpus-per-node 8 --
 `{dir, op: save | load, content: weights | full, mode: sync | async, step}` (dir may use environment variables) becomes
 Megatron's flags (`torch_dist`; async through the persistent `mcore` worker; a weights load is a `--finetune` without
 optimizer). One save per run, at `step`. Rank 0 logs a `checkpoint` event (`scripts/trillium/FORMAT.md`): time blocked,
-total time, bytes, files, filesystem; a weights checksum written at save time is compared after the load.
+total time, bytes, peak memory on loads.
 
 ## Loss
 The last pipeline stage's first data-parallel rank keeps the loss of every step (with the gradient norm) in its step

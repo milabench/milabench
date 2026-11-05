@@ -11,7 +11,7 @@ following, not the job). `DRY_RUN=1` prints what would be submitted.
 | A-G | `./10_ag.sh 13\|26\|52\|12\|48` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16; selective recompute, 64 per copy |
 | B-G | `./20_bg.sh 13\|26\|39\|52` | pp13-ep8 with 1-4 copies: 256 per copy (weak) and 768 in total (strong) |
 | C | `./30_c.sh speed 13\|52`, `./30_c.sh loss [recipes]` | bf16 / fp8-tensorwise / fp8-blockwise / mxfp8; 500-step loss runs from seed 1234 |
-| F1 | `./40_f1.sh 13\|52 [all\|weights\|full]`, `./40_f1.sh 26` | weights then full: save sync, load, save async, load; the checkpoint is deleted after each load (timed). 26: full at pp13-ep16, the fallback |
+| F1 | `./40_f1.sh 13\|52 [all\|weights\|full]`, `./40_f1.sh 26` | weights then full: save sync, load, save async, load; the checkpoint is deleted after each load. 26: full at pp13-ep16, the fallback |
 
 Global batch: with PP stages and m micro-batches per data-parallel rank, the 1F1B pipeline bubble is
 (PP - 1) / (m + PP - 1), so the batch is chosen in micro-batches. Weak scaling, and the layout comparison at a node count
@@ -29,7 +29,7 @@ before launch (`placement.check_layout`): a wrong node count or batch fails at o
 Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, account `rrg-bengioy-ad`, partition
 `compute_b200_full_node`, `--gpus-per-node=b200:8`, no reservation unless `RESERVATION` is set, `CAMPAIGN` =
 `trillium-MMDD`, `REPETITION`). Node telemetry under `$SCRATCH/trillium/nodemon/<run>`, checkpoints under
-`$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there), checkpoint deletions in `$MILABENCH_BASE/slurm/ckpt-rm.<job>.jsonl`.
+`$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there).
 
 ## If only 47 nodes are available
 
@@ -82,20 +82,8 @@ speed, and C-loss needs the distinct text.
 - `loss` events with `step` and `grad_norm`, from the last pipeline stage, emitted by rank 0 every 10 steps and at the end
   (a run that times out loses at most 10 steps; the same values are in that rank's step rows). `step` counts from 1: the first
   step's loss has `step` 1, the first step's `rate` event has `batch_id` 0.
-- F1: one `checkpoint` event per save / load: `op`, `step`, `repetition`, `mode`, `content`, `format`, `bytes`,
-  `files`, `blocked_s` (training stopped), `total_s` (until the write is complete; async: until Megatron finalizes
-  it), `path`, `filesystem` (`vast-nfs` on Trillium), `filesystem_source`, `start_epoch`, `end_epoch`, `params_total`; a load
-  adds `checksum_match`, `saved_by` (mode and run of the save), `peak_allocated_gib`, and `cache_drop`: every node evicts the
-  checkpoint from its page cache (`posix_fadvise(DONTNEED)`) before the load, so the load time is the filesystem's.
-
-## What `checksum_match` proves (F1)
-
-For every rank and every named model parameter (full: also the Adam moments and master weights of every parameter of the
-optimizer), three float64 numbers: sum, sum of squares, sum weighted by position. They are written beside the checkpoint at
-save time and must be exactly equal after the load; a difference, or a missing file, fails the run. This shows that each rank
-got back the tensors it had, in the same order, on the same layout. It is not a cryptographic hash: a change that keeps all
-three numbers would pass. It does not check the scheduler, the RNG (`--no-load-rng`), a load on another layout, or the data
-loader position, and the save-side numbers are taken from memory before the write, so what it proves is the round trip.
+- F1: one `checkpoint` event per save / load, as in `scripts/trillium/FORMAT.md`. Before a load, every node evicts the
+  checkpoint from its page cache (`posix_fadvise(DONTNEED)`), so the load time is the filesystem's.
 
 ## When a rank fails
 

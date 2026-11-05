@@ -6,8 +6,7 @@
 #                     TE and nvcc wheels): the module must not come before the venv on PATH (slime's make_env puts the
 #                     wheels' nvcc first)
 # F1 (checkpoints): every entry gets TT_CKPT_DIR=$CKPT_ROOT/<job name>.<job id>, the same for the whole job. A `-save`
-# entry starts from an empty directory; after a `-load` entry the directory is deleted and the deletion timed
-# ($MILABENCH_BASE/slurm/ckpt-rm.<job id>.jsonl): run them as save, load, save, load, ... so that only one checkpoint
+# entry starts from an empty directory; after a `-load` entry the directory is deleted: run them as save, load, save, load, ... so that only one checkpoint
 # exists at a time. The directory is also deleted when the job ends, whatever happened.
 # Prints one PASS / FAIL line per entry and the largest per-rank peak memory, then a summary.
 set -uo pipefail
@@ -81,23 +80,15 @@ case " ${ENTRIES} " in
             exit 3
         fi ;;
 esac
-ckpt_rm() {  # ckpt_rm RUN: delete the checkpoint, timed, one JSON line per deletion; fails if it is still there
+ckpt_rm() {  # delete the checkpoint; fails if it is still there
     [ -d "$TT_CKPT_DIR" ] || return 0
-    local bytes start end ok=true
-    bytes=$(du -sb "$TT_CKPT_DIR" 2>/dev/null | cut -f1)
-    start=$(date +%s.%N)
-    rm -rf "$TT_CKPT_DIR" || ok=false
-    end=$(date +%s.%N)
-    [ -e "$TT_CKPT_DIR" ] && ok=false
-    printf '{"run": "%s", "path": "%s", "bytes": %s, "rm_s": %s, "start_epoch": %s, "end_epoch": %s, "ok": %s}\n' \
-        "$1" "$TT_CKPT_DIR" "${bytes:-null}" "$(python3 -c "print(round($end - $start, 3))")" "$start" "$end" "$ok" \
-        | tee -a "$MILABENCH_BASE/slurm/ckpt-rm.$SLURM_JOB_ID.jsonl" | sed "s/^/[$RUN_PREFIX] checkpoint deleted: /"
-    if [ "$ok" != true ]; then
+    rm -rf "$TT_CKPT_DIR"
+    if [ -e "$TT_CKPT_DIR" ]; then
         echo "[$RUN_PREFIX] ERROR: could not delete $TT_CKPT_DIR" >&2
         return 1
     fi
 }
-trap 'ckpt_rm end-of-job || true; local_cleanup' EXIT
+trap 'ckpt_rm || true; local_cleanup' EXIT
 
 peak() {
     grep -rhoE "\"$1\": ?[0-9.]+" "$2" 2>/dev/null | grep -oE '[0-9.]+$' | sort -g | tail -1
@@ -120,7 +111,7 @@ for item in "${entries[@]}"; do
     mkdir -p "$BENCHMATE_NODEMON_DIR" || echo "[$RUN_PREFIX] WARNING: could not create $BENCHMATE_NODEMON_DIR" >&2
     case $entry in
         *-save*)
-            if ! ckpt_rm "before $entry"; then  # never a second checkpoint beside one that could not be deleted
+            if ! ckpt_rm; then  # never a second checkpoint beside one that could not be deleted
                 status_all=1
                 summary+=("$entry: NOT RUN, the previous checkpoint is still there")
                 continue
@@ -143,7 +134,7 @@ for item in "${entries[@]}"; do
     line+="  peak allocated $(peak peak_memory_allocated "$rundir") / reserved $(peak peak_memory_reserved "$rundir") GiB"
     echo "[$RUN_PREFIX] $line"
     summary+=("$line")
-    case $entry in *-load*) ckpt_rm "$run" || status_all=1 ;; esac
+    case $entry in *-load*) ckpt_rm || status_all=1 ;; esac
 done
 
 echo "[$RUN_PREFIX] ===== summary (runs in $MILABENCH_BASE/runs/$RUN_PREFIX.$SLURM_JOB_ID.*)"

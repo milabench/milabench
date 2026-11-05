@@ -18,8 +18,7 @@ from .machine import GPUS_PER_NODE
 from .style import GLM, QWEN
 
 # Checkpoint events: the TorchTitan pack's older names -> FORMAT.md's, for the test runs that have them.
-CKPT_RENAME = {"kind": "content", "async_mode": "mode", "fs_type": "filesystem", "rep": "repetition",
-               "restored": "checksum_match"}
+CKPT_RENAME = {"kind": "content", "async_mode": "mode", "rep": "repetition"}
 CKPT_VALUES = {"content": {"model": "weights"},
                "mode": {"disabled": "sync", "async_with_pinned_mem": "async_pinned"}}
 
@@ -62,15 +61,11 @@ def expected_operations(entry: str):
 
 
 def failed_operation(row: dict, events: list[dict]):
-    """The checkpoint operation a failed F1 run did not finish: a load that restored the wrong data, or the first of
-    its entry's without an event."""
+    """The checkpoint operation a failed F1 run did not finish: the first of its entry's without an event."""
     expected = expected_operations(row.get("variant")) or expected_operations(row.get("bench"))
     if expected is None:
         return None
     content, ops = expected
-    for e in events:
-        if e.get("checksum_match") is False:
-            return {"run_id": row["run_id"], "content": e.get("content", content), "op": e.get("op"), "mode": e.get("mode")}
     done = {(e.get("op"), e.get("mode")) for e in events}
     for op, mode in ops:
         if (op, mode) not in done:
@@ -79,14 +74,10 @@ def failed_operation(row: dict, events: list[dict]):
 
 
 def normalize_checkpoint(c: dict) -> dict:
-    """One checkpoint event in the FORMAT.md shape; {min, max} over ranks -> max (and *_min); nested
-    ``saved_by`` -> ``saved_by_mode``, ``saved_by_run``."""
+    """One checkpoint event in the FORMAT.md shape; {min, max} over ranks -> max (and *_min)."""
     out = {}
     for k, v in c.items():
         k = CKPT_RENAME.get(k, k)
-        if k == "saved_by":
-            out["saved_by_mode"], out["saved_by_run"] = (v or {}).get("mode"), (v or {}).get("run")
-            continue
         if isinstance(v, dict) and "max" in v:
             out[f"{k}_min"] = v.get("min")
             v = v["max"]

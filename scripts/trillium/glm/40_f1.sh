@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # F1: GLM-5 checkpoint save and load, sync vs async. One job runs, per content, save (sync), load, save (async), load: the
-# checkpoint is deleted (timed) after each load, so only one exists at a time (job.sbatch), weights first: a full checkpoint
+# checkpoint is deleted after each load, so only one exists at a time (job.sbatch), weights first: a full checkpoint
 # that runs out of memory (see the README) then costs little.
 #   ./40_f1.sh 13|52|39 [all|weights|full] [-- extra sbatch args]  default all (39: a 47-node window)
 #   ./40_f1.sh 26 [-- extra sbatch args]                           fallback: full, pp13-ep16, if full does not fit at 13 nodes
