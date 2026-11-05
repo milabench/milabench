@@ -14,7 +14,7 @@
 #   CUDA_MODULE      module loaded by the job (default cuda/12.9; empty: none)
 #   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist
 #   AFTER            job id to wait for (afterany)
-#   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default trillium-glm); UPDATE=1
+#   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default trillium); UPDATE=1
 #                    fast-forwards it (default 1), UPDATE=0 fails instead
 #   PREPARE=0        skip `milabench prepare` in the job (data already staged)
 #   REPETITION       run.repetition (default 1); CAMPAIGN (default trillium-MMDD); EXCLUSIVE_CLUSTER (1 in the window)
