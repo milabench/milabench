@@ -13,7 +13,7 @@ scripts/trillium/qwen/tt_trillium.sh --nodes 13 --time 00:30:00 TT_CAMPAIGN=wind
 
 Defaults: partition `compute_b200_full_node`, `--gpus-per-node=b200:8`, account
 `rrg-bengioy-ad` (`TRI_ACCOUNT`, `TRI_PARTITION`, `TRI_RESERVATION`, `TRI_QOS` change them),
-`module load cuda/12.9` in the job, `CC_CLUSTER=trillium`, wandb offline (no proxy on
+`module load StdEnv/2023 gcc/12.3 cuda/12.9` in the job, `CC_CLUSTER=trillium`, wandb offline (no proxy on
 Trillium: `wandb sync` from a login node).
 
 ## Layout on `$SCRATCH`
