@@ -87,6 +87,10 @@ at 2), D4 14 s (1 cut). Trillium at 52 nodes x 8 B200, *estimates* (not measured
   `NCCL_P2P_NET_CHUNKSIZE`, `NCCL_NCHANNELS_PER_NET_PEER`, `NCCL_NET_SHARED_BUFFERS`, `NCCL_BUFFSIZE`,
   `NCCL_MAX_P2P_PEERS` (`NCCL_P2P_PXN_LEVEL=0`: 35), and 10.4-11.5 GB/s on a 25-node job, also one pair at a time
   (job 1239737), so that drop comes with the size of the job, not from the traffic. All-gather on the same NICs: 192.
-- `--gpus 0,2,4,6` (each on its own NIC) on 2-4 nodes: 148-164 GB/s per node, repeatable to 0.3%. Not yet run above 4 nodes.
+- `--gpus 0,2,4,6` (each on its own NIC): 148-164 GB/s per node on 2-4 nodes, repeatable to 0.3%. The drop with job size
+  hits these GPUs too: 64 GB/s at 13 nodes (all inside one group below; all 8 GPUs: 10.9), the same at 25.
+- Two bandwidth groups, jobs 1239766 and 1239768 (two 25-node sets, 600 pairs, 1,225 in all; pairs across the sets untested):
+  `trig0101`-`trig0128` and `trig0129`-`trig0152`. Within a group 62.9-66.9 GB/s, across 45.0-47.5, no overlap
+  (on 4 nodes 163 and 148). Median latency the same in both, 25.0 us. No node or pair stands out.
 - Alltoall goes through send/recv too: 10 GB/s bus BW at 2 nodes, 4.3 at 25.
-- Durations, 25 nodes: D3 2 min 38 s (job 1239634); D2 5 min 9 s on all 8 GPUs (job 1239660, 25 rounds of 10.7 s).
+- Durations, 25 nodes: D3 2 min 38 s (job 1239634); D2 5 min 9 s on all 8 GPUs (job 1239660, 25 rounds of 10.7 s), 1 min 4 s on 0, 2, 4, 6 (job 1239766, 1.3 s per round).
