@@ -12,15 +12,15 @@ except what SciNet measured.
 
 | | known | source |
 |---|---|---|
-| Nodes | 52 (`trig0101`-`trig0152`), exclusive access during the window; **5 of them (trig0148-0152) are reserved for SciNet's inference service (`AI_inference-nodes`): we may get only 47. Open question with SciNet: see "If only 47 nodes"** | SciNet talk 2026-10-21; `/etc/hosts`; `scontrol show reservation` |
-| Per node | 8 x B200 180 GB on NVLink, 2 x 48-core Intel, 2 TB RAM, liquid cooled | SciNet talk |
+| Nodes | 52 (`trig0101`-`trig0152`), **50 usable on 2026-11-04**: `trig0146` is in maintenance (7 of 8 GPUs), `trig0122` excluded (see Health checks). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
+| Per node | 8 x B200, 179.1 GiB each, on NVLink, 1,000 W limit; 2 x 48-core Intel, ~2 TB RAM, liquid cooled | health checks; SciNet talk |
 | GPUs | 416 in total | |
-| Network | InfiniBand, 800 Gb/s per node, "non-blocking" (user); HCA count unknown | user; SciNet |
+| Network | InfiniBand, 800 Gb/s per node (user). `trig0152` has 4 ports at 400 Gb/s, 2 at 200 and 4 at 100. Measured all-reduce: 337 GB/s between 2 nodes, 177 GB/s over 25, above the ~160 GB/s that 800 Gb/s predicts *(est., Rorqual's ratio)*. Which ports NCCL uses: not checked | user; health checks |
 | Switch layout | **unknown** (asked to the admins). `/etc/hosts` puts the nodes in 8 subnets of 7, 7, 7, 7, 4, 7, 7, 6 nodes (racks?) | `/etc/hosts` |
 | Shared with others | the distributed filesystem and the interconnect (CPU and H100 nodes stay in production) | user |
-| Storage | `/scratch`, `/project`: VAST over NFS (65 PB). Nodes are diskless (`TmpDisk=2048` MB): no local NVMe, only /dev/shm in the 2 TB RAM | `df`, `scontrol show node` |
-| Slurm | partition `compute_b200_full_node`, 1-day limit; no topology plugin (`scontrol show topology` empty) | `sinfo` |
-| Software | `module load cuda/12.9`, `--gpus-per-node=b200:8`; account `rrg-bengioy-ad` (to confirm on trillium-gpu) | SciNet talk; user |
+| Storage | `/scratch`, `/project`: VAST over NFS (65 PB), 25 TiB quota on `$SCRATCH`. Nodes are diskless; `/tmp` is ~1.5 TiB of zram, RAM like `/dev/shm`, although Slurm reports `TmpDisk=2048` MB | health checks, `diskusage_report`, `scontrol show node` |
+| Slurm | partition `compute_b200_full_node`, 1-day limit; no topology plugin. QOS `normal` stops at 100 GPUs per user (12 nodes); use `bump`. **Jobs above 25 nodes are refused** (removal asked to the admins) | `sinfo`, `sacctmgr`, `sbatch --test-only` |
+| Software | Driver 595.91.07, CUDA 13.2 runtime (>= 580, as the cu130 wheels need); `module load cuda/12.9`, `--gpus-per-node=b200:8`; account `rrg-bengioy-ad` | health checks; SciNet talk |
 | Matmul (SciNet, 8192^2) | B200: BF16 1,668, FP8 3,041 TFLOP/s; H100: BF16 785 | SciNet talk (their measurement) |
 | Window | a few days *(est.)*, date unknown | user |
 
@@ -74,6 +74,13 @@ Groups run in this order. IDs are used by the launch scripts (`run.variant`) and
 
 If D2 shows groups (latency or bandwidth clusters), add **P**: Qwen and GLM at 13 nodes inside one group vs
 spread over groups. Otherwise placement is dropped.
+
+**Health checks, measured on 2026-11-04** (51 nodes, jobs 1238238, 1238239, 1238240, 1238571; 25 nodes per job; srygaard's tool, not the matmul / per-HCA checks D1 lists, which it does not have):
+
+- All GPUs pass DCGM, with no Xid or uncorrected ECC. Medians: 727 GB/s intra-node, 337 GB/s pair, 14.5 GB/s loopback, about 1,295 TFLOPS (FP16 diagnostic).
+- `trig0122`: excluded. `mlx5_1` firmware 28.35.2000 (others 28.47.1026), pairs 289-292 GB/s against 337; 25-node all-reduce 165 GB/s with it, 177 without.
+- `trig0109` GPU 7: 177,903 corrected ECC and 2 corrected remapped rows, unchanged over two runs. Kept; watch nodemon's ECC.
+- **CPU clocks at full GPU power (~8 kW), 50 of 51 nodes:** mean 1,640-2,270 MHz against ~3,150 before, a quarter of samples at 200 MHz on the median node, cause unknown; `trig0114` holds ~3,190. Measured under DCGM's power test with CPU load, not training: check in the first runs (`stragglers`, nodemon's CPU collector).
 
 ### E. Jobs side by side (second: decides whether runs can be packed)
 
@@ -171,6 +178,8 @@ first load read through `peak_allocated_gib` before the 52-node one. If it does 
 expert state per GPU), entries `megatron-glm5-tri-ckpt-full-ep16-*-n26`.
 
 ### If only 47 nodes
+
+No longer expected (2026-11-04): `trig0148-0152` joined the reservation. Kept for the plan's shape on fewer nodes.
 
 `N_NODES` in `analysis/tri_analysis/machine.py` is the one setting: 52, or 47 if trig0148-0152 stay reserved. The synthetic
 data, figures and scales of the report follow it. What changes at 47 (376 GPUs):

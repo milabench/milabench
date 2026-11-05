@@ -116,7 +116,7 @@ with these differences, to check on the first B200 node:
   `milabench install ... --set cuda=129` (cu129 wheels and the matching nvcc wheels).
 - **TransformerEngine build**: `NVTE_CUDA_ARCHS="100"` (sm_100 only, much shorter build); the build runs on a GPU node
   (it needs libcuda), from a job.
-- **`TMPDIR` for the build**: set it to `/dev/shm/$USER/tmp` in that job: compiling TE does not fit `/tmp` (2 GB on these nodes).
+- **`TMPDIR` for the build**: set it to `/dev/shm/$USER/tmp` in that job: Slurm reports `/tmp` as 2 GB (`TmpDisk`), though health checks found ~1.5 TiB of zram.
 - **CUDA module**: the job loads `cuda/12.9` (SciNet's recommendation), but the venv's own toolkit (torch / nvcc wheels)
   must win: the module's `nvcc` and headers must not come first on `PATH` / `CPATH` when TE or TileLang compile.
   `benchmarks/slime/benchfile.py` puts the wheels' `nvcc` first; check `which nvcc` inside a run if a build fails.
@@ -130,7 +130,7 @@ with these differences, to check on the first B200 node:
   the `python3` on `PATH`, which under milabench's launcher is the milabench CLI's (`MILABENCH_VENV`): install
   `pybind11` there (`uv pip install pybind11`). The checkout must be writable; a failed build stops the run.
 - **`TMPDIR`**: `job.sbatch` puts `TMPDIR` and the Triton / TileLang caches in `/dev/shm/$USER` (RAM), logs the free space at the start, removes it at the end. Kernels are therefore compiled again per job.
-- **No local disk** (`TmpDisk` 2 GB): unlike Rorqual's `job.sbatch`, nothing is copied to a node-local base; data and
+- **No local disk** (`/tmp` and `/dev/shm` are RAM): unlike Rorqual's `job.sbatch`, nothing is copied to a node-local base; data and
   venv are read from scratch (VAST).
 - **sm_100 kernels to verify** in the 1-node smoke: TileLang DSA indexer and sparse MLA (GLM-5 plugin), SGLang RoPE
   (`MEGATRON_USE_SGLANG_ROPE=1`), TE grouped GEMM in BF16, FP8 tensorwise / blockwise and MXFP8.
