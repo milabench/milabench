@@ -1038,6 +1038,9 @@ def checkpoint_argv(cfg: dict, argv: list[str]) -> list[str]:
                 ck["step"] = 0
             iters = flag(argv, "--train-iters")
             argv = [*drop(argv, "--train-iters", value=True), "--train-iters", str(ck["step"] + iters)]
+            # that total can differ from the save's --train-iters, which the scheduler's check refuses (AssertionError on
+            # "total number of iterations", job 1244097): keep the saved schedule
+            argv.append("--use-checkpoint-opt_param-scheduler")
     CKPT["cfg"] = ck
     return argv
 
