@@ -509,6 +509,12 @@ tri-c-mxfp8:
   argv:
     --precision: mxfp8
 
+# Selective AC also saves MXFP8's GEMMs (all of them: BF16 saves every second mm), which it otherwise recomputes.
+tri-c-mxfp8-savemm:
+  inherits: tri-c-mxfp8
+  argv:
+    --sac-save-scaled-mm: 1
+
 tri-closs-bf16:
   inherits: tri-c-bf16
   max_duration: 5400

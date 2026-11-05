@@ -107,6 +107,8 @@ class Options:
     # Performance
     compile: CompileMode = "regions+graphs"
     ac: ACMode = "selective"
+    sac_save_scaled_mm: bool = False
+    """Selective AC also saves every ``_scaled_mm_v2`` output (Trillium C-speed test)."""
     precision: Precision = "bf16"
     """``mxfp8``: MXFP8 linears (MXFP8_TARGETS, B200 / sm_100 only)."""
     grad_reduce: Literal["fp32", "bf16"] = "fp32"
@@ -295,11 +297,23 @@ def _data(opts: Options, vocab_size: int):
     )
 
 
-def _activation_checkpoint(mode: ACMode):
+class _SaveScaledMM(SelectiveAC):
+    """Selective AC that also saves MXFP8's GEMMs. ``_scaled_mm_v2`` is outside the policy's
+    every-second-mm count, so this saves all of them, where BF16 saves every second ``mm``."""
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(SelectiveAC.Config):
+        pass
+
+    def get_save_ops(self) -> set:
+        return super().get_save_ops() | {torch.ops.aten._scaled_mm_v2.default}
+
+
+def _activation_checkpoint(mode: ACMode, save_scaled_mm: bool = False):
     if mode == "none":
         return None
     if mode == "selective":
-        return SelectiveAC.Config()
+        return _SaveScaledMM.Config() if save_scaled_mm else SelectiveAC.Config()
     if mode == "full":
         return FullAC.Config()
     raise ValueError(f"unknown activation checkpointing mode {mode!r}")
@@ -457,6 +471,6 @@ def qwen38() -> Trainer.Config:
             or os.environ.get("BENCHMATE_WANDB_ALL_RANKS") == "1",
         ),
         checkpointer=checkpointer,
-        activation_checkpoint=_activation_checkpoint(opts.ac),
+        activation_checkpoint=_activation_checkpoint(opts.ac, opts.sac_save_scaled_mm),
         dump_folder=opts.dump_folder,
     )
