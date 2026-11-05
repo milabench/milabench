@@ -823,6 +823,11 @@ megatron-glm5-tri-pp13-ep8-n13-gbs64:
 megatron-glm5-tri-pp13-ep8-n13-gbs256-sel:
   inherits: _tri_glm5
   argv: {<<: *tri_sel}
+# Megatron's per-rank timers, for the send/recv between stages: a GPU sync at each timer and 2 barriers per step, so a
+# separate short run, to compare with gbs256
+megatron-glm5-tri-pp13-ep8-n13-gbs256-timers:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {--timing-log-level: 2, --timing-log-option: all, --train-iters: 11}
 megatron-glm5-tri-pp13-ep8-n52-gbs1024-sel:
   inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
   argv: {<<: *tri_sel}
