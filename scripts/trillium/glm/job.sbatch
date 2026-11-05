@@ -2,9 +2,8 @@
 # Job script of _common.sh `submit`: GLM-5 Megatron entries on Trillium, one `milabench run` each, in the order given.
 # Needs MILABENCH_BASE, WORKDIR, MILABENCH_VENV, CONFIG, ENTRIES (space separated) and RUN_PREFIX (--export=ALL).
 #   PREPARE=0         skip `milabench prepare`
-#   CUDA_MODULE       loaded first (default cuda/12.9, empty: none). The benchmark venv brings its own CUDA (torch,
-#                     TE and nvcc wheels): the module must not come before the venv on PATH (slime's make_env puts the
-#                     wheels' nvcc first)
+#   CUDA_MODULE       loaded first (default none). The benchmark venv brings its own CUDA (torch, TE and nvcc wheels):
+#                     the cuda module's headers on CPATH break TileLang's kernel build with the wheels' nvcc
 # F1 (checkpoints): every entry gets TT_CKPT_DIR=$CKPT_ROOT/<job name>.<job id>, the same for the whole job. A `-save`
 # entry starts from an empty directory; after a `-load` entry the directory is deleted: run them as save, load, save, load, ... so that only one checkpoint
 # exists at a time. The directory is also deleted when the job ends, whatever happened.
@@ -13,7 +12,7 @@ set -uo pipefail
 : "${MILABENCH_BASE:?}" "${WORKDIR:?}" "${MILABENCH_VENV:?}" "${CONFIG:?}" "${ENTRIES:?}" "${RUN_PREFIX:?}"
 
 if [ -n "${CUDA_MODULE:-}" ]; then
-    module load StdEnv/2023 gcc/12.3 "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
+    module load "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
 fi
 export PATH=$MILABENCH_VENV/bin:$PATH
 export MILABENCH_GPU_ARCH=cuda

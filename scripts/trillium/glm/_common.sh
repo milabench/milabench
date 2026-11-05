@@ -11,7 +11,7 @@
 #   CONFIG           (default $WORKDIR/benchmarks/megatron/dev.yaml)
 #   ACCOUNT / PARTITION / GPUS / RESERVATION / QOS                  (default rrg-bengioy-ad / compute_b200_full_node /
 #                                                                    b200:8 / b200-friendly-users / bump)
-#   CUDA_MODULE      module loaded by the job, after StdEnv/2023 gcc/12.3 (default cuda/12.9; empty: none)
+#   CUDA_MODULE      module loaded by the job (default none, job.sbatch says why)
 #   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist (EXCLUDE default trig0122; empty: none)
 #   AFTER            job id to wait for (afterany)
 #   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default trillium); UPDATE=1
@@ -32,7 +32,7 @@ export MILABENCH_BASE=${MILABENCH_BASE:-${SCRATCH:?}/trillium/glm}
 export WORKDIR=${WORKDIR:-$MILABENCH_BASE/src}
 export MILABENCH_VENV=${MILABENCH_VENV:-$WORKDIR/.venv}
 export CONFIG=${CONFIG:-$WORKDIR/benchmarks/megatron/dev.yaml}
-export CUDA_MODULE=${CUDA_MODULE-cuda/12.9}
+export CUDA_MODULE=${CUDA_MODULE-}
 export CKPT_ROOT=${CKPT_ROOT:-$SCRATCH/trillium/checkpoints}
 RUNS_DIR=${RUNS_DIR:-$SCRATCH/trillium/runs}
 export NODEMON_ROOT=${NODEMON_ROOT:-$SCRATCH/trillium/nodemon}

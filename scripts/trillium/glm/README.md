@@ -117,9 +117,9 @@ with these differences, to check on the first B200 node:
 - **TransformerEngine build**: `NVTE_CUDA_ARCHS="100"` (sm_100 only, much shorter build); the build runs on a GPU node
   (it needs libcuda), from a job.
 - **`TMPDIR` for the build**: set it to `/dev/shm/$USER/tmp` in that job: Slurm reports `/tmp` as 2 GB (`TmpDisk`), though health checks found ~1.5 TiB of zram.
-- **CUDA module**: the job loads `cuda/12.9` (SciNet's recommendation), but the venv's own toolkit (torch / nvcc wheels)
-  must win: the module's `nvcc` and headers must not come first on `PATH` / `CPATH` when TE or TileLang compile.
-  `benchmarks/slime/benchfile.py` puts the wheels' `nvcc` first; check `which nvcc` inside a run if a build fails.
+- **CUDA module**: the job loads none: the venv brings its own toolkit (torch / nvcc wheels). `cuda/12.9` loads only after
+  `StdEnv/2023 gcc/12.3`, and its headers on `CPATH` then break TileLang's kernel build with the wheels' nvcc (`cuda/std/utility`,
+  "missing binary operator before token", job 1239249).
 - **Caches**: `$HOME` is read-only from the compute nodes: `job.sbatch` points `XDG_CACHE_HOME` at `$MILABENCH_BASE/cache` (scratch). Install with `UV_CACHE_DIR` on scratch too.
 - **Failed builds**: `milabench install` only logs a failed `pip install`. After the builds the pack imports
   `transformer_engine.pytorch` in the venv and stops if it can't (the launchers also refuse a venv without the marker); `torch_memory_saver` is optional for this pack (a `WARNING`
