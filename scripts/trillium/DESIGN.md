@@ -99,7 +99,7 @@ spread over groups. Otherwise placement is dropped.
 
 If E1 shows no slowdown (< 2%), runs of <= 26 nodes are packed in parallel for A, B, C, F.
 
-**E1, measured on 2026-11-05** (`tri-aq-fsdp-12k`, not HSDP-8 at 24k: that one is short of memory on B200; 3 sets of 13 nodes, not 4; 2 repetitions, 12 runs, up to 300 s of overlap): together is 0.26% slower than alone on average (-0.51% to +0.65%), so jobs are packed. Step times are throttled by the CPU clock drop. This holds for 13-node Qwen FSDP only: GLM and larger jobs are untested.
+**E1, measured on 2026-11-05** (`tri-aq-fsdp-12k`, not HSDP-8 at 24k: that one is short of memory on B200; 3 sets of 13 nodes, not 4; 2 repetitions, 12 runs, up to 300 s of overlap): together is 0.26% slower than alone on average (-0.51% to +0.65%), so jobs are packed. Step times are throttled by the CPU clock drop. This holds for 13-node Qwen FSDP only: GLM and larger jobs are untested. **Pipeline layouts are not covered:** `tri-aq-tp4-fsdp-12k` took 4.955 s with its whole measurement beside a PP2 job in the same bandwidth group (job 1241064), 3.465 s beside FSDP on the same nodes (job 1241200), one case. FSDP on `trig0101-0128` beside GLM-5 on `trig0129-0150` stayed within 0.37% of its value without GLM.
 
 - Inside a group or random: 2.999 s against 3.050 s (+1.7%) without slow nodes, one random set only.
 - `trig0134`, `0135`, `0148`: CPU 1,252-1,797 MHz, 36-54% of samples below 500 MHz, against 2,783-3,167 MHz and 0-10% on most peers in the same jobs. Sets with one average 3.28 s, the others 3.02 s (+8.5%). An association; excluded by default.
