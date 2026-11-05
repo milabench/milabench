@@ -741,7 +741,7 @@ megatron-glm5-check-fit-full-offload1-64n:
 # Names: megatron-glm5-tri-<layout>-n<nodes>-gbs<global batch>[-sel][-<precision>].
 # Micro-batch is always 1: the GLM-5 plugin's attention takes THD input only (checked before launch).
 # Stage splits (first / middle x stages / last, 78 layers; the first stage holds the 3 dense layers, the last the loss):
-#   PP13 7 / 6 x 11 / 5     PP26 4 / 3 x 24 / 2     PP6 15 / 13 x 4 / 11
+#   PP13 7 / 6 x 11 / 5     PP26 4 / 3 x 24 / 2     PP6 15 / 13 x 4 / 11     PP10 9 / 8 x 8 / 5     PP25 5 / 3 x 23 / 4
 # DSA index sharing off (as the Rorqual G runs: it only allows some stage boundaries). Run `deviations`: dsa_index_share.
 # Optimizer: as the Rorqual full runs (precision-aware: FP32 master weights, BF16 gradients and Adam moments).
 _tri_glm5:
@@ -775,6 +775,14 @@ _tri_pp26: &tri_pp26
   --pipeline-model-parallel-size: 26
   --decoder-first-pipeline-num-layers: 4
   --decoder-last-pipeline-num-layers: 2
+_tri_pp10: &tri_pp10
+  --pipeline-model-parallel-size: 10
+  --decoder-first-pipeline-num-layers: 9
+  --decoder-last-pipeline-num-layers: 5
+_tri_pp25: &tri_pp25
+  --pipeline-model-parallel-size: 25
+  --decoder-first-pipeline-num-layers: 5
+  --decoder-last-pipeline-num-layers: 4
 _tri_pp6: &tri_pp6
   --pipeline-model-parallel-size: 6
   --decoder-first-pipeline-num-layers: 15
@@ -871,6 +879,37 @@ megatron-glm5-tri-pp6-ep16-n48-gbs1024:
   inherits: _tri_glm5
   num_machines: 48
   argv: {<<: *tri_pp6, --expert-model-parallel-size: 16, --global-batch-size: 1024}
+
+# node counts 13 does not divide: 50 is the most Slurm accepts while trig0122 and trig0146 are out. PP10: 25 micro-batches per
+# copy, bubble 9 / 34 = 26 %. PP25: 64, 24 / 88 = 27 %, the batches of pp26-ep8
+megatron-glm5-tri-pp10-ep8-n10-gbs200:
+  inherits: _tri_glm5
+  num_machines: 10
+  argv: {<<: *tri_pp10, --global-batch-size: 200}
+megatron-glm5-tri-pp10-ep8-n20-gbs400:
+  inherits: _tri_glm5
+  num_machines: 20
+  argv: {<<: *tri_pp10, --global-batch-size: 400}
+megatron-glm5-tri-pp10-ep8-n30-gbs600:
+  inherits: _tri_glm5
+  num_machines: 30
+  argv: {<<: *tri_pp10, --global-batch-size: 600}
+megatron-glm5-tri-pp10-ep8-n40-gbs800:
+  inherits: _tri_glm5
+  num_machines: 40
+  argv: {<<: *tri_pp10, --global-batch-size: 800}
+megatron-glm5-tri-pp10-ep8-n50-gbs1000:
+  inherits: _tri_glm5
+  num_machines: 50
+  argv: {<<: *tri_pp10, --global-batch-size: 1000}
+megatron-glm5-tri-pp25-ep8-n25-gbs512:
+  inherits: _tri_glm5
+  num_machines: 25
+  argv: {<<: *tri_pp25, --global-batch-size: 512}
+megatron-glm5-tri-pp25-ep8-n50-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 50
+  argv: {<<: *tri_pp25, --global-batch-size: 1024}
 
 # --- C: precision. TransformerEngine FP8 (e4m3) recipes, bf16 master weights, MoE token counts padded for the FP8
 # grouped GEMM. On B200 blockwise needs no NVTE_FP8_BLOCK_SCALING_FP32_SCALES (Hopper only: the Rorqual _fp8 entries

@@ -131,6 +131,8 @@ stage, so the smallest run differs. Bubble = (PP - 1) / (micro-batches + PP - 1)
 | `pp13-ep32` | across 4 nodes | 52 nodes (1), 1024 | same | 32, 27% |
 | `pp26-ep8` | in a node | 26 nodes (1), 512 | 52 nodes (2), 1024 | 64, 28% |
 | `pp6-ep16` (13 layers per stage) | across 2 nodes | 12 nodes (1), 256 | 48 nodes (4), 1024 (416 GPUs don't split in 6) | 16, 24% |
+| `pp10-ep8` (8 layers per middle stage), added for the 40 clean nodes and the 50 available | in a node | 10 nodes (1), 200 | 50 nodes (5), 1000 | 25, 26% |
+| `pp25-ep8` (3 layers per middle stage), added for 50 nodes | in a node | 25 nodes (1), 512 | 50 nodes (2), 1024 | 64, 27% |
 
 The EP comparison (8 / 16 / 32) is made at 52 nodes, EP 8 / 16 and PP 13 / 26 also at 26 nodes; `pp13-ep8` and `pp6-ep16`
 also at 13 / 12 nodes. Plus recompute full vs selective (`moe_act layernorm`, at 13 and 52 nodes) and the small batch, 64 at

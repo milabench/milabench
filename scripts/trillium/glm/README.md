@@ -8,7 +8,7 @@ following, not the job). `DRY_RUN=1` prints what would be submitted.
 | Step | Script | What it does |
 |------|--------|--------------|
 | 0 | `./00_plan.sh` | No GPU. Every layout of the campaign against Megatron's rules: copies, data parallel, micro-batches per pipeline. `./00_plan.sh pp13 8 13 256` shows one layout's rank groups. |
-| A-G | `./10_ag.sh 13\|26\|52\|12\|48` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16; selective recompute, 64 per copy |
+| A-G | `./10_ag.sh 13\|26\|52\|12\|48\|10\|20\|30\|40\|25\|50` | Layouts pp13-ep8 / ep16 / ep32, pp26-ep8, pp6-ep16, pp10-ep8, pp25-ep8; selective recompute, 64 per copy |
 | B-G | `./20_bg.sh 13\|26\|39\|52` | pp13-ep8 with 1-4 copies: 256 per copy (weak) and 768 in total (strong) |
 | C | `./30_c.sh speed 13\|52`, `./30_c.sh loss [recipes]` | bf16 / fp8-tensorwise / fp8-blockwise / mxfp8; 500-step loss runs from seed 1234 |
 | F1 | `./40_f1.sh 13\|52 [all\|weights\|full]`, `./40_f1.sh 26` | weights then full: save sync, load, save async, load; the checkpoint is deleted after each load. 26: full at pp13-ep16, the fallback |
