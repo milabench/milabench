@@ -28,7 +28,7 @@ $PY analyze.py collect | synth | build | plot | report
 | `analysis/tri_analysis/style.py`, `figures.py` | style, one function per figure ID of DESIGN.md |
 | `analysis/tri_analysis/tables.py` | `macros.tex` (`\Tri*`), `qwen_layouts.tex`, `ledger.tex` |
 | `report/` | LaTeX report; `report/generated/` is written by `analyze.py`, never edited |
-| `qwen/`, `net/` | launch scripts; GLM's are on branch `trillium-glm` (`glm/`) |
+| `qwen/`, `net/` | launch scripts (with `glm/`) |
 
 Collection is read-only: rsync from `trillium-gpu:$SCRATCH/trillium/{runs,health,nccl,nodemon}` and
 only the JSON metadata of `checkpoints/`; when ssh fails it says so and keeps the local copy.

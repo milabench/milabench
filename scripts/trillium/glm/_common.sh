@@ -9,8 +9,8 @@
 #   WORKDIR          the milabench checkout the job runs            (default $MILABENCH_BASE/src)
 #   MILABENCH_VENV   venv with the milabench CLI                    (default $WORKDIR/.venv)
 #   CONFIG           (default $WORKDIR/benchmarks/megatron/dev.yaml)
-#   ACCOUNT / PARTITION / GPUS / RESERVATION                        (default rrg-bengioy-ad / compute_b200_full_node /
-#                                                                    b200:8 / none)
+#   ACCOUNT / PARTITION / GPUS / RESERVATION / QOS                  (default rrg-bengioy-ad / compute_b200_full_node /
+#                                                                    b200:8 / b200-friendly-users / bump)
 #   CUDA_MODULE      module loaded by the job (default cuda/12.9; empty: none)
 #   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist
 #   AFTER            job id to wait for (afterany)
@@ -39,8 +39,9 @@ export NODEMON_ROOT=${NODEMON_ROOT:-$SCRATCH/trillium/nodemon}
 ACCOUNT=${ACCOUNT:-rrg-bengioy-ad}
 PARTITION=${PARTITION-compute_b200_full_node}
 GPUS=${GPUS:-b200:8}
-RESERVATION=${RESERVATION:-}
-BRANCH=${BRANCH:-trillium-glm}
+RESERVATION=${RESERVATION-b200-friendly-users}
+QOS=${QOS-bump}  # normal stops at 100 GPUs per user, 12 nodes
+BRANCH=${BRANCH:-trillium}
 UPDATE=${UPDATE:-1}
 
 # metrics, handed to the job (--export=ALL) and from there to every rank
@@ -122,6 +123,7 @@ submit() {
                 --gpus-per-node="$GPUS" --time="$time" --output="$MILABENCH_BASE/slurm/$name-%j.out" --export=ALL)
     [ -n "$PARTITION" ]        && args+=(--partition="$PARTITION")
     [ -n "$RESERVATION" ]      && args+=(--reservation="$RESERVATION")
+    [ -n "$QOS" ]              && args+=(--qos="$QOS")
     [ -n "${EXCLUDE:-}" ]      && args+=(--exclude="$EXCLUDE")
     [ -n "${NODELIST:-}" ]     && args+=(--nodelist="$NODELIST")
     [ -n "$dep" ]              && args+=(--dependency="$dep")

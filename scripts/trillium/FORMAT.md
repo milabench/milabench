@@ -198,7 +198,7 @@ Unchanged format (Rorqual FORMAT.md section 3), but **every training run** sets
 
 ## Changes requested
 
-T1-T3 and T6 are written by both packs (Qwen merged, GLM on branch `trillium-glm`); T5 by `scripts/trillium/net/`.
+T1-T3 and T6 are written by both packs (Qwen and GLM merged); T5 by `scripts/trillium/net/`.
 
 | # | change | where | for |
 |---|---|---|---|

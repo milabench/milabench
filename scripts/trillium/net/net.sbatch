@@ -5,13 +5,15 @@
 #
 # Submit from the repository root (the scripts are found under $SLURM_SUBMIT_DIR, or $NET_DIR).
 # Defaults are for Trillium's B200 partition; on Rorqual override account, partition and GPUs:
-#   --account=rrg-bengioy-ad_gpu --partition=gpubase_bynode_b1 --gpus-per-node=h100:4 --mem=0
+#   --account=rrg-bengioy-ad_gpu --partition=gpubase_bynode_b1 --gpus-per-node=h100:4 --mem=0 --reservation= --qos=normal
 # Results: $NET_OUT (default ${NET_ROOT:-$SCRATCH/trillium}/nccl/<job>/): pairs.jsonl, collectives.jsonl, logs/.
 # Per-experiment arguments: NET_D2_ARGS, NET_D3_ARGS, NET_D4_ARGS (e.g. NET_D2_ARGS=--sequential).
 #
 #SBATCH --job-name=tri-net
 #SBATCH --account=rrg-bengioy-ad
 #SBATCH --partition=compute_b200_full_node
+#SBATCH --reservation=b200-friendly-users
+#SBATCH --qos=bump
 #SBATCH --gpus-per-node=b200:8
 #SBATCH --exclusive
 #SBATCH --time=1:00:00

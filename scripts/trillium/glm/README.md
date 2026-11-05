@@ -27,7 +27,7 @@ Every entry runs on exactly its `num_machines` nodes (the job is sized from the 
 before launch (`placement.check_layout`): a wrong node count or batch fails at once, not after the model build.
 
 Environment: see `_common.sh` (`MILABENCH_BASE` = `$SCRATCH/trillium/glm`, account `rrg-bengioy-ad`, partition
-`compute_b200_full_node`, `--gpus-per-node=b200:8`, no reservation unless `RESERVATION` is set, `CAMPAIGN` =
+`compute_b200_full_node`, `--gpus-per-node=b200:8`, reservation `b200-friendly-users` and QOS `bump` (`RESERVATION`, `QOS`), `CAMPAIGN` =
 `trillium-MMDD`, `REPETITION`). Node telemetry under `$SCRATCH/trillium/nodemon/<run>`, checkpoints under
 `$SCRATCH/trillium/checkpoints/<job>`, run data in `$SCRATCH/trillium/runs` (`$MILABENCH_BASE/runs` links there).
 

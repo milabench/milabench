@@ -28,7 +28,7 @@
 # milabench startup), capped at 24 h.
 #
 # Environment: TRI_ACCOUNT (rrg-bengioy-ad), TRI_PARTITION
-# (compute_b200_full_node), TRI_RESERVATION (sbatch --reservation, if any),
+# (compute_b200_full_node), TRI_RESERVATION (b200-friendly-users), TRI_QOS (bump),
 # TT_PYTHON (Python with milabench: default $TT_TRI_BASE/env/bin/python).
 
 set -euo pipefail
@@ -128,7 +128,8 @@ CMD=(
     --time="$TIME"
     --job-name="$BENCH"
     --output="$BASE/logs/%x-%j.out"
-    ${TRI_RESERVATION:+--reservation="$TRI_RESERVATION"}
+    --reservation="${TRI_RESERVATION-b200-friendly-users}"
+    --qos="${TRI_QOS-bump}"
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"
