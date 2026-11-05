@@ -20,7 +20,7 @@ Trillium: `wandb sync` from a login node).
 
 | path | content |
 |---|---|
-| `$SCRATCH/trillium/qwen/env` | venv with milabench (`uv pip install -e milabench`) |
+| `$SCRATCH/trillium/qwen/env` | venv with milabench (`uv pip install -e milabench[cuda]`) |
 | `$SCRATCH/trillium/qwen/milabench` | this repository, branch with the Trillium entries |
 | `$SCRATCH/trillium/qwen/output` | `MILABENCH_BASE`: bench venv, FineWeb data |
 | `$SCRATCH/trillium/qwen/logs` | Slurm output, `<bench>-<job>.out` |
@@ -51,7 +51,7 @@ unset PYTHONPATH PIP_CONFIG_FILE; export PATH=$HOME/.local/bin:$PATH UV_CACHE_DI
 mkdir -p $SCRATCH/trillium/qwen && cd $SCRATCH/trillium/qwen
 git clone -b <branch> https://github.com/milabench/milabench.git
 uv venv --python-preference only-managed --python 3.12 --seed env
-VIRTUAL_ENV=$PWD/env uv pip install -e ./milabench
+VIRTUAL_ENV=$PWD/env uv pip install -e './milabench[cuda]'   # pynvml: without it `milabench run` stops (cuda is not installed)
 export PATH=$PWD/env/bin:$PATH MILABENCH_BASE=$PWD/output MILABENCH_GPU_ARCH=cuda
 milabench install --config milabench/config/torchtitan_native_trillium.yaml --select tri-smoke
 milabench prepare --config milabench/config/torchtitan_native_trillium.yaml --select tri-smoke
