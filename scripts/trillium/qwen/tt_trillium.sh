@@ -122,7 +122,7 @@ JOB_ENV=(
 )
 
 CMD=(
-    sbatch
+    /opt/slurm/bin/.sbatch --export=NONE --get-user-env  # the real sbatch: the site filter refuses above 25 nodes, the admins asked us to use this (2026-11-05)
     --account="${TRI_ACCOUNT:-rrg-bengioy-ad}"
     --partition="${TRI_PARTITION:-compute_b200_full_node}"
     --gpus-per-node=b200:8

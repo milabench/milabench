@@ -140,7 +140,8 @@ submit() {
     preflight
     mkdir -p "$MILABENCH_BASE/slurm"
     local jobid
-    jobid=$(sbatch --parsable "${args[@]}" "$@" "$GLM/job.sbatch")
+    # the real sbatch: the site filter refuses above 25 nodes, the admins asked us to use this (2026-11-05)
+    jobid=$(/opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable "${args[@]}" "$@" "$GLM/job.sbatch")
     [ -n "${TEST_ONLY:-}" ] && return 0
     echo "submitted job $jobid"
     [ -n "${NO_TAIL:-}" ] && return 0
