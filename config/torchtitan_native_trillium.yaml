@@ -515,6 +515,17 @@ tri-c-mxfp8-savemm:
   argv:
     --sac-save-scaled-mm: 1
 
+# Full recompute treats BF16 and MXFP8 alike: FP8 without the selective AC save-list asymmetry.
+tri-c-bf16-acfull:
+  inherits: tri-c-bf16
+  argv:
+    --ac: full
+
+tri-c-mxfp8-acfull:
+  inherits: tri-c-mxfp8
+  argv:
+    --ac: full
+
 tri-closs-bf16:
   inherits: tri-c-bf16
   max_duration: 5400
