@@ -1177,6 +1177,12 @@ megatron-glm5-tri-test-b200-n2-gbs32-fp8-blockwise:
 megatron-glm5-tri-test-b200-n2-gbs32-mxfp8:
   inherits: _tri_test_b200
   argv: {<<: *tri_mxfp8}
+# 32 micro-batches per data-parallel rank as pp13-ep8 at 256, long enough to read clocks and power
+megatron-glm5-tri-test-b200-n2-gbs256:
+  inherits: _tri_test_b200
+  argv:
+    --global-batch-size: 256
+    --train-iters: 30
 _tri_test_b200_ckpt:
   inherits: _tri_test_ckpt_ep8
   num_machines: 2
