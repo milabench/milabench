@@ -1157,3 +1157,46 @@ megatron-glm5-tri-test-ckpt-ep8-full-load:
   inherits: _tri_test_ckpt_ep8
   checkpoint: {content: full, op: load}
   argv: {<<: *tri_ckpt_load}
+# --- B200, 2 nodes: the same truncated model on 8 GPUs per node, PP2 x EP8, one stage per node as pp13-ep8. The entries above
+# assume 4 GPUs per node (the n2 ones would run 16 ranks at EP4, the ep8 ones want 4 nodes), and their blockwise sets the
+# Hopper-only NVTE_FP8_BLOCK_SCALING_FP32_SCALES ---
+_tri_test_b200:
+  inherits: _tri_test
+  placement: {gpus_per_node: 8}
+  argv:
+    --expert-model-parallel-size: 8
+    --global-batch-size: 32
+megatron-glm5-tri-test-b200-n2-gbs32:
+  inherits: _tri_test_b200
+megatron-glm5-tri-test-b200-n2-gbs32-fp8-tensorwise:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-test-b200-n2-gbs32-fp8-blockwise:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-test-b200-n2-gbs32-mxfp8:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_mxfp8}
+_tri_test_b200_ckpt:
+  inherits: _tri_test_ckpt_ep8
+  num_machines: 2
+  placement: {gpus_per_node: 8}
+megatron-glm5-tri-test-b200-ckpt-weights-sync-save:
+  inherits: _tri_test_b200_ckpt
+megatron-glm5-tri-test-b200-ckpt-weights-async-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {mode: async}
+megatron-glm5-tri-test-b200-ckpt-weights-load:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {op: load}
+  argv: {<<: *tri_ckpt_load}
+megatron-glm5-tri-test-b200-ckpt-full-sync-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full}
+megatron-glm5-tri-test-b200-ckpt-full-async-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-test-b200-ckpt-full-load:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
