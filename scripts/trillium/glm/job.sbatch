@@ -13,7 +13,7 @@ set -uo pipefail
 : "${MILABENCH_BASE:?}" "${WORKDIR:?}" "${MILABENCH_VENV:?}" "${CONFIG:?}" "${ENTRIES:?}" "${RUN_PREFIX:?}"
 
 if [ -n "${CUDA_MODULE:-}" ]; then
-    module load "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
+    module load StdEnv/2023 gcc/12.3 "$CUDA_MODULE" 2>/dev/null || echo "[$RUN_PREFIX] WARNING: module load $CUDA_MODULE failed" >&2
 fi
 export PATH=$MILABENCH_VENV/bin:$PATH
 export MILABENCH_GPU_ARCH=cuda
@@ -30,6 +30,7 @@ srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --
 export TMPDIR=$LOCAL_ROOT/tmp
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-$LOCAL_ROOT/triton}
 export TILELANG_CACHE_DIR=${TILELANG_CACHE_DIR:-$LOCAL_ROOT/tilelang}
+export FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-$LOCAL_ROOT}  # its import creates $HOME/.cache/flashinfer otherwise
 echo "[$RUN_PREFIX] local_root=$LOCAL_ROOT free: $(df -h "$(dirname "$LOCAL_ROOT")" | tail -1)"
 local_cleanup() {
     echo "[$RUN_PREFIX] local_root before cleanup: $(du -sh "$LOCAL_ROOT" 2>/dev/null | cut -f1) on this node"

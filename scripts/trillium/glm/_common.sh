@@ -11,7 +11,7 @@
 #   CONFIG           (default $WORKDIR/benchmarks/megatron/dev.yaml)
 #   ACCOUNT / PARTITION / GPUS / RESERVATION / QOS                  (default rrg-bengioy-ad / compute_b200_full_node /
 #                                                                    b200:8 / b200-friendly-users / bump)
-#   CUDA_MODULE      module loaded by the job (default cuda/12.9; empty: none)
+#   CUDA_MODULE      module loaded by the job, after StdEnv/2023 gcc/12.3 (default cuda/12.9; empty: none)
 #   EXCLUDE / NODELIST  hostlists -> sbatch --exclude / --nodelist (EXCLUDE default trig0122; empty: none)
 #   AFTER            job id to wait for (afterany)
 #   BRANCH / UPDATE  the job runs $WORKDIR as it is: it must be origin/$BRANCH's latest (default trillium); UPDATE=1
