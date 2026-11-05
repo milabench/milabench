@@ -80,17 +80,19 @@ def timed(fn, iters, warmup, barrier=True):
     return start.elapsed_time(end) / 1e3 / iters
 
 
-def exchange(net: Net, pairs, size, iters=10, warmup=3, lat_iters=200, lat_size=8):
+def exchange(net: Net, pairs, size, iters=10, warmup=3, lat_iters=200, lat_size=8, gpus=None):
     """All ``pairs`` of nodes at once: GPU i of a <-> GPU i of b, both directions together.
 
     Bandwidth: every GPU sends and receives ``size`` bytes per iteration; the pair's figure is the
     bytes one node sends per second (one direction, all its GPUs and HCAs): gpus x size / slowest GPU.
     Latency: ping-pong of ``lat_size`` bytes on every GPU pair, one-way time, median over GPU pairs.
-    Nodes outside ``pairs`` only join the barriers. Returns ``{(a, b): (bw_gbs, lat_us)}`` on every rank.
+    ``gpus``: only these GPUs of each node exchange (default all). Other GPUs and nodes outside ``pairs``
+    only join the barriers. Returns ``{(a, b): (bw_gbs, lat_us)}`` on every rank.
     """
+    gpus = range(net.gpus) if gpus is None else gpus
     peer = first = None
     for a, b in pairs:
-        if net.host in (a, b):
+        if net.host in (a, b) and net.local in gpus:
             peer = net.ranks_of[b if net.host == a else a][net.local]
             first = net.host == a
 
@@ -121,7 +123,7 @@ def exchange(net: Net, pairs, size, iters=10, warmup=3, lat_iters=200, lat_size=
     gathered = [r for r in net.all_gather(mine) if r]
     for a, b in pairs:
         rows = [r for r in gathered if r[0] in (a, b)]
-        bw = net.gpus * size / max(r[1] for r in rows) / 1e9
+        bw = len(gpus) * size / max(r[1] for r in rows) / 1e9
         lat = statistics.median(r[2] for r in rows if r[0] == a) * 1e6
         results[(a, b)] = (round(bw, 3), round(lat, 2))
     return results
