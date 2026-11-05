@@ -519,6 +519,10 @@ tri-closs-bf16:
       stop_seconds: 0
   argv:
     --seed: 1234
+    # 500 steps x 104 GPUs x 24,576 tokens = 1.28e9 tokens: ~36 documents per GPU and step, 1.87 M documents (a sample
+    # of 6,000 documents through the packer), 18,940 at most for a GPU. _tri's 500,000 would repeat after ~134 steps.
+    # Staged in $SCRATCH/trillium/data (tt_trillium.sh, README.md)
+    --samples: 2000000
 
 tri-closs-mxfp8:
   inherits: tri-closs-bf16

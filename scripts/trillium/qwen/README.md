@@ -22,7 +22,8 @@ Trillium: `wandb sync` from a login node).
 |---|---|
 | `$SCRATCH/trillium/qwen/env` | venv with milabench (`uv pip install -e milabench[cuda]`) |
 | `$SCRATCH/trillium/qwen/milabench` | this repository, branch with the Trillium entries |
-| `$SCRATCH/trillium/qwen/output` | `MILABENCH_BASE`: bench venv, FineWeb data |
+| `$SCRATCH/trillium/qwen/output` | `MILABENCH_BASE`: bench venv, FineWeb data (500,000 documents) |
+| `$SCRATCH/trillium/data` | C-loss's FineWeb (4.2 M documents), shared with GLM-5: `scripts/trillium/glm/README.md`, "Data to stage" |
 | `$SCRATCH/trillium/qwen/logs` | Slurm output, `<bench>-<job>.out` |
 | `$SCRATCH/trillium/qwen/compile-cache` | torch.compile cache archives (per torch / Triton / GPU model) |
 | `$SCRATCH/trillium/runs/<run>` | milabench run data (`MILABENCH_DIRS_RUNS`) |
@@ -43,6 +44,11 @@ scripts/trillium/qwen/tt_trillium.sh --nodes 13 tri-closs-bf16-seed2            
 ```
 
 `TT_REPETITION` only sets `run.repetition`: the run name holds the job id, so repeats do not overwrite each other.
+
+C-loss needs 500 steps x 104 GPUs x 24,576 tokens = 1.28e9 tokens, 1.87 M documents *(est.: 6,000 documents through the packer, 36 per GPU and step)*: `tri-closs-*` read the
+first 2 M documents (1.39e9 tokens, GPT-2 count) of `$SCRATCH/trillium/data` (the launcher sets `MILABENCH_DIRS_DATA`). Everything else stays on `output/data`: growing it in place would replace
+files under running jobs, and every job would copy the larger cache to its nodes. A C-loss job copies that directory's `datasets` (26 GiB, both workloads' caches) to `/dev/shm`
+on every node *(est. 20-65 s, from 1.5 GiB in 1.2-3.7 s)*.
 
 ## Install (login node: it downloads)
 

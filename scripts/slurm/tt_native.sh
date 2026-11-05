@@ -166,8 +166,8 @@ fi
 # parquet paths, which stay on the shared filesystem (stat only). Reading from
 # Lustre caused data stalls of up to 1.4-2 s per step on one node (2026-10-25);
 # staging takes ~6 s for 597 MB.
-if [ "${TT_LOCAL_DATA:-1}" = 1 ] && [ -d "$MILABENCH_BASE/data/datasets" ]; then
-    SRC_DATASETS=$MILABENCH_BASE/data/datasets
+SRC_DATASETS=${MILABENCH_DIRS_DATA:-$MILABENCH_BASE/data}/datasets
+if [ "${TT_LOCAL_DATA:-1}" = 1 ] && [ -d "$SRC_DATASETS" ]; then
     LOCAL_DATASETS=$LOCAL_ROOT/tt_native_data/datasets
     t0=$(date +%s.%N)
     srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "

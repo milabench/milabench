@@ -86,10 +86,11 @@ if [ -z "$TIME" ]; then
     TIME=$(printf '%02d:%02d:00' $((seconds / 3600)) $((seconds % 3600 / 60)))
 fi
 
+DATA_DIR=
 case "$BENCH" in
     tri-aq-*) EXPERIMENT=A-Q ;;
     tri-bqs-*) EXPERIMENT=B-Q-strong ;;
-    tri-closs-*) EXPERIMENT=C-loss ;;
+    tri-closs-*) EXPERIMENT=C-loss; DATA_DIR=$SCRATCH/trillium/data ;;  # 2 M documents (README.md); the others stay on 500,000
     tri-c-*) EXPERIMENT=C-speed ;;
     tri-ckpt-*) EXPERIMENT=F1 ;;
     tri-ref) EXPERIMENT=R ;;
@@ -107,6 +108,7 @@ JOB_ENV=(
     CC_CLUSTER=trillium
     ${EXPERIMENT:+TT_EXPERIMENT="$EXPERIMENT"}
     MILABENCH_DIRS_RUNS="$TRI/runs"
+    ${DATA_DIR:+MILABENCH_DIRS_DATA="$DATA_DIR"}
     TT_NODEMON_ROOT="$TRI/nodemon"
     TT_CKPT_ROOT="$TRI/checkpoints"
     # /tmp holds 2 GB on the B200 nodes (TmpDisk=2048): compile cache, datasets

@@ -65,12 +65,18 @@ dense, so the FLOPs, and the MFU, are still overestimates.
 
 ## Data to stage on Trillium
 
-Compute nodes have no internet: stage FineWeb from a login node, once, before the window, with the largest entry:
-`milabench prepare --config benchmarks/megatron/dev.yaml --select megatron-glm5-tri-loss-bf16-n13`. That is 4.2 M documents of
-`sample-10BT` (about 5.7 GB of parquet, extrapolated from 27 MB per 20,000 documents, plus its Arrow cache) and the model's HF
-config and tokenizer. The summary's `data_loading` records `docs_available`, `doc_stride`, `slots_read`, `docs_read`,
-`slots_over_stride` (slots that needed more documents than the stride: those overlap the next slot), `max_doc_index` and
-`wrapped`, read loaders' prefetching included. The speed entries read 200,000 documents at most and need no stride: they measure
+Compute nodes have no internet: FineWeb is staged from a login node, once. C-loss reads `$SCRATCH/trillium/data`, shared with Qwen's
+C-loss (`MILABENCH_DIRS_DATA`, set by `./30_c.sh loss`). Staged on 2026-11-05: 4.2 M documents of `sample-10BT`, 2.91e9 tokens (GPT-2
+count), 21 parquet files, 5.5 GiB; an Arrow cache of 13 GiB per `datasets` version (GLM-5's 5.1.0, Qwen's 4.7.0), both built; the
+two tokenizers, copied from the two bases. C-loss reads 500 x 256 x 8 = 1,024,000 slots, 1.05e9 tokens, at document indices up to 4.096 M (stride 4).
+
+How (`stage-fineweb.sh` and `warm-cache.sh` in that directory): `prepare_fineweb(dest, 4_200_000, warm_cache=False, workers=1)` under `nice`, 8.2 GB read in 8.5 min; then
+`load_fineweb(dest)` from each venv with `HF_HOME=$SCRATCH/trillium/data`, 57 s and 26 s of one core. Keep the parquet files where they are: the Arrow cache's
+key holds their paths and mtimes. `prepare_fineweb` returns early when the documents are there, without building a cache. A `milabench prepare` of a loss entry without `MILABENCH_DIRS_DATA` would fetch a second copy into `$MILABENCH_BASE/data`.
+
+The summary's `data_loading` records `docs_available`, `doc_stride`, `slots_read`, `docs_read`,
+`slots_over_stride` (slots that needed more documents than the stride: those overlap the next slot; 8.6 % *(est.: 6,000 documents through `slot()`, 2.8 documents per slot)*), `max_doc_index` and
+`wrapped`, read loaders' prefetching included. The speed entries read 200,000 documents at most from `$MILABENCH_BASE/data` and need no stride: they measure
 speed, and C-loss needs the distinct text.
 
 ## What the runs record (run data, `scripts/analysis/FORMAT.md` + `scripts/trillium/FORMAT.md`)
@@ -121,7 +127,7 @@ uv venv --python-preference only-managed --python 3.12 --seed src/.venv
 VIRTUAL_ENV=$PWD/src/.venv uv pip install -e ./src pybind11 nvidia-ml-py
 export PATH=$PWD/src/.venv/bin:$PATH E=megatron-glm5-tri-test-n2-gbs16 C=src/benchmarks/megatron/dev.yaml
 SLIME_DOWNLOAD_ONLY=1 milabench install --config $C --select $E
-milabench prepare --config $C --select $E   # the small data; for the runs, the entry named in "Data to stage"
+milabench prepare --config $C --select $E   # the small data; for the runs, "Data to stage"
 uv pip install --python venv/torch/bin/python onnxscript onnx nvdlfw-inspect nvidia-cudnn-frontend importlib-metadata   # TE's dependencies
 mkdir wheelhouse   # transformer_engine, transformer_engine_cu13 (x86_64) and transformer_engine_torch 2.18.0, from PyPI's file URLs
 ```

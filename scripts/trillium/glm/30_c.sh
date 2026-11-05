@@ -31,6 +31,7 @@ case $mode in
         if [ $# -gt 0 ] && [ "$1" != -- ]; then recipes=$1; shift; fi
         [ $# -gt 0 ] && [ "$1" = -- ] && shift
         export TT_EXPERIMENT=C-loss
+        export MILABENCH_DIRS_DATA=$SCRATCH/trillium/data   # 4.2 M documents (README.md); the speed entries stay on 200,000
         export NO_TAIL=1   # one job per recipe: following the first log would stop the loop
         for recipe in $recipes; do
             submit "glm5-c-loss-$recipe-r$TT_REPETITION" "${TIME:-06:00:00}" 13 "megatron-glm5-tri-loss-$recipe-n13" -- "$@"
