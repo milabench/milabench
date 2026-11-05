@@ -681,6 +681,7 @@ def precision_loss(t):
     loss = t["loss"]
     if r.empty or loss.empty:
         return None
+    r = r.assign(repetition=r.repetition.fillna(1))  # a first run started without TT_REPETITION is repetition 1, the reference
     d = loss.dropna(subset=["step"]).merge(r[["run_id", "model", "precision", "seed", "repetition", "started"]],
                                            on="run_id")
     models = [m for m in (QWEN, GLM) if m in set(d.model)]
