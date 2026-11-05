@@ -858,6 +858,10 @@ megatron-glm5-tri-pp6-ep16-n12-gbs256:
   inherits: _tri_glm5
   num_machines: 12
   argv: {<<: *tri_pp6, --expert-model-parallel-size: 16}
+# Megatron's per-rank timers, as pp13-ep8-n13-gbs256-timers: EP across nodes, send/recv and all-to-all
+megatron-glm5-tri-pp6-ep16-n12-gbs256-timers:
+  inherits: megatron-glm5-tri-pp6-ep16-n12-gbs256
+  argv: {--timing-log-level: 2, --timing-log-option: all, --train-iters: 11}
 # if only 47 nodes are available (5 reserved for SciNet): the n48 substitute, 288 GPUs, 48 per stage, 3 copies
 megatron-glm5-tri-pp6-ep16-n36-gbs768:
   inherits: _tri_glm5
