@@ -770,6 +770,8 @@ _tri_glm5:
     --train-iters: 20
     --log-straggler: true
     --log-interval: 5
+    # the last stage's first receive waits for every stage before it to compile its kernels: 573 s of Megatron's default 600 at PP13 (job 1242058)
+    --distributed-timeout-minutes: 30
 
 _tri_pp26: &tri_pp26
   --pipeline-model-parallel-size: 26
