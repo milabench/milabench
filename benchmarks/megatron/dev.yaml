@@ -919,7 +919,7 @@ megatron-glm5-tri-pp13-ep8-n39-gbs768-mxfp8:
   argv: {<<: *tri_mxfp8}
 
 # C-loss: 500 steps from the same seed and data, a realistic learning rate (warm-up 50, cosine to 1/10). The loss of
-# every step comes from the last pipeline stage (`loss` events with `step`). Duration: not measured on B200
+# every step comes from the last pipeline stage (`loss` events with `step`). Duration: 500 x 48.61 s (BF16, 13 nodes, job 1242058) = 6.75 h, an estimate
 _tri_loss: &tri_loss
   --train-iters: 500
   --seed: 1234
@@ -930,8 +930,8 @@ _tri_loss: &tri_loss
   --log-interval: 10
 megatron-glm5-tri-loss-bf16-n13:
   inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
-  # 5 h 30, 30 minutes under the job's limit (30_c.sh, 06:00:00): milabench stops the run itself and the job ends cleanly
-  max_duration: 19800
+  # 8 h, 30 minutes under the job's limit (30_c.sh, 08:30:00): milabench stops the run itself and the job ends cleanly
+  max_duration: 28800
   # 500 steps x 256 sequences x 8 slots = 1,024,000 slots. A slot takes ~2 documents (1024 tokens, ~700 per document): with a
   # stride of 4, 4.1 M documents and very few read twice. `data_loading` in the summary says how many, and if it wrapped
   data:

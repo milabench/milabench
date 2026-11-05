@@ -4,8 +4,8 @@
 #   ./30_c.sh loss [RECIPES] [-- extra sbatch args]  C-loss: 500 steps from seed 1234 at 13 nodes, one job per recipe
 #                                                    (default "bf16 bf16-rep2 bf16-seed2 fp8-tensorwise fp8-blockwise
 #                                                    mxfp8": the two extra bf16 runs measure the noise, 6 jobs instead of 4)
-# env: TIME (speed: 02:00:00 at 13 nodes, 02:30:00 at 52; loss: 06:00:00: estimates, the B200 step time is not
-# measured yet), REPETITION, and _common.sh's
+# env: TIME (speed: 02:00:00 at 13 nodes, 02:30:00 at 52; loss: 08:30:00: 500 x 48.61 s, BF16 at 13 nodes, job 1242058,
+# plus startup, an estimate of about 7 h), REPETITION, and _common.sh's
 set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/_common.sh"
 mode=${1:?usage: $0 speed 13|52 | loss [RECIPES]}
@@ -34,7 +34,7 @@ case $mode in
         export MILABENCH_DIRS_DATA=$SCRATCH/trillium/data   # 4.2 M documents (README.md); the speed entries stay on 200,000
         export NO_TAIL=1   # one job per recipe: following the first log would stop the loop
         for recipe in $recipes; do
-            submit "glm5-c-loss-$recipe-r$TT_REPETITION" "${TIME:-06:00:00}" 13 "megatron-glm5-tri-loss-$recipe-n13" -- "$@"
+            submit "glm5-c-loss-$recipe-r$TT_REPETITION" "${TIME:-08:30:00}" 13 "megatron-glm5-tri-loss-$recipe-n13" -- "$@"
         done
         ;;
     *) echo "unknown mode $mode (speed | loss)" >&2; exit 2 ;;
