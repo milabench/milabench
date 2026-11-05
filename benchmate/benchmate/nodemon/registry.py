@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import Any, Protocol
 
 from .collector import NodeCollector
+from .collectors.nvml import NvmlCollector, pynvml
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,13 @@ class CollectorRegistry:
         self._logged: set[str] = set()
         self._started = time.monotonic()
         self._closed = False
+        #: NVML_ERROR_UNINITIALIZED until nvmlInit, then NVML_SUCCESS or the NVML error code.
+        self._nvml_state = pynvml.NVML_ERROR_UNINITIALIZED
+
+    @property
+    def nvml_initialized(self) -> bool:
+        """True after ``nvmlInit`` succeeded, until ``nvmlShutdown``."""
+        return self._nvml_state == pynvml.NVML_SUCCESS
 
     def register(self, collector: NodeCollector, period_s: float) -> NodeCollector:
         """Add a collector sampled every `period_s` seconds. Returns it."""
@@ -104,6 +112,16 @@ class CollectorRegistry:
         self._started = now
         for entry in self._enabled():
             collector = entry.collector
+            if isinstance(collector, NvmlCollector) and self._nvml_state == pynvml.NVML_ERROR_UNINITIALIZED:
+                # Each nvmlInit increments _nvmlLib_refcount, so this runs once and close releases that one reference. The wrapper returns None; the C call's result is NVML_SUCCESS.
+                try:
+                    pynvml.nvmlInit()
+                except pynvml.NVMLError as err:
+                    reason = pynvml.NVMLError._errcode_to_string.get(err.value, err.value)
+                    log.debug(f"NVML did not start ({reason}).")
+                    self._nvml_state = err.value  # refused, so a later collector does not ask again
+                else:
+                    self._nvml_state = pynvml.NVML_SUCCESS
             try:
                 available = collector.probe()
             except Exception:
@@ -194,6 +212,14 @@ class CollectorRegistry:
                     entry.collector.close()
                 except Exception:
                     log.exception(f"Collector {entry.collector.name!r} failed to close.")
+            if self.nvml_initialized:
+                try:
+                    pynvml.nvmlShutdown()
+                    self._nvml_state = pynvml.NVML_ERROR_UNINITIALIZED
+                except pynvml.NVMLError as err:
+                    reason = pynvml.NVMLError._errcode_to_string.get(err.value, err.value)
+                    log.error(f"NVML did not shut down ({reason}).")
+                    self._nvml_state = err.value
         if self.sink:
             self._guard("sink", self.sink.close)
         self._log_cpu()

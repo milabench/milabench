@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from types import ModuleType
 from typing import Any
 
+import pynvml  # provided by nvidia-ml-py, which voir depends on
+
 from ..collector import NodeCollector
 
 
@@ -23,26 +25,23 @@ class Gpu:
 
 
 class NvmlCollector(NodeCollector):
-    """A collector over the GPUs NVML sees, with NVML initialized in probe() and shut down in close()."""
+    """A collector over the GPUs NVML sees.
 
-    def __init__(self) -> None:
-        #: The pynvml module, imported in probe() so a host without the bindings still runs.
-        self._nvml: ModuleType | None = None
+    Every collector uses the one pynvml session. The registry calls ``nvmlInit`` once
+    before probing and ``nvmlShutdown`` once after every collector has closed, so a
+    collector that keeps no GPUs does not take the driver down with it.
+    """
+
+    def __init__(self, nvml: ModuleType = pynvml) -> None:
+        """`nvml`: already initialized."""
+        #: The pynvml module. The registry starts it.
+        self._nvml = nvml
         self._gpus: list[Gpu] = []
         #: index -> UUID, for the status file. Survives close(), which the status file is written after.
         self._uuid_of: dict[int, str] = {}
 
     def probe(self) -> bool:
-        """Initialize NVML and open every GPU _open() accepts; False without bindings, a driver or GPUs."""
-        try:
-            import pynvml  # provided by nvidia-ml-py, which voir depends on
-        except ImportError:
-            return False
-        try:
-            pynvml.nvmlInit()
-        except pynvml.NVMLError:
-            return False
-        self._nvml = pynvml
+        """Open every GPU _open() accepts; False when NVML is not started or there are no GPUs."""
         if self._init():
             self._gpus = [
                 gpu
@@ -55,16 +54,15 @@ class NvmlCollector(NodeCollector):
 
     def _devices(self) -> Iterator[Gpu]:
         """Every GPU NVML can open; one that fails is skipped."""
-        pynvml = self._nvml
         try:
-            count = pynvml.nvmlDeviceGetCount()
-        except pynvml.NVMLError:
+            count = self._nvml.nvmlDeviceGetCount()
+        except self._nvml.NVMLError:
             return
         for index in range(count):
             try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(index)
-                uuid = _text(pynvml.nvmlDeviceGetUUID(handle))
-            except pynvml.NVMLError:
+                handle = self._nvml.nvmlDeviceGetHandleByIndex(index)
+                uuid = _text(self._nvml.nvmlDeviceGetUUID(handle))
+            except self._nvml.NVMLError:
                 continue
             self._uuid_of[index] = uuid
             yield Gpu(index, handle, uuid)
@@ -101,11 +99,5 @@ class NvmlCollector(NodeCollector):
             return None
 
     def close(self) -> None:
-        """Shut NVML down."""
-        if self._nvml:
-            try:
-                self._nvml.nvmlShutdown()
-            except self._nvml.NVMLError:
-                pass
-        self._nvml = None
+        """Forget the opened GPUs. The shared session stays up."""
         self._gpus = []

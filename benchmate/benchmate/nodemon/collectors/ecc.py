@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Any
+
+import pynvml
 
 from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
@@ -25,8 +28,9 @@ class EccCollector(NvmlCollector):
         CollectorMetric("remap_failure", MetricKind.SAMPLE, "", "Nonzero when a row remap failed: the GPU has no spare rows left"),
     )
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, nvml: ModuleType = pynvml) -> None:
+        """`nvml`: already initialized."""
+        super().__init__(nvml)
         #: Lifetime values per GPU, read for the status file rather than written on every row.
         self._lifetime: dict[int, dict[str, Any]] = {}
 

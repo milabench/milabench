@@ -56,6 +56,20 @@ def test_ib_counts_bytes_from_lanes_on_active_infiniband_ports_only(tmp_path):
     collector.close()
 
 
+def test_ib_prefers_the_64_bit_xmit_wait_counter_past_the_32_bit_maximum(tmp_path):
+    active = ib_port(tmp_path, "mlx5_0", 1, "4: ACTIVE", "InfiniBand", 1000)
+    stuck = (1 << 32) - 1
+    write(active / "counters" / "port_xmit_wait", str(stuck))
+    write(active / "hw_counters" / "port_xmit_wait", str(stuck + 10))
+    collector = IbCollector(tmp_path)
+
+    assert collector.probe()
+    (row,) = collector.sample(now_s=0.0)
+
+    assert row["xmit_wait"] == stuck + 10
+    collector.close()
+
+
 def proc_stat(ticks: dict[int, tuple[int, int]]) -> str:
     """A /proc/stat with each CPU's cumulative (user, idle) ticks."""
     lines = ["cpu  0 0 0 0 0 0 0 0 0 0"]
