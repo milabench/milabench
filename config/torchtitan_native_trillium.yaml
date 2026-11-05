@@ -563,6 +563,14 @@ tri-closs-mxfp8-seed2:
   inherits: tri-closs-bf16-seed2
   argv:
     --precision: mxfp8
+tri-closs-bf16-seed3:
+  inherits: tri-closs-bf16
+  argv:
+    --seed: 5678
+tri-closs-mxfp8-seed3:
+  inherits: tri-closs-bf16-seed3
+  argv:
+    --precision: mxfp8
 # The same seed: tri-closs-bf16 again with TT_REPETITION=2 (a leading argument of tt_trillium.sh).
 
 # --- F1: checkpoint save / load (after a short measurement) ------------------
