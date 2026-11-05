@@ -472,6 +472,14 @@ tri-bqs-fsdp-n52:
   argv:
     --grad-accum: 1
 
+# 39 nodes, the same batch: 8 sequences per GPU (32,768 tokens, more than the other points' 24k), no accumulation.
+tri-bqs-fsdp-n39:
+  inherits: tri-aq-fsdp-24k
+  num_machines: 39
+  argv:
+    --grad-accum: 1
+    --microbatch-sequences: 8
+
 tri-bqs-hsdp8-n13:
   inherits: tri-aq-hsdp8-24k
   num_machines: 13
@@ -551,6 +559,10 @@ tri-closs-bf16-seed2:
   inherits: tri-closs-bf16
   argv:
     --seed: 4321
+tri-closs-mxfp8-seed2:
+  inherits: tri-closs-bf16-seed2
+  argv:
+    --precision: mxfp8
 # The same seed: tri-closs-bf16 again with TT_REPETITION=2 (a leading argument of tt_trillium.sh).
 
 # --- F1: checkpoint save / load (after a short measurement) ------------------
