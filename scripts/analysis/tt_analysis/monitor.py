@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pandas as pd
 
-SCHEMA = "benchmate.nodemon.v1"
+SCHEMA = "benchmate.nodemon.v3"
+
+# NVML clock-event bits. Test with a mask: 0x84 is both, and it is not equal to either.
+# Same values as benchmate.nodemon.collectors.gpu.ClockReason.
+_SW_POWER_CAP = 0x4
+_HW_POWER_BRAKE = 0x80
+_REASON_BITS = (("sw_power_cap", _SW_POWER_CAP), ("hw_power_brake", _HW_POWER_BRAKE))
 
 # Per collector, the columns that identify a row's entity; everything else is a metric.
 # `gpu_uuid` is no longer one of them -- it is in the status file -- but it is still listed so
@@ -31,6 +37,30 @@ ENTITY_COLUMNS = {
 
 COLUMNS = ["cluster", "source", "schema", "host", "entity", "gpu", "gpu_uuid", "metric",
            "value", "text", "time", "bench", "truncated", "synthetic"]
+
+
+def _expand_clock_reasons(frame: pd.DataFrame) -> pd.DataFrame:
+    """One 0/1 row per power-cap bit, beside the raw ``clocks_event_reasons`` mask.
+
+    Tests the bit, not the mask: ``0x84`` has both the software power cap (0x4) and the external
+    power brake (0x80), and comparing it for equality with 4 drops the brake. Reads the mask
+    _numeric already decoded into ``value``; an empty cell, or one without the ``0x`` prefix
+    (which the sampler never writes), gives an empty bit rather than a guess.
+    """
+    reasons = frame[frame.metric == "clocks_event_reasons"]
+    if reasons.empty:
+        return frame
+    is_hex = reasons["text"].astype(str).str.startswith("0x")  # the same test _numeric decodes with
+    mask = reasons["value"].where(is_hex)
+    extra = []
+    for name, bit in _REASON_BITS:
+        rows = reasons.copy()
+        rows["metric"] = name
+        # Exact on floats: the masks are small integers. NaN stays NaN.
+        rows["value"] = (mask // bit) % 2
+        rows["text"] = rows["value"].map({1.0: "1", 0.0: "0"}).fillna("")
+        extra.append(rows)
+    return pd.concat([frame, *extra], ignore_index=True)
 
 
 def _numeric(series: pd.Series) -> pd.Series:
@@ -102,4 +132,4 @@ def parse_nodemon(run: Path, cluster: str, synthetic: bool = False) -> pd.DataFr
     out["cluster"] = cluster
     out["source"] = run.name
     out["synthetic"] = synthetic
-    return out[COLUMNS]
+    return _expand_clock_reasons(out[COLUMNS])

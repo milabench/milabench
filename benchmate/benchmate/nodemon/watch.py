@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -41,6 +42,8 @@ from .collectors import (
 )
 from .collectors.gpu import ClockReason
 from .sink import TsvSink
+
+log = logging.getLogger(__name__)
 
 # --- rules: what each kind of finding is, and how it is found ----------------------------------------------------------------------------
 
@@ -160,6 +163,22 @@ class Above(CounterRule):
                 yield Finding(host, self, device, f"{self.metric.name} {rate:,.0f}/s")
 
 
+def hex_cell(row: dict[str, str], column: str) -> int | None:
+    """A hex bit-field cell as an int, read by ClockReason.mask so every rule reads it the same way.
+
+    A missing or empty cell is 0: the query failed, which says nothing was set, not that the row is bad.
+    Text that is not ``0x`` hex is None, so one bad cell cannot stop a live follow.
+    """
+    text = row.get(column)
+    if text is None or not text.strip():
+        return 0
+    try:
+        return ClockReason.mask(text)
+    except ValueError as err:
+        log.debug(f"Unreadable {column} cell, read as unknown: {err}")
+        return None
+
+
 @dataclass(frozen=True)
 class Flags(MetricRule):
     """A hex bit field with any bit of `mask` set."""
@@ -167,10 +186,7 @@ class Flags(MetricRule):
     mask: int
 
     def hit(self, row: dict[str, str]) -> bool:
-        try:
-            return bool(int(row.get(self.metric.name) or "0", 16) & self.mask)
-        except ValueError:
-            return False
+        return bool((hex_cell(row, self.metric.name) or 0) & self.mask)
 
     def check(self, window: Window) -> Iterator[Finding]:
         yield from {
@@ -301,8 +317,13 @@ CPU_BUSY_MHZ = CpuCollector.metric("cpu_mhz_busy_mean")
 
 
 def gpu_working(row: dict[str, str]) -> bool:
-    """A gpu row where the GPU was not idling: an idle GPU's clock is down by design, not slow."""
-    return not ClockReason.GPU_IDLE & ClockReason.parse(row.get(CLOCK_REASONS.name))
+    """A gpu row where the GPU was not idling: an idle GPU's clock is down by design, not slow.
+
+    A missing or empty reasons cell (the query failed) still counts, so a GPU whose driver will not
+    give its reasons is compared with its peers. Only an unreadable cell leaves the row out.
+    """
+    mask = hex_cell(row, CLOCK_REASONS.name)
+    return mask is not None and not mask & ClockReason.GPU_IDLE
 
 
 CPU_UTIL_FOR_CLOCK_COMPARISON = 0.2
@@ -318,7 +339,8 @@ CLOCK_RULES = (
     Flags(
         "GPU hardware slowdown", 8,
         "The hardware itself cut the clock: HW_SLOWDOWN, HW_THERMAL_SLOWDOWN or HW_POWER_BRAKE_SLOWDOWN. A cooling "
-        "or power supply fault; the node is a candidate to drain.",
+        "or power supply fault; the node is a candidate to drain. Bits are tested with a mask, so a GPU that also "
+        "has SW_POWER_CAP set (0x84) is still this finding.",
         CLOCK_REASONS,
         ClockReason.HW_SLOWDOWN | ClockReason.HW_THERMAL_SLOWDOWN | ClockReason.HW_POWER_BRAKE_SLOWDOWN,
     ),
@@ -329,6 +351,8 @@ CLOCK_RULES = (
         CLOCK_REASONS,
         ClockReason.SW_THERMAL_SLOWDOWN,
     ),
+    # No rule for SW_POWER_CAP: a GPU training at its TDP sits on its own cap most of the time, so
+    # it would list every healthy GPU. The slowest-clock reading names it when it holds that clock.
 )
 
 STALE = Stale(
@@ -813,7 +837,7 @@ def slowest_clock(window: Window) -> tuple[float, str]:
     if worst is None:
         return 0, "no samples"
     level = max((rule.severity for rule in slowdowns_of(worst[2])), default=0)
-    reasons = ClockReason.parse(worst[2].get(CLOCK_REASONS.name)).names()
+    reasons = ClockReason.describe(hex_cell(worst[2], CLOCK_REASONS.name) or 0) or "-"
     return level, f"min {worst[0]:.0f} {SM_CLOCK.unit} on {worst[1]} ({reasons})"
 
 

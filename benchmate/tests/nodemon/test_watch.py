@@ -249,6 +249,40 @@ def test_a_counter_that_was_reset_keeps_its_rise_and_counts_on_from_zero():
     assert counters.risen("mem", "oom_kill") == {("cn-a", ""): 5}
 
 
+def test_every_rule_reads_a_clock_reasons_cell_the_same_way():
+    from benchmate.nodemon.watch import CLOCK_RULES, gpu_working, hex_cell
+
+    brake = next(rule for rule in CLOCK_RULES if rule.name == "GPU hardware slowdown")
+    cell = lambda text: {"clocks_event_reasons": text}  # noqa: E731
+
+    # Empty: the query failed. The GPU is still compared with its peers, with no reason set.
+    assert gpu_working(cell("")) and gpu_working({}) and hex_cell(cell(""), "clocks_event_reasons") == 0
+    assert not gpu_working(cell("0x1"))  # idle
+    # Unprefixed text is unreadable for every reader, not a brake to one and nothing to another.
+    assert hex_cell(cell("84"), "clocks_event_reasons") is None
+    assert not brake.hit(cell("84")) and not gpu_working(cell("84"))
+    assert brake.hit(cell("0x84"))
+
+
+def test_a_combined_power_mask_reports_the_cap_and_the_brake_separately(tmp_path):
+    now = time.time()
+    stamp = int((now - 5) * 1000)
+    columns = ["time_ms", "gpu", "sm_clock_mhz", "clocks_event_reasons"]
+    tsv(tmp_path / "nodes" / "cn-a.gpu.tsv", columns, [[stamp, 0, 1580, "0x84"], [stamp, 1, 1580, "0x4"]])
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh({}, now)
+    text = block(window)
+    scored = ranked(findings(window), {"cn-a"})
+
+    assert "power cap" not in text  # a GPU on its own cap is normal, not a finding
+    assert "GPU hardware slowdown: cn-a:0\n" in text
+    # Only the brake scores, once: the cap bit beside it in 0x84 does not hide it.
+    severity = {rule.name: rule.severity for rule in RULES}
+    assert [(score, host) for score, host, _ in scored] == [(severity["GPU hardware slowdown"], "cn-a")]
+
+
 def test_one_gpu_whose_clock_lags_its_peers_is_slow_but_an_idle_one_is_not(tmp_path):
     now = time.time()
     stamp = int((now - 5) * 1000)
