@@ -39,7 +39,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
-          "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
+          "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
           "TriCkGWLoadLo", "TriCkGWLoadHi", "TriCkGWSize", "TriCkGWLoadPeak", "TriCkGFSize", "TriCkGFSync", "TriCkGFSyncGBs", "TriCkGFSyncPeak", "TriCkGFBlocked", "TriCkGFTotal", "TriCkGFAsyncPeak",
           # Loss
           "TriLossSeedOneLo", "TriLossSeedOneHi", "TriLossSeedOneEnd", "TriLossSeedTwoLo", "TriLossSeedTwoHi", "TriLossSeedTwoEnd", "TriLossSeedThreeLo", "TriLossSeedThreeHi", "TriLossSeedThreeEnd",
@@ -365,6 +365,9 @@ def _checkpoint_numbers(t) -> dict[str, tuple]:
         w = q[(q.nodes == n) & (q.content == "weights")]
         rng(f"TriCkQ{tag}WSave", w[w.op == "save"], "total_s", ".1f")
         rng(f"TriCkQ{tag}WLoad", w[w.op == "load"], "total_s", ".1f")
+    big = q[(q.nodes == 39) & (q.content == "full") & (q.op == "save") & (q["mode"] == "sync")]
+    if len(big):
+        out["TriCkQBigSyncGBs"] = (big.gb_s.median(), ".0f", False)
     p = q[(q["mode"] == "async_pinned") & (q.repetition >= 2)]
     rng("TriCkQPinBlocked", p, "blocked_s", ".1f")
     size = q[q.content == "full"].bytes.median() / 1e12
