@@ -5,7 +5,7 @@ The campaign is not finished: the runs at 39 nodes and above are coming in, and 
 
 \begin{itemize}[leftmargin=*, itemsep=2pt]
   \item \textbf{The machine.} Of 52 nodes, 43 were usable and 40 clean until November~6, and 48 and 45 since. Seven had GPUs at 200\,W, which holds a whole job back to about a ninth of its speed; the administrators cleared six, and this should be checked before a job starts. Every node but one drops its CPU clocks under high GPU power, and three drop them about twice as much; the cause of that is unknown.
-  \item \textbf{The fabric.} Two bandwidth groups, 45--47\,GB/s across against 63--67 within, on the four GPUs that share a switch with a port. Collectives hold to 25 nodes; all-to-all is far lower. Nothing is measured above 25 nodes yet: those tests come after all the others.
+  \item \textbf{The fabric.} Two bandwidth groups, 45--47\,GB/s across against 63--67 within, on the four GPUs that share a switch with a port. Collectives hold to \TriNetInsideTop{} nodes, with no clear gain from staying inside a group; all-to-all is far lower. Nothing is measured above \TriNetInsideTop{} nodes yet: those tests come after all the others.
   \item \textbf{Side by side.} 13-node Qwen FSDP jobs do not slow each other (\TriInterferencePct\,\%). One job beside a pipeline job did, once.
   \item \textbf{Qwen.} 24k tokens per GPU, \texttt{fsdp} or \texttt{hsdp8}, selective recompute. Above that, memory or padding limits it; TP and PP cost throughput. \texttt{fsdp} holds \TriWeakFEffOne\,\% of its 1-node throughput at \TriWeakFTop{} nodes.
   \item \textbf{GLM-5.} Expert groups inside a node, full recompute. \TriGlmCopiesTop{} copies reach \TriGlmCopiesEff\,\% of the throughput per GPU of one; memory per GPU falls with copies.

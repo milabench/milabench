@@ -14,7 +14,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_JOB,
+from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB,
                       NODE_NET_GBS, NODES, SUBNET_OF)
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
@@ -276,6 +276,7 @@ def collectives_scale(t):
     if c.empty:
         return None
     c = c[c.status == "ok"]
+    inside = c[(c.job_id == NET_D3_INSIDE_JOB) & (c.experiment == "D3") & (c.size_bytes == 2**30) & c.nodes.isin([8, 13, 26])]
     if not c.synthetic.any():
         c = c[c.job_id == NET_D3_JOB]
     d3 = c[(c.experiment == "D3") & (c.size_bytes == 2**30)]
@@ -293,6 +294,11 @@ def collectives_scale(t):
         ax.text(1, y, text, fontsize=6, color=INK2, va="bottom")
     handles = [_handle(COLLECTIVE_COLOR[k], k.replace("_", "-"), d3[d3.collective == k].synthetic.any(),
                        COLLECTIVE_MARKER[k], "-", ms=3.5) for k in COLLECTIVE_COLOR if k in set(d3.collective)]
+    for coll, g in inside.groupby("collective"):
+        med = g.groupby("nodes").busbw_gbs.median()
+        ax.plot(med.index, med.values, ls="", marker=COLLECTIVE_MARKER[coll], mfc="white", mec=COLLECTIVE_COLOR[coll], mew=0.7, ms=4.5, zorder=3)
+    if len(inside):
+        handles.append(plt.Line2D([], [], ls="", marker="o", mfc="white", mec=INK2, mew=0.7, ms=4, label="inside one group"))
     ax.legend(handles=handles, loc="upper right", fontsize=6)
     if not d4.empty:  # not a bus bandwidth: median node-pair bandwidth across the cut, per node
         x = d4.nodes.max() * 1.6
@@ -304,7 +310,7 @@ def collectives_scale(t):
     ax.set_xscale("log", base=2)
     ticks = sorted(d3.nodes.unique())
     ax.set_xticks(ticks)
-    ax.set_xticklabels([str(int(x)) for x in ticks])
+    ax.set_xticklabels([f"{int(x)}, 26" if x == 25 and len(inside) else str(int(x)) for x in ticks])
     ax.minorticks_off()
     ax.set_xlim(0.8, max(ticks) * 2.4)
     ax.set_yscale("log")

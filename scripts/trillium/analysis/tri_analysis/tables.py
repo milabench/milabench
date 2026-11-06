@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_JOB)
+from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB)
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
                      with_energy)
@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriNetInsideTop", "TriInGather", "TriInScatter", "TriInReduce", "TriCrossGather", "TriCrossScatter", "TriCrossReduce", "TriInAlltoall", "TriInThirteenLo", "TriInThirteenHi", "TriGlmThirtyTok", "TriGlmThirtyStep", "TriGlmThirtyMem", "TriGlmThirtyMfu", "TriGlmThirtyAtoa", "TriGlmThirtyAtoaPct", "TriGlmThirtyEff", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -222,6 +222,16 @@ def _network_numbers(t) -> dict[str, tuple]:
             out["TriAllReduceLo"], out["TriAllReduceHi"] = (reduce.min(), ".0f", False), (reduce.max(), ".0f", False)
             out["TriAlltoallTwo"] = (med["alltoall"][2], ".1f", False)
             out["TriAlltoallFull"] = (med["alltoall"][d.nodes.max()], ".1f", False)
+            i = c[(c.job_id == NET_D3_INSIDE_JOB) & (c.experiment == "D3") & (c.size_bytes == 2**30) & (c.status == "ok")]
+            if len(i):
+                inside = i.groupby(["collective", "nodes"]).busbw_gbs.median()
+                top, big = int(i.nodes.max()), int(d.nodes.max())
+                out["TriNetInsideTop"] = (top, "d", False)
+                for coll, tag in (("all_gather", "Gather"), ("reduce_scatter", "Scatter"), ("all_reduce", "Reduce")):
+                    out[f"TriIn{tag}"], out[f"TriCross{tag}"] = (inside[coll][top], ".0f", False), (med[coll][big], ".0f", False)
+                out["TriInAlltoall"] = (inside["alltoall"][top], ".1f", False)
+                gain = [100 * (inside[k][13] / med[k][13] - 1) for k in ("all_gather", "reduce_scatter", "all_reduce")]
+                out["TriInThirteenLo"], out["TriInThirteenHi"] = (min(gain), ".1f", False), (max(gain), ".1f", False)
     return out
 
 
@@ -499,7 +509,7 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
     def one(layout, nodes, seqs, ac="full"):
         d = ag[(ag.layout == layout) & (ag.nodes == nodes) & (ag.seqs == seqs) & (ag.ac == ac)]
         return d if len(d) else None
-    for name, layout, nodes, seqs in (("Thirteen", "pp13-ep8", 13, 256), ("Small", "pp13-ep8", 13, 64), ("Six", "pp6-ep16", 12, 256), ("Ten", "pp10-ep8", 10, 200), ("Forty", "pp10-ep8", 40, 800), ("ThirtySix", "pp6-ep16", 36, 768)):
+    for name, layout, nodes, seqs in (("Thirteen", "pp13-ep8", 13, 256), ("Small", "pp13-ep8", 13, 64), ("Six", "pp6-ep16", 12, 256), ("Ten", "pp10-ep8", 10, 200), ("Thirty", "pp10-ep8", 30, 600), ("Forty", "pp10-ep8", 40, 800), ("ThirtySix", "pp6-ep16", 36, 768)):
         d = one(layout, nodes, seqs)
         if d is not None:
             out[f"TriGlm{name}Tok"] = (d.tok_s_gpu.median(), ",.0f", False)
@@ -520,6 +530,9 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
     ten, forty = one("pp10-ep8", 10, 200), one("pp10-ep8", 40, 800)
     if ten is not None and forty is not None:
         out["TriGlmFortyEff"] = (100 * forty.tok_s_gpu.median() / ten.tok_s_gpu.median(), ".0f", False)
+    thirty = one("pp10-ep8", 30, 600)
+    if ten is not None and thirty is not None:
+        out["TriGlmThirtyEff"] = (100 * thirty.tok_s_gpu.median() / ten.tok_s_gpu.median(), ".0f", False)
     a, b = one("pp13-ep8", 13, 256), one("pp6-ep16", 12, 256)
     if a is not None and b is not None:
         out["TriGlmEpRatio"] = (a.tok_s_gpu.median() / b.tok_s_gpu.median(), ".1f", False)
