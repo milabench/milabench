@@ -132,7 +132,7 @@ CMD=(
     --output="$BASE/logs/%x-%j.out"
     --reservation="${TRI_RESERVATION-b200-friendly-users}"
     --qos="${TRI_QOS-bump}"
-    --exclude="${TRI_EXCLUDE-trig0135}"  # trig0135: in a maintenance reservation since 2026-11-06 14:39
+    --exclude="${TRI_EXCLUDE-}"  # none: all 52 nodes pass as of 2026-11-06
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"
