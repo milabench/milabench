@@ -53,7 +53,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriSlowBehindLo", "TriSlowBehindHi", "TriSlowThirteenWith", "TriSlowThirteenWithout", "TriSlowThirteenPct", "TriKernelMaxChange",
           "TriKernelReruns", "TriKernelRepeatLo", "TriKernelRepeatHi",
           # E1, R
-          "TriInterferenceLo", "TriInterferenceHi", "TriPlacementPct", "TriPlacementGroup", "TriPlacementRandom", "TriBesidePPSlow", "TriBesidePPFast", "TriRefRuns", "TriRefSpreadPct",
+          "TriInterferenceLo", "TriInterferenceHi", "TriPlacementPct", "TriPlacementGroup", "TriPlacementRandom", "TriBesidePPSlow", "TriBesidePPFast", "TriRefRuns", "TriRefSpreadPct", "TriRefAfter",
           # D
           "TriDcgmHi", "TriDcgmLo", "TriDcgmFailed", "TriNodesCheckedAfter", "TriIntra", "TriPairBus", "TriLoopback", "TriPairBusLo", "TriPairBusLoHi", "TriPairWithinLo",
           "TriPairWithinHi", "TriPairAcrossLo", "TriPairAcrossHi", "TriPairsMeasured", "TriPairAllGpus", "TriNetTop", "TriGatherLo", "TriGatherHi", "TriAllReduceLo",
@@ -556,6 +556,8 @@ def key_numbers(t) -> dict[str, tuple]:
         out["TriDriftPct"] = (drift(rr)[1], "+.2f", rr.synthetic.any())  # linear trend over the window
         fixed = rr[rr.hosts == REF_NODES] if not rr.synthetic.any() else rr
         out["TriRefRuns"] = (len(fixed), "d", rr.synthetic.any())
+        if "pstate" in fixed:
+            out["TriRefAfter"] = (int((fixed.pstate == "after").sum()), "d", rr.synthetic.any())
         out["TriRefSpreadPct"] = (100 * (fixed.tok_s_gpu.max() - fixed.tok_s_gpu.min()) / fixed.tok_s_gpu.median(), ".2f", rr.synthetic.any())
     aq = _completed(runs, "A-Q")
     base = qwen_base(runs)

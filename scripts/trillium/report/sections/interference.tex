@@ -23,8 +23,7 @@ the same batches compared in each. Together is \TriInterferencePct\,\% slower th
 
 \textbf{Placement.} E1's first draw used sets inside a bandwidth group (\cref{sec:network}), its second random sets. Among sets without a slow node, step time is \TriPlacementGroup\,s inside a group and \TriPlacementRandom\,s across (\TriPlacementPct\,\%), from one random set only, so we do not rest anything on it. The fixed node sets stay inside one group each.
 
-\paragraph{Reference drift (R).} A short reference run (\texttt{fsdp}, 12k tokens per GPU, 4 nodes) was repeated through the window. Its first two runs were on other nodes, one of them with slow \texttt{trig0148}, which shows; from the third on it stayed on the same 4 nodes, and those runs differ by at most \TriRefSpreadPct\,\% with a linear trend of \TriDriftPct\,\% (\cref{fig:reference_drift}). So we saw no drift from background load in this window, down to differences of a fraction of a percent. Differences between configurations below about 1\,\% should not be read as real. The last run is after the kernel change.
-It did not sample the hours after 18:00; more reference runs are planned.
+\paragraph{Reference drift (R).} A short reference run (\texttt{fsdp}, 12k tokens per GPU, 4 nodes) was repeated through the window. Its first two runs were on other nodes, one of them with slow \texttt{trig0148}, which shows; from the third on it stayed on the same 4 nodes, and those runs differ by at most \TriRefSpreadPct\,\% with a linear trend of \TriDriftPct\,\% (\cref{fig:reference_drift}). So we saw no drift from background load in this window, down to differences of a fraction of a percent. Differences between configurations below about 1\,\% should not be read as real. The last \TriRefAfter{} are after the kernel change. More reference runs are planned.
 
 \begin{figure}[h]
   \centering\fig[0.8\linewidth]{reference_drift}
