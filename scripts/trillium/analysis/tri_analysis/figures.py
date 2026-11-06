@@ -605,8 +605,7 @@ def glm_scaling(t):
         ax.plot(med.copies, med.value, color=col, lw=1.0)
         for n in sorted(set(failed[failed.experiment == exp].nodes) - set(g.nodes)):
             _failed_x(ax, n / GLM_COPY_NODES, "failed" if exp == "B-G-weak" else None)
-        bubble = g.groupby("copies").apply(lambda d: (d.pp - 1) / (d.microbatches + d.pp - 1), include_groups=False
-                                           ).groupby("copies").median()
+        bubble = ((g.pp - 1) / (g.microbatches + g.pp - 1)).groupby(g.copies).median()
         for _, row in med.iterrows():
             _pt(ax, row.copies, row.value, col, row.synthetic, "o" if exp == "B-G-weak" else "s")
             ax.annotate(f"{bubble[row.copies]:.0%}", (row.copies, row.value), xytext=(0, 5 if above else -9),

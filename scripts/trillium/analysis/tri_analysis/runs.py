@@ -7,12 +7,14 @@ parser (``tt_analysis.runs.parse_run``); this module only reads what it does not
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
 
 import tt_analysis.runs as tt_runs
-from tt_analysis.runs import percentile, read_events
+from tt_analysis.runs import percentile
+from tt_analysis.runs import read_events as _read_events
 
 from .machine import GPUS_PER_NODE
 from .style import GLM, QWEN
@@ -31,18 +33,25 @@ def canonical_model(name):
 
 def _clean_events(path: Path):
     """``read_events`` for the Rorqual parser: the TorchTitan pack writes ``per_ep_group: null`` (no MoE),
-    where the parser expects a list."""
-    for e in read_events(path):
+    where the parser expects a list. A run whose summary came out garbled gets the one recovered from its
+    line (data/raw/trillium/recovered/<run>.summary.json, glm/ag/recover.py on Trillium)."""
+    found = False
+    for e in _read_events(path):
         d = e.get("data")
         s = d.get("summary") if isinstance(d, dict) else None
         if isinstance(s, dict):
+            found = True
             for key in ("per_ep_group", "per_rank"):
                 if s.get(key) is None:
                     s[key] = []
         yield e
+    recovered = path.parents[2] / "recovered" / f"{path.parent.name}.summary.json"
+    if not found and recovered.exists():
+        s = json.loads(recovered.read_text())
+        yield {"event": "data", "data": {"summary": s, "task": "train"}}
 
 
-tt_runs.read_events = _clean_events  # this process reads Trillium's run data only
+tt_runs.read_events = read_events = _clean_events  # this process reads Trillium's run data only
 
 
 def expected_operations(entry: str):

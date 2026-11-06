@@ -6,10 +6,71 @@ import numpy as np
 import pandas as pd
 
 from .machine import GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GLM_TOP_COPIES, GLM_TOP_NODES
-from .style import GLM
+from .style import GLM, QWEN
 
 # A-Q cross: every other lever fixed, at the defaults of config/torchtitan_native_trillium.yaml
 QWEN_BASE = {"grad_reduce": "fp32", "ac": "selective", "precision": "bf16"}
+
+# Which runs enter the report. Every run stays in runs.csv and in the ledger; `completed`, `failed_runs` and
+# `checkpoints` see only ``in_report``. The hardware reruns are read directly, in the machine block.
+REPORT_CAMPAIGNS = {"phase1", "trillium-1105"}
+MACHINE_CAMPAIGNS = {"post-pstate", "hw-reboot", "hw-probe"}
+REPORT_EXPERIMENTS = {"A-Q", "A-G", "B-Q-weak", "B-Q-strong", "B-G-weak", "B-G-strong", "C-speed", "C-loss", "E1", "R",
+                      "F1", "F2"}
+# Tagged for the campaign, but kept out whatever their tags: job -> why. All runs of the job.
+SET_ASIDE = {
+    "1239932": "capped trig0123 in the job, 26.3 s per step, cancelled: evidence for the cap only",
+    "1241330": "cancelled",
+    "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
+}
+# Left out of anything that measures noise between repetitions: rank 2 on trig0101 stalled twice.
+NOISE_ASIDE = {"1240555"}
+SLOW_NODES = {"trig0134", "trig0135", "trig0148"}  # low CPU clocks, about 8.5 % on 13 nodes (DESIGN.md, E)
+CAPPED_NODES = {"trig0122", "trig0123", "trig0133", "trig0138", "trig0140", "trig0143", "trig0145", "trig0152"}  # 200 W
+UNFINISHED_JOB_STATES = ("RUNNING", "PENDING", "COMPLETING", "SUSPENDED", "REQUEUED", "CONFIGURING")
+
+
+def bandwidth_group(host: str) -> int:
+    """Two bandwidth groups, measured (DESIGN.md, D2): trig0101-0128 and trig0129-0152."""
+    return 1 if host <= "trig0128" else 2
+
+
+def mark_selection(r: pd.DataFrame) -> pd.DataFrame:
+    """Columns that say what a run is for: role (report / machine / test), in_report, set_aside (why not),
+    slow_nodes, capped_nodes, bw_groups."""
+    measured = ~r.synthetic.astype(bool)
+    tagged = r.campaign.isin(REPORT_CAMPAIGNS) & r.experiment.isin(REPORT_EXPERIMENTS)
+    tagged |= (r.campaign == "hw-reboot") & (r.experiment == "R")  # the reference run after the reboot belongs to the drift
+    role = np.select([tagged, r.campaign.isin(MACHINE_CAMPAIGNS)], ["report", "machine"], "test")
+    aside = r.job.map(SET_ASIDE) if "job" in r else pd.Series(None, index=r.index, dtype=object)
+    hosts = r.hosts.fillna("").str.split(";")
+    return r.assign(role=np.where(measured, role, "report"), set_aside=aside,
+                    in_report=(tagged & aside.isna()) | ~measured,
+                    slow_nodes=[";".join(sorted(SLOW_NODES & set(h))) for h in hosts],
+                    capped_nodes=[";".join(sorted(CAPPED_NODES & set(h))) for h in hosts],
+                    bw_groups=["+".join(str(g) for g in sorted({bandwidth_group(x) for x in h if x})) for h in hosts])
+
+
+def mark_beside(r: pd.DataFrame) -> pd.DataFrame:
+    """beside_pp: the Qwen PP runs whose measurement overlapped this one's, in the same bandwidth group, and how much of
+    this measurement that covers. A pipeline layout next to another multi-node job in its group ran slower once
+    (tp4-fsdp 12k: 4.955 s beside PP2, 3.465 s beside FSDP)."""
+    has = r.measure_start.notna() & r.measure_end.notna() & (r.nodes > 1)
+    pp = r[has & (r.pp > 1) & (r.model == QWEN)]
+    names, shares = {}, {}
+    for row in r[has].itertuples():
+        seen, covered = [], 0.0
+        for o in pp.itertuples():
+            overlap = min(row.measure_end, o.measure_end) - max(row.measure_start, o.measure_start)
+            same_group = set(row.bw_groups.split("+")) & set(o.bw_groups.split("+"))
+            if o.run_id != row.run_id and overlap > 0 and same_group and not set(row.hosts.split(";")) & set(o.hosts.split(";")):
+                seen.append(f"{o.layout}:{o.job}")
+                covered += overlap
+        if seen:
+            names[row.run_id] = ";".join(seen)
+            shares[row.run_id] = min(1.0, covered / (row.measure_end - row.measure_start))
+    return r.assign(beside_pp=r.run_id.map(names), beside_pp_share=r.run_id.map(shares))
+
 
 # GLM-5 runs that serve two experiments. run.experiment holds one value, the launcher's tag, and these
 # runs are not repeated: (layout, nodes, global batch in sequences) -> (tag, experiment also served).
@@ -34,6 +95,8 @@ def with_second_experiments(runs: pd.DataFrame) -> pd.DataFrame:
     base = (r.model == GLM) & (r.ac == "full") & (r.precision == "bf16") & (r.mb_seqs == 1)
     extra = [r[base & (r.layout == layout) & (r.nodes == nodes) & (seqs == batch) & (r.experiment == tag)]
              .assign(experiment=also) for layout, nodes, batch, tag, also in SERVES_TWICE]
+    # Qwen: the weak-scaling runs other than at 13 nodes are the layout comparison's 2-node and top-scale points.
+    extra.append(r[(r.model == QWEN) & (r.experiment == "B-Q-weak") & (r.nodes != 13)].assign(experiment="A-Q"))
     return pd.concat([r, *extra], ignore_index=True)
 
 
@@ -43,6 +106,8 @@ def completed(runs: pd.DataFrame, *experiments) -> pd.DataFrame:
     if runs.empty:
         return runs
     r = runs[runs.status == "completed"]
+    if "in_report" in r:
+        r = r[r.in_report.astype(bool)]
     if "full_model" in r:
         r = r[r.full_model.astype(object) != False]  # noqa: E712  (truncated test models, NaN = not known)
     if not experiments:
@@ -81,6 +146,8 @@ def series_gaps(runs: pd.DataFrame) -> dict[str, list[int]]:
 def checkpoints(ck: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     """Checkpoint operations of the completed F1 runs, with the run's model, nodes and peak memory."""
     f1 = runs[runs.experiment == "F1"] if len(runs) else runs  # a failed run's finished operations count too
+    if "in_report" in f1:
+        f1 = f1[f1.in_report.astype(bool)]
     if "full_model" in f1:
         f1 = f1[f1.full_model.astype(object) != False]  # noqa: E712
     if ck.empty or f1.empty:
@@ -99,6 +166,8 @@ def failed_runs(runs: pd.DataFrame, *experiments) -> pd.DataFrame:
     if runs.empty or "failed_unresolved" not in runs:
         return runs.iloc[0:0]
     r = runs[runs.failed_unresolved.astype(bool)]
+    if "in_report" in r:
+        r = r[r.in_report.astype(bool)]
     if not experiments:
         return r  # each run once
     r = with_second_experiments(r)

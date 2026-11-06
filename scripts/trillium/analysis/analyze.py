@@ -4,7 +4,7 @@
     analyze.py all                    # collect + synth + build + plot + report
     analyze.py all --no-collect       # from the local copy in data/raw
     analyze.py all --no-synthetic     # measured data only
-    analyze.py collect | synth | build | plot | report
+    analyze.py collect | synth | build | plot | report | progress
 
 Raw data is copied read-only from trillium-gpu:$SCRATCH/trillium/ (rsync over ssh) into
 data/raw/trillium/; synthetic data (../FORMAT.md formats) goes to data/synthetic/trillium/.
@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from tri_analysis import build as build_mod  # noqa: E402
-from tri_analysis import figures, synthetic, tables  # noqa: E402
+from tri_analysis import figures, progress, synthetic, tables  # noqa: E402
 from tri_analysis.machine import CLUSTER  # noqa: E402
 from tri_analysis.select import failed_runs, series_gaps  # noqa: E402
 
@@ -34,7 +34,28 @@ GENERATED = REPORT / "generated"
 HOST = "trillium-gpu"
 # Directories under $SCRATCH/trillium copied into data/raw/trillium/. Checkpoints: only their
 # JSON metadata, never the checkpoint files themselves (up to ~9 TB).
-REMOTE = ["runs", "health", "nccl", "nodemon"]
+REMOTE = ["runs", "nccl", "nodemon"]
+# Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
+# The trailing slash matters: health checks are one directory per job, directly under health/.
+REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
+                ("trillium/glm/ag/recovered/", "recovered"),
+                ("trillium/hw/post-pstate/README.md", "post-pstate"),
+                ("trillium/hw/post-pstate/before_after.tsv", "post-pstate"),
+                ("trillium/hw/post-pstate/noise.tsv", "post-pstate"),
+                ("trillium/hw/post-pstate/power_limits.tsv", "post-pstate"),
+                ("trillium/hw/post-pstate/healthcheck_cpu_clocks.tsv", "post-pstate"),
+                ("trillium/hw/post-pstate/boot_checks.tsv", "post-pstate"),
+                ("trillium/hw/post-pstate/load_table.tsv", "post-pstate"),
+                ("trillium/hw/fp8-glm/summary.txt", "fp8-glm"),
+                # The running agents' own tables: cross-checks only, never a source for the report.
+                ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
+                ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),
+                ("trillium/qwen/p3/results13.tsv", "agent-tables/qwen-p3"),
+                ("trillium/qwen/large/results.tsv", "agent-tables/qwen-large"),
+                ("trillium/glm/ag-results.tsv", "agent-tables/glm"),
+                ("trillium/glm/p3-results.tsv", "agent-tables/glm"),
+                ("trillium/glm/closs-results.tsv", "agent-tables/glm")]
+SACCT = "sacct -u $USER -X -S 2026-11-04 -P -o JobID,JobName,State,Start,End,Elapsed,NNodes,NodeList"
 CHECKPOINT_FILTER = ["--include", "*/", "--include", "*.json", "--include", "*.jsonl", "--exclude", "*",
                      "--prune-empty-dirs"]
 
@@ -48,8 +69,11 @@ def collect() -> None:
     dest = RAW / CLUSTER
     dest.mkdir(parents=True, exist_ok=True)
     try:
-        root = ssh("echo $SCRATCH").strip() + "/trillium"
+        scratch = ssh("echo $SCRATCH").strip()
+        root = scratch + "/trillium"
         existing = ssh(" ".join(f"test -e {root}/{d} && echo {d};" for d in [*REMOTE, "checkpoints"])).split()
+        # Before the rsync: a job not in this snapshot, or still running in it, may have partial files (build.py).
+        (dest / "sacct.txt").write_text(ssh(SACCT))
     except (subprocess.SubprocessError, OSError) as exc:
         print(f"[collect] {HOST}: ssh failed ({exc}); keeping the local copy", file=sys.stderr)
         return
@@ -61,10 +85,13 @@ def collect() -> None:
         if "checkpoints" in existing:
             subprocess.run([*rsync, *CHECKPOINT_FILTER, f"{HOST}:{root}/checkpoints", f"{dest}/"], check=True,
                            timeout=600)
+        for src, sub in REMOTE_OTHER:
+            (dest / sub).mkdir(parents=True, exist_ok=True)
+            subprocess.run([*rsync, f"{HOST}:{scratch}/{src}", f"{dest / sub}/"], check=True, timeout=600)
     except (subprocess.SubprocessError, OSError) as exc:
         print(f"[collect] {HOST}: rsync failed ({exc}); the local copy may be partial", file=sys.stderr)
         return
-    print(f"[collect] {HOST}: {', '.join(existing) or 'nothing'}")
+    print(f"[collect] {HOST}: {', '.join([*existing, *sorted({d for _, d in REMOTE_OTHER})])}")
 
 
 def build(use_synthetic: bool):
@@ -100,6 +127,12 @@ def plot(t) -> None:
     tables.write_all(t, GENERATED / "tables")
 
 
+def show_progress(t) -> None:
+    points = progress.table(t)
+    points.to_csv(TABLES / "progress.csv", index=False)
+    print(progress.markdown(progress.summary(points, t, RAW / CLUSTER / "sacct.txt")))
+
+
 def report() -> None:
     if not (REPORT / "main.tex").exists():
         print(f"[report] no {REPORT / 'main.tex'}; skipped")
@@ -115,7 +148,7 @@ def report() -> None:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["all", "collect", "synth", "build", "plot", "report"])
+    parser.add_argument("command", choices=["all", "collect", "synth", "build", "plot", "report", "progress"])
     parser.add_argument("--no-collect", action="store_true")
     parser.add_argument("--no-synthetic", action="store_true")
     args = parser.parse_args(argv)
@@ -128,8 +161,10 @@ def main(argv=None) -> None:
         print(f"[synth] -> {SYN}")
     if args.command in ("build", "all"):
         t = build(use_syn)
-    elif args.command in ("plot", "report"):
+    elif args.command in ("plot", "report", "progress"):
         t = build_mod.load(TABLES)
+    if args.command == "progress":
+        show_progress(t)
     if args.command in ("plot", "all", "report"):
         plot(t)
     if args.command in ("report", "all"):

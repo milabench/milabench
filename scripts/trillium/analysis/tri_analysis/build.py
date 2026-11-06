@@ -32,9 +32,12 @@ from tt_analysis.runs import data_files, parse_run
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, PSTATE_BOOTS, SUBNET_OF
 from .runs import canonical_model, drop_warmup, failed_operation, parse_extras
+from .select import UNFINISHED_JOB_STATES, mark_beside, mark_selection
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
-          "run_power", "gpu_monitor"]
+          "run_power", "node_telemetry", "gpu_monitor"]
+GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
+CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
 # ... and the metrics kept from it (stability, stragglers).
 MONITOR_METRICS = {"sm_clock_mhz", "clocks_event_reasons", "power_w", "util_mean", "tensor_util",
@@ -46,7 +49,7 @@ MONITOR_METRICS = {"sm_clock_mhz", "clocks_event_reasons", "power_w", "util_mean
 CONFIG_KEY = ["experiment", "model", "layout", "nodes", "tokens_per_gpu", "global_batch_tokens", "grad_reduce",
               "ac", "precision", "mb_seqs", "node_set", "condition", "loss_seed"]
 CKPT_KEY = ["model", "nodes", "content", "op", "mode"]
-RUN_TABLES = ["steps", "loss", "checkpoints", "ep_groups", "run_power", "gpu_monitor"]
+RUN_TABLES = ["steps", "loss", "checkpoints", "ep_groups", "run_power", "node_telemetry", "gpu_monitor"]
 
 
 def _sources(raw: Path, synthetic: Path | None):
@@ -56,16 +59,43 @@ def _sources(raw: Path, synthetic: Path | None):
         yield synthetic / CLUSTER, True
 
 
-def _power(mon: pd.DataFrame, run: dict) -> dict | None:
-    """Per run: GPUs sampled and their mean power over the measurement window (W)."""
-    p = mon[mon.metric == "power_w"]
+def _window(frame: pd.DataFrame, run: dict) -> pd.DataFrame:
     if run.get("measure_start") and run.get("measure_end"):
-        p = p[(p.time >= run["measure_start"]) & (p.time <= run["measure_end"])]
-    if p.empty:
-        return None
-    per_gpu = p.groupby(["host", "gpu"]).value.mean()
-    return {"run_id": run["run_id"], "gpus_sampled": len(per_gpu), "power_w_gpu": per_gpu.mean(),
-            "power_w_total": per_gpu.sum(), "synthetic": bool(p.synthetic.any())}
+        t = frame.time_ms / 1000
+        return frame[(t >= run["measure_start"]) & (t <= run["measure_end"])]
+    return frame
+
+
+def _node_telemetry(d: Path, run: dict, is_syn: bool) -> list[dict]:
+    """Per host, over the run's measurement window: GPU power, clock and activity, CPU clock. Reads only these columns:
+    the whole telemetry is 5 GB. Only the F2 runs are kept row by row (gpu_monitor)."""
+    rows = []
+    for path in sorted((d / "nodes").glob("*.gpu.tsv")):
+        host = path.name.split(".")[0]
+        g = _window(pd.read_csv(path, sep="\t", usecols=lambda c: c in GPU_COLUMNS), run)
+        if g.empty:
+            continue
+        per_sample = g.groupby("time_ms").power_w.sum()
+        row = {"run_id": run["run_id"], "host": host, "gpus": g.gpu.nunique(), "gpu_w_mean": g.groupby("gpu").power_w.mean().mean(),
+               "node_gpu_kw_mean": per_sample.mean() / 1000, "node_gpu_kw_max": per_sample.max() / 1000,
+               "sm_clock_mhz": g.sm_clock_mhz.median(), "synthetic": is_syn}
+        if "util_mean" in g:
+            row["gpu_util"] = g.util_mean.mean()
+        cpu_path = path.with_name(f"{host}.cpu.tsv")
+        if cpu_path.exists():
+            c = _window(pd.read_csv(cpu_path, sep="\t", usecols=lambda x: x in CPU_COLUMNS), run)
+            c = c[c.cpu_mhz_busy_mean.notna()]
+            if len(c):
+                row.update(cpu_mhz=c.cpu_mhz_busy_mean.mean(), cpu_low_share=(c.cpu_mhz_busy_mean < 500).mean())
+        rows.append(row)
+    return rows
+
+
+def _power(nodes: list[dict], run: dict) -> dict:
+    """Per run: GPUs sampled and their mean power over the measurement window (W)."""
+    n = pd.DataFrame(nodes)
+    return {"run_id": run["run_id"], "gpus_sampled": int(n.gpus.sum()), "power_w_gpu": (n.gpu_w_mean * n.gpus).sum() / n.gpus.sum(),
+            "power_w_total": (n.gpu_w_mean * n.gpus).sum(), "synthetic": bool(n.synthetic.any())}
 
 
 def pstate(started, hosts, boots: dict[str, datetime]) -> str | None:
@@ -74,6 +104,18 @@ def pstate(started, hosts, boots: dict[str, datetime]) -> str | None:
         return None
     after = [h in boots and datetime.fromisoformat(started) >= boots[h] for h in hosts.split(";")]
     return "after" if all(after) else "mixed" if any(after) else "before"
+
+
+def mark_jobs(r: pd.DataFrame, sacct: Path) -> pd.DataFrame:
+    """job and job_state, from the run name and the collector's sacct snapshot. A run whose job has not ended is not a
+    failed run, even if its entry finished: status "running", and left out. So is a job newer than the snapshot."""
+    r = r.assign(job=r.run_name.str.extract(r"\.(\d{7})(?:\.|$)")[0])
+    if not sacct.exists():
+        return r.assign(job_state=None)
+    jobs = pd.read_csv(sacct, sep="|", dtype=str)
+    state = r.job.map(jobs.set_index("JobID").State)
+    unfinished = state.fillna("RUNNING").str.startswith(UNFINISHED_JOB_STATES) & r.job.notna()
+    return r.assign(job_state=state, status=r.status.where(~unfinished, "running"))
 
 
 def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) -> dict[str, pd.DataFrame]:
@@ -115,13 +157,12 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
             runs = by_name.get(d.name)
             if runs is None:
                 continue
-            mon = parse_nodemon(d, CLUSTER, synthetic=is_syn)
-            if mon.empty:
-                continue
             for run in runs:
-                if (p := _power(mon, run)) is not None:
-                    rows["run_power"].append(p)
+                if nodes := _node_telemetry(d, run, is_syn):
+                    rows["node_telemetry"] += nodes
+                    rows["run_power"].append(_power(nodes, run))
                 if run.get("experiment") in FULL_TELEMETRY:
+                    mon = parse_nodemon(d, CLUSTER, synthetic=is_syn)
                     rows["gpu_monitor"].append(mon[mon.metric.isin(MONITOR_METRICS)].drop(columns="text"))
 
     tables = {name: pd.DataFrame(r) for name, r in rows.items() if name != "gpu_monitor"}
@@ -135,6 +176,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
         boots = {b.node: datetime.fromisoformat(b.boot).astimezone().replace(tzinfo=None)
                  for b in pd.read_csv(PSTATE_BOOTS, sep="\t").itertuples()}
         r["pstate"] = [None if s else pstate(t, h, boots) for s, t, h in zip(r.synthetic, r.started, r.hosts)]
+        r = mark_beside(mark_selection(mark_jobs(r, raw / CLUSTER / "sacct.txt")))
         tables["runs"] = r.sort_values("started").reset_index(drop=True)
     _prefer_measured(tables)
     out.mkdir(parents=True, exist_ok=True)
@@ -184,7 +226,7 @@ def _failed_unresolved(runs: pd.DataFrame) -> pd.Series:
     k = cols.where(cols.notna(), "").map(str).agg("|".join, axis=1)
     measured = ~runs.synthetic.astype(bool)
     done = set(k[measured & (runs.status == "completed")])
-    return measured & (runs.status != "completed") & runs.experiment.notna() & ~k.isin(done)
+    return measured & ~runs.status.isin(["completed", "running"]) & runs.experiment.notna() & ~k.isin(done)
 
 
 def _prefer_measured(t: dict[str, pd.DataFrame]) -> None:

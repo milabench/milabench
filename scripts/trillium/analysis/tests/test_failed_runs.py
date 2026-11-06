@@ -30,6 +30,8 @@ def crashed_copy(syn: Path, raw: Path, name: str) -> None:
             d["return_code"] = -9
         elif e["event"] == "data" and "run_start" not in d:
             continue
+        if "run_start" in d:
+            d["run_start"]["run"]["campaign"] = "phase1"  # a campaign run: others stay out of the report
         keep.append(json.dumps(e))
     (out / src.name).write_text("\n".join(keep) + "\n")
 
