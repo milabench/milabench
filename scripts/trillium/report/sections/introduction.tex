@@ -32,7 +32,7 @@ Trillium's B200 partition gives our group, among other users, a reservation of 5
   \item \textbf{Network per FLOP.} 200\,Gb/s per GPU for 1,668\,TFLOP/s of BF16 matmul, about 0.12\,Gb/s per TFLOP/s, twice Rorqual's (0.064), on nodes twice as large (8 GPUs on NVLink instead of 4). Point-to-point traffic is far slower than that (\cref{sec:network}).
   \item \textbf{FP8 and MXFP8.} Low precision nearly doubles the matmul rate but not the network. How much of that survives in a training step is one of our questions.
   \item \textbf{Memory.} 180\,GB per GPU. Qwen3.8-27B fits on one node. One copy of GLM-5 takes 13 nodes at \texttt{pp13-ep8}, 90\,GiB per GPU.
-  \item \textbf{Power.} Under high GPU power the CPUs throttle on nearly every node (\cref{sec:machine}). It affects every Qwen result in this report and no GLM-5 result. We did not expect this before access.
+  \item \textbf{Power.} Under high GPU power the CPUs throttle on nearly every node (\cref{sec:machine}). It affects every Qwen result in this report except pipeline layouts, and no GLM-5 result. We did not expect this before access.
 \end{enumerate}
 
 \paragraph{Questions.} Each section answers one question:

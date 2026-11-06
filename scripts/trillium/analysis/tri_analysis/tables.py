@@ -45,7 +45,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriLossSameMax", "TriLossSameMin", "TriLossOtherMax", "TriLossOtherMxMax", "TriLossGlmLast", "TriLossGlmEnd",
           # Layouts
           "TriLevTokens", "TriLevTwoLarge", "TriLevFourLarge", "TriLevPpTwo", "TriLevPpFour", "TriLevHsdp", "TriLevHsdpLarge", "TriLevReduce", "TriLevFull", "TriLevFullH", "TriLevFortyEight", "TriLevPpBest",
-          "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax",
+          "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax", "TriLayoutTopRepeat",
           # Machine
           "TriCapNodes", "TriCapTFlops", "TriCapControlLo", "TriCapControlHi", "TriCapPowerLo", "TriCapPowerHi", "TriCapControlPowerLo",
           "TriCapControlPowerHi", "TriCapFactor", "TriCpuBeforeMed", "TriCpuBeforeLo", "TriCpuBeforeHi", "TriCpuAfterMed", "TriCpuAfterLo",
@@ -260,6 +260,7 @@ def _layout_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]
         spread = x.groupby(["layout", "tokens_per_gpu", "grad_reduce", "ac"]).mean_s.agg(lambda v: 100 * (v.max() - v.min()) / v.mean() if len(v) > 1 else float("nan")).dropna()
         out["TriLayoutRepeatMedian"] = (spread.median(), ".1f", False)
         out["TriLayoutRepeatMax"] = (spread.max(), ".1f", False)
+        out["TriLayoutTopRepeat"] = (spread.reindex(top.index).max(), ".0f", False)
     return out
 
 

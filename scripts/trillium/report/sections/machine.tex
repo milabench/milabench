@@ -8,7 +8,7 @@
 
 Of the 52 nodes, 43 could be used and 40 were clean. Seven nodes have GPUs held at a 200\,W power limit, which makes a capped GPU about
 \TriCapFactor{} times slower. Two more are out. CPU clocks fall under high GPU power on all but one node, so \textbf{every Qwen step
-time in this report is throttled}. Three nodes spend about twice as long at low CPU clocks and slow any job that holds them. A kernel change during the
+time in this report is throttled, except under pipeline layouts}. Three nodes spend about twice as long at low CPU clocks and slow any job that holds them. A kernel change during the
 campaign had no measurable effect, so results before and after it are compared directly. \Cref{fig:machine_status} shows the nodes.
 
 \begin{figure}[h]

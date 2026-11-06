@@ -63,7 +63,7 @@
 
 \triunset{\TriLevTokens}\triunset{\TriLevTwoLarge}\triunset{\TriLevFourLarge}\triunset{\TriLevPpTwo}\triunset{\TriLevPpFour}\triunset{\TriLevHsdp}\triunset{\TriLevHsdpLarge}\triunset{\TriLevReduce}\triunset{\TriLevFull}\triunset{\TriLevFullH}
 \triunset{\TriLevFortyEight}\triunset{\TriLevPpBest}\triunset{\TriMemFsdp}\triunset{\TriMemHsdp}\triunset{\TriMemReduce}\triunset{\TriMemFull}\triunset{\TriTokFortyEight}\triunset{\TriTokFsdp}\triunset{\TriTokReduce}\triunset{\TriTokTpFour}\triunset{\TriTokPpBest}
-\triunset{\TriLayoutTopGap}\triunset{\TriPaddingPct}\triunset{\TriLayoutRepeatMedian}\triunset{\TriLayoutRepeatMax}
+\triunset{\TriLayoutTopRepeat}\triunset{\TriLayoutTopGap}\triunset{\TriPaddingPct}\triunset{\TriLayoutRepeatMedian}\triunset{\TriLayoutRepeatMax}
 
 \triunset{\TriLossSeedOneLo}\triunset{\TriLossSeedOneHi}\triunset{\TriLossSeedOneEnd}\triunset{\TriLossSeedTwoLo}\triunset{\TriLossSeedTwoHi}\triunset{\TriLossSeedTwoEnd}\triunset{\TriLossSeedThreeLo}\triunset{\TriLossSeedThreeHi}\triunset{\TriLossSeedThreeEnd}
 \triunset{\TriLossSameMax}\triunset{\TriLossSameMin}\triunset{\TriLossOtherMax}\triunset{\TriLossOtherMxMax}\triunset{\TriLossGlmLast}\triunset{\TriLossGlmEnd}
@@ -106,7 +106,7 @@
 
 \begin{abstract}
   We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training, on two workloads: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM). The partition has 52 nodes of 8 B200 GPUs; 43 were usable during this campaign and 40 clean, so runs so far reach \TriQwenTop{} nodes on Qwen and \TriGlmTop{} on GLM-5.
-  GPUs on 7 nodes were held at a 200\,W limit, and CPU clocks fall under high GPU power on all but one node, so every Qwen step time here is throttled.
+  GPUs on 7 nodes were held at a 200\,W limit, and CPU clocks fall under high GPU power on all but one node, so Qwen's step times here are throttled, except under pipeline layouts.
   On 13 nodes, Qwen is fastest at 24k tokens per GPU, where \texttt{fsdp} and \texttt{hsdp8} tie at about 5,000 tokens/s per GPU (\TriQwenBestMFU\,\% MFU), and it holds \TriWeakHEffOne\,\% of its 1-node throughput at \TriWeakTop{} nodes. GLM-5 should keep expert parallelism inside a node: \texttt{pp13-ep8} is $\times$\TriGlmEpRatio{} as fast as \texttt{pp6-ep16}. MXFP8 buys $\times$\TriQwenFpTop{} on Qwen and $\times$\TriGlmFpMx{} on GLM-5, and whether it trains the same as BF16 is not settled. A full GLM-5 checkpoint cannot be loaded on one 13-node copy. Side-by-side 13-node Qwen FSDP jobs change throughput by \TriInterferencePct\,\%. Parts of this report are still partial; each section says what is missing.
 \end{abstract}
 
