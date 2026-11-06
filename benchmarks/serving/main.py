@@ -16,6 +16,8 @@ import vllm.benchmarks.datasets as datasets
 from benchmate.timeline import timeline, TimelineConfig, _default_db_path
 from benchmate.toggles import vllm_request_metrics_enabled
 
+import text_corpus
+
 push_metric = None
 
 # name of the client pass being run (client.passes), None for the single default pass
@@ -328,6 +330,19 @@ def benchmark(argv):
 
     original_get_samples = bench.get_samples
     def get_samples(args, tokenizer):
+        if args.real_text:
+            return text_corpus.make_real_text_dataset(datasets)(
+                dataset_path=args.dataset_path, random_seed=args.seed,
+            ).sample(
+                tokenizer=tokenizer,
+                num_requests=args.num_prompts,
+                input_len=args.random_input_len,
+                output_len=args.random_output_len,
+                request_id_prefix=args.request_id_prefix,
+            )
+        if args.dataset_name == "sharegpt" and args.dataset_path is None:
+            args.dataset_path = text_corpus.corpus_path()
+
         match args.hf_name:
             case "openslr/librispeech_asr":
                 return open_dataset(datasets.ASRDataset, args, tokenizer)
@@ -350,6 +365,8 @@ def benchmark(argv):
 
     parser = ArgumentParser()
     bench.add_cli_args(parser)
+    # real text instead of random token ids, same lengths (--random-input-len / --random-output-len)
+    parser.add_argument("--real-text", action="store_true")
 
     print("BENCH:", " ".join(['vllm', 'bench', 'serve'] + argv))
     args = parser.parse_args(argv)
@@ -463,6 +480,9 @@ def run_eval(bench_argv, spec: dict):
             limit = limit.get(task)
         if limit:
             cmd += ["--limit", str(limit)]
+        # every question's prompt, response and score (samples_<task>_*.jsonl), to compare configs per question
+        if spec.get("log_samples"):
+            cmd += ["--log_samples"]
         print("EVAL:", " ".join(cmd), flush=True)
         subprocess.run(cmd, check=True)
 

@@ -1,0 +1,76 @@
+# all.yaml, with torch.compile turned on where the benchmark already has a switch.
+#
+# Torchtune recipes (the llm-* benches) take `compile` as a config override.
+# True compiles the model and the loss.
+#
+# Torchvision's --optim inductor wraps the model in torch.compile.
+# resnet50 also keeps channels-last; that flag is a separate token because
+# --optim is nargs="+".
+
+include:
+  - all.yaml
+
+# Set on each llm bench, not on _llm: a parent's argv is merged ahead of the
+# child's, which would put compile=True before the recipe path and make
+# `tune run` try to launch a module named "compile=True".
+llm-lora-single:
+  argv:
+    compile=True: true
+
+llm-lora-ddp-gpus:
+  argv:
+    compile=True: true
+
+llm-lora-ddp-nodes:
+  argv:
+    compile=True: true
+
+llm-lora-mp-gpus:
+  argv:
+    compile=True: true
+
+llm-full-mp-gpus:
+  argv:
+    compile=True: true
+
+llm-full-mp-nodes:
+  argv:
+    compile=True: true
+
+
+_torchvision:
+  argv:
+    --optim: inductor
+
+# training.yaml sets --optim to channel_last, which would replace the
+# inductor default above. Pass both.
+resnet50:
+  argv:
+    --optim: null
+    "--":
+      - --optim
+      - channel_last
+      - inductor
+
+resnet50-noio:
+  argv:
+    --optim: null
+    "--":
+      - --optim
+      - channel_last
+      - inductor
+
+# max_duration in training.yaml / inference.yaml is sized for the default batch. voir still
+# measures the same number of steps (stop) at the larger optimized / max batch, so a step that
+# is 5-20x longer runs out of time. Give the slow ones room.
+whisper-transcribe-single:
+  max_duration: 2400
+
+txt-to-image-single:
+  max_duration: 2400
+
+recursiongfn:
+  max_duration: 1800
+
+dimenet:
+  max_duration: 1800

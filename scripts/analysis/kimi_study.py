@@ -10,6 +10,8 @@ Writes, under ``--out``:
 
 * ``passes.csv``: one row per (config, pass): throughput, TTFT / TPOT / ITL / E2E percentiles
 * ``itl_by_context.csv``: mean ITL per context-position bin, per (config, pass)
+* ``dataset_effect.csv``: each real-text pass (``text-<pass>``) next to its random-token twin, with text / random
+  ratios; the ``chat-*`` passes (OpenHermes-2.5 prompts and reply lengths) are in ``passes.csv``
 * ``accuracy.csv`` and ``accuracy.md``: one row per config, one column per eval task (+ delta vs the reference)
 * Altair charts (``.html`` interactive + ``.png``): ``throughput_vs_latency``, ``efficiency`` (output tokens per
   joule and GPU power vs concurrency, power averaged over each pass's request window only), ``context_scaling``,
@@ -26,8 +28,9 @@ from collections import defaultdict
 
 import pandas as pd
 
-# accuracy reference: no online quantization, bf16 KV cache
-REFERENCE = "kimi-atom-tp8-bf16"
+# accuracy reference: no online quantization, bf16 KV cache; the first one with an eval in the runs read
+# (graphs since study.2026-11-04, eager before)
+REFERENCES = ["kimi-atom-tp8-bf16-graphs", "kimi-atom-tp8-bf16"]
 
 
 def bench_name(path: str) -> str:
@@ -122,10 +125,27 @@ def accuracy_table(evals: pd.DataFrame) -> pd.DataFrame:
     # the last run of a config wins (re-runs after a fix)
     evals = evals.drop_duplicates(["config", "task", "metric"], keep="last")
     table = evals.pivot_table(index="config", columns="task", values="value", aggfunc="last") * 100
-    if REFERENCE in table.index:
+    reference = next((r for r in REFERENCES if r in table.index), None)
+    if reference:
         for task in list(table.columns):
-            table[f"{task} Δ"] = table[task] - table.loc[REFERENCE, task]
+            table[f"{task} Δ"] = table[task] - table.loc[reference, task]
     return table.round(1)
+
+
+def dataset_effect(passes: pd.DataFrame) -> pd.DataFrame:
+    """Each ``text-<pass>`` (real text, same lengths) next to its random-token ``<pass>``: ratios text / random."""
+    text = passes[passes["pass"].str.startswith("text-")].copy()
+    if text.empty:
+        return pd.DataFrame()
+    text["pass"] = text["pass"].str[len("text-"):]
+    metrics = ["output_throughput", "ttft_ms_p50", "ttft_ms_p99", "tpot_ms_p50", "tpot_ms_p99", "itl_ms_p50",
+               "output_tok_per_j"]
+    metrics = [m for m in metrics if m in passes]
+    both = passes[["config", "pass", *metrics]].merge(text[["config", "pass", *metrics]], on=["config", "pass"],
+                                                      suffixes=("_random", "_text"))
+    for m in metrics:
+        both[f"{m}_ratio"] = both[f"{m}_text"] / both[f"{m}_random"]
+    return both
 
 
 def _save(chart, out: str, name: str):
@@ -280,6 +300,13 @@ def main():
         print(passes[[c for c in cols if c in passes]].to_string(index=False, float_format="%.1f"))
     if not itl.empty:
         itl.to_csv(os.path.join(args.out, "itl_by_context.csv"), index=False)
+
+    effect = dataset_effect(passes) if not passes.empty else pd.DataFrame()
+    if not effect.empty:
+        effect.to_csv(os.path.join(args.out, "dataset_effect.csv"), index=False)
+        print("\nreal text / random tokens (same lengths):")
+        cols = ["config", "pass"] + [c for c in effect if c.endswith("_ratio")]
+        print(effect[cols].to_string(index=False, float_format="%.3f"))
 
     table = accuracy_table(evals)
     if not table.empty:

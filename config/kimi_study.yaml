@@ -55,44 +55,57 @@ _kimi:
       --random-range-ratio: 0.0
       --ready-check-timeout-sec: 10800
     passes:
-      # Sized for Kimi-K3's speed on 1 node (~6-8 output tok/s per sequence in eager mode, ~500 tok/s at 64):
-      # about 30 min of passes per config. 256 output tokens are plenty for TPOT.
+      # Sized for the HIP-graphs configs (~15 ms TPOT at concurrency 1, ~3k tok/s at saturation): about 55 min of
+      # passes per config. Every pass sends at least 60 requests and 2 per concurrency slot, so p99 is not one request.
+      # The eager configs are ~10x slower and only run the eval (see kimi-atom-tp8-bf16).
       # latency / throughput: 1k in, 256 out
-      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 4,   --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc4,   argv: {--max-concurrency: 4,   --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc16,  argv: {--max-concurrency: 16,  --num-prompts: 32,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc4,   argv: {--max-concurrency: 4,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc16,  argv: {--max-concurrency: 16,  --num-prompts: 64,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc128, argv: {--max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc256, argv: {--max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
-      # past 256 the GPUs are not saturated yet (TPOT still ~165 ms); the server runs at most 512 (see --max-num-seqs)
+      # past 256 the GPUs are not saturated yet; the server runs at most 512 (see --max-num-seqs)
       - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
       # prefill / decode cost vs input length: 128 out (TPOT here = decode at that context length)
-      - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 1024,   --random-output-len: 128}}
-      - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 8192,   --random-output-len: 128}}
-      - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 32768,  --random-output-len: 128}}
-      - {name: ctx64k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 65536,  --random-output-len: 128}}
-      - {name: ctx128k-c1,  argv: {--max-concurrency: 1,  --num-prompts: 2,  --random-input-len: 131072, --random-output-len: 128}}
-      - {name: ctx1k-c16,   argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 1024,   --random-output-len: 128}}
-      - {name: ctx8k-c16,   argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 8192,   --random-output-len: 128}}
-      - {name: ctx32k-c16,  argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 32768,  --random-output-len: 128}}
-      - {name: ctx64k-c16,  argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 65536,  --random-output-len: 128}}
-      - {name: ctx128k-c16, argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 131072, --random-output-len: 128}}
-      # decode slowdown as the context fills within the requests: 1k in, 4k out
-      - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 1,  --random-input-len: 1024, --random-output-len: 4096}}
-      - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 16, --random-input-len: 1024, --random-output-len: 4096}}
+      - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c1,  argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 131072, --random-output-len: 128}}
+      - {name: ctx1k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c16,  argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c16,  argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c16, argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 131072, --random-output-len: 128}}
+      # decode slowdown as the context fills within the requests: 1k in, 4k out. Read per token position
+      # (pass_summary.itl_by_context: 4096 ITL samples per request), not as a request percentile: few requests suffice.
+      - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 4,  --random-input-len: 1024, --random-output-len: 4096}}
+      - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 32, --random-input-len: 1024, --random-output-len: 4096}}
 
 # accuracy pass, appended by the entries that measure it (quantization variants, one reference layout
 # per backend): `client: {passes: {append: [*eval]}}`. Kimi-K3 reasons before answering: leave room for it.
+# GSM8K (1319) and ARC-Challenge (1172) are near 98%: they catch a broken config, not a small loss.
+# MMLU-Pro (2002 of 12,032, stratified, ~75-85%: +-0.9 pt) and AIME 24/25 (60 problems x 4 samples) are the
+# sensitive ones. Every answer is logged (samples_<task>_*.jsonl) to compare configs question by question.
 _kimi_eval_pass:
   enabled: false
   pass: &eval
     name: eval
     eval:
-      tasks: [milabench_gsm8k, milabench_arc_challenge, milabench_gpqa_diamond]
-      limit: {milabench_gsm8k: 250, milabench_arc_challenge: 250}
+      tasks: [milabench_gsm8k, milabench_arc_challenge, milabench_gpqa_diamond, milabench_mmlu_pro]
       num_concurrent: 128
       gen_kwargs: {max_gen_toks: 8192, temperature: 0}
+      log_samples: true
+  # gen_kwargs apply to every task of a pass: AIME samples (avg@4) and needs room to reason (32k context left)
+  aime: &eval_aime
+    name: eval-aime
+    eval:
+      tasks: [milabench_aime24, milabench_aime25]
+      num_concurrent: 240
+      gen_kwargs: {max_gen_toks: 32768, temperature: 1.0, top_p: 0.95}
+      log_samples: true
 
 # -----------------------------------------------------------------------------
 # ATOM (ROCm). 1-node entries: TP8 inside the node.
@@ -100,8 +113,8 @@ _kimi_eval_pass:
 
 _kimi_atom:
   inherits: _kimi
-  # load (~15 min) + the performance passes (~65 min) + the eval (~45 min): 2 h was not enough
-  max_duration: 10800
+  # load ~15 min + the performance passes ~55 + eval ~35 + eval-aime ~40
+  max_duration: 14400
   server:
     backend: atom
     argv:
@@ -118,11 +131,15 @@ _kimi_atom:
       --block-size: 128
       --no-enable_prefix_caching: true
 
-# accuracy reference: no online quantization, bf16 KV cache
+# Eager configs: performance in study.2026-11-02_20-16-04 (~10x slower than graphs, host-bound), small eval in
+# study.2026-11-03_15-36-43. Accuracy is now measured on the graphs configs (graphs change how kernels are
+# launched, not the arithmetic): kimi-atom-tp8-bf16-graphs is the reference.
 kimi-atom-tp8-bf16:
   inherits: _kimi_atom
+  # disabled: superseded by kimi-atom-tp8-bf16-graphs (see above)
+  enabled: false
   client:
-    passes: {append: [*eval]}
+    passes: [*eval]
   server:
     argv:
       --kv_cache_dtype: bf16
@@ -153,8 +170,10 @@ kimi-atom-tp8-bf16-seqs512:
 # what serving-moe-kimi-k3-mxfp4-gpus runs: ptpc_fp8 on the BF16 linear layers + fp8 KV cache
 kimi-atom-tp8-fp8:
   inherits: _kimi_atom
+  # disabled: superseded by kimi-atom-tp8-fp8-graphs (see kimi-atom-tp8-bf16)
+  enabled: false
   client:
-    passes: {append: [*eval]}
+    passes: [*eval]
   server:
     argv:
       --kv_cache_dtype: fp8
@@ -164,8 +183,11 @@ kimi-atom-tp8-fp8:
 # fp8 weights only: separates the two quantization effects
 kimi-atom-tp8-fp8w-bf16kv:
   inherits: _kimi_atom
+  # disabled: scored exactly like kimi-atom-tp8-fp8 on every task (study.2026-11-02_20-16-04); the fp8 KV cache
+  # stays in every graphs config
+  enabled: false
   client:
-    passes: {append: [*eval]}
+    passes: [*eval]
   server:
     argv:
       --kv_cache_dtype: bf16
@@ -188,18 +210,100 @@ kimi-atom-tp8-fp8w-bf16kv-gpqa:
 # CUDA graphs (no --enforce-eager)
 kimi-atom-tp8-fp8-graphs:
   inherits: _kimi_atom
+  # load ~15 min + random passes ~55 + real-text twins ~55 + chat ~10 + eval ~35 + eval-aime ~40
+  max_duration: 21600
+  # the fastest 1-node config. Also: real-text twins of the random passes and a chat workload (OpenHermes-2.5,
+  # benchmarks/serving/text_corpus.py), and its accuracy measured directly rather than through kimi-atom-tp8-fp8
+  client:
+    passes:
+      append:
+      # real text, same lengths as the random-token passes above: the difference is the content only
+      - {name: text-conc1,    argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc4,    argv: {--real-text: true, --max-concurrency: 4, --num-prompts: 60, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc16,   argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc64,   argv: {--real-text: true, --max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc128,  argv: {--real-text: true, --max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc256,  argv: {--real-text: true, --max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc512,  argv: {--real-text: true, --max-concurrency: 512, --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-conc1024, argv: {--real-text: true, --max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: text-ctx1k-c1,   argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 1024, --random-output-len: 128}}
+      - {name: text-ctx8k-c1,   argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 8192, --random-output-len: 128}}
+      - {name: text-ctx32k-c1,  argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 32768, --random-output-len: 128}}
+      - {name: text-ctx64k-c1,  argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 65536, --random-output-len: 128}}
+      - {name: text-ctx128k-c1, argv: {--real-text: true, --max-concurrency: 1, --num-prompts: 60, --random-input-len: 131072, --random-output-len: 128}}
+      - {name: text-ctx1k-c16,  argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 1024, --random-output-len: 128}}
+      - {name: text-ctx8k-c16,  argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 8192, --random-output-len: 128}}
+      - {name: text-ctx32k-c16, argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 32768, --random-output-len: 128}}
+      - {name: text-ctx64k-c16, argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 65536, --random-output-len: 128}}
+      - {name: text-ctx128k-c16, argv: {--real-text: true, --max-concurrency: 16, --num-prompts: 64, --random-input-len: 131072, --random-output-len: 128}}
+      # chat workload: OpenHermes-2.5 first user turn as the prompt, output length = the dataset reply's token count
+      # (EOS still ignored: Kimi-K3 would otherwise reason for as long as it likes); vLLM keeps prompt <= 1024,
+      # prompt + reply <= 2048 tokens
+      - {name: chat-conc1,   argv: {--dataset-name: sharegpt, --max-concurrency: 1, --num-prompts: 60}}
+      - {name: chat-conc16,  argv: {--dataset-name: sharegpt, --max-concurrency: 16, --num-prompts: 60}}
+      - {name: chat-conc64,  argv: {--dataset-name: sharegpt, --max-concurrency: 64, --num-prompts: 128}}
+      - {name: chat-conc256, argv: {--dataset-name: sharegpt, --max-concurrency: 256, --num-prompts: 512}}
+      - {name: chat-conc512, argv: {--dataset-name: sharegpt, --max-concurrency: 512, --num-prompts: 1024}}
+      - *eval
+      - *eval_aime
   server:
     argv:
       --kv_cache_dtype: fp8
       --online_quant_config: *ptpc
 
 # BF16 with CUDA graphs: eager mode spends ~90% of a decode step outside the GPU (FP8: 154 ms -> 15 ms TPOT at
-# concurrency 1), so the layouts below run with graphs; the eager entries above are the accuracy comparison
+# concurrency 1), so every layout runs with graphs. Accuracy reference: no online quantization, bf16 KV cache.
 kimi-atom-tp8-bf16-graphs:
   inherits: _kimi_atom
+  client:
+    passes: {append: [*eval, *eval_aime]}
   server:
     argv:
       --kv_cache_dtype: bf16
+
+# -----------------------------------------------------------------------------
+# Quantization ladder past FP8 (CUDA graphs, fp8 KV cache): how far ATOM's online quantization goes on Kimi-K3,
+# not what is production-ready. The routed experts already ship in MXFP4 (BF16 activations: the A4W4 MoE path
+# is Triton + SiLU only, Kimi uses SiTU). mxfp4 = W4A4, block 32: weights and activations in FP4.
+#   fp8-graphs      ptpc_fp8 on attention, shared experts, dense MLP
+#   mxfp4-mlp       + shared experts (92 layers) and the dense MLP (layer 0) in MXFP4, attention stays FP8
+#   mxfp4-attn      + attention projections (69 KDA o_proj, 24 MLA qkv_a/q_b/kv_b/g/o_proj) in MXFP4. The KDA in_proj
+#                   stays FP8: it fuses q/k/v/g + b_proj (96 rows) + f_a_proj (128, replicated), 6284 rows per GPU at
+#                   TP8, and aiter's MXFP4 weight shuffle needs a multiple of 16 (AssertionError: 6284 % 16 == 12)
+#   mxfp4-max       + lm_head, the routed experts' latent projections, f_b_proj: everything that is a Linear
+#                   (the short convolutions and the embedding are not)
+# -----------------------------------------------------------------------------
+
+kimi-atom-tp8-mxfp4-mlp:
+  inherits: _kimi_atom
+  client:
+    passes: {append: [*eval, *eval_aime]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: '{"global_quant_config":"ptpc_fp8","layer_quant_config":{"*block_sparse_moe.shared_experts.*":"mxfp4","*.mlp.*":"mxfp4"},"exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*self_attn.f_b_proj*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
+
+kimi-atom-tp8-mxfp4-attn:
+  inherits: _kimi_atom
+  # disabled: MXFP4 smoke kimi-quant-smoke-4 failed (fail passes={} gsm8k=None)
+  enabled: false
+  client:
+    passes: {append: [*eval, *eval_aime]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: '{"global_quant_config":"mxfp4","layer_quant_config":{"*self_attn.in_proj":"ptpc_fp8"},"exclude_layer":["lm_head","model.embed_tokens","*self_attn.[qkv]_conv1d*","*self_attn.f_b_proj*","*block_sparse_moe.experts*","*block_sparse_moe.routed_expert_*","*vision_tower*","*mm_projector*"]}'
+
+kimi-atom-tp8-mxfp4-max:
+  inherits: _kimi_atom
+  # disabled: MXFP4 smoke kimi-quant-smoke-4 failed (fail passes={} gsm8k=None)
+  enabled: false
+  client:
+    passes: {append: [*eval, *eval_aime]}
+  server:
+    argv:
+      --kv_cache_dtype: fp8
+      --online_quant_config: '{"global_quant_config":"mxfp4","layer_quant_config":{"*self_attn.in_proj":"ptpc_fp8"},"exclude_layer":["model.embed_tokens","*self_attn.[qkv]_conv1d*","*block_sparse_moe.experts*","*vision_tower*","*mm_projector*"]}'
 
 # DP attention + expert parallel over the 8 GPUs (CUDA graphs)
 kimi-atom-dpattn8-ep8-fp8:

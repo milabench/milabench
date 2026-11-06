@@ -52,8 +52,8 @@ def setup_flashinfer():
             print(f"Warning: '{' '.join(cmd)}' exited with code {result.returncode}")
 
 
-def eval_tasks() -> list[str]:
-    """lm-eval tasks of the client passes (client.passes[].eval.tasks), shared section and arch variant."""
+def client_passes() -> list[dict]:
+    """client.passes of the shared section and the arch variant."""
     import json
     import os
 
@@ -63,11 +63,24 @@ def eval_tasks() -> list[str]:
         return []
     arch = cfg.get("system", {}).get("arch", "cuda")
     sections = [cfg.get("client") or {}, (((cfg.get("variants") or {}).get(arch) or {}).get("client") or {})]
+    return [spec for section in sections for spec in section.get("passes") or []]
+
+
+def eval_tasks() -> list[str]:
+    """lm-eval tasks of the client passes (client.passes[].eval.tasks)."""
     tasks = []
-    for section in sections:
-        for spec in section.get("passes") or []:
-            tasks += [t for t in (spec.get("eval") or {}).get("tasks", []) if t not in tasks]
+    for spec in client_passes():
+        tasks += [t for t in (spec.get("eval") or {}).get("tasks", []) if t not in tasks]
     return tasks
+
+
+def needs_text_corpus() -> bool:
+    """A pass uses the OpenHermes corpus (text_corpus.py): --real-text, or sharegpt without its own path."""
+    for spec in client_passes():
+        argv = spec.get("argv") or {}
+        if argv.get("--real-text") or (argv.get("--dataset-name") == "sharegpt" and not argv.get("--dataset-path")):
+            return True
+    return False
 
 
 def download_eval_datasets(tasks):
@@ -89,6 +102,10 @@ def main():
 
     if tasks := eval_tasks():
         download_eval_datasets(tasks)
+
+    if needs_text_corpus():
+        from text_corpus import build_corpus
+        build_corpus()
 
     model = args.model or args.server_model
     hf_aliases = {
