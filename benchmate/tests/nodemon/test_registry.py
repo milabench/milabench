@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from benchmate.nodemon import (
     CollectorMetric,
     CollectorRegistry,
@@ -27,10 +29,12 @@ class ListSink:
     def __init__(self):
         self.rows = []
 
-    def write(self, collector, rows, wall):
-        self.rows.extend((collector.name, wall) for _ in rows)
+    def write(self, collector, rows, sampled_at_unix_s):
+        self.rows.extend((collector.name, sampled_at_unix_s) for _ in rows)
 
-    next_flush = math.inf
+    schema = "test"
+    flush_every_s = 0.0
+    next_flush_monotonic_s = math.inf
 
     def flush(self):
         pass
@@ -73,9 +77,29 @@ def test_first_sample_lands_on_a_multiple_of_the_period():
     assert collector.samples == 1
 
 
+def test_a_late_tick_is_stamped_with_its_read_time_and_the_skipped_ones_are_counted():
+    sink = ListSink()
+    registry = CollectorRegistry(sink)
+    registry.register(FakeCollector("c"), period_s=5.0)
+    registry.start(now=100.0, wall=1002.5)  # first due instant is monotonic 102.5, wall 1005
+
+    registry.tick(now=112.6, wall=1015.1)  # due instants 102.5 and 107.5 passed unsampled
+
+    assert sink.rows == [("c", 1015.1)]  # the read time, not the due instant 1012.5
+    assert registry.describe()["c"]["skipped"] == 2
+
+
 def test_every_collector_the_default_registry_samples_can_be_read_back_by_watch():
     from benchmate.nodemon import default_registry
     from benchmate.nodemon.collectors import COLLECTORS
 
     # watch finds a collector's device columns and counters in COLLECTORS, and ignores a file it does not list.
     assert set(default_registry().describe()) <= set(COLLECTORS)
+
+
+def test_start_runs_once():
+    registry = CollectorRegistry(ListSink())
+    registry.register(FakeCollector("fast"), period_s=1.0)
+    registry.start(now=0.0, wall=1000.0)
+    with pytest.raises(RuntimeError, match="already called"):
+        registry.start(now=1.0, wall=1001.0)

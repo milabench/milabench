@@ -278,7 +278,7 @@ def write_nodemon(root, cluster, run_name, bench, hosts, t0, t1, slow=None, cpu_
         # the run summary's per_rank[].gpu_uuid starts.
         gpus = {str(g): _gpu_uuid(h, g) for g in range(4)}
         (out.parent / f"{h}.status.json").write_text(json.dumps({
-            "schema": "benchmate.nodemon.v1", "state": "closed", "bench": bench,
+            "schema": "benchmate.nodemon.v3", "state": "closed", "bench": bench,
             "run_name": run_name, "pid": 1, "start": round(t0 * 1000),
             "end": round(t1 * 1000), "reason": "signal SIGTERM", "flush_every": 10.0,
             "collectors": {"gpu": {"enabled": True, "period_s": 30.0, "gpus": gpus},
