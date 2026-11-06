@@ -13,7 +13,8 @@ import pandas as pd
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_JOB)
 from .select import completed as _completed
-from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, qwen_base, with_energy)
+from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
+                     with_energy)
 from .style import GLM, QWEN, WORKLOAD_LABEL
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
@@ -751,6 +752,39 @@ def qwen_layouts_table(runs: pd.DataFrame) -> str:
     return "\n".join(lines) + "\n"
 
 
+def checkpoint_table(t) -> str:
+    """Checkpoint times, one row per workload, content and node count: ranges over repetitions, seconds. Pinned blocked: from the second save on."""
+    c = checkpoints(t["checkpoints"], t["runs"])
+    if c.empty:
+        return ""
+
+    def cell(d, col, fmt):
+        if d.empty:
+            return ""
+        lo, hi = d[col].min(), d[col].max()
+        return f"{lo:{fmt}}" if f"{lo:{fmt}}" == f"{hi:{fmt}}" else f"{lo:{fmt}}--{hi:{fmt}}"
+
+    lines = [r"\begin{tabular}{llrrrrrrrr}", r"\toprule",
+             r"Workload & Content & Nodes & Sync save & GB/s & Async blocked & Async total & Pinned blocked & Pinned total & Load \\", r"\midrule"]
+    failed = t.get("failed_ops", pd.DataFrame())
+    for model in (QWEN, GLM):
+        for content in ("weights", "full"):
+            d = c[(c.model == model) & (c.content == content)]
+            for n in sorted(d.nodes.unique()):
+                g = d[d.nodes == n]
+                save, load = g[g.op == "save"], g[g.op == "load"]
+                sync, asy, pin = save[save["mode"] == "sync"], save[save["mode"] == "async"], save[save["mode"] == "async_pinned"]
+                fmt = ".1f" if model == QWEN and content == "weights" else ".0f"
+                loaded = cell(load, "total_s", fmt)
+                if len(failed) and not ((failed.model == model) & (failed.content == content) & (failed.nodes == n)).empty:
+                    if ((failed.model == model) & (failed.content == content) & (failed.nodes == n) & (failed.op == "load")).any():
+                        loaded = "out of memory"
+                lines.append(f"{WORKLOAD_LABEL[model]} & {content} ({d.bytes.median() / 1e12:.2f}\\,TB) & {int(n)} & {cell(sync, 'total_s', fmt)} & {cell(sync, 'gb_s', '.0f')} & {cell(asy, 'blocked_s', '.1f')} & "
+                             f"{cell(asy, 'total_s', '.0f')} & {cell(pinned_blocked(pin), 'blocked_s', '.1f')} & {cell(pin, 'total_s', '.0f')} & {loaded} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def _esc(v) -> str:
     return str(v).replace("_", r"\_").replace("%", r"\%")
 
@@ -793,6 +827,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "qwen_layouts.tex").write_text(qwen_layouts_table(runs))
     (out / "kernel_change.tex").write_text(kernel_change_table(tables))
     (out / "loss_gaps.tex").write_text(loss_table(tables))
+    (out / "checkpoints.tex").write_text(checkpoint_table(tables))
     if len(runs):
         if "in_report" in runs:
             (out / "ledger.tex").write_text(ledger(runs))

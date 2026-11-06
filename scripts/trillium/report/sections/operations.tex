@@ -17,14 +17,22 @@
   \label{fig:checkpoint}
 \end{figure}
 
-\textbf{Qwen.} Full state, \TriCkQSizeFull\,TB: synchronous save \TriCkQOneSyncLo--\TriCkQOneSyncHi\,s on 1 node, \TriCkQThirteenSyncLo--\TriCkQThirteenSyncHi\,s on 13, \TriCkQTopSyncLo--\TriCkQTopSyncHi\,s on 25. An asynchronous save blocks training \TriCkQOneAsyncLo--\TriCkQOneAsyncHi\,s on 1 node, \TriCkQThirteenAsyncLo--\TriCkQThirteenAsyncHi\,s on 13, \TriCkQTopAsyncLo--\TriCkQTopAsyncHi\,s on 25; pinned, from its second save on, \TriCkQPinBlockedLo--\TriCkQPinBlockedHi\,s, but its total grows to \TriCkQTopPinTotalLo--\TriCkQTopPinTotalHi\,s on 25 nodes (\TriCkQOnePinTotalLo--\TriCkQOnePinTotalHi\,s on 1), and we do not know why. Load: \TriCkQOneLoadLo--\TriCkQOneLoadHi, \TriCkQThirteenLoadLo--\TriCkQThirteenLoadHi\ and \TriCkQTopLoadLo--\TriCkQTopLoadHi\,s. Weights, \TriCkQSizeW\,GB: save \TriCkQThirteenWSaveLo--\TriCkQThirteenWSaveHi\,s at 13 nodes, \TriCkQTopWSaveLo--\TriCkQTopWSaveHi\,s at 25, \TriCkQBigWSaveLo--\TriCkQBigWSaveHi\,s at 39; load \TriCkQThirteenWLoadLo--\TriCkQThirteenWLoadHi, \TriCkQTopWLoadLo--\TriCkQTopWLoadHi\ and \TriCkQBigWLoadLo--\TriCkQBigWLoadHi\,s.
-\textbf{Above 13 nodes, checkpoints get slower as nodes are added}, for the same size. We have not looked for the cause. The runs at each scale happened at different times, on a shared filesystem, so scale need not be the only reason.
+\begin{table}[h]
+  \caption{Checkpoint times in seconds, range over repetitions: synchronous save and its filesystem throughput, asynchronous save (time training is blocked, and total), pinned asynchronous save (blocked from the second save on, total), load.}
+  \label{tab:checkpoints}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \IfFileExists{generated/tables/checkpoints.tex}{\input{generated/tables/checkpoints}}{\textit{No data yet.}}
+  \end{adjustbox}
+\end{table}
+
+\textbf{Qwen} (\cref{tab:checkpoints}). An asynchronous save blocks training for about 10\,s on 1 node and under 2\,s from 13 nodes on; pinned, from its second save on, about 1\,s or less, but its total grows much faster with nodes than the others. \textbf{Above 13 nodes, checkpoints get slower as nodes are added, for the same size:} a full synchronous save takes \TriCkQThirteenSyncLo--\TriCkQThirteenSyncHi\,s at 13 nodes, \TriCkQTopSyncLo--\TriCkQTopSyncHi\,s at 25 and \TriCkQBigSyncLo--\TriCkQBigSyncHi\,s at 39, and a load \TriCkQThirteenLoadLo--\TriCkQThirteenLoadHi, \TriCkQTopLoadLo--\TriCkQTopLoadHi\ and \TriCkQBigLoadLo--\TriCkQBigLoadHi\,s; weights show the same. So the filesystem delivers less to this job as it grows. We have not looked for the cause, and each scale ran at one time on a shared filesystem, so scale need not be the only reason.
 
 \textbf{GLM-5, weights}, \TriCkGWSize\,TB: synchronous save \TriCkGWSyncLo--\TriCkGWSyncHi\,s; asynchronous blocked \TriCkGWAsyncBlockedLo--\TriCkGWAsyncBlockedHi\,s, total \TriCkGWAsyncTotalLo--\TriCkGWAsyncTotalHi\,s; load \TriCkGWLoadLo--\TriCkGWLoadHi\,s, peaking at \TriCkGWLoadPeak\,GiB. So on GLM-5 an asynchronous save blocks training for longer than a synchronous one and takes much longer overall. That is not what asynchronous saves are for, and we have not explained it. The three rounds agree, including the one after the kernel change. The slowest load, 48.7\,s, ran beside a 26-node GLM-5 job, one case on a shared filesystem.
 
 \textbf{GLM-5, full state}, \TriCkGFSize\,TB: synchronous save \TriCkGFSync\,s (\TriCkGFSyncGBs\,GB/s), peak \TriCkGFSyncPeak\,GiB; asynchronous blocked \TriCkGFBlocked\,s, total \TriCkGFTotal\,s, peak \TriCkGFAsyncPeak\,GiB. The \textbf{load failed}: out of memory on the 96 ranks of stages 1--12 in \texttt{optimizer.load\_state\_dict}, at 175.4--176.1\,GiB allocated. Stage 0's load peak was 2.22 times its training peak, against the 1.95 assumed from a 2-node test, so a load would need about 200\,GiB on one copy (an estimate). Training memory per GPU falls with copies (\cref{sec:scaling}), so a full load may fit at 39 nodes, where a save and load are planned; that is inferred, and the earlier expectation that it would fail there did not account for this. If it fails, the fallback is half the expert state per GPU, \texttt{pp13-ep16} on 26 nodes. A separate error in the scheduler state stopped stage 0 here, and would need fixing for any full load to finish.
 
-\textbf{Still to come:} GLM-5 weights and full at 39 nodes; Qwen at 39.
+\textbf{Still to come:} GLM-5 weights and full at 39 nodes; Qwen's asynchronous saves at 39.
 
 \paragraph{Stability (F2).} \textbf{Not run.} The long run waits for the top node count. No figure yet: what follows on stragglers comes from existing runs. The closest evidence on stability is the 500-step GLM-5 runs of \cref{sec:precision}, where BF16 steps slow down from 48.6\,s to about 55\,s; 7 hours, without a gap.
 
