@@ -132,7 +132,7 @@ CMD=(
     --output="$BASE/logs/%x-%j.out"
     --reservation="${TRI_RESERVATION-b200-friendly-users}"
     --qos="${TRI_QOS-bump}"
-    --exclude="${TRI_EXCLUDE-trig[0122,0134-0135,0140,0145,0148]}"  # trig0145: 200 W cap, held by the admins; trig0140: NCCL fails with NVLS on (2026-11-06); trig0122: old mlx5_1 firmware, 14% slower pairs; trig0134,0135,0148: lowest CPU clocks, 13-node Qwen ~8.5% slower with one (E1)
+    --exclude="${TRI_EXCLUDE-trig[0134-0135,0146,0148]}"  # trig0146: back 2026-11-06, health check pending; trig0134,0135,0148: lowest CPU clocks, 13-node Qwen ~8.5% slower with one (E1)
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"
