@@ -12,7 +12,7 @@ Trillium's B200 partition gives our group, among other users, a reservation of 5
     \toprule
     & Known & Source \\
     \midrule
-    Nodes & 52 (\texttt{trig0101}--\texttt{trig0152}), 43 usable and 40 clean until November~6, 51 and all clean since (\cref{sec:machine}) & \texttt{sinfo}, health checks \\
+    Nodes & 52 (\texttt{trig0101}--\texttt{trig0152}), 43 usable and 40 clean until November~6, all 52 since (\cref{sec:machine}) & \texttt{sinfo}, health checks \\
     Per node & 8 B200, 179.1\,GiB each, on NVLink, 1,000\,W limit; 2 $\times$ 48-core Intel, about 2\,TB RAM, liquid cooled & health checks; SciNet talk \\
     Network & InfiniBand; NCCL uses 4 ports at 400\,Gb/s, 1,600\,Gb/s per node. GPUs 0, 2, 4, 6 share a PCIe switch with a port; 1, 3, 5, 7 have none & \cref{sec:network} \\
     Switch layout & unknown. Two bandwidth groups measured: \texttt{trig0101--0128}, \texttt{trig0129--0152} & \cref{sec:network} \\

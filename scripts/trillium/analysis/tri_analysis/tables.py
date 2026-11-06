@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmTwentyEff", "TriGlmTwentyTok", "TriGlmTwentyStep", "TriGlmTwentyMem", "TriGlmTwentyMfu", "TriGlmTwentyAtoa", "TriGlmTwentyAtoaPct", "TriFixPctLo", "TriFixPctHi", "TriGlmPpStepPct", "TriGlmPpTwoFiveTok", "TriGlmPpTwoFiveStep", "TriGlmPpTwoFiveMem", "TriGlmPpTwoFiveMfu", "TriGlmPpTwoFiveAtoa", "TriGlmPpTwoFiveAtoaPct", "TriGlmEpTwoSixRatio", "TriGlmEpAtoaShare", "TriGlmPpRatio", "TriGlmEpEightTok", "TriGlmEpEightStep", "TriGlmEpEightMem", "TriGlmEpEightMfu", "TriGlmEpEightAtoa", "TriGlmEpEightAtoaPct", "TriGlmEpSixteenTok", "TriGlmEpSixteenStep", "TriGlmEpSixteenMem", "TriGlmEpSixteenMfu", "TriGlmEpSixteenAtoa", "TriGlmEpSixteenAtoaPct", "TriGlmPpTwoSixTok", "TriGlmPpTwoSixStep", "TriGlmPpTwoSixMem", "TriGlmPpTwoSixMfu", "TriGlmPpTwoSixAtoa", "TriGlmPpTwoSixAtoaPct", "TriBackNodes", "TriBackPctLo", "TriBackPctHi", "TriBackSlowLo", "TriBackSlowHi", "TriNetInsideTop", "TriInGather", "TriInScatter", "TriInReduce", "TriCrossGather", "TriCrossScatter", "TriCrossReduce", "TriInAlltoall", "TriInThirteenLo", "TriInThirteenHi", "TriGlmThirtyTok", "TriGlmThirtyStep", "TriGlmThirtyMem", "TriGlmThirtyMfu", "TriGlmThirtyAtoa", "TriGlmThirtyAtoaPct", "TriGlmThirtyEff", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriProbeRowsLo", "TriProbeRowsHi", "TriProbeTimeLo", "TriProbeTimeHi", "TriProbeRefTime", "TriGlmLongBfMid", "TriGlmLongBfEnd", "TriGlmLongMxMid", "TriGlmLongMxEnd", "TriProbeSlowRatio", "TriProbeSlowTimeLo", "TriProbeSlowTimeHi", "TriProbeFixTimeLo", "TriProbeFixTimeHi", "TriLoopRatioLo", "TriLoopRatioHi", "TriProbeLowMs", "TriProbeHighMs", "TriDropRows", "TriDropR", "TriDropRMain", "TriDropRMainRows", "TriAllNodes", "TriAllStepLo", "TriAllStepHi", "TriAllLowLo", "TriAllLowHi", "TriAllWattLo", "TriAllWattHi", "TriAllTflopLo", "TriAllTflopHi", "TriAllNvlsLo", "TriAllNvlsHi", "TriMeterIdleLo", "TriMeterIdleHi", "TriMeterPeakLo", "TriMeterPeakHi", "TriMeterOddIdle", "TriMeterOddPeak", "TriMeterOddPct", "TriMeterOddIdlePct", "TriReturnStep", "TriReturnWattLo", "TriReturnWattHi", "TriOtherHealthNodes", "TriOtherHealthPending", "TriGlmTwentyEff", "TriGlmTwentyTok", "TriGlmTwentyStep", "TriGlmTwentyMem", "TriGlmTwentyMfu", "TriGlmTwentyAtoa", "TriGlmTwentyAtoaPct", "TriFixPctLo", "TriFixPctHi", "TriGlmPpStepPct", "TriGlmPpTwoFiveTok", "TriGlmPpTwoFiveStep", "TriGlmPpTwoFiveMem", "TriGlmPpTwoFiveMfu", "TriGlmPpTwoFiveAtoa", "TriGlmPpTwoFiveAtoaPct", "TriGlmEpTwoSixRatio", "TriGlmEpAtoaShare", "TriGlmPpRatio", "TriGlmEpEightTok", "TriGlmEpEightStep", "TriGlmEpEightMem", "TriGlmEpEightMfu", "TriGlmEpEightAtoa", "TriGlmEpEightAtoaPct", "TriGlmEpSixteenTok", "TriGlmEpSixteenStep", "TriGlmEpSixteenMem", "TriGlmEpSixteenMfu", "TriGlmEpSixteenAtoa", "TriGlmEpSixteenAtoaPct", "TriGlmPpTwoSixTok", "TriGlmPpTwoSixStep", "TriGlmPpTwoSixMem", "TriGlmPpTwoSixMfu", "TriGlmPpTwoSixAtoa", "TriGlmPpTwoSixAtoaPct", "TriBackNodes", "TriBackPctLo", "TriBackPctHi", "TriBackSlowLo", "TriBackSlowHi", "TriNetInsideTop", "TriInGather", "TriInScatter", "TriInReduce", "TriCrossGather", "TriCrossScatter", "TriCrossReduce", "TriInAlltoall", "TriInThirteenLo", "TriInThirteenHi", "TriGlmThirtyTok", "TriGlmThirtyStep", "TriGlmThirtyMem", "TriGlmThirtyMfu", "TriGlmThirtyAtoa", "TriGlmThirtyAtoaPct", "TriGlmThirtyEff", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -101,6 +101,65 @@ def _value(v, fmt, synthetic) -> str:
     return rf"\TriSyn{{{text}}}" if synthetic else text
 
 
+def _span(values) -> tuple[float, float]:
+    """Lowest and highest of cells such as 980-986, 667,668 or 2.9."""
+    cells = [float(x) for v in values for x in str(v).replace(",", "-").split("-") if x]
+    return min(cells), max(cells)
+
+
+def _drop_numbers(t: dict[str, pd.DataFrame], out: dict) -> None:
+    """The hardware agent's 1-node tables: what the low-clock share means, and the load test on all nodes."""
+    probe = t.get("probe_share", pd.DataFrame())
+    if len(probe):
+        r = probe.groupby("run").agg(node=("node", "first"), rows=("probe_pct_rows", "mean"), time=("probe_pct_time", "mean"),
+                                     low=("loop_low_us", "mean"), high=("loop_high_us", "mean"), low_s=("probe_dt_low_ms", "mean"), high_s=("probe_dt_high_ms", "mean"))
+        slow = r[r.rows > 40]
+        main = r[(r.rows <= 40) & (r.node != "trig0114")]
+        ref = main[main.node == "trig0151"]
+        fixed = main[main.node.isin(SLOW_NODES)]
+        out["TriProbeRowsLo"], out["TriProbeRowsHi"] = (main.rows.min(), ".0f", False), (main.rows.max(), ".0f", False)
+        out["TriProbeTimeLo"], out["TriProbeTimeHi"] = (main.time.min(), ".0f", False), (main.time.max(), ".0f", False)
+        out["TriProbeRefTime"] = (ref.time.mean(), ".0f", False)
+        out["TriProbeSlowRatio"] = (slow.time.mean() / ref.time.mean(), ".1f", False)
+        out["TriProbeSlowTimeLo"], out["TriProbeSlowTimeHi"] = (slow.time.min(), ".0f", False), (slow.time.max(), ".0f", False)
+        out["TriProbeFixTimeLo"], out["TriProbeFixTimeHi"] = (fixed.time.min(), ".0f", False), (fixed.time.max(), ".0f", False)
+        ratio = main.low / main.high
+        out["TriLoopRatioLo"], out["TriLoopRatioHi"] = (ratio.min(), ".1f", False), (ratio.max(), ".1f", False)
+        out["TriProbeLowMs"], out["TriProbeHighMs"] = (main.low_s.median(), ".0f", False), (main.high_s.median(), ".0f", False)
+    d = t.get("drop_runs", pd.DataFrame())
+    if len(d):
+        latest = d.sort_values("start").groupby(["node", "psu"]).tail(1)
+        with_drops = latest[latest.node != "trig0114"]
+        main = with_drops[with_drops.pct_low < 40]
+        out["TriDropRows"] = (len(with_drops), "d", False)
+        out["TriDropR"] = (with_drops.pct_low.corr(with_drops.step_s), ".2f", False)
+        out["TriDropRMain"] = (main.pct_low.corr(main.step_s), ".2f", False)
+        out["TriDropRMainRows"] = (len(main), "d", False)
+    a = t.get("all_nodes", pd.DataFrame())
+    if len(a):
+        main = a[~a.node.isin(["trig0114", "trig0135", "trig0151"])]
+        main = main[main.job == main.q_run]  # trig0113's second run is the side-by-side repeat
+        odd, ctl = a[a.node == "trig0114"], a[a.node == "trig0135"]
+        out["TriAllNodes"] = (main.node.nunique(), "d", False)
+        out["TriAllStepLo"], out["TriAllStepHi"] = (main.step_s.min(), ".2f", False), (main.step_s.max(), ".2f", False)
+        for name, col, fmt in (("Low", "probe_pct_low", ".0f"), ("Watt", "load_w", ",.0f"), ("Tflop", "load_tflop", ",.0f"), ("Nvls", "nccl_on", ".0f")):
+            lo, hi = _span(main[col])
+            out[f"TriAll{name}Lo"], out[f"TriAll{name}Hi"] = (lo, fmt, False), (hi, fmt, False)
+        out["TriMeterIdleLo"], out["TriMeterIdleHi"] = (main.meter_idle.min(), ".1f", False), (main.meter_idle.max(), ".1f", False)
+        out["TriMeterPeakLo"], out["TriMeterPeakHi"] = (main.meter_peak.min(), ".1f", False), (main.meter_peak.max(), ".1f", False)
+        out["TriMeterOddIdle"], out["TriMeterOddPeak"] = (odd.meter_idle.mean(), ".1f", False), (odd.meter_peak.mean(), ".1f", False)
+        out["TriMeterOddPct"] = (100 * (1 - odd.meter_peak.mean() / main.meter_peak.median()), ".0f", False)
+        out["TriMeterOddIdlePct"] = (100 * (1 - odd.meter_idle.mean() / main.meter_idle.median()), ".0f", False)
+        if len(ctl):
+            out["TriReturnStep"] = (ctl.step_s.iloc[0], ".2f", False)
+            lo, hi = _span(ctl.load_w)
+            out["TriReturnWattLo"], out["TriReturnWattHi"] = (lo, ",.0f", False), (hi, ",.0f", False)
+    h = t.get("other_health", pd.DataFrame())
+    if len(h):
+        out["TriOtherHealthNodes"] = (int((h.label == "current").sum()), "d", False)
+        out["TriOtherHealthPending"] = (int((h.label != "current").sum()), "d", False)
+
+
 def _machine_numbers(t) -> dict[str, tuple]:
     """The machine block: from the health checks, the hardware reruns and hw/post-pstate's readings. All measured."""
     out = {}
@@ -137,6 +196,7 @@ def _machine_numbers(t) -> dict[str, tuple]:
         ctl = cleared[cleared.node == "trig0151"]
         if len(ctl):
             out["TriClearedCtlLo"], out["TriClearedCtlHi"] = (ctl.tflop_s.min(), ",.0f", False), (ctl.tflop_s.max(), ",.0f", False)
+    _drop_numbers(t, out)
     if len(steps) and len(runs) and "hosts" in runs:
         probe = runs[runs.campaign == "hw-probe"]
         mean = steps[steps.run_id.isin(probe.run_id)].groupby("run_id").step_s.mean()
@@ -334,7 +394,7 @@ def _loss_numbers(t) -> dict[str, tuple]:
     other = q[(q.kind == "other seed") & (q.recipe != "bf16")]
     if len(other):
         out["TriLossOtherMxMax"] = (other.last100.abs().max(), ".2f", False)
-    d = m[m.kind == "recipe"]
+    d = m[(m.kind == "recipe") & (m.recipe == "mxfp8")]
     if len(d):
         out["TriLossGlmLast"] = (d.last100.iloc[0], "+.2f", False)
         out["TriLossGlmEnd"] = (d.step500.iloc[0], "+.2f", False)
@@ -396,8 +456,13 @@ def _speed_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]:
                     out[f"TriGlmMem{name}Top"] = (b.mem_alloc_gib[rec], ".0f", False)
                     out[f"TriGlmMemPct{name}Top"] = (100 * (b.mem_alloc_gib[rec] / b.mem_alloc_gib.bf16 - 1), ".0f", False)
     cl = _completed(runs, "C-loss")
-    cl = cl[cl.model == GLM].set_index("precision") if len(cl) else cl
+    # The first run of each recipe: later repetitions and seeds run on other nodes, and answer another question.
+    cl = cl[cl.model == GLM].sort_values("started").drop_duplicates("precision").set_index("precision") if len(cl) else cl
     if len(cl) and {"bf16", "mxfp8"} <= set(cl.index):
+        for rec, name in (("bf16", "Bf"), ("mxfp8", "Mx")):
+            x = steps[steps.run_id == cl.run_id[rec]]
+            out[f"TriGlmLong{name}Mid"] = (x[x.step.between(26, 300)].step_s.median(), ".1f", False)
+            out[f"TriGlmLong{name}End"] = (x[x.step > 475].step_s.median(), ".1f", False)
         out["TriGlmLongStepBf"], out["TriGlmLongStepMx"] = (cl.step_s.bf16, ".1f", False), (cl.step_s.mxfp8, ".1f", False)
         out["TriGlmLongFp"] = (cl.tok_s_gpu.mxfp8 / cl.tok_s_gpu.bf16, ".2f", False)
         out["TriGlmLongMemBf"] = (cl.mem_alloc_gib.bf16, ".0f", False)

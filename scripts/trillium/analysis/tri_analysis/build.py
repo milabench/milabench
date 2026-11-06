@@ -37,7 +37,8 @@ from .runs import canonical_model, drop_warmup, failed_operation, parse_extras, 
 from .select import NO_DATA_RUNS, UNFINISHED_JOB_STATES, mark_beside, mark_selection
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
-          "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared"]
+          "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared",
+          "all_nodes", "probe_share", "drop_runs", "other_health"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
@@ -211,6 +212,11 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     paths = [raw / CLUSTER / "caps-cleared" / "load_table.tsv", raw / CLUSTER / "caps-cleared" / "load2" / "load_table.tsv"]
     found = [pd.read_csv(p, sep="\t") for p in paths if p.exists()]
     tables["cap_cleared"] = pd.concat(found, ignore_index=True) if found else pd.DataFrame()
+    # The hardware agent's tables on the CPU clock drops, read as they are.
+    for name, rel in (("all_nodes", "allnodes/by_node.tsv"), ("probe_share", "nodemon-gaps/probe_1node.tsv"),
+                      ("drop_runs", "cpu-drops/runs_1node.tsv"), ("other_health", "srygaard-hc/by_node.tsv")):
+        path = raw / CLUSTER / rel
+        tables[name] = pd.read_csv(path, sep="\t", index_col=False) if path.exists() else pd.DataFrame()
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]
