@@ -31,7 +31,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
           "TriGlmThirteenTok","TriGlmThirteenStep","TriGlmThirteenMem","TriGlmThirteenMfu","TriGlmThirteenAtoa","TriGlmThirteenAtoaPct","TriGlmSmallTok","TriGlmSmallStep","TriGlmSmallMem","TriGlmSmallMfu","TriGlmSmallAtoa","TriGlmSmallAtoaPct",
           "TriGlmSixTok","TriGlmSixStep","TriGlmSixMem","TriGlmSixMfu","TriGlmSixAtoa","TriGlmSixAtoaPct","TriGlmTenTok","TriGlmTenStep","TriGlmTenMem","TriGlmTenMfu","TriGlmTenAtoa","TriGlmTenAtoaPct","TriGlmEpRatio","TriGlmSmallRatio","TriGlmSmallFormula",
-          "TriGlmStrongTok","TriGlmStrongStep","TriGlmStrongRatio","TriGlmStrongFormula",
+          "TriGlmStrongTok","TriGlmStrongStep","TriGlmStrongRatio","TriGlmStrongFormula","TriGlmWeakTwoTok","TriGlmWeakTwoStep","TriGlmWeakTwoMem","TriGlmMemFallPct","TriGlmStrongTwoTok","TriGlmStrongTwoStep","TriGlmStrongTwoRatio","TriGlmStrongTwoFormula",
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
@@ -440,6 +440,21 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
     if a is not None and c is not None:
         out["TriGlmSmallRatio"] = (c.tok_s_gpu.median() / a.tok_s_gpu.median(), ".2f", False)
         out["TriGlmSmallFormula"] = ((1 - 12 / 20) / (1 - 12 / 44), ".2f", False)  # (P-1)/(m+P-1) with 13 stages: 8 and 32 micro-batches
+    wk = _completed(runs, "B-G-weak")
+    wk = wk[(wk.layout == "pp13-ep8") & (wk.ac == "full") & (wk.precision == "bf16") & (wk.nodes == 26)] if len(wk) else wk
+    if len(wk) and a is not None:
+        out["TriGlmWeakTwoTok"] = (wk.tok_s_gpu.median(), ",.0f", False)
+        out["TriGlmWeakTwoStep"] = (wk.step_s.median(), ".1f", False)
+        out["TriGlmWeakTwoMem"] = (wk.mem_alloc_gib.max(), ".0f", False)
+        out["TriGlmMemFallPct"] = (100 * (1 - wk.mem_alloc_gib.max() / a.mem_alloc_gib.max()), ".0f", False)
+    st2 = _completed(runs, "B-G-strong")
+    st2 = st2[st2.layout == "pp13-ep8"] if len(st2) else st2
+    if len(st2) and {13, 26} <= set(st2.nodes):
+        one, two = st2[st2.nodes == 13], st2[st2.nodes == 26]
+        out["TriGlmStrongTwoTok"] = (two.tok_s_gpu.median(), ",.0f", False)
+        out["TriGlmStrongTwoStep"] = (two.step_s.median(), ".1f", False)
+        out["TriGlmStrongTwoRatio"] = (two.tok_s_gpu.median() / one.tok_s_gpu.median(), ".2f", False)
+        out["TriGlmStrongTwoFormula"] = ((1 - 12 / 60) / (1 - 12 / 108), ".2f", False)  # 48 and 96 micro-batches, 13 stages
     st = _completed(runs, "B-G-strong")
     st = st[(st.nodes == 13)] if len(st) else st
     if len(st) and a is not None:

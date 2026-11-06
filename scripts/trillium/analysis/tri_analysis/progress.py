@@ -2,7 +2,8 @@
 
 A point is a configuration at a node count; repetitions don't count. Done: a completed run in the report. Answered: it
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
-20_bg.sh, 30_c.sh, 40_f1.sh) and the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh). Points
+20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
+GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Points
 that need 50 or more nodes count apart: they wait for the 200 W caps to clear.
 """
 
@@ -111,10 +112,7 @@ def plan() -> list[Point]:
     for n in (13, 39, 52):
         for content, op, mode in (("weights", "save", "sync"), ("weights", "save", "async"), ("weights", "load", "sync"),
                                   ("full", "save", "sync"), ("full", "save", "async"), ("full", "load", "sync")):
-            if n == 39 and content == "full":
-                continue
             p.append(Point(k, f"GLM-5 {content} {op} {mode} n{n}", n, {}, "F1", op=(GLM, content, op, mode, n)))
-    p += [Point(k, f"GLM-5 full {op} ep16 n26", 26, {}, "F1", op=(GLM, "full", op, "sync", 26)) for op in ("save", "load")]
     p.append(Point("Long run", "best Qwen layout, at least 1 h", 39, dict(model=QWEN, experiment="F2"), "F2"))
     return p
 
