@@ -39,34 +39,26 @@ COLUMNS = ["cluster", "source", "schema", "host", "entity", "gpu", "gpu_uuid", "
            "value", "text", "time", "bench", "truncated", "synthetic"]
 
 
-def reason_bit(text: object, bit: int) -> float | None:
-    """1.0 when `bit` is set in a hex mask, 0.0 when it is not, None when the cell is empty.
-
-    ``0x84`` has both the software power cap (0x4) and the external power brake (0x80).
-    Comparing the mask for equality with 4 drops the brake.
-    """
-    if text is None or (isinstance(text, float) and pd.isna(text)):
-        return None
-    raw = str(text).strip()
-    if not raw or raw == "nan":
-        return None
-    try:
-        return float(bool(int(raw, 16) & bit))
-    except ValueError:
-        return None
-
-
 def _expand_clock_reasons(frame: pd.DataFrame) -> pd.DataFrame:
-    """One 0/1 row per power-cap bit, beside the raw ``clocks_event_reasons`` mask."""
+    """One 0/1 row per power-cap bit, beside the raw ``clocks_event_reasons`` mask.
+
+    Tests the bit, not the mask: ``0x84`` has both the software power cap (0x4) and the external
+    power brake (0x80), and comparing it for equality with 4 drops the brake. Reads the mask
+    _numeric already decoded into ``value``; an empty cell, or one without the ``0x`` prefix
+    (which the sampler never writes), gives an empty bit rather than a guess.
+    """
     reasons = frame[frame.metric == "clocks_event_reasons"]
     if reasons.empty:
         return frame
+    is_hex = reasons["text"].astype(str).str.startswith("0x")  # the same test _numeric decodes with
+    mask = reasons["value"].where(is_hex)
     extra = []
     for name, bit in _REASON_BITS:
         rows = reasons.copy()
         rows["metric"] = name
-        rows["value"] = rows["text"].map(lambda text, bit=bit: reason_bit(text, bit))
-        rows["text"] = rows["value"].map(lambda value: "" if value is None or pd.isna(value) else str(int(value)))
+        # Exact on floats: the masks are small integers. NaN stays NaN.
+        rows["value"] = (mask // bit) % 2
+        rows["text"] = rows["value"].map({1.0: "1", 0.0: "0"}).fillna("")
         extra.append(rows)
     return pd.concat([frame, *extra], ignore_index=True)
 

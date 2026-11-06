@@ -339,11 +339,12 @@ sample; those instants have no row. `clock.synced: false` or a large `maxerror_u
 node's timestamps cannot be lined up with the others. The run-identity fields appear only when
 the launcher exported them, so the directory name stays the join of record. `gpus`,
 `snapshot_start`, `snapshot`, and `snapshot_delta` are inventory, not a series: read once.
-`snapshot_start` is taken when the sampler starts (`ecc` probe), `snapshot` at the latest `ecc`
-sample (every 60 s, so up to a minute before the end; no GPU is read at shutdown), and `snapshot_delta`
+`snapshot_start` is taken at the first `ecc` sample (up to a minute after the sampler starts; none
+if it stopped before), `snapshot` at the latest `ecc`
+sample (every 60 s, so up to a minute before the end; no GPU is read at startup or shutdown), and `snapshot_delta`
 is their field-wise difference, empty where either side is. The series itself is still the
 volatile uncorrected count only. `power_limits` holds each GPU's VBIOS default and configured power
-limits when the `gpu` collector started. The limit in effect, which an outside cap can lower mid-run, is
+limits at the first `gpu` sample; the status file written at start does not have them yet. The limit in effect, which an outside cap can lower mid-run, is
 the `power_enforced_w` series: below `power_limit_w` means the cap did not come from the driver.
 
 ## 4. Per-rank step metrics: JSONL per rank, mirrored to WandB

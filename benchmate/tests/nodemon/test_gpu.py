@@ -66,6 +66,16 @@ def test_a_combined_clock_mask_parses_as_the_list_of_reasons_it_sets():
     assert ClockReason.parse("0x0") == []
 
 
+def test_a_reason_bit_the_enum_does_not_declare_is_shown_as_hex_not_dropped():
+    from benchmate.nodemon.collectors.gpu import ClockReason
+
+    # 0x200: a bit from a newer driver. split() keeps only real members; describe() shows the rest.
+    assert ClockReason.parse("0x284") == [ClockReason.SW_POWER_CAP, ClockReason.HW_POWER_BRAKE_SLOWDOWN]
+    assert ClockReason.describe(0x284) == "SW_POWER_CAP|HW_POWER_BRAKE_SLOWDOWN|0x200"
+    assert ClockReason.describe(0x4) == "SW_POWER_CAP"
+    assert ClockReason.describe(0) == ""
+
+
 def test_a_clock_mask_without_the_hex_prefix_raises_rather_than_reading_as_hex():
     from benchmate.nodemon.collectors.gpu import ClockReason
 
@@ -77,18 +87,39 @@ def test_a_clock_mask_without_the_hex_prefix_raises_rather_than_reading_as_hex()
         ClockReason.parse("0xzz")  # the prefix is there but the digits are not hex
 
 
-def test_the_power_limits_are_read_at_start_for_the_status_not_every_tick():
+def test_the_power_limits_are_read_once_at_the_first_sample_not_in_probe():
     collector = GpuCollector()
+    readings = {"power_limit_w": 200_000, "power_default_w": 700_000}  # an admin capped it below the default
+    asked = []
+
+    def query(gpu, key, fn, *args):
+        asked.append(key)
+        return readings.get(key)
+
     collector._nvml = SimpleNamespace(
-        nvmlDeviceGetPowerManagementLimit=lambda handle: 200_000,  # an admin capped it below the default
-        nvmlDeviceGetPowerManagementDefaultLimit=lambda handle: 700_000,
+        **{name: object() for name in (
+            "nvmlDeviceGetPowerManagementLimit", "nvmlDeviceGetPowerManagementDefaultLimit",
+            "nvmlDeviceGetPowerUsage", "nvmlDeviceGetEnforcedPowerLimit", "nvmlDeviceGetClockInfo",
+            "nvmlDeviceGetUtilizationRates", "nvmlDeviceGetTemperature",
+        )},
+        NVML_CLOCK_SM=0,
+        NVML_TEMPERATURE_GPU=0,
     )
     collector._init = lambda: True
+    collector._query = query
+    collector._xids = lambda: {}
+    collector._duty_cycle = lambda gpu: {}
     collector.nvml_gpus = NvmlGpus([Gpu(3, object(), "GPU-3")])
 
     assert collector.probe()
+    # The main thread runs probe() with no timeout, so it reads no limit a hung GPU could block.
+    assert "power_limit_w" not in asked and "power_limits" not in collector.describe()
+
+    collector.sample(0.0)
+    collector.sample(1.0)
 
     assert collector.describe()["power_limits"] == {"3": {"power_default_w": 700.0, "power_limit_w": 200.0}}
+    assert (asked.count("power_limit_w"), asked.count("power_default_w")) == (1, 1)
     assert "power_limit_w" not in GpuCollector.columns
     assert "power_limits" not in GpuCollector().describe()
 

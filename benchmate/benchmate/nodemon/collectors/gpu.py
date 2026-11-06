@@ -32,17 +32,42 @@ class ClockReason(IntFlag):
     DISPLAY_CLOCK_SETTING = pynvml.nvmlClocksEventReasonDisplayClockSetting
 
     @classmethod
-    def parse(cls, text: str) -> list[ClockReason]:
-        """The reasons set in a gpu.tsv cell (``f"0x{reasons:x}"``), in declaration order.
+    def mask(cls, text: str) -> int:
+        """The bits in a gpu.tsv cell (``f"0x{reasons:x}"``), the one parser of that column.
 
-        ``0x84`` is ``[SW_POWER_CAP, HW_POWER_BRAKE_SLOWDOWN]``. Text without the ``0x`` prefix,
-        an empty cell included, raises ValueError rather than reading a decimal mask as hex.
+        Text without the ``0x`` prefix, an empty cell included, raises ValueError rather than
+        reading a decimal mask as hex.
         """
         raw = text.strip()
         if not raw.lower().startswith("0x"):
             raise ValueError(f"clocks_event_reasons must be hex text starting with 0x, got {text!r}")
-        mask = int(raw, 16)  # raises ValueError on a bad digit
+        return int(raw, 16)  # raises ValueError on a bad digit
+
+    @classmethod
+    def split(cls, mask: int) -> list[ClockReason]:
+        """The declared reasons set in `mask`, in declaration order.
+
+        ``0x84`` is ``[SW_POWER_CAP, HW_POWER_BRAKE_SLOWDOWN]``. Bits this enum does not declare
+        are left out; describe() shows them.
+        """
         return [reason for reason in cls if reason & mask]
+
+    @classmethod
+    def parse(cls, text: str) -> list[ClockReason]:
+        """The declared reasons set in a gpu.tsv cell; see mask() and split()."""
+        return cls.split(cls.mask(text))
+
+    @classmethod
+    def describe(cls, mask: int) -> str:
+        """`mask` for display: ``SW_POWER_CAP|0x200``, the declared names then any other bits
+        (a newer driver's) as hex, so none is dropped. Empty for 0.
+        """
+        names = [reason.name for reason in cls.split(mask)]
+        # Plain ints: ~ on an IntFlag complements within the declared bits only, from Python 3.11.
+        undeclared = mask & ~sum(int(reason) for reason in cls)
+        if undeclared:
+            names.append(f"0x{undeclared:x}")
+        return "|".join(names)
 
 
 class PowerQuery(str, Enum):
@@ -94,22 +119,20 @@ class GpuCollector(NvmlCollector):
         self._xids_logged: set[tuple[int, int]] = set()
         #: The last utilization sample already read, per GPU, so each call asks for newer ones only.
         self._seen: dict[int, int] = {}
-        #: Per GPU, the power limits at start, for the status file rather than every row: they change
-        #: only when an admin sets them. The one in effect is the power_enforced_w series.
+        #: Per GPU, the power limits at the first sample, for the status file rather than every row:
+        #: they change only when an admin sets them. The one in effect is the power_enforced_w series.
+        #: Read on the sampling thread, not in probe(): the main thread has no timeout on a hung GPU.
         self._limits: dict[int, dict[str, Any]] = {}
 
-    def probe(self) -> bool:
-        if not super().probe():
-            return False
+    def _read_limits(self) -> dict[int, dict[str, Any]]:
         limits = (PowerQuery.power_default_w, PowerQuery.power_limit_w)
-        self._limits = {
+        return {
             gpu.index: {
                 query.name: self._get_power_attr(gpu, query)
                 for query in limits
             }
             for gpu in self._gpus
         }
-        return True
 
     def _get_power_attr(self, gpu: Gpu, query: PowerQuery) -> float | None:
         """One power reading in W; None when the query fails or this NVML lacks it."""
@@ -207,31 +230,28 @@ class GpuCollector(NvmlCollector):
 
     def sample(self, now_s: float) -> list[dict[str, Any]]:
         """One row per GPU, carrying any XID delivered since the last one."""
+        if not self._limits:
+            self._limits = self._read_limits()
         xids = self._xids()
-        rows = []
-        for gpu in self._gpus:
-            reasons = self._query(gpu, "reasons", self._reasons)
-            util = self._query(gpu, "util", self._nvml.nvmlDeviceGetUtilizationRates)
-            rows.append(
-                {
-                    "gpu": gpu.index,
-                    "sm_clock_mhz": self._query(
-                        gpu, "sm_clock", self._nvml.nvmlDeviceGetClockInfo, self._nvml.NVML_CLOCK_SM
-                    ),
-                    "clocks_event_reasons": None if reasons is None else f"0x{reasons:x}",
-                    **{
-                        query.name: self._get_power_attr(gpu, query)
-                        for query in (PowerQuery.power_w, PowerQuery.power_enforced_w)
-                    },
-                    "temp_c": self._query(
-                        gpu, "temp", self._nvml.nvmlDeviceGetTemperature, self._nvml.NVML_TEMPERATURE_GPU
-                    ),
-                    "util": None if util is None else util.gpu / 100,
-                    **self._duty_cycle(gpu),
-                    "xid": ";".join(xids[gpu.index]) if gpu.index in xids else None,
-                }
-            )
-        return rows
+        return [self._row(gpu, xids.get(gpu.index, [])) for gpu in self._gpus]
+
+    def _row(self, gpu: Gpu, xids: list[str]) -> dict[str, Any]:
+        """One GPU's row; `xids` are the ones delivered for it since the last row."""
+        sm_clock_mhz = self._query(gpu, "sm_clock", self._nvml.nvmlDeviceGetClockInfo, self._nvml.NVML_CLOCK_SM)
+        reasons = self._query(gpu, "reasons", self._reasons)
+        temp_c = self._query(gpu, "temp", self._nvml.nvmlDeviceGetTemperature, self._nvml.NVML_TEMPERATURE_GPU)
+        util = self._query(gpu, "util", self._nvml.nvmlDeviceGetUtilizationRates)
+        return {
+            "gpu": gpu.index,
+            "sm_clock_mhz": sm_clock_mhz,
+            "clocks_event_reasons": None if reasons is None else f"0x{reasons:x}",
+            PowerQuery.power_w.name: self._get_power_attr(gpu, PowerQuery.power_w),
+            PowerQuery.power_enforced_w.name: self._get_power_attr(gpu, PowerQuery.power_enforced_w),
+            "temp_c": temp_c,
+            "util": None if util is None else util.gpu / 100,
+            **self._duty_cycle(gpu),
+            "xid": ";".join(xids) or None,
+        }
 
     def close(self) -> None:
         """Free the event set before NVML goes away."""
@@ -244,7 +264,7 @@ class GpuCollector(NvmlCollector):
         super().close()
 
     def describe(self) -> dict[str, Any]:
-        """The GPU map, plus each GPU's power limits at start."""
+        """The GPU map, plus each GPU's power limits at the first sample."""
         described = super().describe()
         if self._limits:
             described["power_limits"] = {

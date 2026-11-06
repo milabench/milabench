@@ -124,7 +124,8 @@ class CollectorRegistry:
             now = time.monotonic()
         if wall is None:
             wall = time.time()
-        self._started = now
+        # The real clock, not `now`: _log_cpu measures against time.monotonic(), and `now` may be a test's.
+        self._started = time.monotonic()
         # Once for every NVML collector, so a refusal is not asked again by the next one.
         if any(isinstance(entry.collector, NvmlCollector) for entry in self._enabled()):
             self._nvml_gpus = NvmlGpus.start()

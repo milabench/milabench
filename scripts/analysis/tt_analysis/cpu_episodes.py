@@ -48,7 +48,7 @@ def _clock(value: Any) -> float | None:
 
 
 def _summarize(host: str, package: str, rows: list[tuple[int, float | None]], below_mhz: float) -> dict[str, Any]:
-    rows = sorted(rows)
+    rows = sorted(rows, key=lambda row: row[0])  # by time only: a clock can be None, which does not compare
     durations: list[float] = []
     episodes = 0
     start: int | None = None
