@@ -8,7 +8,7 @@ from typing import Any, NamedTuple
 import pynvml
 
 from ..collector import CollectorMetric, MetricKind, Rate
-from .nvml import Gpu, NvmlCollector
+from .nvml import Gpu, NvmlCollector, nvml_error_text
 
 log = logging.getLogger(__name__)
 
@@ -73,8 +73,11 @@ class NvlinkCollector(NvmlCollector):
         try:
             # The raw entry point, so NVML writes into our buffers rather than pynvml's.
             self._get_field_values = self._nvml._nvmlGetFunctionPointer("nvmlDeviceGetFieldValues")
-        except (self._nvml.NVMLError, AttributeError) as error:
-            log.debug(f"No NVLink rows: NVML would not give nvmlDeviceGetFieldValues ({error}).")
+        except self._nvml.NVMLError as err:
+            log.debug(f"No NVLink rows: NVML would not give nvmlDeviceGetFieldValues ({nvml_error_text(err.value)}).")
+            return False
+        except AttributeError as err:
+            log.debug(f"No NVLink rows: the bindings have no _nvmlGetFunctionPointer ({err}).")
             return False
         return True
 
@@ -90,9 +93,16 @@ class NvlinkCollector(NvmlCollector):
             try:
                 if self._nvml.nvmlDeviceGetNvLinkState(gpu.handle, link) == self._nvml.NVML_FEATURE_ENABLED:
                     active.append(link)
-            except self._nvml.NVMLError:
+            except self._nvml.NVMLError as err:
+                # The bindings' NVML_NVLINK_MAX_LINKS (36) exceeds a GPU's links (18 on H100 and B200);
+                # NVML answers the indexes past its last link with an invalid argument. Not a break:
+                # a disabled link in the middle may answer the same, and the links after it still count.
+                if err.value != self._nvml.NVML_ERROR_INVALID_ARGUMENT:
+                    self._log_nvml_error(f"GPU {gpu.index} NVLink {link} state", err.value)
                 continue
         links.peak = self._peak(gpu, active)
+        peak = "unknown" if links.peak is None else f"{links.peak / 1e9:.0f} GB/s"
+        log.debug(f"GPU {gpu.index}: {len(active)} active NVLinks, peak {peak} per direction.")
         return True
 
     def _peak(self, gpu: Gpu, active: list[int]) -> float | None:
@@ -132,11 +142,13 @@ class NvlinkCollector(NvmlCollector):
         except (ctypes.ArgumentError, OSError):
             return None
         if ret != 0:  # NVML_SUCCESS
+            self._log_nvml_error(f"GPU {gpu.index} field values {[field_id for field_id, _ in fields]}", ret)
             return None
         union = self._nvml.c_nvmlValue_t._fields_
         out = []
         for i in range(len(fields)):
             if values[i].nvmlReturn != 0:
+                self._log_nvml_error(f"GPU {gpu.index} field {fields[i][0]} scope {fields[i][1]}", values[i].nvmlReturn)
                 return None
             # The union's members are in NVML_VALUE_TYPE_* order.
             out.append(getattr(values[i].value, union[values[i].valueType][0]))

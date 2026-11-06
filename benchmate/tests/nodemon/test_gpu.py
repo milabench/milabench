@@ -8,7 +8,7 @@ import pytest
 
 from benchmate.nodemon.collectors import GpuCollector
 from benchmate.nodemon.collectors import nvml as nvml_module
-from benchmate.nodemon.collectors.nvml import Gpu
+from benchmate.nodemon.collectors.nvml import Gpu, NvmlGpus
 
 
 def sample(timestamp, value):
@@ -33,6 +33,7 @@ def fake_nvml(samples=(), events=()):
     return SimpleNamespace(
         NVMLError=pynvml.NVMLError,
         NVML_ERROR_NOT_FOUND=pynvml.NVML_ERROR_NOT_FOUND,
+        NVML_ERROR_TIMEOUT=pynvml.NVML_ERROR_TIMEOUT,
         NVML_GPU_UTILIZATION_SAMPLES=pynvml.NVML_GPU_UTILIZATION_SAMPLES,
         nvmlEventTypeXidCriticalError=pynvml.nvmlEventTypeXidCriticalError,
         nvmlDeviceGetSamples=get_samples,
@@ -54,6 +55,75 @@ def test_the_duty_cycle_averages_the_buffered_samples_and_asks_only_for_newer_on
     assert second == {"util_mean": None, "util_min": None, "util_samples": None}
 
 
+def test_a_combined_clock_mask_parses_as_the_list_of_reasons_it_sets():
+    from benchmate.nodemon.collectors.gpu import ClockReason
+
+    assert ClockReason.parse("0x84") == [
+        ClockReason.SW_POWER_CAP,
+        ClockReason.HW_POWER_BRAKE_SLOWDOWN,
+    ]
+    assert ClockReason.parse("0x4") == [ClockReason.SW_POWER_CAP]
+    assert ClockReason.parse("0x0") == []
+
+
+def test_a_reason_bit_the_enum_does_not_declare_is_shown_as_hex_not_dropped():
+    from benchmate.nodemon.collectors.gpu import ClockReason
+
+    # 0x200: a bit from a newer driver. split() keeps only real members; describe() shows the rest.
+    assert ClockReason.parse("0x284") == [ClockReason.SW_POWER_CAP, ClockReason.HW_POWER_BRAKE_SLOWDOWN]
+    assert ClockReason.describe(0x284) == "SW_POWER_CAP|HW_POWER_BRAKE_SLOWDOWN|0x200"
+    assert ClockReason.describe(0x4) == "SW_POWER_CAP"
+    assert ClockReason.describe(0) == ""
+
+
+def test_a_clock_mask_without_the_hex_prefix_raises_rather_than_reading_as_hex():
+    from benchmate.nodemon.collectors.gpu import ClockReason
+
+    with pytest.raises(ValueError, match="starting with 0x"):
+        ClockReason.parse("132")  # decimal: would read as 0x132 if the prefix were not required
+    with pytest.raises(ValueError, match="starting with 0x"):
+        ClockReason.parse("")  # an empty cell does not start with 0x
+    with pytest.raises(ValueError, match="invalid literal"):
+        ClockReason.parse("0xzz")  # the prefix is there but the digits are not hex
+
+
+def test_the_power_limits_are_read_once_at_the_first_sample_not_in_probe():
+    collector = GpuCollector()
+    readings = {"power_limit_w": 200_000, "power_default_w": 700_000}  # an admin capped it below the default
+    asked = []
+
+    def query(gpu, key, fn, *args):
+        asked.append(key)
+        return readings.get(key)
+
+    collector._nvml = SimpleNamespace(
+        **{name: object() for name in (
+            "nvmlDeviceGetPowerManagementLimit", "nvmlDeviceGetPowerManagementDefaultLimit",
+            "nvmlDeviceGetPowerUsage", "nvmlDeviceGetEnforcedPowerLimit", "nvmlDeviceGetClockInfo",
+            "nvmlDeviceGetUtilizationRates", "nvmlDeviceGetTemperature",
+        )},
+        NVML_CLOCK_SM=0,
+        NVML_TEMPERATURE_GPU=0,
+    )
+    collector._init = lambda: True
+    collector._query = query
+    collector._xids = lambda: {}
+    collector._duty_cycle = lambda gpu: {}
+    collector.nvml_gpus = NvmlGpus([Gpu(3, object(), "GPU-3")])
+
+    assert collector.probe()
+    # The main thread runs probe() with no timeout, so it reads no limit a hung GPU could block.
+    assert "power_limit_w" not in asked and "power_limits" not in collector.describe()
+
+    collector.sample(0.0)
+    collector.sample(1.0)
+
+    assert collector.describe()["power_limits"] == {"3": {"power_default_w": 700.0, "power_limit_w": 200.0}}
+    assert (asked.count("power_limit_w"), asked.count("power_default_w")) == (1, 1)
+    assert "power_limit_w" not in GpuCollector.columns
+    assert "power_limits" not in GpuCollector().describe()
+
+
 def test_xids_are_collected_per_gpu_and_an_empty_queue_is_the_normal_case():
     collector = GpuCollector()
     collector._nvml = fake_nvml(events=[
@@ -70,7 +140,7 @@ def test_xids_are_collected_per_gpu_and_an_empty_queue_is_the_normal_case():
 
 def _one_gpu(monkeypatch):
     """NVML answers one GPU and counts init and shutdown, without a driver."""
-    calls = {"init": 0, "shutdown": 0}
+    calls = {"init": 0, "shutdown": 0, "count": 0}
 
     def nvml_init():
         calls["init"] += 1
@@ -78,12 +148,16 @@ def _one_gpu(monkeypatch):
     def nvml_shutdown():
         calls["shutdown"] += 1
 
+    def device_count():
+        calls["count"] += 1
+        return 1
+
     def no_events():
         raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
 
     monkeypatch.setattr(nvml_module.pynvml, "nvmlInit", nvml_init)
     monkeypatch.setattr(nvml_module.pynvml, "nvmlShutdown", nvml_shutdown)
-    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetCount", lambda: 1)
+    monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetCount", device_count)
     monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetHandleByIndex", lambda index: object())
     monkeypatch.setattr(nvml_module.pynvml, "nvmlDeviceGetUUID", lambda handle: "GPU-a")
     monkeypatch.setattr(nvml_module.pynvml, "nvmlEventSetCreate", no_events)
@@ -98,12 +172,16 @@ def test_nvml_starts_once_and_the_last_close_stops_it(monkeypatch):
 
     calls = _one_gpu(monkeypatch)
     registry = CollectorRegistry()
-    registry.register(GpuCollector(), 1.0)
-    registry.register(OtherGpu(), 1.0)
+    first = registry.register(GpuCollector(), 1.0)
+    second = registry.register(OtherGpu(), 1.0)
 
     registry.start(now=0.0, wall=0.0)
-    assert calls == {"init": 1, "shutdown": 0}
+    assert calls == {"init": 1, "shutdown": 0, "count": 1}  # the GPUs are listed once, for both
+    assert first._gpus[0] is second._gpus[0]
     registry.close()
+    assert calls["shutdown"] == 1
+    first.nvml_gpus.close()  # the session already ended: not shut down twice
+    NvmlGpus([]).close()  # a list built directly has no session to end
     assert calls["shutdown"] == 1
 
     nvml_module.pynvml.nvmlInit()  # the session ended, so this starts NVML again
@@ -117,7 +195,7 @@ def test_a_refused_nvml_init_is_not_asked_again(monkeypatch):
     class OtherGpu(GpuCollector):
         name = "other"
 
-    calls = {"init": 0, "shutdown": 0}
+    calls = {"init": 0, "shutdown": 0, "count": 0}
 
     def nvml_init():
         calls["init"] += 1
@@ -127,6 +205,7 @@ def test_a_refused_nvml_init_is_not_asked_again(monkeypatch):
         calls["shutdown"] += 1
 
     def no_devices():
+        calls["count"] += 1
         raise pynvml.NVMLError(pynvml.NVML_ERROR_UNINITIALIZED)
 
     monkeypatch.setattr(nvml_module.pynvml, "nvmlInit", nvml_init)
@@ -139,4 +218,29 @@ def test_a_refused_nvml_init_is_not_asked_again(monkeypatch):
     registry.start(now=0.0, wall=0.0)
     registry.close()
 
-    assert calls == {"init": 1, "shutdown": 0}
+    assert calls == {"init": 1, "shutdown": 0, "count": 0}  # no GPU is listed without NVML
+
+
+def test_the_gpu_list_skips_a_gpu_nvml_cannot_open_and_is_empty_without_a_count():
+    def handle(index):
+        if index == 1:
+            raise pynvml.NVMLError(pynvml.NVML_ERROR_GPU_IS_LOST)
+        return index
+
+    nvml = SimpleNamespace(
+        NVMLError=pynvml.NVMLError,
+        nvmlDeviceGetCount=lambda: 3,
+        nvmlDeviceGetHandleByIndex=handle,
+        nvmlDeviceGetUUID=lambda handle: f"GPU-{handle}".encode(),  # older bindings return bytes
+    )
+
+    gpus = NvmlGpus.discover(nvml)
+
+    assert [gpu.index for gpu in gpus.gpus] == [0, 2]
+    assert gpus.uuid_of() == {"0": "GPU-0", "2": "GPU-2"}
+
+    def no_count():
+        raise pynvml.NVMLError(pynvml.NVML_ERROR_UNINITIALIZED)
+
+    nvml.nvmlDeviceGetCount = no_count
+    assert NvmlGpus.discover(nvml).gpus == []

@@ -6,7 +6,7 @@ It records:
 
 | Collector | Every | What | Source |
 | --- | --- | --- | --- |
-| [`gpu.py`](collectors/gpu.py) | 1 s | SM clock, clock event (throttle) reasons, power, temperature, utilization | NVML (`pynvml`) |
+| [`gpu.py`](collectors/gpu.py) | 1 s | SM clock, clock event (throttle) reasons, power, enforced power limit, temperature, utilization | NVML (`pynvml`) |
 | [`nvlink.py`](collectors/nvlink.py) | 10 s | NVLink traffic per GPU, and its share of the links' peak | NVML (`pynvml`) |
 | [`ib.py`](collectors/ib.py) | 1 s | InfiniBand traffic, link rate, `port_xmit_wait`, `symbol_error`, `link_downed` | `/sys/class/infiniband` |
 | [`cpu.py`](collectors/cpu.py) | 2 s | CPU clocks, utilization, frequency cap, temperature, throttle count, governor | `/proc/stat`, `/proc/cpuinfo`, cpufreq, hwmon |
@@ -33,12 +33,12 @@ python -m benchmate.nodemon --bench llama &
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--out DIR` | `BENCHMATE_NODEMON_DIR` | Output directory |
-| `--flush-every SECONDS` | 10 | How often pending rows are written to the files. 0 writes on every sample. |
+| `--flush-every SECONDS` | 10 ± 2.5% | How often pending rows are written to the files. Each flush is shifted by a random ±2.5% of the period (±250 ms at 10 s) so the nodes don't all write to network storage at once. 0 writes on every sample. |
 | `--bench NAME` | empty | Recorded in the status file |
 | `--nice N` | 10 | CPU scheduling niceness, -20 to 19. The default lowers the sampler's priority below the benchmark's (0), so it yields the CPU when cores are contended. Going below the current niceness needs privileges; if refused, it logs an error and keeps running. |
 | `--log-level` | `INFO` | Logging on stderr. `INFO` includes a CPU-usage summary at exit. |
 
-**Start it from anywhere.** Each host gets exactly one sampler. The first process takes the lock `nodes/<host>.lock`, and any other start on that host exits 0 at once, before opening anything. It is therefore safe to start it from every Slurm task or every local rank. The lock is released when the process exits, even when it is killed.
+**Start it from anywhere.** One sampler per host: the first takes the lock `<host>.lock` and any other exits 0 at once, so every Slurm task or rank can start it. The lock is released on exit, even on a kill.
 
 **Stopping:**
 
@@ -78,32 +78,72 @@ A collector that is unavailable on a host (no GPU, no InfiniBand) writes no file
 
 ### Status file
 
-`<host>.status.json` is written twice. On sampler start and stop. It tells a clean stop apart from a crash:
+`<host>.status.json` is written twice, when the sampler starts and when it stops, so it tells a clean stop apart from a crash:
 
-It also records:
-
-- `schema`: the format of everything in the directory, currently `benchmate.nodemon.v1`;
-- `bench`: the `--bench` name;
-- the run it belongs to, from the environment: `run_name` (`MILABENCH_RUN_NAME`), `campaign`
-  (`TT_CAMPAIGN`), `slurm_job_id`, `slurm_step_id` and `slurm_nodelist`. Whatever is unset is
-  left out;
-- `start` and `end`: in milliseconds since the Unix epoch, like the `time_ms` column;
-- `collectors`: each collector, whether it ran, its period, and `cpu_s`, the CPU seconds its samples used (0 while running, final once stopped). A collector may add its own fields here: the NVML ones publish `gpus`, the index-to-UUID map the rows leave out; `ecc` adds each GPU's `lifetime` error totals; `dcgm` records the exporter `url` it read and, as `exporter_gpus`, the exporter's own GPU numbering, which is not NVML's and is kept apart from `gpus` so the two can be compared;
-- `flush_every`;
-- `clock` and `clock_end`: whether the kernel clock was NTP-synchronized and its maximum error in µs. A node with `synced: false` has timestamps that may not line up with other nodes.
-- `stuck`, if present: a collector call hung at shutdown, typically NVML on a failing GPU. Rows collected before it were still written.
+```jsonc
+{
+  "schema": "benchmate.nodemon.v3",      // format of everything in the directory
+  "state": "closed",                     // running | closed | failed; "running" after the run ended = killed
+  "bench": "llama",                      // --bench
+  // The run, from the environment; unset ones are left out.
+  "run_name": "tt-w-n63-long",           // MILABENCH_RUN_NAME
+  "campaign": "tt38",                    // TT_CAMPAIGN
+  "slurm_job_id": "11431300",
+  "slurm_step_id": "0",
+  "slurm_nodelist": "rg[21701-21763]",
+  "pid": 1692897,
+  "start": 1793133997863,                // ms since the Unix epoch, like time_ms
+  "end": 1793134142545,
+  "reason": "signal SIGTERM",
+  "flush_every": 10.0,
+  "collectors": {
+    "gpu": {
+      "enabled": true,                   // false: probed unavailable, wrote no file
+      "period_s": 1.0,
+      "cpu_s": 0.026,                    // CPU seconds its samples used; 0 while running
+      "skipped": 0,                      // due instants a late tick passed without a row
+      "gpus": {"0": "GPU-ee57a905-..."}, // NVML index -> UUID, which the rows leave out
+      "power_limits": {                  // at the first sample: they change only when an admin sets them
+        "0": {"power_default_w": 700.0, "power_limit_w": 700.0}
+      }
+    },
+    "ecc": {
+      "enabled": true, "period_s": 60.0, "cpu_s": 0.004, "skipped": 0,
+      "gpus": {"0": "GPU-ee57a905-..."},
+      // Lifetime error counts at the first sample, at the latest, and their difference.
+      // Both read on the sampling thread: no NVML query at startup or shutdown can block this file.
+      "snapshot_start": {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}},
+      "snapshot":       {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}},
+      "snapshot_delta": {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}}
+    },
+    "dcgm": {
+      "enabled": true, "period_s": 10.0, "cpu_s": 0.02, "skipped": 0,
+      "url": "http://localhost:9400/metrics",
+      "exporter_gpus": {"0": "GPU-ee57a905-..."} // the exporter's numbering, not NVML's: compare with gpus
+    },
+    "gpm": {"enabled": false, "period_s": 1.0, "cpu_s": 0.0, "skipped": 0}
+  },
+  // Kernel clock at start and stop. synced: false = timestamps may not line up with other nodes.
+  "clock": {"synced": true, "maxerror_us": 53126},
+  "clock_end": {"synced": true, "maxerror_us": 53130},
+  "stuck": "gpu"                         // only if a collector hung at shutdown (typically NVML on a
+                                         // failing GPU); the rows read before it were still written
+}
+```
 
 
 ## Overhead
 
-About 0.4% of one core on a 4-GPU node, measured with no effect on benchmark rates.
+CPU time over 90 s on idle Trillium nodes (96 cores), all collectors at their default periods:
 
-The costly reads have longer periods:
+| Node | CPU | `gpu` (1 s) | `nvlink` (10 s) | everything else |
+| --- | --- | --- | --- | --- |
+| 4 × H100 | 1.5% of one core | ~11 ms per sample | ~12 ms per sample | 0.3% |
+| 8 × B200 | 4.1% of one core | ~26 ms per sample | ~107 ms per sample | 0.4% |
 
-- NVLink counters (~2 ms per GPU) every 10 s,
-- `/proc/cpuinfo` (~2 ms on 96 cores) every 2 s.
+NVML reads dominate and grow with the GPU count; NVLink is the costliest per sample, hence its 10 s period. `/proc/cpuinfo` takes ~3 ms on 96 cores, read every 2 s.
 
-Each collector's CPU time are in the status file (`cpu_s`).
+Each collector's CPU time is in the status file (`cpu_s`) and in the summary logged at exit.
 
 ## Using it from Python
 
@@ -129,23 +169,19 @@ state = sampler.stop(
 python -m pytest benchmate/tests/nodemon
 ```
 
-## Following a run
+## Monitoring a live run
 
 ```bash
 python -m benchmate.nodemon.watch $BENCHMATE_NODEMON_DIR --follow 30
 ```
 
-One block per refresh: the lowest SM clock with its throttle reasons (a Note column names the GPU or node behind a reading), how busy the GPUs are, their power and temperature,
-NVLink and IB rates, IB link errors and congestion (a port whose `xmit_wait` rises far faster than the other ports'), the median CPU busy-core clock, how busy the CPUs are
-and any CPU package or GPU whose clock or power is well below its peers' (the stragglers), host memory, XIDs, and pending or failed row remaps,
-uncorrected ECC and EDAC errors, PCIe errors or persistently degraded GPU/HCA links, an unsynchronized node clock, OOM kills, and any node whose sampler has died while its status still says
-`running`.
+Each refresh prints one block: GPU clocks with throttle reasons, utilization, power and temperature; NVLink and IB rates, IB errors and congestion; CPU busy-core clock and utilization; stragglers (a GPU or CPU package well below its peers); and faults (XIDs, row remaps, ECC/EDAC, PCIe errors or degraded links, OOM kills, unsynchronized clocks, dead samplers). It ends with the nodes ranked by score, worst first: the ones to look at or drain.
 
-Nodes ranked by score, worst first: the nodes to look at, or drain, before the others.
-
-`--flagged-hosts` (8) is how many hosts or devices a line names before counting the rest. `--window` sets how much history each refresh covers (60 s by default). With `--follow` on a terminal the block is redrawn in place, below a blank line instead of its time header; piped or
-redirected, each refresh is appended. Without `--follow` it
-prints one block and exits.
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--follow SECONDS` | off | Refresh every SECONDS until every sampler finishes: redrawn in place on a terminal, appended when piped. Off prints one block and exits. |
+| `--window SECONDS` | 60 | History each refresh covers |
+| `--flagged-hosts N` | 8 | Hosts or devices a line names before counting the rest |
 
 ## Not yet done
 

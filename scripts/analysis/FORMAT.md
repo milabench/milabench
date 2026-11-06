@@ -181,15 +181,16 @@ the Megatron pack starts it from every rank (`benchmarks/megatron/main.py`). Tor
 
 Identity is in the paths, not the rows: a row carries `time_ms` alone, the host is in the file
 name, the benchmark in the status file. One wide file per collector, melted to
-`time, host, gpu, metric, value`, timestamps aligned to whole multiples of the period so hosts
-join without binning. An empty cell means **unavailable, never zero**; a collector that cannot
-run writes no file, and `status.json` says which.
+`time, host, gpu, metric, value`. `time_ms` is when the sample was read: hosts sample on the
+same instants but land milliseconds apart, so join hosts by window, not equality. A late tick
+skips missed instants (counted in `collectors.<name>.skipped`). An empty cell means
+**unavailable, never zero**; a collector that cannot run writes no file, and `status.json` says which.
 
 ### Collectors
 
 | file | period | one row per | columns after `time_ms` |
 |---|---|---|---|
-| `<host>.gpu.tsv` | 1 s | GPU | `gpu sm_clock_mhz clocks_event_reasons power_w temp_c util util_mean util_min util_samples xid` |
+| `<host>.gpu.tsv` | 1 s | GPU | `gpu sm_clock_mhz clocks_event_reasons power_w power_enforced_w temp_c util util_mean util_min util_samples xid` |
 | `<host>.nvlink.tsv` | 10 s | GPU | `gpu nvlink_tx_bytes nvlink_rx_bytes nvlink_tx_bytes_per_s nvlink_rx_bytes_per_s nvlink_utilization` |
 | `<host>.ib.tsv` | 1 s | HCA port | `hca port rate_gbps tx_bytes rx_bytes ib_tx_bytes_per_s ib_rx_bytes_per_s ib_utilization xmit_wait symbol_error link_downed` |
 | `<host>.cpu.tsv` | 2 s | package | `package busy_cores cpu_mhz_busy_mean cpu_mhz_min cpu_mhz_max cpu_mhz_mean cpu_mhz_cap cpu_util cpu_temp_c thermal_throttle_count governor` |
@@ -200,8 +201,8 @@ run writes no file, and `status.json` says which.
 | `<host>.gpm.tsv` | 1 s | GPU | `gpu sm_util sm_occupancy tensor_util dram_bw_util fp64_util fp32_util fp16_util hmma_tensor_util imma_tensor_util dmma_tensor_util pcie_tx_mib_s pcie_rx_mib_s` — Hopper and newer only |
 
 ```
-time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	temp_c	util	util_mean	util_min	util_samples	xid
-1793134142000	1	1410	0x0	106.832	42	0.97	0.93	0.71	71	
+time_ms	gpu	sm_clock_mhz	clocks_event_reasons	power_w	power_enforced_w	temp_c	util	util_mean	util_min	util_samples	xid
+1793134142000	1	1410	0x0	106.832	700.0	42	0.97	0.93	0.71	71	
 ```
 
 ### Metric details
@@ -210,6 +211,11 @@ Units: `time_ms` is wall-clock epoch milliseconds (the run data's clock); clocks
 W, temperature in °C, memory in GiB, PCIe speed in GT/s; `util`, `cpu_util`, `*_utilization` and
 the `gpm` `*_util` columns are fractions in 0–1; `gpm.pcie_*_mib_s` is MiB/s;
 `clocks_event_reasons` is the NVML bitmask as hex.
+Test its bits: `0x4` (`SW_POWER_CAP`) is the GPU's own power limit and `0x80`
+(`HW_POWER_BRAKE_SLOWDOWN`) is an external brake. `0x84` is both, so it is not equal to `0x4`.
+The melted `gpu_monitor` rows add `sw_power_cap` and `hw_power_brake`, each 1 or 0, empty when
+the mask cell was empty. CPU low-clock runs are per package in
+`tt_analysis/cpu_episodes.py`, timed from the real `time_ms` gaps of `cpu_mhz_busy_mean`.
 `*_bytes`, `xmit_wait`, `symbol_error`, `link_downed`, `oom_kill`, `aer_*`, `ce_count` and
 `ue_count` are cumulative (the analysis takes deltas); IB bytes are already converted from the
 sysfs 4-byte lanes.
@@ -251,27 +257,95 @@ its throughput, is visible in `cpu_mhz_busy_mean` alone.
 `<host>.status.json`, written at start and rewritten at exit:
 
 ```jsonc
-{"schema": "benchmate.nodemon.v1", "state": "closed",    // running | closed | failed
- "bench": "glm5", "run_name": "tt-w-n63-long", "campaign": "tt38",
- "slurm_job_id": "11431300", "slurm_step_id": "0", "slurm_nodelist": "rg[21701-21763]",
- "pid": 1692897, "start": 1793133997863, "end": 1793134142545, "reason": "signal SIGTERM",
- "flush_every": 10.0,
- "collectors": {"gpu": {"enabled": true, "period_s": 1.0, "cpu_s": 0.026,
-                        "gpus": {"0": "GPU-ee57a905-...", "1": "GPU-..."}},
-                "ecc": {"...": null,
-                        "lifetime": {"0": {"ecc_aggregate_uncorrected": 0,
-                                           "remapped_corrected": 0, "remapped_uncorrected": 0}}},
-                "gpm": {"enabled": false}},
- "clock": {"synced": true, "maxerror_us": 53126}, "clock_end": {"...": null}}
+{
+  "schema": "benchmate.nodemon.v3",
+  "state": "closed",  // running | closed | failed
+  "bench": "glm5",
+  "run_name": "tt-w-n63-long",
+  "campaign": "tt38",
+  "slurm_job_id": "11431300",
+  "slurm_step_id": "0",
+  "slurm_nodelist": "rg[21701-21763]",
+  "pid": 1692897,
+  "start": 1793133997863,
+  "end": 1793134142545,
+  "reason": "signal SIGTERM",
+  "flush_every": 10.0,
+  "collectors": {
+    "gpu": {
+      "enabled": true,
+      "period_s": 1.0,
+      "cpu_s": 0.026,
+      "gpus": {
+        "0": "GPU-ee57a905-...",
+        "1": "GPU-..."
+      },
+      "power_limits": {
+        "0": {
+          "power_default_w": 700.0,
+          "power_limit_w": 700.0
+        }
+      }
+    },
+    "ecc": {
+      "...": null,
+      "snapshot_start": {
+        "0": {
+          "ecc_aggregate_uncorrected": 0,
+          "remapped_corrected": 0,
+          "remapped_uncorrected": 0
+        }
+      },
+      "snapshot": {
+        "0": {
+          "ecc_aggregate_uncorrected": 0,
+          "remapped_corrected": 0,
+          "remapped_uncorrected": 0
+        }
+      },
+      "snapshot_delta": {
+        "0": {
+          "ecc_aggregate_uncorrected": 0,
+          "remapped_corrected": 0,
+          "remapped_uncorrected": 0
+        }
+      }
+    },
+    "cpu": {
+      "enabled": true,
+      "period_s": 2.0,
+      "cpu_s": 0.01,
+      "skipped": 0
+    },
+    "gpm": {
+      "enabled": false
+    }
+  },
+  "clock": {
+    "synced": true,
+    "maxerror_us": 53126
+  },
+  "clock_end": {
+    "...": null
+  }
+}
 ```
 
 Reader rules: `state: "running"` with a last row older than ~2 × `flush_every` means the
 sampler was killed, so the series is truncated; a final line without a newline is dropped.
 `enabled: false` means the collector probed false and wrote no file (`gpm` before
-Hopper, `ib` without an HCA). `clock.synced: false` or a large `maxerror_us` means this
+Hopper, `ib` without an HCA). `skipped` counts due instants that collector passed without a
+sample; those instants have no row. `clock.synced: false` or a large `maxerror_us` means this
 node's timestamps cannot be lined up with the others. The run-identity fields appear only when
-the launcher exported them, so the directory name stays the join of record. `gpus` and
-`lifetime` are inventory, not a series: read once.
+the launcher exported them, so the directory name stays the join of record. `gpus`,
+`snapshot_start`, `snapshot`, and `snapshot_delta` are inventory, not a series: read once.
+`snapshot_start` is taken at the first `ecc` sample (up to a minute after the sampler starts; none
+if it stopped before), `snapshot` at the latest `ecc`
+sample (every 60 s, so up to a minute before the end; no GPU is read at startup or shutdown), and `snapshot_delta`
+is their field-wise difference, empty where either side is. The series itself is still the
+volatile uncorrected count only. `power_limits` holds each GPU's VBIOS default and configured power
+limits at the first `gpu` sample; the status file written at start does not have them yet. The limit in effect, which an outside cap can lower mid-run, is
+the `power_enforced_w` series: below `power_limit_w` means the cap did not come from the driver.
 
 ## 4. Per-rank step metrics: JSONL per rank, mirrored to WandB
 
@@ -358,7 +432,7 @@ For MoE, Megatron has two data-parallel sizes: `dp` = world / (TP x PP x CP) for
   version; renaming or removing a field bumps it.
 - The analysis has one adapter per schema version. Current adapters:
   `milabench.torchtitan_native.v2` (mapping in `tt_analysis/runs.py:_v2_fields`) and
-  `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v1`
+  `milabench.pretrain.v1`; for telemetry, `benchmate.nodemon.v3`
   (`tt_analysis/monitor.py`); `benchmate.rankmetrics.v1` (section 4, per-rank JSONL) has no reader yet.
 - Runs before the v2 measurement path (2026-10-21) are excluded.
 
