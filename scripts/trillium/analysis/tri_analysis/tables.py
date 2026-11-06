@@ -46,7 +46,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriLossSameMax", "TriLossSameMin", "TriLossOtherMax", "TriLossOtherMxMax", "TriLossGlmLast", "TriLossGlmEnd",
           # Layouts
           "TriLevTokens", "TriLevTwoLarge", "TriLevFourLarge", "TriLevPpTwo", "TriLevPpFour", "TriLevHsdp", "TriLevHsdpLarge", "TriLevReduce", "TriLevFull", "TriLevFullH", "TriLevFortyEight", "TriLevPpBest",
-          "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax", "TriLayoutTopRepeat",
+          "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax", "TriLayoutTopRepeat", "TriLevReduceTopNodes", "TriLevReduceTop", "TriTokReduceTop", "TriTokFsdpTop", "TriMemReduceTop", "TriMemFsdpTop",
           # Machine
           "TriCapNodes", "TriCapTFlops", "TriCapControlLo", "TriCapControlHi", "TriCapPowerLo", "TriCapPowerHi", "TriCapControlPowerLo",
           "TriCapControlPowerHi", "TriCapFactor", "TriCpuBeforeMed", "TriCpuBeforeLo", "TriCpuBeforeHi", "TriCpuAfterMed", "TriCpuAfterLo",
@@ -234,6 +234,16 @@ def _layout_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]
     r = _completed(runs, "A-Q")
     if r.empty or (r.synthetic.any()):
         return out
+    # The BF16 reduction at the largest count with both: the one lever repeated at scale.
+    f = r[(r.layout == "fsdp") & (r.tokens_per_gpu == 24576) & (r.ac == "selective") & (r.precision == "bf16") & (r.nodes > 13)]
+    m = f.groupby(["nodes", "grad_reduce"]).agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max")).unstack()
+    both = m.v.dropna().index if len(m) and "bf16" in m.v else []
+    if len(both):
+        n = both.max()
+        out["TriLevReduceTopNodes"] = (int(n), "d", False)
+        out["TriLevReduceTop"] = (100 * (m.v.bf16[n] / m.v.fp32[n] - 1), "+.1f", False)
+        out["TriTokReduceTop"], out["TriTokFsdpTop"] = (m.v.bf16[n], ",.0f", False), (m.v.fp32[n], ",.0f", False)
+        out["TriMemReduceTop"], out["TriMemFsdpTop"] = (m.mem.bf16[n], ".0f", False), (m.mem.fp32[n], ".0f", False)
     r = r[(r.nodes == 13) | ((r.nodes == 12) & (r.layout == "hsdp16"))]
     m = r.groupby(["layout", "tokens_per_gpu", "grad_reduce", "ac"]).agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max"), share=("valid_token_share", "mean"), step=("step_s", "median"))
     get = lambda layout="fsdp", tokens=12288, reduce="fp32", ac="selective": m.loc[(layout, tokens, reduce, ac)] if (layout, tokens, reduce, ac) in m.index else None  # noqa: E731
