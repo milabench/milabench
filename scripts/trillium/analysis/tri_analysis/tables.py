@@ -28,6 +28,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriEnergyBest",
           "TriQwenTop", "TriGlmTop", "TriRunsInReport", "TriGlmCopiesTop",
           # Scaling, GLM-5, operations
+          "TriGlmWeakThreeTok", "TriGlmWeakThreeStep", "TriGlmWeakThreeMem", "TriGlmWeakThreeAtoa", "TriGlmStrongThreeRatio", "TriGlmStrongThreeFormula",
           "TriSlowRunNodes", "TriSlowRunTok", "TriSlowRunStep", "TriSlowRunPct", "TriSlowRunEff", "TriStragNodes", "TriStragLowLo", "TriStragLowHi", "TriStragLowRest", "TriStragUtilSlow", "TriStragUtilRest",
           "TriWeakTop","TriWeakFTop","TriWeakHTop","TriWeakFCross","TriWeakHCross","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
           "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
@@ -487,8 +488,21 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
         out["TriGlmWeakTwoStep"] = (wk.step_s.median(), ".1f", False)
         out["TriGlmWeakTwoMem"] = (wk.mem_alloc_gib.max(), ".0f", False)
         out["TriGlmMemFallPct"] = (100 * (1 - wk.mem_alloc_gib.max() / a.mem_alloc_gib.max()), ".0f", False)
+    wk3 = _completed(runs, "B-G-weak")
+    wk3 = wk3[(wk3.layout == "pp13-ep8") & (wk3.ac == "full") & (wk3.precision == "bf16") & (wk3.nodes == 39)] if len(wk3) else wk3
+    if len(wk3):
+        out["TriGlmWeakThreeTok"] = (wk3.tok_s_gpu.median(), ",.0f", False)
+        out["TriGlmWeakThreeStep"] = (wk3.step_s.median(), ".1f", False)
+        out["TriGlmWeakThreeMem"] = (wk3.mem_alloc_gib.max(), ".0f", False)
+        if len(ep):
+            a2a = ep[ep.run_id.isin(wk3.run_id)].a2a_s
+            if len(a2a):
+                out["TriGlmWeakThreeAtoa"] = (a2a.median(), ".1f", False)
     st2 = _completed(runs, "B-G-strong")
     st2 = st2[st2.layout == "pp13-ep8"] if len(st2) else st2
+    if len(st2) and {13, 39} <= set(st2.nodes):
+        out["TriGlmStrongThreeRatio"] = (st2[st2.nodes == 39].tok_s_gpu.median() / st2[st2.nodes == 13].tok_s_gpu.median(), ".2f", False)
+        out["TriGlmStrongThreeFormula"] = ((1 - 12 / 44) / (1 - 12 / 108), ".2f", False)  # 32 and 96 micro-batches, 13 stages
     if len(st2) and {13, 26} <= set(st2.nodes):
         one, two = st2[st2.nodes == 13], st2[st2.nodes == 26]
         out["TriGlmStrongTwoTok"] = (two.tok_s_gpu.median(), ",.0f", False)

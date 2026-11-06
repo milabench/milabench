@@ -23,13 +23,13 @@ In weak scaling the work per GPU is fixed, so perfect scaling is a flat line of 
 
 \textbf{Still to come:} 50 nodes if the caps clear.
 
-\paragraph{GLM-5, answer so far.} Two model copies scale. At 26 nodes, \texttt{pp13-ep8} with 32 micro-batches per data-parallel rank reaches \TriGlmWeakTwoTok{} tokens/s per GPU, \TriGlmCopiesEffTwo\,\% of one copy at 13 nodes (\TriGlmWeakTwoStep\,s per step against \TriGlmThirteenStep; \cref{fig:glm_scaling}). So far there is no one-off drop from 1 to 2 copies.
+\paragraph{GLM-5, answer so far.} Model copies scale. With 32 micro-batches per data-parallel rank, \texttt{pp13-ep8} reaches \TriGlmThirteenTok{} tokens/s per GPU with 1 copy, \TriGlmWeakTwoTok{} with 2 (\TriGlmCopiesEffTwo\,\%) and \TriGlmWeakThreeTok{} with 3 (\TriGlmCopiesEff\,\% of one copy, \TriGlmCopiesEffFromTwo\,\% of two; \cref{fig:glm_scaling}). Steps take \TriGlmThirteenStep, \TriGlmWeakTwoStep{} and \TriGlmWeakThreeStep\,s. There is no one-off drop from 1 to 2 copies. The 3-copy run is the first GLM-5 run across the bandwidth groups, and expert all-to-all stays at \TriGlmWeakThreeAtoa\,s, since its groups stay inside a node.
 
-\textbf{A fixed batch.} At 768 sequences in total, going from 1 to 2 copies gives $\times$\TriGlmStrongTwoRatio{} per GPU (\TriGlmStrongTok{} to \TriGlmStrongTwoTok{} tokens/s), and the bubble formula alone predicts $\times$\TriGlmStrongTwoFormula{} \est{}: nearly all of that loss is the larger pipeline bubble, from 96 to 48 micro-batches. At one copy the same formula also fits: 96 micro-batches instead of 32 raise throughput by $\times$\TriGlmStrongRatio{}, against $\times$\TriGlmStrongFormula{} \est{}.
+\textbf{A fixed batch.} At 768 sequences in total, throughput per GPU falls with copies, to $\times$\TriGlmStrongTwoRatio{} at 2 and $\times$\TriGlmStrongThreeRatio{} at 3, and the bubble formula alone predicts $\times$\TriGlmStrongTwoFormula{} and $\times$\TriGlmStrongThreeFormula{} \est{}: nearly all of that loss is the larger pipeline bubble, from 96 to 48 to 32 micro-batches. At one copy the same formula also fits: 96 micro-batches instead of 32 raise throughput by $\times$\TriGlmStrongRatio{}, against $\times$\TriGlmStrongFormula{} \est{}.
 
-\textbf{Memory falls with copies, which we did not expect.} The peak per GPU drops from \TriGlmThirteenMem{} to \TriGlmWeakTwoMem\,GiB (\TriGlmMemFallPct\,\% less) at 2 copies. The likely reason is that optimizer state is split across data-parallel ranks; that is inferred, not measured.
+\textbf{Memory falls with copies, which we did not expect.} The peak per GPU goes from \TriGlmThirteenMem{} to \TriGlmWeakTwoMem{} to \TriGlmWeakThreeMem\,GiB. The likely reason is that optimizer state is split across data-parallel ranks; that is inferred, not measured.
 
-\textbf{Caveats.} The 1-copy runs were on the second bandwidth group before the kernel change, and the 2-copy runs on the first group after it. A rerun of the 13-node entry after the change moved by 0.30\,\%. There is one run of each 2-copy point.
+\textbf{Caveats.} The 1-copy runs were on the second bandwidth group before the kernel change, and the others on other nodes after it. A rerun of the 13-node entry after the change moved by 0.30\,\%. There is one run of each multi-copy point, over 19 steps, and steps drift up within a run (\cref{sec:precision}), so a longer run may average higher.
 
 \begin{figure}[h]
   \centering\fig[0.72\linewidth]{glm_scaling}
@@ -37,4 +37,4 @@ In weak scaling the work per GPU is fixed, so perfect scaling is a flat line of 
   \label{fig:glm_scaling}
 \end{figure}
 
-\textbf{Still to come:} 3 copies (39 nodes), the first GLM-5 run across the bandwidth groups. 4 copies need 52 nodes, only if the caps clear.
+\textbf{Still to come:} 4 copies need 52 nodes, only if the caps clear.
