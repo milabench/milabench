@@ -14,7 +14,7 @@ from tt_analysis.tables import ledger
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_JOB)
 from .select import completed as _completed
-from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, qwen_base, with_energy)
+from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, qwen_base, with_energy)
 from .style import GLM, QWEN, WORKLOAD_LABEL
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
@@ -26,6 +26,23 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
           "TriEnergyBest",
+          # Scaling, GLM-5, operations
+          "TriWeakTop","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
+          "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
+          "TriGlmThirteenTok","TriGlmThirteenStep","TriGlmThirteenMem","TriGlmThirteenMfu","TriGlmThirteenAtoa","TriGlmThirteenAtoaPct","TriGlmSmallTok","TriGlmSmallStep","TriGlmSmallMem","TriGlmSmallMfu","TriGlmSmallAtoa","TriGlmSmallAtoaPct",
+          "TriGlmSixTok","TriGlmSixStep","TriGlmSixMem","TriGlmSixMfu","TriGlmSixAtoa","TriGlmSixAtoaPct","TriGlmTenTok","TriGlmTenStep","TriGlmTenMem","TriGlmTenMfu","TriGlmTenAtoa","TriGlmTenAtoaPct","TriGlmEpRatio","TriGlmSmallRatio","TriGlmSmallFormula",
+          "TriGlmStrongTok","TriGlmStrongStep","TriGlmStrongRatio","TriGlmStrongFormula",
+          "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
+          # Speed
+          "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          # Checkpoints
+          *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
+          "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
+          "TriCkGWLoadLo", "TriCkGWLoadHi", "TriCkGWSize", "TriCkGWLoadPeak", "TriCkGFSize", "TriCkGFSync", "TriCkGFSyncGBs", "TriCkGFSyncPeak", "TriCkGFBlocked", "TriCkGFTotal", "TriCkGFAsyncPeak",
+          # Loss
+          "TriLossSeedOneLo", "TriLossSeedOneHi", "TriLossSeedOneEnd", "TriLossSeedTwoLo", "TriLossSeedTwoHi", "TriLossSeedTwoEnd", "TriLossSeedThreeLo", "TriLossSeedThreeHi", "TriLossSeedThreeEnd",
+          "TriLossSameMax", "TriLossSameMin", "TriLossOtherMax", "TriLossOtherMxMax", "TriLossGlmLast", "TriLossGlmEnd",
           # Layouts
           "TriLevTokens", "TriLevTwoLarge", "TriLevFourLarge", "TriLevPpTwo", "TriLevPpFour", "TriLevHsdp", "TriLevHsdpLarge", "TriLevReduce", "TriLevFull", "TriLevFullH", "TriLevFortyEight", "TriLevPpBest",
           "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax",
@@ -246,6 +263,234 @@ def _layout_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]
     return out
 
 
+def _loss_numbers(t) -> dict[str, tuple]:
+    out = {}
+    g = loss_gaps(t["runs"], t["loss"])
+    if g.empty or g.synthetic.any():
+        return out
+    q, m = g[g.model == QWEN], g[g.model == GLM]
+    r = q[q.kind == "recipe"]
+    for seed, name in ((1234, "One"), (4321, "Two"), (5678, "Three")):
+        d = r[r.seed_a == seed]
+        if len(d):
+            out[f"TriLossSeed{name}Lo"], out[f"TriLossSeed{name}Hi"] = (d.last100.min(), "+.2f", False), (d.last100.max(), "+.2f", False)
+            out[f"TriLossSeed{name}End"] = (d.step500.mean(), "+.2f", False)
+    same = q[q.kind == "same seed"]
+    if len(same):
+        out["TriLossSameMax"] = (same.last100.abs().max(), ".2f", False)
+        out["TriLossSameMin"] = (same.last100.abs().min(), ".3f", False)
+    other = q[(q.kind == "other seed") & (q.recipe == "bf16")]
+    if len(other):
+        out["TriLossOtherMax"] = (other.last100.abs().max(), ".2f", False)
+    other = q[(q.kind == "other seed") & (q.recipe != "bf16")]
+    if len(other):
+        out["TriLossOtherMxMax"] = (other.last100.abs().max(), ".2f", False)
+    d = m[m.kind == "recipe"]
+    if len(d):
+        out["TriLossGlmLast"] = (d.last100.iloc[0], "+.2f", False)
+        out["TriLossGlmEnd"] = (d.step500.iloc[0], "+.2f", False)
+    return out
+
+
+def _speed_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
+    """C-speed medians and memory, the full-recompute comparison (tagged p3-acfull), and GLM-5 over 500 steps (C-loss)."""
+    out = {}
+    if runs.empty or runs.synthetic.any():
+        return out
+    cs = _completed(runs, "C-speed")
+    q, g = cs[cs.model == QWEN], cs[cs.model == GLM]
+    if len(q):
+        m = q.groupby(["nodes", "precision"]).agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max")).unstack()
+        one = m.loc[1]
+        out["TriQwenFpOne"] = (one.v.mxfp8 / one.v.bf16, ".2f", False)
+        top = int(m.index.max())
+        out["TriQwenFpTopNodes"] = (top, "d", False)
+        out["TriQwenFpTop"] = (m.loc[top].v.mxfp8 / m.loc[top].v.bf16, ".2f", False)
+        out["TriQwenMemBf"], out["TriQwenMemMx"] = (one.mem.bf16, ".0f", False), (one.mem.mxfp8, ".0f", False)
+        b = q[(q.nodes == 1) & (q.precision == "bf16")].tok_s_gpu
+        out["TriQwenFpOneSpread"] = (100 * (b.max() - b.min()) / b.median(), ".1f", False)
+    full = runs[(runs.experiment == "p3-acfull") & (runs.status == "completed")]
+    if len(full):
+        m = full.groupby("precision").agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max"))
+        out["TriQwenFpFull"] = (m.v.mxfp8 / m.v.bf16, ".2f", False)
+        out["TriQwenFullMem"] = (m.mem.bf16, ".1f", False)
+    if len(g):
+        m = g[g.nodes == 13].set_index("precision")
+        for rec, name in (("fp8-tensorwise", "Tensor"), ("fp8-blockwise", "Block"), ("mxfp8", "Mx")):
+            if rec in m.index:
+                out[f"TriGlmFp{name}"] = (m.tok_s_gpu[rec] / m.tok_s_gpu.bf16, ".2f", False)
+                out[f"TriGlmMem{name}"] = (m.mem_alloc_gib[rec], ".0f", False)
+                out[f"TriGlmMemPct{name}"] = (100 * (m.mem_alloc_gib[rec] / m.mem_alloc_gib.bf16 - 1), ".0f", False)
+        out["TriGlmMemBf"] = (m.mem_alloc_gib.bf16, ".0f", False)
+        out["TriGlmStepBf"] = (m.step_s.bf16, ".1f", False)
+    cl = _completed(runs, "C-loss")
+    cl = cl[cl.model == GLM].set_index("precision") if len(cl) else cl
+    if len(cl) and {"bf16", "mxfp8"} <= set(cl.index):
+        out["TriGlmLongStepBf"], out["TriGlmLongStepMx"] = (cl.step_s.bf16, ".1f", False), (cl.step_s.mxfp8, ".1f", False)
+        out["TriGlmLongFp"] = (cl.tok_s_gpu.mxfp8 / cl.tok_s_gpu.bf16, ".2f", False)
+        out["TriGlmLongMemBf"] = (cl.mem_alloc_gib.bf16, ".0f", False)
+    return out
+
+
+def _checkpoint_numbers(t) -> dict[str, tuple]:
+    out = {}
+    c = checkpoints(t["checkpoints"], t["runs"])
+    if c.empty or c.synthetic.any():
+        return out
+
+    def rng(name, d, col, fmt=".0f"):
+        if len(d):
+            out[f"{name}Lo"], out[f"{name}Hi"] = (d[col].min(), fmt, False), (d[col].max(), fmt, False)
+
+    q, g = c[c.model == QWEN], c[c.model == GLM]
+    for n, tag in ((1, "One"), (13, "Thirteen"), (25, "Top")):
+        f = q[(q.nodes == n) & (q.content == "full")]
+        rng(f"TriCkQ{tag}Sync", f[(f.op == "save") & (f["mode"] == "sync")], "total_s")
+        rng(f"TriCkQ{tag}Load", f[f.op == "load"], "total_s")
+        rng(f"TriCkQ{tag}Async", f[(f.op == "save") & (f["mode"] == "async")], "blocked_s", ".1f")
+        rng(f"TriCkQ{tag}AsyncTotal", f[(f.op == "save") & (f["mode"] == "async")], "total_s")
+        rng(f"TriCkQ{tag}PinTotal", f[(f.op == "save") & (f["mode"] == "async_pinned")], "total_s")
+        w = q[(q.nodes == n) & (q.content == "weights")]
+        rng(f"TriCkQ{tag}WSave", w[w.op == "save"], "total_s", ".1f")
+        rng(f"TriCkQ{tag}WLoad", w[w.op == "load"], "total_s", ".1f")
+    p = q[(q["mode"] == "async_pinned") & (q.repetition >= 2)]
+    rng("TriCkQPinBlocked", p, "blocked_s", ".1f")
+    size = q[q.content == "full"].bytes.median() / 1e12
+    out["TriCkQSizeFull"] = (size, ".2f", False)
+    out["TriCkQSizeW"] = (q[q.content == "weights"].bytes.median() / 1e9, ".0f", False)
+    s = g[g.content == "weights"]
+    rng("TriCkGWSync", s[(s.op == "save") & (s["mode"] == "sync")], "total_s")
+    rng("TriCkGWAsyncBlocked", s[(s.op == "save") & (s["mode"] == "async")], "blocked_s")
+    rng("TriCkGWAsyncTotal", s[(s.op == "save") & (s["mode"] == "async")], "total_s")
+    rng("TriCkGWLoad", s[s.op == "load"], "total_s")
+    if len(s):
+        out["TriCkGWSize"] = (s.bytes.median() / 1e12, ".2f", False)
+        out["TriCkGWLoadPeak"] = (s[s.op == "load"].peak_allocated_gib.max(), ".0f", False)
+    f = g[g.content == "full"]
+    if len(f):
+        a, y = f[(f.op == "save") & (f["mode"] == "async")].iloc[0], f[(f.op == "save") & (f["mode"] == "sync")].iloc[0]
+        out["TriCkGFSize"] = (f.bytes.median() / 1e12, ".2f", False)
+        out["TriCkGFSync"], out["TriCkGFSyncGBs"], out["TriCkGFSyncPeak"] = (y.total_s, ".0f", False), (y.gb_s, ".0f", False), (y.peak_allocated_gib, ".0f", False)
+        out["TriCkGFBlocked"], out["TriCkGFTotal"], out["TriCkGFAsyncPeak"] = (a.blocked_s, ".0f", False), (a.total_s, ".0f", False), (a.peak_allocated_gib, ".0f", False)
+    return out
+
+
+def _scaling_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
+    out = {}
+    if runs.empty or runs.synthetic.any():
+        return out
+    w = _completed(runs, "B-Q-weak")
+    w = w[(w.slow_nodes.fillna("") == "")]
+    for layout, tag in (("fsdp", "F"), ("hsdp8", "H")):
+        m = w[w.layout == layout].groupby("nodes").agg(v=("tok_s_gpu", "median"), s=("step_s", "median"))
+        if m.empty:
+            continue
+        top = int(m.index.max())
+        out["TriWeakTop"] = (top, "d", False)
+        out[f"TriWeak{tag}One"] = (m.v[1], ",.0f", False)
+        out[f"TriWeak{tag}TopTok"] = (m.v[top], ",.0f", False)
+        out[f"TriWeak{tag}Step"] = (m.s[top], ".2f", False)
+        out[f"TriWeak{tag}StepOne"] = (m.s[1], ".2f", False)
+        out[f"TriWeak{tag}EffOne"] = (100 * m.v[top] / m.v[1], ".0f", False)
+        if 2 in m.index:
+            out[f"TriWeak{tag}EffTwo"] = (100 * m.v[top] / m.v[2], ".0f", False)
+    s = _completed(runs, "B-Q-strong")
+    s = s[s.layout == "fsdp"] if len(s) else s
+    if len(s):
+        m = s.groupby("nodes").tok_s_gpu.median()
+        out["TriStrongOne"] = (m.iloc[0], ",.0f", False)
+        out["TriStrongOneStep"] = (s[s.nodes == m.index[0]].step_s.median(), ".1f", False)
+        if len(m) > 1:
+            n = int(m.index[-1])
+            out["TriStrongTopNodes"] = (n, "d", False)
+            out["TriStrongTop"] = (m.iloc[-1], ",.0f", False)
+            out["TriStrongTopStep"] = (s[s.nodes == n].step_s.median(), ".1f", False)
+            out["TriStrongEff"] = (100 * m.iloc[-1] * n / (m.iloc[0] * m.index[0]) / (n / m.index[0]), ".0f", False)
+    return out
+
+
+def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
+    out = {}
+    if runs.empty or runs.synthetic.any():
+        return out
+    ag = _completed(runs, "A-G")
+    if ag.empty:
+        return out
+    ag = ag.assign(seqs=ag.global_batch_tokens / ag.seq_len)
+    def one(layout, nodes, seqs, ac="full"):
+        d = ag[(ag.layout == layout) & (ag.nodes == nodes) & (ag.seqs == seqs) & (ag.ac == ac)]
+        return d if len(d) else None
+    for name, layout, nodes, seqs in (("Thirteen", "pp13-ep8", 13, 256), ("Small", "pp13-ep8", 13, 64), ("Six", "pp6-ep16", 12, 256), ("Ten", "pp10-ep8", 10, 200)):
+        d = one(layout, nodes, seqs)
+        if d is not None:
+            out[f"TriGlm{name}Tok"] = (d.tok_s_gpu.median(), ",.0f", False)
+            out[f"TriGlm{name}Step"] = (d.step_s.median(), ".1f", False)
+            out[f"TriGlm{name}Mem"] = (d.mem_alloc_gib.max(), ".0f", False)
+            out[f"TriGlm{name}Mfu"] = (d.mfu_pct.median(), ".0f", False)
+            if len(ep):
+                a2a = ep[ep.run_id.isin(d.run_id)].a2a_s
+                if len(a2a):
+                    out[f"TriGlm{name}Atoa"] = (a2a.median(), ".1f", False)
+                    out[f"TriGlm{name}AtoaPct"] = (100 * a2a.median() / d.step_s.median(), ".0f", False)
+    a, b = one("pp13-ep8", 13, 256), one("pp6-ep16", 12, 256)
+    if a is not None and b is not None:
+        out["TriGlmEpRatio"] = (a.tok_s_gpu.median() / b.tok_s_gpu.median(), ".1f", False)
+    c = one("pp13-ep8", 13, 64)
+    if a is not None and c is not None:
+        out["TriGlmSmallRatio"] = (c.tok_s_gpu.median() / a.tok_s_gpu.median(), ".2f", False)
+        out["TriGlmSmallFormula"] = ((1 - 12 / 20) / (1 - 12 / 44), ".2f", False)  # (P-1)/(m+P-1) with 13 stages: 8 and 32 micro-batches
+    st = _completed(runs, "B-G-strong")
+    st = st[(st.nodes == 13)] if len(st) else st
+    if len(st) and a is not None:
+        out["TriGlmStrongTok"] = (st.tok_s_gpu.median(), ",.0f", False)
+        out["TriGlmStrongStep"] = (st.step_s.median(), ".1f", False)
+        out["TriGlmStrongRatio"] = (st.tok_s_gpu.median() / a.tok_s_gpu.median(), ".2f", False)
+        out["TriGlmStrongFormula"] = ((1 - 12 / 108) / (1 - 12 / 44), ".2f", False)
+    return out
+
+
+def _operations_numbers(t) -> dict[str, tuple]:
+    out = {}
+    runs = t["runs"]
+    if runs.empty or runs.synthetic.any():
+        return out
+    done = _completed(runs)
+    for model, tag in ((QWEN, "Q"), (GLM, "G")):
+        d = done[(done.model == model) & done.experiment.isin(["A-Q", "A-G", "B-Q-weak", "B-G-weak", "B-G-strong", "C-speed"])].dropna(subset=["first_step_total_s"])
+        if len(d):
+            m = d.first_step_total_s / 60
+            out[f"TriStart{tag}Lo"], out[f"TriStart{tag}Hi"], out[f"TriStart{tag}Med"] = (m.min(), ".1f", False), (m.max(), ".1f", False), (m.median(), ".1f", False)
+    e = with_energy(done, t["run_power"])
+    if len(e):
+        q = e[(e.model == QWEN) & (e.nodes == 13) & (e.tokens_per_gpu == 24576) & (e.experiment == "A-Q") & (e.ac == "selective") & (e.grad_reduce == "fp32")]
+        for layout, tag in (("fsdp", "Fsdp"), ("hsdp8", "Hsdp"), ("pp2-fsdp", "Pp")):
+            d = q[q.layout == layout]
+            if len(d):
+                out[f"TriEnergy{tag}"] = (d.mtok_kwh.median(), ".0f", False)
+                out[f"TriPower{tag}"] = (d.power_w_gpu.median(), ",.0f", False)
+        g = e[(e.model == GLM) & (e.nodes == 13) & (e.layout == "pp13-ep8") & (e.ac == "full") & (e.precision == "bf16") & (e.experiment == "A-G") & (e.global_batch_tokens == 256 * 8192)]
+        if len(g):
+            out["TriEnergyGlm"] = (g.mtok_kwh.median(), ".0f", False)
+            out["TriPowerGlm"] = (g.power_w_gpu.median(), ",.0f", False)
+    return out
+
+
+def loss_table(t) -> str:
+    g = loss_gaps(t["runs"], t["loss"])
+    if g.empty:
+        return ""
+    lab = {"recipe": "{} minus BF16", "same seed": "{}, two runs, same seed", "other seed": "{}, two seeds"}
+    lines = [r"\begin{tabular}{lllrr}", r"\toprule", r"Workload & Comparison & Seeds, nodes & Steps 401--500 & Step 500 \\", r"\midrule"]
+    for model in (QWEN, GLM):
+        for kind in ("recipe", "same seed", "other seed"):
+            for x in g[(g.model == model) & (g.kind == kind)].itertuples():
+                seeds = str(x.seed_a) if x.seed_a == x.seed_b else f"{x.seed_a}, {x.seed_b}"
+                lines.append(f"{WORKLOAD_LABEL[model]} & {lab[kind].format(x.recipe.upper())} & {seeds}, {'same nodes' if x.same_nodes else 'other nodes'} & "
+                             f"{x.last100:+.3f} & {x.step500:+.3f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def key_numbers(t) -> dict[str, tuple]:
     """Macro name -> (value, format, synthetic); a name missing here is written as "??"."""
     out = {}
@@ -322,6 +567,12 @@ def key_numbers(t) -> dict[str, tuple]:
             share = 100 * (1 - one.step_s.median() / f13.step_s.median())
             out["TriQwenFsdpCommPct"] = (share, ".0f", one.synthetic.any() or f13.synthetic.any())
     out.update(_layout_numbers(runs, t["steps"]))
+    out.update(_loss_numbers(t))
+    out.update(_speed_numbers(runs))
+    out.update(_checkpoint_numbers(t))
+    out.update(_scaling_numbers(runs))
+    out.update(_glm_numbers(runs, t["ep_groups"]))
+    out.update(_operations_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -465,5 +716,6 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "macros.tex").write_text(macros(tables))
     (out / "qwen_layouts.tex").write_text(qwen_layouts_table(runs))
     (out / "kernel_change.tex").write_text(kernel_change_table(tables))
+    (out / "loss_gaps.tex").write_text(loss_table(tables))
     if len(runs):
         (out / "ledger.tex").write_text(ledger(runs.assign(excluded_nodes=runs.excluded_nodes.astype(object).fillna(""))))

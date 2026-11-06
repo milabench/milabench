@@ -69,17 +69,12 @@
 
 \textbf{Still to come:} \texttt{fsdp} with a BF16 reduction at 39 nodes, and the top-scale points of \cref{sec:scaling}.
 
-\paragraph{GLM-5 (A-G).} Every layout at a node count takes that count's weak-scaling batch (\cref{sec:method}). A
-copy is $P\times E$ GPUs and expert groups can only use the GPUs of one stage, so the smallest run differs between
-layouts (\cref{tab:ag}). The expert-parallel comparison (EP 8, 16, 32) is made at 52 nodes, EP 8 and 16 and
-13 and 26 stages also at 26 nodes; \texttt{pp13-ep8} and \texttt{pp6-ep16} also run at 13 and 12 nodes. On \texttt{pp13-ep8},
-recomputation (full vs.\ selective: MoE activation and norms) and a small global batch (64 sequences at 13 nodes: 8
-micro-batches for 13 stages, a pipeline bubble of 60\,\% \est{}) are varied. About 12 runs, each
-repeated twice, about 25 minutes each \est{}, including about 15 minutes of startup at scale \est{}.
+\paragraph{GLM-5 (A-G), answer so far.} Keep expert parallelism inside a node. At 12--13 nodes, \texttt{pp13-ep8} (expert groups inside a node) reaches \TriGlmThirteenTok{} tokens/s per GPU and \texttt{pp6-ep16} (expert groups across 2 nodes) \TriGlmSixTok: a factor of \TriGlmEpRatio. Expert all-to-all takes \TriGlmThirteenAtoa\,s of a \TriGlmThirteenStep\,s step in the first and \TriGlmSixAtoa\,s of \TriGlmSixStep\,s in the second (\TriGlmSixAtoaPct\,\%, median expert group; \cref{fig:glm_layouts}). This agrees with all-to-all being the weakest collective across nodes (\cref{sec:network}). GLM-5 stays below the CPU clock drop, so its step times are not throttled by it (\cref{sec:machine}).
+
+\paragraph{What was measured.} Every layout at a node count takes that count's weak-scaling batch, so a comparison holds at one node count. A model copy is $P\times E$ GPUs, and expert groups can only use the GPUs of one stage, so each layout has its own smallest run (\cref{tab:ag}). Two repetitions of \texttt{pp13-ep8} at 13 nodes (48.47 and about 48.6\,s) and \texttt{pp6-ep16} at 12 nodes, one of \texttt{pp10-ep8} at 10 nodes. The first of those \texttt{pp13-ep8} runs lost its summary to a garbled log line, recovered from that line. Each run measures 19 steps after the first.
 
 \begin{table}[h]
-  \caption{GLM-5 layouts (A-G). Smallest run: one model copy. Batch: global, in sequences. \texttt{pp13-ep8} also at 26 nodes
-    (2 copies, 512), the weak-scaling run. With 47 nodes, \cref{app:plan}.}
+  \caption{GLM-5 layouts (A-G). Smallest run: one model copy. Batch: global, in sequences. Bubble: the 1F1B formula. Layouts above 43 nodes need the capped nodes back.}
   \label{tab:ag}
   \centering\small
   \begin{adjustbox}{max width=\linewidth}
@@ -87,25 +82,24 @@ repeated twice, about 25 minutes each \est{}, including about 15 minutes of star
     \toprule
     Layout & Expert group & Smallest run (copies), batch & Largest run (copies), batch & Bubble \est{} \\
     \midrule
-    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1), 256 & 52 nodes (4), 1{,}024 & 27\,\% \\
+    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1), 256 & 39 nodes (3), 768; 52 (4), 1{,}024 & 27\,\% \\
     \texttt{pp13-ep16} & across 2 nodes & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 27\,\% \\
     \texttt{pp13-ep32} & across 4 nodes & 52 nodes (1), 1{,}024 & same & 27\,\% \\
     \texttt{pp26-ep8}  & in a node & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 28\,\% \\
-    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1), 256 & 48 nodes (4), 1{,}024 (416 GPUs don't split in 6) & 24\,\% \\
+    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1), 256 & 36 nodes (3), 768; 48 (4), 1{,}024 & 24\,\% \\
+    \texttt{pp10-ep8} (8 layers per middle stage) & in a node & 10 nodes (1), 200 & 40 nodes (4), 800; 50 (5), 1{,}000 & 26\,\% \\
+    \texttt{pp25-ep8} (3 layers per middle stage) & in a node & 25 nodes (1), 512 & 50 nodes (2), 1{,}024 & 27\,\% \\
     \bottomrule
   \end{tabular}
   \end{adjustbox}
 \end{table}
 
-On the whole machine, the fastest layout is \texttt{\TriGlmBestLayout}: \TriGlmBestTokS{} tokens/s per
-GPU, \TriGlmBestMFU\,\% MFU.
-
 \begin{figure}[h]
   \centering\fig{glm_layouts}
-  \caption{GLM-5 by layout and variant: tokens/s per GPU (left) and expert all-to-all time per step
-    (right, median over expert groups), at each node count (color); \texttt{pp13-ep8} at 26 nodes is the weak-scaling run.
-    Batch 64: the small-batch point at 13 nodes. \syntheticnote{glm_layouts}}
+  \caption{GLM-5 by layout and variant: tokens/s per GPU (left) and expert all-to-all time per step (right, median over expert groups), by node count (color). Batch 64: the small-batch point at 13 nodes. Red cross: selective recompute, out of memory. \syntheticnote{glm_layouts}}
   \label{fig:glm_layouts}
 \end{figure}
 
-\placeholder{cost of expert groups crossing nodes; effect of recomputation and of the small batch.}
+\textbf{Other points.} \texttt{pp10-ep8} at 10 nodes reaches \TriGlmTenTok{} tokens/s per GPU, a tie with \texttt{pp13-ep8}, at \TriGlmTenMem\,GiB against \TriGlmThirteenMem\,GiB. The best layout so far runs at \TriGlmThirteenMfu\,\% MFU, an overestimate, since attention counts as dense. A small batch of 64 sequences (8 micro-batches for 13 stages) gives $\times$\TriGlmSmallRatio{} the rate of batch 256, and the 1F1B formula gives $\times$\TriGlmSmallFormula{} \est{}, so the bubble accounts for it. Selective recompute ran out of memory in the first forward, at 169.7--171.1\,GiB on stage 0, so GLM-5 stays on full recompute. In timed runs, send and receive calls take 9.5--29.5\,\% of forward-backward by stage (mean 19.7\,\%, waits included); the slowest transfer steady state gives at least about 19\,GB/s per node (derived), so the send and receive drop of \cref{sec:network} does not dominate at 13 nodes.
+
+\textbf{Still to come:} \texttt{pp13-ep16} and \texttt{pp26-ep8} at 26 nodes, \texttt{pp25-ep8} at 25, \texttt{pp10-ep8} at 20, 30 and 40, \texttt{pp6-ep16} at 36. The comparison of expert groups across more nodes (EP~16 and EP~32) depends on them; 50 and 52 nodes only if nodes return.

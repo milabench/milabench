@@ -2,52 +2,29 @@
 \label{sec:scaling}
 
 \begin{question}
-  \textbf{How far does each workload scale on the partition?} How does Qwen3.8-27B's throughput per GPU
-  change from 8 to \TriNGpus{} GPUs, with the best layout and with plain FSDP? Do GLM-5 model copies scale from
-  1 to \TriGlmTopCopies{}?
+  \textbf{How far does each workload scale on the partition?} How does Qwen3.8-27B's throughput per GPU change as GPUs are added, with \texttt{hsdp8} and plain \texttt{fsdp}? Do GLM-5 model copies scale?
 \end{question}
 
-All scaling runs use the best layouts found in \cref{sec:layouts}. In weak scaling the work per GPU is
-fixed, so perfect scaling is a flat line of throughput per GPU. Unlike on 4-GPU nodes, a 1-node run
-trains the full Qwen model, so it serves as the 100\,\% efficiency reference.
+In weak scaling the work per GPU is fixed, so perfect scaling is a flat line of throughput per GPU. A 1-node run trains the full Qwen model, so it serves as the 100\,\% reference. A drop from 1 to 2 nodes or copies, from the first cross-node traffic, would not by itself be a limit on scaling, so efficiency is given against both. All Qwen step times are throttled by the CPU clock drop (\cref{sec:machine}), at every scale: efficiencies compare throttled runs with throttled runs.
 
-\paragraph{To look at: a one-off drop from 1 to 2 copies.} A second copy (or a second node, for Qwen) adds cross-node data
-parallelism, with a cost per step that does not depend on the batch. So a drop from 1 to 2 is expected, once, and is not by itself
-a limit on scaling. A truncated GLM-5 on H100 looked like this from 2 to 4 nodes: 0.76 efficiency, which a constant
-+0.76\,s per step accounts for; that cause is inferred, not measured, and this is not B200. Efficiency is therefore given
-against both baselines: 1 copy or node, and 2, the first run with that traffic.
+\paragraph{Qwen3.8-27B, answer so far.} Nearly flat up to \TriWeakTop{} nodes, the largest run so far: \texttt{hsdp8} holds \TriWeakHEffOne\,\% of its 1-node throughput and \TriWeakHEffTwo\,\% of its 2-node throughput; \texttt{fsdp} \TriWeakFEffOne\,\% and \TriWeakFEffTwo\,\% (\cref{fig:qwen_scaling}). Step times grow from \TriWeakHStepOne{} to \TriWeakHStep\,s (\texttt{hsdp8}), \TriWeakFStepOne{} to \TriWeakFStep\,s (\texttt{fsdp}). Up to 26 nodes, all runs stay in one bandwidth group (\cref{sec:network}): that does not yet test the slower links between groups. Runs above 28 nodes will.
 
-\paragraph{Qwen3.8-27B (B-Q).} Weak scaling at 1, 2, 4, 8, 13, 26 and \TriNNodes{} nodes with fixed tokens per GPU,
-for the best layout and the \texttt{fsdp} baseline (B-Q-weak). Strong scaling keeps the global batch of
-52 nodes ($52\times8\times24$k tokens) at 13, 26 and 52 nodes (B-Q-strong). With the best
-layout, weak-scaling efficiency at \TriNNodes{} nodes is \TriQwenWeakEff\,\% of 1 node and \TriQwenWeakEffFromTwo\,\% of \TriQwenWeakTwoNodes{} nodes.
+\textbf{Measured:} \texttt{fsdp} and \texttt{hsdp8}, 24k tokens per GPU, at 1, 2, 4, 8, 13, 25 and 26 nodes, none with a slow node. \textbf{Strong scaling}, fixed global batch of 98,304 tokens per GPU at 13 nodes: \texttt{fsdp} runs at \TriStrongOne{} tokens/s per GPU (\TriStrongOneStep\,s per step), and at \TriStrongTopNodes{} nodes \TriStrongTop\ (\TriStrongTopStep\,s), \TriStrongEff\,\% of the 13-node rate. \texttt{hsdp8} has no measurement at 13 or 26 nodes: its peak reached 175.7\,GiB of the GPU's 178\,GiB, allocations kept retrying, and both runs were stopped before a useful measurement. Those failures are the result: with 8 sequences per GPU, or 4 at 26 nodes, the replicated layout runs out of room.
 
 \begin{figure}[h]
   \centering\fig{qwen_scaling}
-  \caption{Qwen3.8-27B tokens/s per GPU vs.\ number of GPUs. Left: weak scaling (24k tokens per GPU), best
-    layout vs.\ \texttt{fsdp}, with the efficiency at \TriNGpus{} GPUs. Right: strong scaling (fixed global
-    batch), labelled with the efficiency relative to the fewest GPUs. \syntheticnote{qwen_scaling}}
+  \caption{Qwen3.8-27B tokens/s per GPU vs.\ GPUs. Left: weak scaling (24k tokens per GPU), \texttt{hsdp8} and \texttt{fsdp}, labelled with the efficiency at the largest run against the fewest GPUs. Right: strong scaling (fixed global batch), labelled with the efficiency against the fewest GPUs. \syntheticnote{qwen_scaling}}
   \label{fig:qwen_scaling}
 \end{figure}
 
-\placeholder{where the curve bends; gap between the best layout and \texttt{fsdp}; strong-scaling
-efficiency.}
+\textbf{Still to come:} 39 nodes (crossing the bandwidth groups); one labelled run at 43 nodes, which includes the 3 slow nodes; 50 nodes if the caps clear.
 
-\paragraph{GLM-5 (B-G).} \texttt{pp13-ep8} with 1, 2, 3 and 4 model copies (13, 26, 39 and 52 nodes). Weak scaling keeps
-32 micro-batches per data-parallel rank: 256, 512, 768 and 1{,}024 sequences in total. Strong scaling keeps 768 sequences in
-total, so the micro-batches go 96, 48, 32, 24 and the bubble 11, 20, 27, 33\,\% \est{}: the cost of spreading a fixed batch.
-The weak runs at 13 and 52 nodes are those of A-G, and the 39-node run serves weak and strong scaling
-(\cref{sec:method}). In weak scaling, \TriGlmTopCopies{} copies reach \TriGlmCopiesEff\,\% of the throughput per GPU of one
-copy and \TriGlmCopiesEffFromTwo\,\% of two; two copies reach \TriGlmCopiesEffTwo\,\% of one.
+\paragraph{GLM-5, answer so far.} Not known yet: only the 13-node point exists, one model copy. Weak scaling needs 26 and 39 nodes, which are planned. What the single copy already says: at 13 nodes, a larger batch reduces the pipeline bubble as the 1F1B formula predicts. 96 micro-batches instead of 32 raise throughput by $\times$\TriGlmStrongRatio{} (\TriGlmStrongTok{} tokens/s per GPU, \TriGlmStrongStep\,s per step), and the formula gives $\times$\TriGlmStrongFormula{} \est{}.
 
 \begin{figure}[h]
   \centering\fig[0.72\linewidth]{glm_scaling}
-  \caption{GLM-5 (\texttt{pp13-ep8}) tokens/s per GPU vs.\ number of model copies (13 nodes each), with
-    256 sequences per copy (weak) and 768 in total (strong); labels: pipeline bubble of each point (est., the formula);
-    legend: efficiency at the most copies against one.
-    \syntheticnote{glm_scaling}}
+  \caption{GLM-5 (\texttt{pp13-ep8}) tokens/s per GPU vs.\ number of model copies (13 nodes each), with 256 sequences per copy (weak) and 768 in total (strong); labels: pipeline bubble of each point (est., the formula). \syntheticnote{glm_scaling}}
   \label{fig:glm_scaling}
 \end{figure}
 
-\placeholder{the drop from 1 to 2 copies against the flat part after it; whether copies interfere through the shared fabric; how
-much the strong-scaling loss comes from the bubble.}
+\textbf{Still to come:} 2 copies (26 nodes, running now), 3 copies (39 nodes). 4 copies need 52 nodes, only if the caps clear. A 39-node GLM-5 run needs 13 clean nodes from each of three sets, so \texttt{trig0141} and \texttt{0142}'s short drain earlier matters only if it repeats.

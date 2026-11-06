@@ -7,86 +7,53 @@
   slower? How long until training starts? How many tokens does a kWh buy?
 \end{question}
 
-\paragraph{Checkpoints (F1).} Save and load of Qwen3.8-27B (full about 0.32\,TB \est{}, weights about 54\,GB \est{}) at 1, 13 and \TriNNodes{} nodes,
-and of GLM-5, weights only (about 1.5\,TB \est{}) and then full (about 8.9\,TB \est{}), at 13 and \TriGlmTopNodes{} nodes;
-synchronous vs.\ asynchronous saves (time training is blocked vs.\ total write time); 3 repetitions at
-different times of day. Those sizes are estimates, from what truncated models measured on H100: 12.0 bytes per parameter for a full checkpoint,
-2.0 for weights. The nodes have no local disk, so an asynchronous save can only stage in host
-memory before writing to the shared VAST filesystem. That filesystem serves the rest of Trillium, so the
-sizes escalate with the administrators' agreement (Qwen 1 node, Qwen at the largest scale, GLM-5 weights, GLM-5 full),
-and only one GLM-5 checkpoint is on disk at a time, deleted once its load is timed.
+\paragraph{Checkpoints (F1), answer.} A Qwen checkpoint costs seconds: a full \TriCkQSizeFull\,TB save blocks training for about 1.5\,s when asynchronous. On GLM-5, weights cost about half a minute and a full \TriCkGFSize\,TB checkpoint two minutes to write, but \textbf{a full checkpoint cannot be loaded on one 13-node copy}: it runs out of GPU memory.
 
-Full checkpoints also raise GPU memory, on saves too. On truncated GLM-5 models (H100, not B200), at $2\times4$ GPUs per copy, 38.4\,GiB in
-training rose to 56.5--60.5\,GiB on saves and a load ran out of memory at 79\,GiB; at $2\times8$, on B200, the load peak was 1.95 times
-the training peak. A full checkpoint of one copy on 13 nodes may therefore not fit in 180\,GB (about 190\,GiB \est{}): GLM-5 runs weights first,
-and has a fallback for the full checkpoint, \texttt{pp13-ep16} on 26 nodes (half the expert state per GPU). A full load at the smallest scale peaks at
-\TriCkptGlmLoadPeak\,GiB per GPU.
-
-At the largest scale, a synchronous save takes \TriCkptQwenSave\,s for Qwen3.8-27B and
-\TriCkptGlmFullSave\,s for the full GLM-5 state; an asynchronous save of GLM-5 blocks training for
-\TriCkptGlmFullBlocked\,s. The highest write throughput is \TriCkptWriteGBs\,GB/s.
+\paragraph{What was measured.} Save and load on the shared VAST filesystem; the nodes have no disk, so an asynchronous save stages in host memory. Qwen3.8-27B at \texttt{fsdp}, 12k tokens per GPU, on 1, 13 and 25 nodes, two saves and two loads per run. GLM-5 at \texttt{pp13-ep8}, 13 nodes: weights in two rounds, then full. Sizes come out at 12.0 bytes per parameter for a full checkpoint and 2.0 for weights, as on the truncated test models. \Cref{fig:checkpoint} shows them all. The first save of a run is often slower than the second, so ranges below are wide at small scale.
 
 \begin{figure}[h]
   \centering\fig{checkpoint}
-  \caption{Checkpoint time vs.\ number of nodes for Qwen3.8-27B (full state), GLM-5 weights only and GLM-5
-    full state: synchronous save, asynchronous save (total and time training is blocked; pinned: its second save, the first also allocates
-    the buffers), and load. Last panels: filesystem throughput of saves and loads, and peak GPU memory of loads and of the runs that
-    save, against the 180\,GB of a B200. Red cross: an operation that failed, with no successful run. \TriCkptOverMemoryNote{} \syntheticnote{checkpoint}}
+  \caption{Checkpoint time vs.\ number of nodes for Qwen3.8-27B and GLM-5, weights and full state: synchronous save, asynchronous save (total, and time training is blocked; pinned: its second save, the first also allocates the buffers), and load. Last panels: filesystem throughput of saves and loads, and peak GPU memory of loads and of the runs that save, against the 180\,GB of a B200. Red cross: an operation that failed, with no successful run. \TriCkptOverMemoryNote{} \syntheticnote{checkpoint}}
   \label{fig:checkpoint}
 \end{figure}
 
-\placeholder{variation with time of day; write throughput against the filesystem's rated bandwidth.}
+\textbf{Qwen.} Full state, \TriCkQSizeFull\,TB: synchronous save \TriCkQOneSyncLo--\TriCkQOneSyncHi\,s on 1 node, \TriCkQThirteenSyncLo--\TriCkQThirteenSyncHi\,s on 13, \TriCkQTopSyncLo--\TriCkQTopSyncHi\,s on 25. An asynchronous save blocks training \TriCkQOneAsyncLo--\TriCkQOneAsyncHi\,s on 1 node, \TriCkQThirteenAsyncLo--\TriCkQThirteenAsyncHi\,s on 13, \TriCkQTopAsyncLo--\TriCkQTopAsyncHi\,s on 25; pinned, from its second save on, \TriCkQPinBlockedLo--\TriCkQPinBlockedHi\,s, but its total grows to \TriCkQTopPinTotalLo--\TriCkQTopPinTotalHi\,s on 25 nodes (\TriCkQOnePinTotalLo--\TriCkQOnePinTotalHi\,s on 1), and we do not know why. Load: \TriCkQOneLoadLo--\TriCkQOneLoadHi, \TriCkQThirteenLoadLo--\TriCkQThirteenLoadHi\ and \TriCkQTopLoadLo--\TriCkQTopLoadHi\,s. Weights, \TriCkQSizeW\,GB: save \TriCkQThirteenWSaveLo--\TriCkQThirteenWSaveHi\,s, load \TriCkQThirteenWLoadLo--\TriCkQThirteenWLoadHi\,s at 13 nodes.
+\textbf{Checkpoints at 25 nodes are slower than at 13.} We have not looked for the cause. Those runs happened at a different time of day from the 13-node ones, on a shared filesystem, so scale need not be the reason.
 
-\paragraph{Stability (F2).} The best Qwen layout trains for at least one hour on \TriNNodes{} nodes. GPU clocks and
-power from the node telemetry share the time axis with throughput, so a drop can be traced to a GPU.
+\textbf{GLM-5, weights}, \TriCkGWSize\,TB: synchronous save \TriCkGWSyncLo--\TriCkGWSyncHi\,s; asynchronous blocked \TriCkGWAsyncBlockedLo--\TriCkGWAsyncBlockedHi\,s, total \TriCkGWAsyncTotalLo--\TriCkGWAsyncTotalHi\,s; load \TriCkGWLoadLo--\TriCkGWLoadHi\,s, peaking at \TriCkGWLoadPeak\,GiB. So on GLM-5 an asynchronous save blocks training for longer than a synchronous one and takes much longer overall. That is not what asynchronous saves are for, and we have not explained it.
+
+\textbf{GLM-5, full state}, \TriCkGFSize\,TB: synchronous save \TriCkGFSync\,s (\TriCkGFSyncGBs\,GB/s), peak \TriCkGFSyncPeak\,GiB; asynchronous blocked \TriCkGFBlocked\,s, total \TriCkGFTotal\,s, peak \TriCkGFAsyncPeak\,GiB. The \textbf{load failed}: out of memory on the 96 ranks of stages 1--12 in \texttt{optimizer.load\_state\_dict}, at 175.4--176.1\,GiB allocated. Stage 0's load peak was 2.22 times its training peak, against the 1.95 assumed from a 2-node test, so a load would need about 200\,GiB at this layout (an estimate). Load memory depends on the layout, not on the copies, so \texttt{pp13-ep8} should fail at 39 nodes too (inferred). The fallback is half the expert state per GPU, \texttt{pp13-ep16} on 26 nodes; a separate error in the scheduler state would stop any full load, and has to be fixed first.
+
+\textbf{Still to come:} GLM-5 weights repetition 3, weights at 39 nodes and full at 26; Qwen at 39.
+
+\paragraph{Stability (F2).} \textbf{Not run.} The long run waits for the top node count. No figure yet: what follows on stragglers comes from existing runs. The closest evidence on stability is the 500-step GLM-5 runs of \cref{sec:precision}, where BF16 steps slow down from 48.6\,s to about 55\,s; 7 hours, without a gap.
 
 \begin{figure}[h]
   \centering\fig{stability}
-  \caption{Long run (\TriNNodes{} nodes), vs.\ time: tokens/s per GPU per step with a 15-step median (top); SM
-    clock (middle) and power (bottom) of the GPUs: gray band, range over all \TriNGpus{} GPUs; line, the median;
-    the GPU with the lowest value is named. \syntheticnote{stability}}
+  \caption{Long run, vs.\ time: tokens/s per GPU per step with a 15-step median (top); SM clock (middle) and power (bottom) of the GPUs: gray band, range over all GPUs; line, the median; the GPU with the lowest value is named. \syntheticnote{stability}}
   \label{fig:stability}
 \end{figure}
 
-\placeholder{throughput drift over the hour; throttling events and their cause.}
-
-\paragraph{Stragglers (F2).} With data parallelism every rank waits for the slowest one, so per-rank step
-times are equal and cannot point to a slow GPU. The slow GPU is the one that waits least: its activity is
-highest. A node whose CPU clock falls also holds back every rank on it.
+\paragraph{Stragglers.} With data parallelism every rank waits for the slowest one, so per-rank step times are equal and cannot point to a slow GPU; the slow GPU is the one that waits least, and a node whose CPU clock falls holds back every rank on it. The slow nodes of \cref{sec:machine} were found this way, from the node telemetry of the side-by-side runs. \Cref{fig:stragglers} applies it to the largest clean run so far, a Qwen \texttt{fsdp} run: no node stands out. This is one run, not the long run the design called for.
 
 \begin{figure}[h]
   \centering\fig{stragglers}
-  \caption{Long run, from the node telemetry. Top: activity of each GPU (highest 10-minute median), by
-    node. Bottom: per node, the lowest 1-minute median of the CPU busy-core clock relative to the first
-    minute. Nodes grouped by subnet; outliers are named. \syntheticnote{stragglers}}
+  \caption{Largest clean Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; the highest node of each panel is named. \syntheticnote{stragglers}}
   \label{fig:stragglers}
 \end{figure}
 
-\placeholder{slowest GPUs and nodes, and their effect on throughput.}
-
-\paragraph{Startup (F3).} Time from process start to the first step, taken from every run (no extra
-runs). At the largest scale it is \TriStartupQwen\,min for Qwen3.8-27B and \TriStartupGlm\,min for
-GLM-5.
+\paragraph{Startup (F3).} Time from process start to the first step, from every run. Qwen3.8-27B takes \TriStartQLo--\TriStartQHi\,min (median \TriStartQMed) at every node count so far, and that time does not visibly grow with scale. GLM-5 takes \TriStartGLo--\TriStartGHi\,min (median \TriStartGMed) at 10--13 nodes. Most of that spread is compile caches: the same GLM-5 entry takes about 15\,min with kernels compiling and about 6\,min with them cached. On Qwen, a cold compile cache slows the whole run too (\cref{sec:layouts}).
 
 \begin{figure}[h]
   \centering\fig[0.72\linewidth]{startup}
-  \caption{Time from process start to the first step vs.\ number of nodes, for both workloads.
-    \syntheticnote{startup}}
+  \caption{Time from process start to the first step vs.\ number of nodes, for both workloads, one point per run. \syntheticnote{startup}}
   \label{fig:startup}
 \end{figure}
 
-\placeholder{which phase (environment, initialization, compilation, first step) grows with scale.}
-
-\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in every run (no
-extra runs). Only GPU power is counted: CPUs, memory, network and cooling are not. The most efficient
-Qwen layout at 13 nodes reaches \TriEnergyBest{} million tokens per kWh.
+\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in each run's measurement. Only GPU power is counted: not CPUs, memory, network or cooling. Qwen at 13 nodes and 24k tokens per GPU: \texttt{fsdp} \TriEnergyFsdp{} and \texttt{hsdp8} \TriEnergyHsdp{} million tokens per kWh at about \TriPowerFsdp{} and \TriPowerHsdp\,W per GPU; \texttt{pp2-fsdp} draws less (\TriPowerPp\,W) but runs slower, \TriEnergyPp. GLM-5 at 13 nodes: \TriEnergyGlm{} at \TriPowerGlm\,W per GPU. So Qwen is throttled at its highest power, and a token of GLM-5 costs much more than a token of Qwen; they are different models, so the second is not a comparison of efficiency.
 
 \begin{figure}[h]
   \centering\fig{energy}
-  \caption{Million tokens per kWh (GPU power only): Qwen3.8-27B by layout at 13 nodes and 24k tokens per
-    GPU (left); by workload and precision on the whole machine (middle); Qwen3.8-27B weak scaling vs.\
-    nodes (right). \syntheticnote{energy}}
+  \caption{Million tokens per kWh (GPU power only): Qwen3.8-27B by layout at 13 nodes and 24k tokens per GPU (left); by workload and precision at the largest run of each (middle); Qwen3.8-27B weak scaling vs.\ nodes (right). \syntheticnote{energy}}
   \label{fig:energy}
 \end{figure}
-
-\placeholder{energy per token of the best configurations; effect of precision and scale.}

@@ -21,6 +21,7 @@ only holds Trillium runs. The directories milabench keeps for install and prepar
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -32,7 +33,7 @@ from tt_analysis.runs import data_files, parse_run
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, PSTATE_BOOTS, SUBNET_OF
 from .runs import canonical_model, drop_warmup, failed_operation, parse_extras, real_step_times
-from .select import UNFINISHED_JOB_STATES, mark_beside, mark_selection
+from .select import NO_DATA_RUNS, UNFINISHED_JOB_STATES, mark_beside, mark_selection
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
           "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load"]
@@ -120,6 +121,33 @@ def mark_jobs(r: pd.DataFrame, sacct: Path) -> pd.DataFrame:
     return r.assign(job_state=state, status=r.status.where(~timed_out, "failed").where(~unfinished, "running"))
 
 
+def _hostlist(text: str) -> str:
+    """trig[0101-0103,0105] -> trig0101;trig0102;trig0103;trig0105."""
+    m = re.fullmatch(r"(\w+)\[(.+)\]", text)
+    if m is None:
+        return text
+    out = []
+    for part in m[2].split(","):
+        lo, _, hi = part.partition("-")
+        out += [f"{m[1]}{i:0{len(lo)}d}" for i in range(int(lo), int(hi or lo) + 1)]
+    return ";".join(out)
+
+
+def _no_data_rows(sacct: Path, seen: set) -> list[dict]:
+    """Jobs of NO_DATA_RUNS: their run data is empty, so the launcher's settings and sacct say what they were."""
+    if not sacct.exists():
+        return []
+    jobs = pd.read_csv(sacct, sep="|", dtype=str).set_index("JobID")
+    rows = []
+    for job, what in NO_DATA_RUNS.items():
+        if job in jobs.index and job not in seen:
+            j = jobs.loc[job]
+            nodes = int(j.NNodes)
+            rows.append({"run_id": f"{CLUSTER}:{what['bench']}.{job}:{what['bench']}", "cluster": CLUSTER, "synthetic": False, "run_name": f"{what['bench']}.{job}", "started": j.Start, "status": "failed",
+                         "hosts": _hostlist(j.NodeList), "nodes": nodes, "gpus": nodes * 8, "job_id": job, "variant": what["bench"], "global_batch_tokens": what["tokens_per_gpu"] * nodes * 8, "seq_len": 4096, **what})
+    return rows
+
+
 def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) -> dict[str, pd.DataFrame]:
     rows = {name: [] for name in TABLES}
     for cdir, is_syn in _sources(raw, synthetic):
@@ -177,6 +205,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]
     if not r.empty:
+        seen = set(r.run_name.str.extract(r"\.(\d{7})(?:\.|$)")[0].dropna())
+        r = pd.concat([r, pd.DataFrame(_no_data_rows(raw / CLUSTER / "sacct.txt", seen))], ignore_index=True) if _no_data_rows(raw / CLUSTER / "sacct.txt", seen) else r
         r["peak_flops_per_gpu"] = PEAK_BF16
         r["mfu_pct"] = 100 * r.flops_per_token * r.tok_s_gpu / PEAK_BF16
         # started is naive local time (tt_analysis.runs), so the boots are too

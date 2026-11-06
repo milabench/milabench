@@ -19,11 +19,11 @@ from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_ME
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
-from .select import (CAPPED_NODES, REF_NODES, SLOW_NODES, checkpoints, completed, drift, e1_changes, failed_runs, pinned_blocked, qwen_base,
+from .select import (CAPPED_NODES, REF_NODES, SLOW_NODES, checkpoints, completed, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
                      with_energy)
 
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
-GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
+GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp10-ep8", "pp25-ep8", "pp6-ep16"]
 POS = {h: i for i, h in enumerate(NODES)}
 REF = {"layout": "fsdp", "tokens_per_gpu": 12288, "grad_reduce": "fp32", "ac": "selective", "precision": "bf16"}
 
@@ -571,8 +571,8 @@ def glm_layouts(t):
     r = r.assign(label=r.apply(_glm_label, axis=1))
     failed = failed_runs(t["runs"], "A-G")
     failed = failed.assign(label=failed.apply(_glm_label, axis=1)) if len(failed) else failed
-    # 12-13 nodes, 26, and the machine (48-52, or 39 at 47 nodes): a layout comparison holds at a node count.
-    r["scale"] = np.select([r.nodes >= 0.75 * r.nodes.max(), r.nodes < 20], ["large", "small"], "mid")
+    # 10-13 nodes, 20-30, and 36 up: a layout comparison holds at a node count.
+    r["scale"] = np.select([r.nodes < 20, r.nodes < 36], ["small", "mid"], "large")
     m = _median(r, ["label", "layout", "nodes", "copies", "scale"])
     ep = t["ep_groups"]
     a2a = (ep.merge(r[["run_id", "label", "nodes"]], on="run_id").groupby(["label", "nodes"]).a2a_s.median()
@@ -613,6 +613,7 @@ def glm_layouts(t):
 def _gpu_axis(ax, values) -> None:
     ax.set_xscale("log", base=2)
     ticks = sorted(set(int(v) for v in values))
+    ticks = [v for i, v in enumerate(ticks) if i == len(ticks) - 1 or ticks[i + 1] / v > 1.1]  # 200 and 208 GPUs: one label
     ax.set_xticks(ticks)
     ax.set_xticklabels([str(v) for v in ticks], fontsize=6)
     ax.minorticks_off()
@@ -653,7 +654,10 @@ def qwen_scaling(t):
                         fontsize=6, color=INK2, ha="center")
         batch = s.global_batch_tokens.iloc[0] / 1e6
         ax.set_title(f"strong: {batch:.1f}M tokens per step, {med.layout.iloc[0]}")
-        _gpu_axis(ax, s.gpus)
+        failed = failed_runs(t["runs"], "B-Q-strong")
+        for gpus in sorted(set(failed.gpus)) if len(failed) else ():
+            _failed_x(ax, gpus, "hsdp8: memory")
+        _gpu_axis(ax, [*s.gpus, *(failed.gpus if len(failed) else ())])
     ax.set_xlabel("GPUs (label: efficiency vs fewest GPUs)")
     for ax in axes:
         ax.set_ylim(0, None)
@@ -738,10 +742,10 @@ def precision_speed(t):
         ax.set_yticks(range(len(recipes)))
         ax.set_yticklabels(recipes)
         ax.set_ylim(len(recipes) - 0.4, -0.7)
-        ax.set_title(f"{WORKLOAD_LABEL[model]}: {int(small)} vs {int(large)} nodes")
+        ax.set_title(f"{WORKLOAD_LABEL[model]}: {int(small)} vs {int(large)} nodes" if small != large else f"{WORKLOAD_LABEL[model]}: {int(small)} nodes")
         ax.set_xlabel("speedup over BF16 (tokens/s)")
         style.finish(ax, trim=False)
-    handles = [_handle(SCALE_COLOR["small"], "small scale", syn), _handle(SCALE_COLOR["large"], "whole machine", syn)]
+    handles = [_handle(SCALE_COLOR["small"], "smallest scale", syn), _handle(SCALE_COLOR["large"], "largest so far", syn)]
     axes[0][0].legend(handles=handles, loc="lower left")
     style.synthetic_mark(fig, syn)
     fig.tight_layout()
@@ -752,67 +756,41 @@ GLM_LR_WARMUP = 50  # --lr-warmup-iters of the C-loss entries (benchmarks/megatr
 
 
 def precision_loss(t):
-    """Loss difference to one BF16 run over 500 steps from the same seed and data, 13 nodes (C-loss); the
-    band is the same difference for the BF16 repeats (same seed, other seed), the noise to compare with.
-    Joined on the loss events' own step, across runs; never with the rate events' batch_id."""
-    r = _runs(t, "C-loss")
-    loss = t["loss"]
-    if r.empty or loss.empty:
+    """Loss difference between runs over 500 steps at 13 nodes (C-loss), by step: each FP8 recipe minus BF16 at the same seed, with the same differences
+    between BF16 repeats as the noise. Joined on the loss events' own step, across runs; never with the rate events' batch_id."""
+    g = loss_gaps(t["runs"], t["loss"])
+    if g.empty:
         return None
-    r = r.assign(repetition=r.repetition.fillna(1))  # a first run started without TT_REPETITION is repetition 1, the reference
-    d = loss.dropna(subset=["step"]).merge(r[["run_id", "model", "precision", "seed", "repetition", "started"]],
-                                           on="run_id")
-    models = [m for m in (QWEN, GLM) if m in set(d.model)]
-    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH, 2.3), sharey=True, squeeze=False)
-    limit = 0.0
+    models = [m for m in (QWEN, GLM) if m in set(g.model)]
+    curve = {k: d.dropna(subset=["step"]).groupby("step").loss.mean() for k, d in t["loss"][t["loss"].run_id.isin(set(g.run_a) | set(g.run_b))].groupby("run_id")}
+    smooth = lambda row: (curve[row.run_a] - curve[row.run_b]).dropna().rolling(25, center=True, min_periods=5).mean()  # noqa: E731
+    fig, axes = plt.subplots(1, len(models), figsize=(TEXT_WIDTH, 3.2), sharey=True, squeeze=False)
+    seed_color = {}
     for ax, model in zip(axes[0], models):
-        g = d[d.model == model]
-        runs = r[r.model == model]
-        base = runs[runs.precision == "bf16"]
-        if base.empty:
-            continue
-        seed = runs[runs.precision != "bf16"].seed.mode()  # the recipes' seed: BF16's reference has the same
-        ref_run = base[base.seed == seed.iloc[0]] if len(seed) and (base.seed == seed.iloc[0]).any() else base
-        ref_run = ref_run.sort_values(["repetition", "started"]).iloc[0]
-        curve = lambda run_id: g[g.run_id == run_id].groupby("step").loss.mean()  # noqa: E731
-        ref = curve(ref_run.run_id)
-
-        def difference(run_id):
-            diff = (curve(run_id) - ref).dropna()
-            return diff, diff.rolling(25, center=True, min_periods=5).mean()
-
-        repeats = [difference(x.run_id) + (x.seed == ref_run.seed,) for x in base.itertuples()
-                   if x.run_id != ref_run.run_id]
-        smoothed = [s for _, s, _ in repeats]
-        if repeats:  # noise: everything the BF16 repeats reach, around 0
-            band = pd.concat([s for _, s, _ in repeats], axis=1)
-            ax.fill_between(band.index, band.min(axis=1).clip(upper=0), band.max(axis=1).clip(lower=0), color=LIGHT,
-                            alpha=0.6, lw=0, zorder=0,
-                            label="BF16 repeats: " + ", ".join(f"{'same' if same else 'other'} seed {diff.iloc[-100:].mean():+.3f}"
-                                                               for diff, _, same in repeats))
+        d = g[g.model == model]
+        for kind, color, alpha, label in (("other seed", LIGHT, 0.45, "other seed"), ("same seed", INK2, 0.3, "same seed")):
+            pairs = d[d.kind == kind]
+            if len(pairs):
+                band = pd.concat([smooth(x) for x in pairs.itertuples()], axis=1)
+                ax.fill_between(band.index, band.min(axis=1).clip(upper=0), band.max(axis=1).clip(lower=0), color=color, alpha=alpha, lw=0, zorder=0,
+                                label=f"{label}: |gap| up to {pairs.last100.abs().max():.2f}")
         ax.axhline(0, color=INK2, lw=0.6)
-        for rec in [p for p in RECIPE_COLOR if p in set(runs.precision)]:
-            run = runs[runs.precision == rec].sort_values(["repetition", "started"]).iloc[0]
-            diff, smooth = difference(run.run_id)
-            smoothed.append(smooth)
-            ax.plot(diff.index, diff, color=RECIPE_COLOR[rec], lw=0.3, alpha=0.15)
-            ax.plot(smooth.index, smooth, color=RECIPE_COLOR[rec], lw=1.2, ls=(0, (4, 2)) if run.synthetic else "-",
-                    label=f"{rec}: {diff.iloc[-100:].mean():+.3f}")
+        for row in d[d.kind == "recipe"].itertuples():
+            color = seed_color.setdefault(row.seed_a, SERIES[len(seed_color) % len(SERIES)])
+            ax.plot(*zip(*smooth(row).items()), color=color, lw=1.1 if row.same_nodes else 0.9, ls="-" if row.same_nodes else (0, (4, 2)),
+                    label=f"{row.recipe}, seed {row.seed_a}: {row.last100:+.2f}" + ("" if row.same_nodes else " (other nodes)"))
         if model == GLM:  # the lr starts at 0: steps 1-2 see the same weights, then an early unstable phase
             ax.axvline(GLM_LR_WARMUP, color=MUTED, lw=0.6, ls=(0, (1, 2)))
             ax.annotate("lr warm-up ends", (GLM_LR_WARMUP, 0), xycoords=("data", "axes fraction"), xytext=(2, 2),
                         textcoords="offset points", fontsize=6, color=INK2, va="bottom")
-        ax.legend(loc="upper right", fontsize=5.5)
-        ax.set_xlim(0, ref.index.max())
-        settled = [abs(s[s.index > 2 * GLM_LR_WARMUP]).max() for s in smoothed]
-        spread = max([x for x in settled if pd.notna(x)] + [0.01])
-        limit = max(limit, 2.5 * spread)
-        ax.set_title(WORKLOAD_LABEL[model])
-        ax.set_xlabel("step (legend: mean of the last 100 steps)")
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=5.5, frameon=False)
+        ax.set_xlim(0, 500)
+        ax.set_title(WORKLOAD_LABEL[model] + ("" if (d.kind != "recipe").any() else ": no BF16 repeats yet"))
+        ax.set_xlabel("step (legend: mean of steps 401-500)")
         style.finish(ax, trim=False)
-    axes[0][0].set_ylim(-limit, limit)  # the settled part; the early unstable phase runs off the axis
-    axes[0][0].set_ylabel("loss − BF16 loss\n(25-step mean; thin: per step;\nband: BF16 repeats)")
-    style.synthetic_mark(fig, d.synthetic.any(), "includes synthetic data (dashed)")
+    axes[0][0].set_ylim(-0.7, 0.55)  # the settled part; the early unstable phase runs off the axis
+    axes[0][0].set_ylabel("loss minus BF16 loss\n(25-step mean)")
+    style.synthetic_mark(fig, g.synthetic.any(), "includes synthetic data")
     fig.tight_layout()
     return fig
 
@@ -974,44 +952,31 @@ def stability(t):
 
 
 def stragglers(t):
-    """Per-GPU activity (busiest 10-minute window) and per-node CPU busy-core clock (lowest minute
-    vs the first) over the long run (F2, node telemetry)."""
-    run, mon = _long_run(t)
-    if run is None or mon.empty:
+    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, and CPU samples below 500 MHz.
+    With data parallelism ranks wait for the slowest, so the node that waits least, with the highest activity, is the slow one."""
+    n = t.get("node_telemetry", pd.DataFrame())
+    r = _runs(t)
+    if n.empty or r.empty:
         return None
-    util, activity = _activity(mon)  # sharpest signal available (Rorqual helper)
-    if util is None:
+    q = r[(r.model == QWEN) & (r.layout == "fsdp") & r.run_id.isin(n.run_id) & (r.tokens_per_gpu == 24576) & (r.ac == "selective")]
+    if q.empty:
         return None
-    util = util.assign(win=((util.time - util.time.min()) // 600).astype(int))
-    peak = util.groupby(["host", "gpu", "win"]).value.median().groupby(["host", "gpu"]).max().reset_index()
-    peak["x"] = peak.host.map(POS) + (peak.gpu.astype(float) - 3.5) * 0.06
-    cpu = mon[mon.metric == "cpu_mhz_busy_mean"]
-    fig, axes = plt.subplots(2 if len(cpu) else 1, 1, figsize=(TEXT_WIDTH, 3.0 if len(cpu) else 1.7),
-                             sharex=True, squeeze=False)
-    ax = axes[0][0]
-    syn = bool(util.synthetic.any())
-    _pt(ax, peak.x, peak.value, INK2, syn, ms=2.2, mew=0.5)
-    out = peak.loc[peak.value.idxmax()]
-    ax.plot(out.x, out.value, "o", color=CRITICAL, ms=3.5)
-    ax.annotate(f"{out.host} GPU{int(out.gpu)}", (out.x, out.value), xytext=(5, -2), textcoords="offset points",
-                fontsize=6, color=CRITICAL)
-    ax.set_ylim(None, peak.value.min() + 1.3 * (peak.value.max() - peak.value.min()))  # room under the tag
-    ax.set_ylabel(f"{activity.splitlines()[0]}\n(busiest 10 min)")
-    style.finish(ax, trim=False)
-    if len(cpu):
-        ax = axes[1][0]
-        drop = _cpu_drop(cpu).rename(columns={"cpu_drop_pct": "value"})  # Rorqual helper
-        drop["x"] = drop.host.map(POS)
-        _pt(ax, drop.x, drop.value, INK2, bool(cpu.synthetic.any()), ms=3)
-        worst = drop.loc[drop.value.idxmin()]
-        ax.plot(worst.x, worst.value, "o", color=CRITICAL, ms=3.5)
-        ax.annotate(worst.host, (worst.x, worst.value), xytext=(5, -2), textcoords="offset points", fontsize=6,
-                    color=CRITICAL)
-        ax.set_ylabel("CPU busy-core clock,\nlowest minute vs first (%)")
+    run = q.sort_values(["nodes", "started"]).iloc[-1]
+    d = n[(n.run_id == run.run_id) & n.host.isin(POS)].copy()
+    d["x"] = d.host.map(POS)
+    panels = [("gpu_util", "GPU activity\n(mean, %)"), ("cpu_low_share", "CPU samples\nbelow 500 MHz (%)"), ("node_gpu_kw_mean", "GPU power\nper node (kW)")]
+    panels = [p for p in panels if p[0] in d and d[p[0]].notna().any()]
+    fig, axes = plt.subplots(len(panels), 1, figsize=(TEXT_WIDTH, 1.1 * len(panels) + 0.5), sharex=True, squeeze=False)
+    axes = axes[:, 0]
+    for ax, (col, label) in zip(axes, panels):
+        v = d[col] * (100 if col == "cpu_low_share" else 1)
+        _pt(ax, d.x, v, INK2, False, ms=3)
+        top = v.idxmax()
+        ax.annotate(f"{d.host[top]}: {v[top]:.3g}", (d.x[top], v[top]), xytext=(5, -2), textcoords="offset points", fontsize=6, color=CRITICAL)
+        ax.set_ylabel(label)
         style.finish(ax, trim=False)
     _subnet_axis(axes)
-    axes[-1][0].set_xlabel("node, grouped by subnet (the slow GPU waits least: highest activity)")
-    style.synthetic_mark(fig, syn)
+    axes[-1].set_xlabel(f"node, grouped by subnet: {run.layout}, 24k tokens per GPU, {int(run.nodes)} nodes, one run (F2 not run)")
     fig.tight_layout()
     return fig
 
