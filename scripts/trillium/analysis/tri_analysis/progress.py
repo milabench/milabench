@@ -4,8 +4,9 @@ A point is a configuration at a node count; repetitions don't count. Done: a com
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
 20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
 GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Network goes up to 52
-as the design has it, with a step at 39, the largest clean set today. Points that need 50 or more nodes count apart: they
-wait for the 200 W caps to clear.
+as the design has it. Points that need 50 or more nodes count apart: they wait for the 200 W caps to clear. User, Nov 6:
+tests for which 39 nodes would be a compromise (D2-D4 above 25 nodes, the long runs) come after all the others, then run
+at full scale, or at 39 if fewer than 50 nodes are usable by then. So they count at 52 here.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Long run": "Qwen and GLM-5, at least 1 h each, last of all: at 50+ nodes if the caps clear, at 39 if nothing else is left and they have not"}
+LEFT_NOTE = {"Network (D2-D4)": "above 25 nodes, last of all: at 52 if the caps clear, at 39 if nothing else is left and they have not",
+             "Long run": "Qwen and GLM-5, at least 1 h each, last of all: at 50+ nodes if the caps clear, at 39 if nothing else is left and they have not"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
@@ -57,12 +59,11 @@ def _glm(block, experiment, layout, nodes, seqs, ac="full", precision="bf16", la
 
 def plan() -> list[Point]:
     p = []
-    # Network, as the design has it (D3's 26 ran at 25, the job limit then). D4 splits an odd count with one node out.
+    # Network, as the design has it (D3's 26 ran at 25, the job limit then).
     net = "Network (D2-D4)"
-    for n in (1, 2, 4, 8, 13, 25, 39, 52):
+    for n in (1, 2, 4, 8, 13, 25, 52):
         p.append(Point(net, f"D3 collectives n{n}", n, {}, net=("D3", n)))
-    p += [Point(net, "D2 pairs, two jobs of 25", 25, {}, net=("D2", 25)), Point(net, "D2 all pairs n39", 39, {}, net=("D2", 39)),
-          Point(net, "D2 all pairs n52", 52, {}, net=("D2", 52)), Point(net, "D4 bisection 19 + 19", 39, {}, net=("D4", 39)),
+    p += [Point(net, "D2 pairs, two jobs of 25", 25, {}, net=("D2", 25)), Point(net, "D2 all pairs n52", 52, {}, net=("D2", 52)),
           Point(net, "D4 bisection 26 + 26", 52, {}, net=("D4", 52))]
     # Qwen layouts: the 13-node cross as it was run (48k selective was skipped, projected out of memory), then small and top scale.
     a = "Qwen layouts"

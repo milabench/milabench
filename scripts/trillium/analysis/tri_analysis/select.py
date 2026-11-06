@@ -87,9 +87,8 @@ SERVES_TWICE = [
     ("pp13-ep8", 52, 1024, "A-G", "B-G-weak"),
     ("pp13-ep8", 39, 768, "B-G-weak", "B-G-strong"),
     ("pp13-ep8", 26, 512, "B-G-weak", "A-G"),
+    ("pp13-ep8", 39, 768, "B-G-weak", "A-G"),  # the largest pp13-ep8 of the layout comparison while fewer than 52 nodes are usable
 ]
-if GLM_TOP_NODES == 39:  # 47 nodes: the 39-node run is also the largest pp13-ep8 of the layout comparison
-    SERVES_TWICE.append(("pp13-ep8", 39, 768, "B-G-weak", "A-G"))
 
 
 def with_second_experiments(runs: pd.DataFrame) -> pd.DataFrame:
