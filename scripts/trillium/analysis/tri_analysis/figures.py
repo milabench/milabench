@@ -738,6 +738,9 @@ def precision_speed(t):
             g = d[d.precision == rec].set_index("nodes")
             ax.plot(g.speedup, [i] * len(g), color=LIGHT, lw=1.0, zorder=1)
             for n, row in g.iterrows():
+                if n not in (small, large):  # sizes in between: shown, not labelled
+                    _pt(ax, row.speedup, i, MUTED, row.synthetic, ms=3)
+                    continue
                 _pt(ax, row.speedup, i, SCALE_COLOR["small" if n == small else "large"], row.synthetic)
                 above = n == small
                 ax.annotate(f"×{row.speedup:.2f}", (row.speedup, i), xytext=(0, 5 if above else -6),
@@ -751,7 +754,7 @@ def precision_speed(t):
         ax.set_title(f"{WORKLOAD_LABEL[model]}: {int(small)} vs {int(large)} nodes" if small != large else f"{WORKLOAD_LABEL[model]}: {int(small)} nodes")
         ax.set_xlabel("speedup over BF16 (tokens/s)")
         style.finish(ax, trim=False)
-    handles = [_handle(SCALE_COLOR["small"], "smallest scale", syn), _handle(SCALE_COLOR["large"], "largest so far", syn)]
+    handles = [_handle(SCALE_COLOR["small"], "smallest", syn), _handle(MUTED, "in between", syn), _handle(SCALE_COLOR["large"], "largest", syn)]
     axes[0][0].legend(handles=handles, loc="lower left")
     style.synthetic_mark(fig, syn)
     fig.tight_layout()
@@ -1033,7 +1036,7 @@ def energy(t):
     speed = e[e.experiment == "C-speed"]
     panels = [
         ("Qwen layouts, 13 nodes, 24k", base[(base.nodes == 13) & (base.tokens_per_gpu == 24576)], "layout"),
-        ("precision, largest run so far", speed[speed.nodes == speed.groupby("model").nodes.transform("max")], "prec"),
+        ("precision, largest run", speed[speed.nodes == speed.groupby("model").nodes.transform("max")], "prec"),
         ("Qwen scale (B-Q-weak)", e[(e.experiment == "B-Q-weak") & (e.slow_nodes.fillna("") == "")], "scale"),
     ]
     panels = [x for x in panels if not x[1].empty]
@@ -1066,6 +1069,9 @@ def energy(t):
                 col = WORKLOAD_COLOR.get(g.model.iloc[0], MUTED)
                 for _, row in g.iterrows():
                     _pt(ax, row.mtok_kwh, i, col, row.synthetic, ms=3.5)
+                    if kind == "prec":
+                        ax.annotate(f"{row.mtok_kwh:.1f}", (row.mtok_kwh, i), xytext=(4, 0), textcoords="offset points",
+                                    fontsize=6, color=INK2, va="center")
             ax.set_yticks(range(len(order)))
             ax.set_yticklabels(order, fontsize=6)
             ax.invert_yaxis()
@@ -1074,6 +1080,8 @@ def energy(t):
         if kind == "scale":
             ax.set_ylabel("M tokens per kWh")
             ax.set_ylim(0, 1.25 * d.mtok_kwh.max())
+        elif kind == "prec":
+            ax.set_xlim(0, 1.2 * d.mtok_kwh.max())  # the two models are ten times apart
         else:
             ax.set_xlim(0.9 * d.mtok_kwh.min(), 1.05 * d.mtok_kwh.max())
         style.finish(ax, trim=False)

@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -347,6 +347,19 @@ def _speed_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]:
                 out[f"TriGlmMemPct{name}"] = (100 * (m.mem_alloc_gib[rec] / m.mem_alloc_gib.bf16 - 1), ".0f", False)
         out["TriGlmMemBf"] = (m.mem_alloc_gib.bf16, ".0f", False)
         out["TriGlmStepBf"] = (m.step_s.bf16, ".1f", False)
+        top = int(g.nodes.max())
+        if top > 13:
+            b = g[g.nodes == top].set_index("precision")
+            # Means without the first measured step, slow at this size; the medians are not affected.
+            b = b.assign(mean_s=b.run_id.map(steps[steps.run_id.isin(b.run_id)].sort_values("step").groupby("run_id").step_s.apply(lambda s: s.iloc[1:].mean())))
+            out["TriGlmFpTopNodes"] = (top, "d", False)
+            out["TriGlmMemBfTop"] = (b.mem_alloc_gib.bf16, ".0f", False)
+            for rec, name in (("fp8-tensorwise", "Tensor"), ("fp8-blockwise", "Block"), ("mxfp8", "Mx")):
+                if rec in b.index:
+                    out[f"TriGlmFp{name}Top"] = (b.tok_s_gpu[rec] / b.tok_s_gpu.bf16, ".2f", False)
+                    out[f"TriGlmFp{name}TopMean"] = (b.mean_s.bf16 / b.mean_s[rec], ".2f", False)
+                    out[f"TriGlmMem{name}Top"] = (b.mem_alloc_gib[rec], ".0f", False)
+                    out[f"TriGlmMemPct{name}Top"] = (100 * (b.mem_alloc_gib[rec] / b.mem_alloc_gib.bf16 - 1), ".0f", False)
     cl = _completed(runs, "C-loss")
     cl = cl[cl.model == GLM].set_index("precision") if len(cl) else cl
     if len(cl) and {"bf16", "mxfp8"} <= set(cl.index):
@@ -366,7 +379,7 @@ def _checkpoint_numbers(t) -> dict[str, tuple]:
         if len(d):
             out[f"{name}Lo"], out[f"{name}Hi"] = (d[col].min(), fmt, False), (d[col].max(), fmt, False)
 
-    q, g = c[c.model == QWEN], c[c.model == GLM]
+    q, g = c[c.model == QWEN], c[(c.model == GLM) & (c.nodes == 13)]
     for n, tag in ((1, "One"), (13, "Thirteen"), (25, "Top"), (39, "Big")):
         f = q[(q.nodes == n) & (q.content == "full")]
         rng(f"TriCkQ{tag}Sync", f[(f.op == "save") & (f["mode"] == "sync")], "total_s")
@@ -544,6 +557,12 @@ def _operations_numbers(t) -> dict[str, tuple]:
             out["TriStragUtilRest"] = (100 * rest.gpu_util.mean(), ".1f", False)
     e = with_energy(done, t["run_power"])
     if len(e):
+        for model, tag in ((QWEN, "Q"), (GLM, "G")):  # MXFP8 against BF16 at the model's largest C-speed run
+            c = e[(e.model == model) & (e.experiment == "C-speed")]
+            c = c[c.nodes == c.nodes.max()].set_index("precision") if len(c) else c
+            if len(c) and {"bf16", "mxfp8"} <= set(c.index):
+                out[f"TriEnergyFp{tag}"] = (c.mtok_kwh.mxfp8 / c.mtok_kwh.bf16, ".2f", False)
+                out[f"TriPowerFp{tag}Bf"], out[f"TriPowerFp{tag}Mx"] = (c.power_w_gpu.bf16, ".0f", False), (c.power_w_gpu.mxfp8, ".0f", False)
         q = e[(e.model == QWEN) & (e.nodes == 13) & (e.tokens_per_gpu == 24576) & (e.experiment == "A-Q") & (e.ac == "selective") & (e.grad_reduce == "fp32")]
         for layout, tag in (("fsdp", "Fsdp"), ("hsdp8", "Hsdp"), ("pp2-fsdp", "Pp")):
             d = q[q.layout == layout]

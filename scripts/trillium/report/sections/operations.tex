@@ -58,7 +58,7 @@
   \label{fig:startup}
 \end{figure}
 
-\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in each run's measurement. Only GPU power is counted: not CPUs, memory, network or cooling. Qwen at 13 nodes and 24k tokens per GPU: \texttt{fsdp} \TriEnergyFsdp{} and \texttt{hsdp8} \TriEnergyHsdp{} million tokens per kWh at about \TriPowerFsdp{} and \TriPowerHsdp\,W per GPU; \texttt{pp2-fsdp} draws less (\TriPowerPp\,W) but runs slower, \TriEnergyPp. GLM-5 at 13 nodes: \TriEnergyGlm{} at \TriPowerGlm\,W per GPU. So Qwen is throttled at its highest power, and a token of GLM-5 costs much more than a token of Qwen; they are different models, so the second is not a comparison of efficiency.
+\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in each run's measurement. Only GPU power is counted: not CPUs, memory, network or cooling. Qwen at 13 nodes and 24k tokens per GPU: \texttt{fsdp} \TriEnergyFsdp{} and \texttt{hsdp8} \TriEnergyHsdp{} million tokens per kWh at about \TriPowerFsdp{} and \TriPowerHsdp\,W per GPU; \texttt{pp2-fsdp} draws less (\TriPowerPp\,W) but runs slower, \TriEnergyPp. GLM-5 at 13 nodes: \TriEnergyGlm{} at \TriPowerGlm\,W per GPU. So Qwen is throttled at its highest power, and a token of GLM-5 costs much more than a token of Qwen; they are different models, so the second is not a comparison of efficiency. MXFP8 also draws less power: at each model's largest precision run, \TriPowerFpQMx{} against \TriPowerFpQBf\,W per GPU on Qwen and \TriPowerFpGMx{} against \TriPowerFpGBf\,W on GLM-5, so tokens per kWh gain $\times$\TriEnergyFpQ{} and $\times$\TriEnergyFpG, more than the speed itself. That is one run of each recipe.
 
 \begin{figure}[h]
   \centering\fig{energy}
