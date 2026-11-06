@@ -41,7 +41,7 @@ and B-G runs have no substitute beyond pp13-ep8 at 39 nodes (`./20_bg.sh 39`).
 
 `./30_c.sh loss` runs 6 jobs: bf16, bf16 again with the same seed (`bf16-rep2`), bf16 with another seed (`bf16-seed2`), and the three FP8
 recipes. The two extra runs give the size of the differences between BF16 runs, against which the FP8 vs BF16 gap can be read. Budget: 2 more
-runs of 13 nodes x 500 steps, +50 % on C-loss (limit 8 h 30 each: 48.61 s per BF16 step at 13 nodes on the speed entry's data, job 1242058, so about 7 h with startup, an estimate). To drop them: `./30_c.sh loss "bf16 fp8-tensorwise ..."`.
+runs of 13 nodes x 500 steps, +50 % on C-loss (limit 9 h each: BF16 took 7 h 47 at 13 nodes, 53.63 s per step, job 1243850). To drop them: `./30_c.sh loss "bf16 fp8-tensorwise ..."`.
 
 ## Runs that serve two experiments
 
