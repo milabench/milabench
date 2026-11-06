@@ -33,7 +33,7 @@ python -m benchmate.nodemon --bench llama &
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--out DIR` | `BENCHMATE_NODEMON_DIR` | Output directory |
-| `--flush-every SECONDS` | 10 ± 0.25 | How often pending rows are written to the files. Each flush is shifted by a random ±250 ms so the nodes don't all write to network storage at once. 0 writes on every sample. |
+| `--flush-every SECONDS` | 10 ± 2.5% | How often pending rows are written to the files. Each flush is shifted by a random ±2.5% of the period (±250 ms at 10 s) so the nodes don't all write to network storage at once. 0 writes on every sample. |
 | `--bench NAME` | empty | Recorded in the status file |
 | `--nice N` | 10 | CPU scheduling niceness, -20 to 19. The default lowers the sampler's priority below the benchmark's (0), so it yields the CPU when cores are contended. Going below the current niceness needs privileges; if refused, it logs an error and keeps running. |
 | `--log-level` | `INFO` | Logging on stderr. `INFO` includes a CPU-usage summary at exit. |
@@ -103,14 +103,15 @@ A collector that is unavailable on a host (no GPU, no InfiniBand) writes no file
       "cpu_s": 0.026,                    // CPU seconds its samples used; 0 while running
       "skipped": 0,                      // due instants a late tick passed without a row
       "gpus": {"0": "GPU-ee57a905-..."}, // NVML index -> UUID, which the rows leave out
-      "power_limits": {                  // at start: they change only when an admin sets them
+      "power_limits": {                  // at the first sample: they change only when an admin sets them
         "0": {"power_default_w": 700.0, "power_limit_w": 700.0}
       }
     },
     "ecc": {
       "enabled": true, "period_s": 60.0, "cpu_s": 0.004, "skipped": 0,
       "gpus": {"0": "GPU-ee57a905-..."},
-      // Lifetime error counts at start, at the latest sample, and their difference.
+      // Lifetime error counts at the first sample, at the latest, and their difference.
+      // Both read on the sampling thread: no NVML query at startup or shutdown can block this file.
       "snapshot_start": {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}},
       "snapshot":       {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}},
       "snapshot_delta": {"0": {"ecc_aggregate_uncorrected": 0, "remapped_corrected": 0, "remapped_uncorrected": 0}}
