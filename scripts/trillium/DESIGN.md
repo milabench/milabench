@@ -12,7 +12,7 @@ except what SciNet measured.
 
 | | known | source |
 |---|---|---|
-| Nodes | 52 (`trig0101`-`trig0152`), **48 clean from 2026-11-06 12:45, 51 with the 3 slow nodes** (`trig0146`, back at 12:16, not yet tested); 40 used on 2026-11-05: `trig0146` is in maintenance (7 of 8 GPUs); 8 nodes capped at 200 W, among them `trig0122`, also excluded for firmware (see Health checks); 3 slow nodes excluded (see E). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
+| Nodes | 52 (`trig0101`-`trig0152`), **49 clean from 2026-11-06 13:10, all 52 with the 3 slow nodes**; `trig0146` back with 8 GPUs at 12:16; 40 used on 2026-11-05: `trig0146` is in maintenance (7 of 8 GPUs); 8 nodes capped at 200 W, among them `trig0122`, also excluded for firmware (see Health checks); 3 slow nodes excluded (see E). The admins expect all 52 eventually. Reservation `b200-friendly-users` until 2026-12-03, shared with other users | `sinfo`, `scontrol`, admins |
 | Per node | 8 x B200, 179.1 GiB each, on NVLink, 1,000 W limit; 2 x 48-core Intel, ~2 TB RAM, liquid cooled | health checks; SciNet talk |
 | GPUs | 416 in total | |
 | Network | InfiniBand. NCCL uses 4 ports at 400 Gb/s, 1,600 Gb/s per node (`mlx5_0`, `1`, `4`, `9`: site `NCCL_IB_HCA`, port counters agree), not the 800 Gb/s first quoted. GPUs 0, 2, 4, 6 each share a PCIe switch with one port; 1, 3, 5, 7 have none. Measured results below | D3, D2 (jobs 1239634, 1239766, 1239768) |
