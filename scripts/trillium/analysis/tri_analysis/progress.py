@@ -24,7 +24,7 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Long run": "best Qwen layout, at least 1 h, planned at 52 nodes; waits for the caps answer, 39 would be a compromise"}
+LEFT_NOTE = {"Long run": "Qwen and GLM-5, at least 1 h each, last of all: at 50+ nodes if the caps clear, at 39 if nothing else is left and they have not"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
@@ -126,7 +126,9 @@ def plan() -> list[Point]:
         for content, op, mode in (("weights", "save", "sync"), ("weights", "save", "async"), ("weights", "load", "sync"),
                                   ("full", "save", "sync"), ("full", "save", "async"), ("full", "load", "sync")):
             p.append(Point(k, f"GLM-5 {content} {op} {mode} n{n}", n, {}, "F1", op=(GLM, content, op, mode, n)))
+    # User, Nov 6: last of all; at 39 nodes only if nothing else is left and 50+ nodes are still out of reach.
     p.append(Point("Long run", "best Qwen layout, at least 1 h", 52, dict(model=QWEN, experiment="F2"), "F2"))
+    p.append(Point("Long run", "GLM-5 pp13-ep8, at least 1 h", 52, dict(model=GLM, experiment="F2"), "F2"))
     return p
 
 

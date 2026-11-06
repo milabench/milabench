@@ -15,5 +15,5 @@ One row per block of `~/projects/tri-work/ops/ANALYSIS_BRIEF.md`. What ran again
 | GLM-5 layouts | partial | A-G 10, 12, 13 nodes | steps within 0.1 s of `p3-results.tsv` (their mean starts one step later); garbled summaries decoded by `runs.garbled_summary`; for 1240808 identical to the agent's recovered file | 20, 25, 26, 30, 36, 40 |
 | GLM-5 scaling | done for now | 13, 26, 39 nodes, weak and strong (1244523, 1247135, 1247857) | agent's 49.59, 50.23 s; 0.980, 0.968, 0.892, 0.806 by means against mine 0.978, 0.966, 0.895, 0.804 by medians; bubble formula against four batch pairs | 52 if caps clear |
 | Startup, energy | partial | all completed runs | telemetry: 1241805 7.40 kW, max 8.07, 19% low = journal; 1241694 4.41 kW against 4.47 (different window, not chased) | grows with each run |
-| Stability, stragglers | partial | stragglers from the 43-node FSDP run | agent's 5.352 s from raw steps | F2 not run |
+| Stability, stragglers | partial | stragglers from the 43-node FSDP run | agent's 5.352 s from raw steps | F2 not run: Qwen and GLM-5, last of all, 50+ nodes or else 39 |
 | Introduction, conclusions | partial | | | final answers, after 39 nodes |
