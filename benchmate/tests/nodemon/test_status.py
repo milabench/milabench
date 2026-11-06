@@ -2,7 +2,7 @@ import json
 
 from benchmate.nodemon import CollectorRegistry, NodeCollector
 from benchmate.nodemon.collectors import GpuCollector
-from benchmate.nodemon.collectors.nvml import Gpu
+from benchmate.nodemon.collectors.nvml import Gpu, NvmlGpus
 
 
 class DescribingCollector(NodeCollector):
@@ -32,13 +32,13 @@ def test_a_collectors_own_fields_reach_the_status_and_a_broken_one_does_not_sink
 
     assert described["described"]["extra"] == "kept"
     assert described["described"]["period_s"] == 1.0
-    assert described["broken"] == {"enabled": True, "period_s": 1.0, "cpu_s": 0.0}
+    assert described["broken"] == {"enabled": True, "period_s": 1.0, "cpu_s": 0.0, "skipped": 0}
 
 
 def test_the_gpu_uuid_map_survives_close_since_the_status_is_written_after_it():
     collector = GpuCollector()
-    collector._uuid_of = {1: "GPU-b", 0: "GPU-a"}
-    collector._gpus = [Gpu(0, object(), "GPU-a")]
+    collector.nvml_gpus = NvmlGpus([Gpu(1, object(), "GPU-b"), Gpu(0, object(), "GPU-a")])
+    collector._gpus = [collector.nvml_gpus.gpus[1]]
 
     collector.close()
 

@@ -126,6 +126,79 @@ def test_pcie_walks_from_the_gpu_up_to_the_root_port(tmp_path):
     collector.close()
 
 
+def test_ecc_keeps_the_startup_snapshot_and_the_latest():
+    from types import SimpleNamespace
+
+    from benchmate.nodemon.collectors.ecc import EccCollector
+    from benchmate.nodemon.collectors.nvml import Gpu, NvmlGpus
+
+    collector = EccCollector()
+    collector._nvml = SimpleNamespace(
+        nvmlDeviceGetRemappedRows=object(),
+        nvmlDeviceGetTotalEccErrors=object(),
+        NVML_MEMORY_ERROR_TYPE_UNCORRECTED=2,
+        NVML_VOLATILE_ECC=0,
+        NVML_AGGREGATE_ECC=1,
+    )
+    collector.nvml_gpus = NvmlGpus([Gpu(7, object(), "GPU-7")])
+    state = {"agg": 177903, "rows": (2, 0, 0, 0)}
+
+    def query(gpu, name, fn, *args):
+        if name == "remapped_rows":
+            return state["rows"]
+        if name == "ecc_aggregate":
+            return state["agg"]
+        if name == "ecc":
+            return 0
+        raise AssertionError(name)
+
+    collector._query = query
+    assert collector.probe()
+    collector.sample(0.0)
+    state["agg"] = 177910
+    state["rows"] = (3, 0, 0, 0)
+    collector.sample(60.0)
+
+    described = collector.describe()
+    assert described["snapshot_start"]["7"] == {
+        "ecc_aggregate_uncorrected": 177903,
+        "remapped_corrected": 2,
+        "remapped_uncorrected": 0,
+    }
+    assert described["snapshot"]["7"] == {
+        "ecc_aggregate_uncorrected": 177910,
+        "remapped_corrected": 3,
+        "remapped_uncorrected": 0,
+    }
+    assert described["snapshot_delta"]["7"] == {
+        "ecc_aggregate_uncorrected": 7,
+        "remapped_corrected": 1,
+        "remapped_uncorrected": 0,
+    }
+    assert "snapshot_start" not in EccCollector().describe()
+
+    # The status file is written even when a GPU hangs: describe() must not ask NVML.
+    def refuse(*args):
+        raise AssertionError("describe() queried NVML")
+
+    collector._query = refuse
+    assert collector.describe()["snapshot"] == described["snapshot"]
+
+    # Nor close(): the end snapshot is the last sample's.
+    collector.close()
+    assert collector.describe()["snapshot"] == described["snapshot"]
+
+
+def test_ecc_difference_is_unknown_when_either_side_is():
+    from benchmate.nodemon.collectors.ecc import difference
+
+    known = {"ecc_aggregate_uncorrected": 177903, "remapped_corrected": 2, "remapped_uncorrected": 0}
+    unknown = {**known, "ecc_aggregate_uncorrected": None}
+
+    assert difference(unknown, known)["ecc_aggregate_uncorrected"] is None
+    assert difference(known, unknown)["ecc_aggregate_uncorrected"] is None
+
+
 def test_edac_reads_each_controller_and_leaves_a_missing_counter_empty(tmp_path):
     write(tmp_path / "mc0" / "mc_name", "F17h_M30h")
     write(tmp_path / "mc0" / "ce_count", "7")

@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pandas as pd
 
-SCHEMA = "benchmate.nodemon.v1"
+SCHEMA = "benchmate.nodemon.v3"
+
+# NVML clock-event bits. Test with a mask: 0x84 is both, and it is not equal to either.
+# Same values as benchmate.nodemon.collectors.gpu.ClockReason.
+_SW_POWER_CAP = 0x4
+_HW_POWER_BRAKE = 0x80
+_REASON_BITS = (("sw_power_cap", _SW_POWER_CAP), ("hw_power_brake", _HW_POWER_BRAKE))
 
 # Per collector, the columns that identify a row's entity; everything else is a metric.
 # `gpu_uuid` is no longer one of them -- it is in the status file -- but it is still listed so
@@ -31,6 +37,38 @@ ENTITY_COLUMNS = {
 
 COLUMNS = ["cluster", "source", "schema", "host", "entity", "gpu", "gpu_uuid", "metric",
            "value", "text", "time", "bench", "truncated", "synthetic"]
+
+
+def reason_bit(text: object, bit: int) -> float | None:
+    """1.0 when `bit` is set in a hex mask, 0.0 when it is not, None when the cell is empty.
+
+    ``0x84`` has both the software power cap (0x4) and the external power brake (0x80).
+    Comparing the mask for equality with 4 drops the brake.
+    """
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return None
+    raw = str(text).strip()
+    if not raw or raw == "nan":
+        return None
+    try:
+        return float(bool(int(raw, 16) & bit))
+    except ValueError:
+        return None
+
+
+def _expand_clock_reasons(frame: pd.DataFrame) -> pd.DataFrame:
+    """One 0/1 row per power-cap bit, beside the raw ``clocks_event_reasons`` mask."""
+    reasons = frame[frame.metric == "clocks_event_reasons"]
+    if reasons.empty:
+        return frame
+    extra = []
+    for name, bit in _REASON_BITS:
+        rows = reasons.copy()
+        rows["metric"] = name
+        rows["value"] = rows["text"].map(lambda text, bit=bit: reason_bit(text, bit))
+        rows["text"] = rows["value"].map(lambda value: "" if value is None or pd.isna(value) else str(int(value)))
+        extra.append(rows)
+    return pd.concat([frame, *extra], ignore_index=True)
 
 
 def _numeric(series: pd.Series) -> pd.Series:
@@ -102,4 +140,4 @@ def parse_nodemon(run: Path, cluster: str, synthetic: bool = False) -> pd.DataFr
     out["cluster"] = cluster
     out["source"] = run.name
     out["synthetic"] = synthetic
-    return out[COLUMNS]
+    return _expand_clock_reasons(out[COLUMNS])

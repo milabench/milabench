@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 import math
+import random
 import threading
 import time
 from pathlib import Path
 from typing import IO, Any
 
 from .collector import NodeCollector
+
+log = logging.getLogger(__name__)
 
 
 def epoch_ms(seconds: float) -> int:
@@ -32,60 +36,68 @@ def tsv_line(cells: list[str]) -> str:
 
 
 class TsvSink:
-    """Rows for out_dir/nodes/<host>.<name>.tsv, held in memory and written every `flush_every` s.
+    """Rows for out_dir/nodes/<host>.<name>.tsv, buffered and written every `flush_every_s`.
 
-    The output is usually on network storage, so rows are not written on
-    every tick: each file with pending rows gets one write and flush per
-    period, however wide its rows. ``flush_every=0`` writes as rows arrive.
-    Rows still pending are lost on SIGKILL; ``close()`` writes them otherwise.
+    One write per file per period, shifted by a random ±`flush_jitter_s` so the nodes
+    don't all hit network storage at once. ``flush_every_s=0`` writes as rows arrive.
+    Pending rows are lost on SIGKILL; ``close()`` writes them otherwise.
     """
 
     #: The format of everything one sampler writes: these columns, and the status file.
-    schema = "benchmate.nodemon.v1"
+    schema = "benchmate.nodemon.v3"
     #: The rows go one level down, leaving the run's status and lock visible beside it.
     rows_dir = "nodes"
     #: Columns every row starts with, before the collector's own. The host is in the
     #: file name and the benchmark in the status file, so neither is repeated per row.
     prefix = ("time_ms",)
 
-    def __init__(self, out_dir: Path, host: str, flush_every: float = 10.0) -> None:
+    def __init__(self,
+        out_dir: Path,
+        host_name: str,
+        flush_every_s: float = 10.0,
+        flush_jitter_s: float = 0.25
+    ) -> None:
         self.directory = Path(out_dir)
-        self.host = host
-        self.flush_every = flush_every
+        self.host_name = host_name
+        self.flush_every_s = flush_every_s
+        self.flush_jitter_s = flush_jitter_s
+        #: Seeded from the OS, so every host draws its own delays.
+        self._random = random.Random()
         self._files: dict[str, IO[str]] = {}
         self._pending: dict[str, list[str]] = {}
         # Reentrant: a SIGUSR1 flush can land on the main thread while it is inside close().
         self._lock = threading.RLock()
         self._closed = False
-        self.next_flush = math.inf
+        self.next_flush_monotonic_s = math.inf
         self._schedule()
 
     def tsv_path(self, name: str) -> Path:
         """One collector's file: <out_dir>/nodes/<host>.<collector>.tsv."""
-        return self.directory / self.rows_dir / f"{self.host}.{name}.tsv"
+        return self.directory / self.rows_dir / f"{self.host_name}.{name}.tsv"
 
     def status_path(self) -> Path:
         """Where this host's sampler records how it started and stopped."""
-        return self.directory / f"{self.host}.status.json"
+        return self.directory / f"{self.host_name}.status.json"
 
     def lock_path(self) -> Path:
         """The lock that keeps one sampler per host."""
-        return self.directory / f"{self.host}.lock"
+        return self.directory / f"{self.host_name}.lock"
 
-    def write(self, collector: NodeCollector, rows: list[dict[str, Any]], wall: float) -> None:
-        """Format rows and queue them, or write them at once when flush_every is 0."""
-        stamp = str(epoch_ms(wall))
+    def write(self, collector: NodeCollector, rows: list[dict[str, Any]], sampled_at_unix_s: float) -> None:
+        """Format rows and queue them, or write them at once when flush_every_s is 0."""
+        stamp = str(epoch_ms(sampled_at_unix_s))
         lines = []
         for row in rows:
             cells = [format_cell(row.get(column)) for column in collector.columns]
             lines.append(tsv_line([stamp, *cells]))
         with self._lock:
             if self._closed:  # a sampler that came unstuck after close()
+                log.debug(f"{len(rows)} {collector.name} row(s) dropped: the sink is closed.")
                 return
             if collector.name not in self._files:
                 self._open(collector)
             self._pending[collector.name].extend(lines)
-            if self.flush_every <= 0:
+            if self.flush_every_s <= 0:
                 self._write(collector.name)
 
     def _open(self, collector: NodeCollector) -> None:
@@ -102,24 +114,32 @@ class TsvSink:
         if path.stat().st_size == 0:
             stream.write(tsv_line([*self.prefix, *collector.columns]))
             stream.flush()
+            log.debug(f"Opened {path}, header written.")
+        else:
+            log.debug(f"Opened {path}, appending.")
 
-    def _write(self, name: str) -> None:
-        """One write and flush of a file's pending lines."""
+    def _write(self, name: str) -> int:
+        """One write and flush of a file's pending lines; how many it wrote."""
         lines = self._pending[name]
         if lines:
             self._pending[name] = []
             stream = self._files[name]
             stream.write("".join(lines))
             stream.flush()
+        return len(lines)
 
     def _schedule(self) -> None:
-        if self.flush_every > 0:
-            self.next_flush = time.monotonic() + self.flush_every
+        if self.flush_every_s > 0:
+            jitter = self._random.uniform(-self.flush_jitter_s, self.flush_jitter_s) if self.flush_jitter_s > 0 else 0.0
+            self.next_flush_monotonic_s = time.monotonic() + self.flush_every_s + jitter
 
     def flush(self) -> None:
         with self._lock:
-            for name in self._files:
-                self._write(name)
+            started = time.monotonic()
+            written = sum(self._write(name) for name in self._files)
+            if written:
+                # Slow writes here point at the shared filesystem rather than the sampler.
+                log.debug(f"Flushed {written} row(s) to {len(self._files)} file(s) in {1e3 * (time.monotonic() - started):.1f} ms.")
             self._schedule()
 
     def close(self) -> None:
@@ -131,4 +151,4 @@ class TsvSink:
                 stream.close()
             self._files.clear()
             self._pending.clear()
-            self.next_flush = math.inf
+            self.next_flush_monotonic_s = math.inf

@@ -112,6 +112,8 @@ class Sampler:
         or after the run ended by itself. Don't call it from a Python signal
         handler, which could deadlock on the stop event.
         """
+        if not self._stop.is_set():  # the atexit stop() follows every other one
+            log.debug(f"Stopping the sampler ({reason}).")
         self._stop.set(reason)
         if self._thread:
             self._thread.join(timeout_s)
@@ -140,6 +142,15 @@ class Sampler:
             self._state = state
 
 
+# TODO: Run the sampler as a child process (`python -m benchmate.nodemon`), not threads in the
+# training rank that wins the host lock. In-process may slow that rank, which then paces the job:
+#
+#   1. GIL: row building, TSV formatting, /proc/cpuinfo parsing. Up to ~1-2.5% of the training
+#      thread (11-26 ms CPU/s on 4xH100 / 8xB200).
+#   2. CPU: shares the rank's pinned cores, at normal priority (only the CLI applies --nice).
+#   3. Exit: atexit stop() can delay process exit by up to 10 s.
+#
+# Measure first: lock-holding rank vs. its node peers, or with vs. without BENCHMATE_NODEMON_DIR.
 def run(
     out_dir: Path,
     host: str | None = None,
@@ -171,6 +182,7 @@ def run(
         # Expected when every task or rank starts a sampler, hence INFO.
         log.info(f"A sampler already runs on {host} (it holds {sink.lock_path()}); not starting another.")
         return Sampler(RunState.BUSY)
+    log.debug(f"Took the host lock {sink.lock_path()}.")
     status = sink.status_path()
     # Checked once the lock is held, so a second sampler on this host is BUSY instead.
     # Every run writes its status file before any row, so this also covers its TSV files.
@@ -203,25 +215,27 @@ def _run(
     the rows collected before it from being written.
     """
     clock = clock_state()
+    log.debug(f"Kernel clock at start: {clock._asdict()}.")
     if clock.synced is False:  # None is unknown, which leaves nothing to act on
         log.warning(
             f"The kernel clock is not NTP-synchronized (max error {clock.maxerror_us} µs): "
             "this node's row times may not line up with other nodes'."
         )
     record: dict[str, Any] = {
-        "schema": getattr(registry.sink, "schema", None),
+        "schema": registry.sink.schema if registry.sink else None,
         "state": RunState.RUNNING.value,
         "bench": bench,
         **run_identity(),
         "pid": os.getpid(),
         "start": epoch_ms(time.time()),
-        "flush_every": getattr(registry.sink, "flush_every", None),
+        "flush_every": registry.sink.flush_every_s if registry.sink else None,
         "clock": clock._asdict(),  # a plain tuple would write a JSON list
     }
     outcome: dict[str, str] = {}
     registry.start()
     record["collectors"] = registry.describe()
     write_status(status, record)
+    log.debug(f"Status {record['state']!r} written to {status}.")
     worker = threading.Thread(
         target=_sample_loop,
         args=(registry, stop, check_every, outcome),
@@ -248,6 +262,7 @@ def _run(
         record["end"] = epoch_ms(time.time())
         record["clock_end"] = clock_state()._asdict()
         write_status(status, record)
+        log.debug(f"Status {record['state']!r} written to {status} (reason: {record['reason']}).")
     return state
 
 
@@ -263,6 +278,7 @@ def _sample_loop(
         while not stop.is_set():
             now = time.monotonic()
             if os.getppid() != parent:  # the launcher died without signalling
+                log.warning(f"The parent process {parent} is gone without stopping the sampler; stopping.")
                 outcome["reason"] = "orphan"
                 break
             registry.tick(now)

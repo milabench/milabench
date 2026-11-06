@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from enum import IntFlag
+import logging
+from enum import Enum, IntFlag
 from types import ModuleType
 from typing import Any
 
@@ -8,6 +9,8 @@ import pynvml
 
 from ..collector import CollectorMetric, MetricKind
 from .nvml import Gpu, NvmlCollector
+
+log = logging.getLogger(__name__)
 
 # TODO: Upstream SM clock and throttle reasons to voir gpudata.
 
@@ -29,16 +32,32 @@ class ClockReason(IntFlag):
     DISPLAY_CLOCK_SETTING = pynvml.nvmlClocksEventReasonDisplayClockSetting
 
     @classmethod
-    def parse(cls, text: str | None) -> ClockReason:
-        """The reasons from gpu.tsv's hex cell; none when the cell is empty or not a number."""
-        try:
-            return cls(int(text or "0", 16))
-        except ValueError:
-            return cls(0)
+    def parse(cls, text: str) -> list[ClockReason]:
+        """The reasons set in a gpu.tsv cell (``f"0x{reasons:x}"``), in declaration order.
 
-    def names(self) -> str:
-        """The reasons set, by name: a combined flag has no name of its own before Python 3.11."""
-        return "|".join(name for name, reason in ClockReason.__members__.items() if reason & self) or "-"
+        ``0x84`` is ``[SW_POWER_CAP, HW_POWER_BRAKE_SLOWDOWN]``. Text without the ``0x`` prefix,
+        an empty cell included, raises ValueError rather than reading a decimal mask as hex.
+        """
+        raw = text.strip()
+        if not raw.lower().startswith("0x"):
+            raise ValueError(f"clocks_event_reasons must be hex text starting with 0x, got {text!r}")
+        mask = int(raw, 16)  # raises ValueError on a bad digit
+        return [reason for reason in cls if reason & mask]
+
+
+class PowerQuery(str, Enum):
+    """The NVML query behind each power reading, all in milliwatts.
+
+    Each member is named after the metric it reads, so ``query.name`` is the row or status key.
+    nvmlDeviceGetEnforcedPowerLimit is missing from older bindings: that reading is then None.
+    """
+
+    # A str mixin rather than StrEnum (Python 3.11+), which benchmate can't require yet.
+    # Lowercase to match the metric names exactly.
+    power_w = "nvmlDeviceGetPowerUsage"
+    power_enforced_w = "nvmlDeviceGetEnforcedPowerLimit"
+    power_limit_w = "nvmlDeviceGetPowerManagementLimit"
+    power_default_w = "nvmlDeviceGetPowerManagementDefaultLimit"
 
 
 class GpuCollector(NvmlCollector):
@@ -51,6 +70,10 @@ class GpuCollector(NvmlCollector):
             "Why the SM clock is below its maximum, as hex NVML clock event reason bits (see ClockReason)",
         ),
         CollectorMetric("power_w", MetricKind.SAMPLE, "W", "Board power draw"),
+        CollectorMetric(
+            "power_enforced_w", MetricKind.SAMPLE, "W",
+            "Power limit in effect: the configured one, or lower under an outside cap (e.g. 200 W)",
+        ),
         CollectorMetric("temp_c", MetricKind.SAMPLE, "C", "GPU temperature"),
         CollectorMetric("util", MetricKind.SAMPLE, "fraction", "Utilization at the tick: one reading of a coarse counter"),
         CollectorMetric(
@@ -67,8 +90,31 @@ class GpuCollector(NvmlCollector):
         super().__init__(nvml)
         self._reasons: Any = None
         self._events: Any = None
+        #: (GPU index, XID) pairs already logged as a warning; repeats go to debug.
+        self._xids_logged: set[tuple[int, int]] = set()
         #: The last utilization sample already read, per GPU, so each call asks for newer ones only.
         self._seen: dict[int, int] = {}
+        #: Per GPU, the power limits at start, for the status file rather than every row: they change
+        #: only when an admin sets them. The one in effect is the power_enforced_w series.
+        self._limits: dict[int, dict[str, Any]] = {}
+
+    def probe(self) -> bool:
+        if not super().probe():
+            return False
+        limits = (PowerQuery.power_default_w, PowerQuery.power_limit_w)
+        self._limits = {
+            gpu.index: {
+                query.name: self._get_power_attr(gpu, query)
+                for query in limits
+            }
+            for gpu in self._gpus
+        }
+        return True
+
+    def _get_power_attr(self, gpu: Gpu, query: PowerQuery) -> float | None:
+        """One power reading in W; None when the query fails or this NVML lacks it."""
+        milliwatts = self._query(gpu, query.name, getattr(self._nvml, query.value, None))
+        return None if milliwatts is None else milliwatts / 1000
 
     def _init(self) -> bool:
         # The newer name, with the older one (kept as an alias) for older bindings.
@@ -83,7 +129,8 @@ class GpuCollector(NvmlCollector):
         """A set to deliver critical XID errors into, or None when NVML has no event support here."""
         try:
             return self._nvml.nvmlEventSetCreate()
-        except self._nvml.NVMLError:
+        except self._nvml.NVMLError as err:
+            self._log_nvml_error("creating the XID event set (no XID column)", err.value)
             return None
 
     def _open(self, gpu: Gpu) -> bool:
@@ -92,8 +139,8 @@ class GpuCollector(NvmlCollector):
             return True
         try:
             self._nvml.nvmlDeviceRegisterEvents(gpu.handle, self._nvml.nvmlEventTypeXidCriticalError, self._events)
-        except self._nvml.NVMLError:
-            pass
+        except self._nvml.NVMLError as err:
+            self._log_nvml_error(f"GPU {gpu.index} registering for XID events (none reported for it)", err.value)
         return True
 
     #: Events drained per tick at most, so a storm can't hold the sampling thread.
@@ -107,16 +154,25 @@ class GpuCollector(NvmlCollector):
         for _ in range(self.max_events):
             try:
                 event = self._nvml.nvmlEventSetWait(self._events, 0)
-            except self._nvml.NVMLError:
+            except self._nvml.NVMLError as err:
                 # NVML_ERROR_TIMEOUT: the queue is empty, which is the normal case.
+                if err.value != self._nvml.NVML_ERROR_TIMEOUT:
+                    self._log_nvml_error("waiting for XID events", err.value)
                 return seen
             if not event.eventType & self._nvml.nvmlEventTypeXidCriticalError:
                 continue
             try:
                 index = self._nvml.nvmlDeviceGetIndex(event.device)
-            except self._nvml.NVMLError:
+            except self._nvml.NVMLError as err:
+                self._log_nvml_error(f"indexing the GPU of XID {event.eventData} (dropped)", err.value)
                 continue
+            if (index, event.eventData) in self._xids_logged:
+                log.debug(f"GPU {index}: XID {event.eventData} again.")
+            else:
+                self._xids_logged.add((index, event.eventData))
+                log.warning(f"GPU {index}: XID {event.eventData}; repeats of it on this GPU are logged at debug.")
             seen.setdefault(index, []).append(str(event.eventData))
+        log.debug(f"{self.max_events} events drained this tick; the rest wait for the next one.")
         return seen
 
     def _duty_cycle(self, gpu: Gpu) -> dict[str, Any]:
@@ -155,7 +211,6 @@ class GpuCollector(NvmlCollector):
         rows = []
         for gpu in self._gpus:
             reasons = self._query(gpu, "reasons", self._reasons)
-            power = self._query(gpu, "power", self._nvml.nvmlDeviceGetPowerUsage)
             util = self._query(gpu, "util", self._nvml.nvmlDeviceGetUtilizationRates)
             rows.append(
                 {
@@ -164,7 +219,10 @@ class GpuCollector(NvmlCollector):
                         gpu, "sm_clock", self._nvml.nvmlDeviceGetClockInfo, self._nvml.NVML_CLOCK_SM
                     ),
                     "clocks_event_reasons": None if reasons is None else f"0x{reasons:x}",
-                    "power_w": None if power is None else power / 1000,
+                    **{
+                        query.name: self._get_power_attr(gpu, query)
+                        for query in (PowerQuery.power_w, PowerQuery.power_enforced_w)
+                    },
                     "temp_c": self._query(
                         gpu, "temp", self._nvml.nvmlDeviceGetTemperature, self._nvml.NVML_TEMPERATURE_GPU
                     ),
@@ -180,7 +238,18 @@ class GpuCollector(NvmlCollector):
         if self._events is not None:
             try:
                 self._nvml.nvmlEventSetFree(self._events)
-            except self._nvml.NVMLError:
-                pass
+            except self._nvml.NVMLError as err:
+                self._log_nvml_error("freeing the XID event set", err.value)
             self._events = None
         super().close()
+
+    def describe(self) -> dict[str, Any]:
+        """The GPU map, plus each GPU's power limits at start."""
+        described = super().describe()
+        if self._limits:
+            described["power_limits"] = {
+                str(index): values
+                for index, values
+                in sorted(self._limits.items())
+            }
+        return described

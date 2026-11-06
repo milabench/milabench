@@ -249,6 +249,25 @@ def test_a_counter_that_was_reset_keeps_its_rise_and_counts_on_from_zero():
     assert counters.risen("mem", "oom_kill") == {("cn-a", ""): 5}
 
 
+def test_a_combined_power_mask_reports_the_cap_and_the_brake_separately(tmp_path):
+    now = time.time()
+    stamp = int((now - 5) * 1000)
+    columns = ["time_ms", "gpu", "sm_clock_mhz", "clocks_event_reasons"]
+    tsv(tmp_path / "nodes" / "cn-a.gpu.tsv", columns, [[stamp, 0, 1580, "0x84"], [stamp, 1, 1580, "0x4"]])
+
+    window = Window(window_s=60.0)
+    read(tmp_path, {}, window)
+    window.refresh({}, now)
+    text = block(window)
+    scored = ranked(findings(window), {"cn-a"})
+
+    assert "GPU software power cap: cn-a:0, cn-a:1\n" in text
+    assert "GPU hardware slowdown: cn-a:0\n" in text
+    # The software cap is reported and does not score; only the brake does, once.
+    severity = {rule.name: rule.severity for rule in RULES}
+    assert [(score, host) for score, host, _ in scored] == [(severity["GPU hardware slowdown"], "cn-a")]
+
+
 def test_one_gpu_whose_clock_lags_its_peers_is_slow_but_an_idle_one_is_not(tmp_path):
     now = time.time()
     stamp = int((now - 5) * 1000)
