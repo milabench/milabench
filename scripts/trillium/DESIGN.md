@@ -84,6 +84,8 @@ spread over groups. Otherwise placement is dropped.
 
 - **8 nodes capped at 200 W** (default 1,000 W, 120 MHz; sweeps at 00:21 and 02:13 on 2026-11-05, same set): `trig0122`, `0123`, `0133`, `0138`, `0140`, `0143`, `0145`, `0152`. Cause unknown, asked to the admins. One capped node takes a 13-node job from ~3 s to 26.7 s per step; `power_check.sh` fails the job at start.
 
+**Kernel change on 2026-11-05:** the admins added the boot option `intel_pstate=passive`, which they say was missing (announced 17:35; root's `Reboot ASAP` is dated 17:28:57). Nodes reboot after their current job, so the date differs per node: `analysis/pstate_boots.tsv`. `runs.csv` has a `pstate` column, `before`, `after` or `mixed`, per run. Read on 14 nodes after the reboot (`cmdline_read_in_job` in that file), against readings from before it: the option replaces `amd_pstate=passive`, the driver goes from `intel_pstate` to `intel_cpufreq`; kernel, GPU driver, BIOS, microcode and RAPL are unchanged.
+
 **Network, measured on 2026-11-04** (up to 25 nodes, the job limit):
 
 - D3: all-gather and reduce-scatter hold 174-192 GB/s from 2 to 25 nodes; all-reduce 171-188 from 4 nodes. All-to-all falls to 10.0 GB/s at 2 nodes and 4.3 at 25.

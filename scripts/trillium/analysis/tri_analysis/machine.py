@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 CLUSTER = "trillium"
 GPUS_PER_NODE = 8
@@ -33,6 +34,10 @@ if N_NODES < 52:
 CKPT_FULL_B_PER_PARAM = 12.0
 CKPT_WEIGHTS_B_PER_PARAM = 2.0
 # /etc/hosts puts the nodes in 8 subnets (racks?), in host order. The switch layout is unknown.
+# The admins' kernel change on 2026-11-05: boot option intel_pstate=passive (driver intel_pstate -> intel_cpufreq), rolled
+# out by reboot after root's "Reboot ASAP" at 17:28:57. This file holds each node's first boot with it (scontrol's BootTime).
+PSTATE_BOOTS = Path(__file__).resolve().parents[1] / "pstate_boots.tsv"
+
 SUBNET_SIZES = [7, 7, 7, 7, 4, 7, 7, 6]
 SUBNET_OF = {}
 _i = 0

@@ -21,6 +21,7 @@ only holds Trillium runs. The directories milabench keeps for install and prepar
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -29,7 +30,7 @@ from tt_analysis.monitor import parse_nodemon
 from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
-from .machine import CLUSTER, PEAK_BF16, SUBNET_OF
+from .machine import CLUSTER, PEAK_BF16, PSTATE_BOOTS, SUBNET_OF
 from .runs import canonical_model, drop_warmup, failed_operation, parse_extras
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
@@ -65,6 +66,14 @@ def _power(mon: pd.DataFrame, run: dict) -> dict | None:
     per_gpu = p.groupby(["host", "gpu"]).value.mean()
     return {"run_id": run["run_id"], "gpus_sampled": len(per_gpu), "power_w_gpu": per_gpu.mean(),
             "power_w_total": per_gpu.sum(), "synthetic": bool(p.synthetic.any())}
+
+
+def pstate(started, hosts, boots: dict[str, datetime]) -> str | None:
+    """Was a run before or after the admins' kernel change, on its nodes? A node not rebooted yet counts as before."""
+    if pd.isna(started) or not hosts or pd.isna(hosts):
+        return None
+    after = [h in boots and datetime.fromisoformat(started) >= boots[h] for h in hosts.split(";")]
+    return "after" if all(after) else "mixed" if any(after) else "before"
 
 
 def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) -> dict[str, pd.DataFrame]:
@@ -122,6 +131,10 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     if not r.empty:
         r["peak_flops_per_gpu"] = PEAK_BF16
         r["mfu_pct"] = 100 * r.flops_per_token * r.tok_s_gpu / PEAK_BF16
+        # started is naive local time (tt_analysis.runs), so the boots are too
+        boots = {b.node: datetime.fromisoformat(b.boot).astimezone().replace(tzinfo=None)
+                 for b in pd.read_csv(PSTATE_BOOTS, sep="\t").itertuples()}
+        r["pstate"] = [None if s else pstate(t, h, boots) for s, t, h in zip(r.synthetic, r.started, r.hosts)]
         tables["runs"] = r.sort_values("started").reset_index(drop=True)
     _prefer_measured(tables)
     out.mkdir(parents=True, exist_ok=True)
