@@ -13,7 +13,7 @@ QWEN_BASE = {"grad_reduce": "fp32", "ac": "selective", "precision": "bf16"}
 
 # Which runs enter the report. Every run stays in runs.csv and in the ledger; `completed`, `failed_runs` and
 # `checkpoints` see only ``in_report``. The hardware reruns are read directly, in the machine block.
-REPORT_CAMPAIGNS = {"phase1", "trillium-1105"}
+REPORT_CAMPAIGNS = r"^(phase1|trillium-\d{4})$"  # GLM-5's launcher tags trillium-MMDD, by the day it was submitted; trillium-p0 and -p3-ckfix are tests
 MACHINE_CAMPAIGNS = {"post-pstate", "hw-reboot", "hw-probe"}
 REPORT_EXPERIMENTS = {"A-Q", "A-G", "B-Q-weak", "B-Q-strong", "B-G-weak", "B-G-strong", "C-speed", "C-loss", "E1", "R",
                       "F1", "F2"}
@@ -46,7 +46,7 @@ def mark_selection(r: pd.DataFrame) -> pd.DataFrame:
     """Columns that say what a run is for: role (report / machine / test), in_report, set_aside (why not),
     slow_nodes, capped_nodes, bw_groups."""
     measured = ~r.synthetic.astype(bool)
-    tagged = r.campaign.isin(REPORT_CAMPAIGNS) & r.experiment.isin(REPORT_EXPERIMENTS)
+    tagged = r.campaign.fillna("").str.match(REPORT_CAMPAIGNS) & r.experiment.isin(REPORT_EXPERIMENTS)
     tagged |= (r.campaign == "hw-reboot") & (r.experiment == "R")  # the reference run after the reboot belongs to the drift
     role = np.select([tagged, r.campaign.isin(MACHINE_CAMPAIGNS)], ["report", "machine"], "test")
     aside = r.job.map(SET_ASIDE) if "job" in r else pd.Series(None, index=r.index, dtype=object)
