@@ -53,6 +53,7 @@ def default_registry(
         "gpu": (GpuCollector, 1.0), # will show thermal throttling as reduced SM clock
         "nvlink": (NvlinkCollector, 10.0),  # costly to read, and cumulative: see NvlinkCollector
         "ib": (IbCollector, 1.0),
+        # One row per package every 2 s, not a 5 s series. cpu_mhz_busy_mean is the column to use.
         "cpu": (CpuCollector, 2.0), # a 96-core node takes 2 ms per collection
         "mem": (MemCollector, 1.0),
         "pcie": (PcieCollector, 10.0),  # link states and AER counts change rarely

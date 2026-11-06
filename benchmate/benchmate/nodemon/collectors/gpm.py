@@ -7,7 +7,7 @@ from typing import Any, ClassVar, NamedTuple
 import pynvml
 
 from ..collector import CollectorMetric, MetricKind
-from .nvml import Gpu, NvmlCollector
+from .nvml import Gpu, NvmlCollector, nvml_error_text
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,8 @@ class SamplePair:
         try:
             self.buffers.append(self._nvml.nvmlGpmSampleAlloc())
             self.buffers.append(self._nvml.nvmlGpmSampleAlloc())
-        except self._nvml.NVMLError:
+        except self._nvml.NVMLError as err:
+            log.debug(f"NVML would not allocate a GPM sample buffer ({nvml_error_text(err.value)}).")
             self.free()
             return False
         return True
@@ -62,8 +63,8 @@ class SamplePair:
         for buffer in self.buffers:
             try:
                 self._nvml.nvmlGpmSampleFree(buffer)
-            except self._nvml.NVMLError:
-                pass
+            except self._nvml.NVMLError as err:
+                log.debug(f"NVML would not free a GPM sample buffer ({nvml_error_text(err.value)}).")
         self.buffers = []
         self.samples = Samples(None, None)
 
@@ -158,8 +159,8 @@ class GpmCollector(NvmlCollector):
         """Keep a GPU only when it supports GPM, and give it the buffers a metric needs."""
         try:
             support = self._nvml.nvmlGpmQueryDeviceSupport(gpu.handle)
-        except self._nvml.NVMLError as error:
-            log.debug(f"GPU {gpu.index}: NVML refused the GPM support query ({error}); no GPM rows for it.")
+        except self._nvml.NVMLError as err:
+            log.debug(f"GPU {gpu.index}: NVML refused the GPM support query ({nvml_error_text(err.value)}); no GPM rows for it.")
             return False
         if not support.isSupportedDevice:
             log.debug(f"GPU {gpu.index} has no GPM counters, so it is older than Hopper; no GPM rows for it.")
@@ -201,7 +202,8 @@ class GpmCollector(NvmlCollector):
             request.metrics[slot].metricId = metric_id
         try:
             self._nvml.nvmlGpmMetricsGet(request)
-        except self._nvml.NVMLError:
+        except self._nvml.NVMLError as err:
+            self._log_nvml_error("reading the GPM metrics", err.value)
             return self._empty()
         readings = self._empty()
         for slot, column in enumerate(self._metric_id):
@@ -211,6 +213,7 @@ class GpmCollector(NvmlCollector):
     def _reading(self, column: str, metric: Any) -> float | None:
         """One metric. A failed one is empty. Percentages become fractions; MiB/s stays MiB/s."""
         if metric.nvmlReturn != self._nvml.NVML_SUCCESS:
+            self._log_nvml_error(f"GPM metric {column}", metric.nvmlReturn)
             return None
         if column in self.rates:
             return metric.value

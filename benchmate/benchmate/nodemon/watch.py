@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import shutil
@@ -41,6 +42,8 @@ from .collectors import (
 )
 from .collectors.gpu import ClockReason
 from .sink import TsvSink
+
+log = logging.getLogger(__name__)
 
 # --- rules: what each kind of finding is, and how it is found ----------------------------------------------------------------------------
 
@@ -300,9 +303,31 @@ GPU_POWER = GpuCollector.metric("power_w")
 CPU_BUSY_MHZ = CpuCollector.metric("cpu_mhz_busy_mean")
 
 
+def reasons_of(row: dict[str, str]) -> list[ClockReason]:
+    """A gpu row's clock reasons. A missing cell or one that is not hex text gives none, so one bad cell cannot stop a live follow."""
+    text = row.get(CLOCK_REASONS.name)
+    if text is None:
+        return []
+    try:
+        return ClockReason.parse(text)
+    except ValueError as err:
+        log.debug(f"Unreadable clock reasons cell, read as none: {err}")
+        return []
+
+
 def gpu_working(row: dict[str, str]) -> bool:
-    """A gpu row where the GPU was not idling: an idle GPU's clock is down by design, not slow."""
-    return not ClockReason.GPU_IDLE & ClockReason.parse(row.get(CLOCK_REASONS.name))
+    """A gpu row where the GPU was not idling: an idle GPU's clock is down by design, not slow.
+
+    A row with no reasons cell, or one that cannot be read, is left out of the comparison.
+    """
+    text = row.get(CLOCK_REASONS.name)
+    if text is None:
+        return False
+    try:
+        return ClockReason.GPU_IDLE not in ClockReason.parse(text)
+    except ValueError as err:
+        log.debug(f"Unreadable clock reasons cell, row left out of the clock comparison: {err}")
+        return False
 
 
 CPU_UTIL_FOR_CLOCK_COMPARISON = 0.2
@@ -318,7 +343,8 @@ CLOCK_RULES = (
     Flags(
         "GPU hardware slowdown", 8,
         "The hardware itself cut the clock: HW_SLOWDOWN, HW_THERMAL_SLOWDOWN or HW_POWER_BRAKE_SLOWDOWN. A cooling "
-        "or power supply fault; the node is a candidate to drain.",
+        "or power supply fault; the node is a candidate to drain. Bits are tested with a mask, so a GPU that also "
+        "has SW_POWER_CAP set (0x84) is still this finding.",
         CLOCK_REASONS,
         ClockReason.HW_SLOWDOWN | ClockReason.HW_THERMAL_SLOWDOWN | ClockReason.HW_POWER_BRAKE_SLOWDOWN,
     ),
@@ -328,6 +354,14 @@ CLOCK_RULES = (
         "keeping up.",
         CLOCK_REASONS,
         ClockReason.SW_THERMAL_SLOWDOWN,
+    ),
+    Flags(
+        "GPU software power cap", 0,
+        "The driver's own power limit is holding the clock (SW_POWER_CAP): the GPU's normal cap, not an external "
+        "brake. A combined mask (0x84) is this and HW_POWER_BRAKE_SLOWDOWN; test the bit, do not compare the mask "
+        "for equality. Severity 0 so a node sitting on its own cap is reported and does not score as a fault.",
+        CLOCK_REASONS,
+        ClockReason.SW_POWER_CAP,
     ),
 )
 
@@ -813,7 +847,7 @@ def slowest_clock(window: Window) -> tuple[float, str]:
     if worst is None:
         return 0, "no samples"
     level = max((rule.severity for rule in slowdowns_of(worst[2])), default=0)
-    reasons = ClockReason.parse(worst[2].get(CLOCK_REASONS.name)).names()
+    reasons = "|".join(reason.name for reason in reasons_of(worst[2])) or "-"
     return level, f"min {worst[0]:.0f} {SM_CLOCK.unit} on {worst[1]} ({reasons})"
 
 

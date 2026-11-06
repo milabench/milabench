@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from statistics import fmean
@@ -12,6 +13,8 @@ from ..collector import (
     PolledFile,
     read_attr,
 )
+
+log = logging.getLogger(__name__)
 
 
 def parse_stat(text: str) -> dict[int, tuple[int, int]]:
@@ -96,9 +99,7 @@ class CpuCollector(NodeCollector):
         CollectorMetric("busy_cores", MetricKind.SAMPLE, "count", "Cores at or above the busy utilization over the last tick"),
         CollectorMetric(
             "cpu_mhz_busy_mean", MetricKind.SAMPLE, "MHz",
-            "Mean clock of the busy cores. Usually the column to watch: the mean over all cores hides a busy core "
-            "that slowed down, since idle cores report their nominal clock. cpu_mhz_cap, cpu_temp_c and "
-            "thermal_throttle_count give the cause.",
+            "Mean clock of busy cores only; empty when none were busy. Primary CPU clock column.",
         ),
         CollectorMetric("cpu_mhz_min", MetricKind.SAMPLE, "MHz", "Lowest core clock in the package"),
         CollectorMetric("cpu_mhz_max", MetricKind.SAMPLE, "MHz", "Highest core clock in the package"),
@@ -138,7 +139,11 @@ class CpuCollector(NodeCollector):
         self._stat = PolledFile(self.proc / "stat", max_bytes=None)
         self._cpuinfo = PolledFile(self.proc / "cpuinfo", max_bytes=None)
         stat = self._stat.read()
-        if not stat or not self._cpuinfo.available:
+        if not stat:
+            log.debug(f"No CPU rows: {self._stat.path} is unreadable or empty.")
+            return False
+        if not self._cpuinfo.available:
+            log.debug(f"No CPU rows: {self._cpuinfo.path} is unreadable.")
             return False
         temps = package_temperatures(self.hwmon_root)
         packages: dict[int, _Package] = {}
@@ -151,6 +156,10 @@ class CpuCollector(NodeCollector):
             package.cpus.append(cpu)
             package.max_freq.append(PolledFile(directory / "cpufreq" / "scaling_max_freq"))
         self._packages = [packages[key] for key in sorted(packages)]
+        log.debug(
+            f"CPUs per package: {({package.package: len(package.cpus) for package in self._packages})}; "
+            f"temperature sensors for packages {sorted(temps) or 'none'}."
+        )
         # The baseline for the first tick's utilization, so its row is not left empty.
         self._last_stat = parse_stat(stat)
         self._last_time_s = time.monotonic()
