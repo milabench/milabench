@@ -22,6 +22,7 @@ only holds Trillium runs. The directories milabench keeps for install and prepar
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -121,6 +122,9 @@ def mark_jobs(r: pd.DataFrame, sacct: Path) -> pd.DataFrame:
     return r.assign(job_state=state, status=r.status.where(~timed_out, "failed").where(~unfinished, "running"))
 
 
+NO_DATA_NAMES = {f"{w['bench']}.{job}" for job, w in NO_DATA_RUNS.items()}
+
+
 def _hostlist(text: str) -> str:
     """trig[0101-0103,0105] -> trig0101;trig0102;trig0103;trig0105."""
     m = re.fullmatch(r"(\w+)\[(.+)\]", text)
@@ -163,6 +167,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                 continue
             parsed = parse_run(f, CLUSTER, SUBNET_OF, synthetic=is_syn)
             if parsed is None:
+                if f.stat().st_size and f.parent.name not in NO_DATA_NAMES:
+                    print(f"[build] {f.parent.name}: has data but no run row (no summary, return code 0): left out", file=sys.stderr)
                 continue
             row, steps, _, ep = parsed
             extra, loss, ckpt, batch_ids, elapsed, items = parse_extras(f, row["run_id"])

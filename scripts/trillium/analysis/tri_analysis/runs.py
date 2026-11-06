@@ -31,10 +31,24 @@ def canonical_model(name):
     return GLM if low.startswith("glm") else QWEN if low.startswith("qwen") else name
 
 
+def garbled_summary(path: Path) -> dict | None:
+    """The summary event whose smuggled line came out garbled: the monitor thread wrote another escape sequence inside it (inferred;
+    1240808, 1246920). It stays in a very long ``line`` event, hex-encoded (as glm/ag/recover.py on Trillium)."""
+    for e in _read_events(path):
+        text = e.get("data") if e.get("event") == "line" else None
+        if not isinstance(text, str) or len(text) < 20000 or "\x1b[" not in text:
+            continue
+        body = re.sub(r"\[[0-?]*z", "", text[text.index("\x1b[") + 2:])
+        try:
+            return json.loads(bytes.fromhex(body[:body.index("z")].translate(str.maketrans(":;<=>?", "abcdef"))).decode())["summary"]
+        except (ValueError, KeyError):
+            continue
+    return None
+
+
 def _clean_events(path: Path):
     """``read_events`` for the Rorqual parser: the TorchTitan pack writes ``per_ep_group: null`` (no MoE),
-    where the parser expects a list. A run whose summary came out garbled gets the one recovered from its
-    line (data/raw/trillium/recovered/<run>.summary.json, glm/ag/recover.py on Trillium)."""
+    where the parser expects a list. A run whose summary came out garbled gets it back from its line."""
     found = False
     for e in _read_events(path):
         d = e.get("data")
@@ -45,9 +59,7 @@ def _clean_events(path: Path):
                 if s.get(key) is None:
                     s[key] = []
         yield e
-    recovered = path.parents[2] / "recovered" / f"{path.parent.name}.summary.json"
-    if not found and recovered.exists():
-        s = json.loads(recovered.read_text())
+    if not found and (s := garbled_summary(path)) is not None:
         yield {"event": "data", "data": {"summary": s, "task": "train"}}
 
 
