@@ -1020,9 +1020,10 @@ def energy(t):
     if e.empty:
         return None
     base = e[e.run_id.isin(qwen_base(t["runs"]).run_id)]
+    speed = e[e.experiment == "C-speed"]
     panels = [
         ("Qwen layouts, 13 nodes, 24k", base[(base.nodes == 13) & (base.tokens_per_gpu == 24576)], "layout"),
-        ("precision, largest run so far", e[(e.experiment == "C-speed") & (e.nodes == e[e.experiment == "C-speed"].groupby("model").nodes.transform("max"))], "prec"),
+        ("precision, largest run so far", speed[speed.nodes == speed.groupby("model").nodes.transform("max")], "prec"),
         ("Qwen scale (B-Q-weak)", e[e.experiment == "B-Q-weak"], "scale"),
     ]
     panels = [x for x in panels if not x[1].empty]
