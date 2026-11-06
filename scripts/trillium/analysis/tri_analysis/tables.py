@@ -1006,13 +1006,13 @@ def ledger(runs: pd.DataFrame) -> str:
     """Every attempt, on as many pages as it takes: start, entry, job, nodes, experiment, status, and why it is not in the figures."""
     r = runs[~runs.synthetic.astype(bool)].sort_values("started")
     lines = [r"\scriptsize", r"\begin{longtable}{lllrlll}",
-             r"\caption{Run ledger: every attempt on Trillium, including failures. Use: report, in the figures; machine, the hardware reruns; test, bring-up and tests of one thing. "
+             r"\caption{Run ledger: every attempt on Trillium, including failures. Use: report, in the figures; set aside, left out of them for the reason given; machine, the hardware reruns; test, bring-up and tests of one thing. "
              r"Why: a run kept out in spite of its tags.}\label{tab:ledger}\\",
              r"\toprule", r"Started & Entry & Job & Nodes & Experiment & Status & Use, why \\", r"\midrule", r"\endhead"]
     for x in r.itertuples():
         job = str(x.job).removesuffix(".0") if pd.notna(x.job) else ""
         nodes = f"{int(x.nodes)}" if pd.notna(x.nodes) else ""
-        use = "report" if x.in_report else x.role
+        use = "set aside" if isinstance(x.set_aside, str) and x.set_aside else "report" if x.in_report else x.role
         why = f", {x.set_aside}" if isinstance(x.set_aside, str) and x.set_aside else ""
         entry = x.bench if isinstance(x.bench, str) else x.run_name
         lines.append(f"{str(x.started).replace('T', ' ')[5:16]} & {_esc(entry.removeprefix('megatron-glm5-'))} & {job} & {nodes} & {_esc(x.experiment) if pd.notna(x.experiment) else ''} & {x.status} & "

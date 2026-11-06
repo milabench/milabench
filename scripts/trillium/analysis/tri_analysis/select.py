@@ -21,6 +21,7 @@ REPORT_EXPERIMENTS = {"A-Q", "A-G", "B-Q-weak", "B-Q-strong", "B-G-weak", "B-G-s
 SET_ASIDE = {
     "1239932": "capped trig0123 in the job, 26.3 s per step, cancelled: evidence for the cap only",
     "1241330": "cancelled",
+    "1251904": "trig0114 stopped responding at 17:03 on Nov 6, after step 30 of 500, NODE_FAIL: says nothing about the recipe",
     "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
 }
 # Stopped before they wrote any event, so their run data is empty; they still answer something, or belong in the ledger. Job -> what the launcher ran.

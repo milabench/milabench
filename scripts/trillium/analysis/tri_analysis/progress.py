@@ -20,7 +20,8 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 52  # all pass since 16:35 on Nov 6 (trig0135 released at 16:20, retested); a point above this waits for nodes
+TOP_NOW = 51  # all 52 passed at 16:35 on Nov 6, then trig0114 stopped responding at 17:03; a point above this waits for it
+NODE_OUT = "trig0114"
 FIFTY = 50
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
@@ -30,8 +31,8 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Network (D2-D4)": "D2, D3, D4 at 52, at the end; fewer only if nodes are lost by then",
-             "Long run": "Qwen and GLM-5, at least 1 h each, at 52, at the end; a compromise only if nodes are lost by then"}
+LEFT_NOTE = {"Network (D2-D4)": f"D2, D3, D4 at the end: at 52 with {NODE_OUT} back, otherwise at the largest scale available",
+             "Long run": f"Qwen and GLM-5, at least 1 h each, at the end: at 52 with {NODE_OUT} back; under 50 only as a compromise"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
@@ -213,12 +214,17 @@ def _left(g: pd.DataFrame) -> str:
     note = LEFT_NOTE.get(g.block.iloc[0])
     if note:
         return note
-    left = g[(g.state == "not run") & ~g.compromise]
-    if left.empty:
-        return "the rest is running" if (g.state == "active").any() else "nothing"
-    if len(left) <= 4:
-        return "; ".join(left.point)
-    return f"{len(left)} points at {', '.join(str(n) for n in sorted(set(left.nodes)))} nodes"
+    left, wait = g[(g.state == "not run") & ~g.compromise], g[(g.state == "needs nodes") & ~g.compromise]
+    parts = []
+    if len(left) > 4:
+        parts.append(f"{len(left)} points at {', '.join(str(n) for n in sorted(set(left.nodes)))} nodes")
+    elif len(left):
+        parts.append("; ".join(left.point))
+    if len(wait):
+        parts.append(f"{len(wait)} at {wait.nodes.max()} with {NODE_OUT} back")
+    if (g.state == "active").any():
+        parts.append("the rest is running")
+    return "; ".join(parts) or "nothing"
 
 
 def _compromise(g: pd.DataFrame) -> str:
@@ -241,7 +247,7 @@ def summary(p: pd.DataFrame, t: dict[str, pd.DataFrame], sacct: Path) -> pd.Data
     e1, ref = (done.experiment == "E1").sum(), (done.experiment == "R").sum()
     # The design has 4 sets of 13 nodes, so 52; the 3 sets that ran are a compromise.
     rows.append({"Figures": "interference", "Group": "Side by side (E1)", "Done / planned": "none", "Running or queued": "",
-                 "What's left": "4 sets of 13, at 52", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
+                 "What's left": f"4 sets of 13, at 52 with {NODE_OUT} back", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
     rows.append({"Figures": "reference_drift", "Group": "Reference (R)", "Done / planned": f"{ref} runs, no fixed count",
                  "Running or queued": "; ".join(jobs.get("Reference", [])), "What's left": "more as the window goes on", "50+ nodes": "none", "Compromise": "none"})
     for block, g in p.groupby("block", sort=False):
