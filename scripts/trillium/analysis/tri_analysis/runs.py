@@ -99,13 +99,19 @@ def normalize_checkpoint(c: dict) -> dict:
 def parse_extras(path: Path, run_id: str):
     """One data file -> (run columns, loss rows, checkpoint rows, batch_id of each rate event)."""
     summary, run_start, losses, ckpts, batch_ids = None, None, [], [], []
+    elapsed, items = [], []
     no_step = 0
+    rates_t0 = None  # absolute time of t_s = 0 in the steps table
     for e in read_events(path):
         if e.get("event") != "data":
             continue
         d = e.get("data") or {}
         if "rate" in d and d.get("task") == "train":
             batch_ids.append(d.get("batch_id", d.get("step")))
+            if rates_t0 is None:
+                rates_t0 = d["time"] - d.get("elapsed", 0)
+            elapsed.append(d.get("elapsed"))
+            items.append(float(d["rate"]) * d["elapsed"] if d.get("elapsed") else None)
         if d.get("loss") is not None and d.get("task", "train") == "train" and "rate" not in d:
             # Own event (FORMAT.md); TorchTitan numbers the step batch_id, Megatron step.
             step = d.get("batch_id", d.get("step"))
@@ -142,6 +148,7 @@ def parse_extras(path: Path, run_id: str):
         "measure_start": m.get("measurement_start_epoch"),
         "measure_end": m.get("measurement_end_epoch"),
         "first_step_total_s": (st.get("first_step_done") or {}).get("max_s"),
+        "rates_t0": rates_t0,
     }
     if not summary and run_start:  # failed run: settings from run_start
         hosts = (run_start.get("placement") or {}).get("hosts") or []
@@ -160,7 +167,19 @@ def parse_extras(path: Path, run_id: str):
     row["loss_events"], row["loss_events_no_step"] = len(losses), no_step
     if any(b is None for b in batch_ids):
         batch_ids = []
-    return row, losses, ckpts, batch_ids
+    return row, losses, ckpts, batch_ids, elapsed, items
+
+
+def real_step_times(row: dict, steps: list[dict], elapsed: list, items: list) -> None:
+    """Step times are the time measured, not declared tokens / rate: the rate counts valid tokens, and a Qwen micro-batch of 49,152 slots hits
+    the packer's 64 documents and pads about 15 % of them. ``valid_token_share``: valid tokens / the tokens declared."""
+    if len(elapsed) != len(steps) or not steps or any(e is None for e in elapsed):
+        return
+    for s, e in zip(steps, elapsed):
+        s["step_s"] = e
+    if row.get("global_batch_tokens"):
+        row["valid_token_share"] = sum(items) / len(items) / row["global_batch_tokens"]
+    row["step_s"], row["step_s_p10"], row["step_s_p90"] = percentile(elapsed, 0.5), percentile(elapsed, 0.1), percentile(elapsed, 0.9)
 
 
 def drop_warmup(row: dict, steps: list[dict]) -> list[dict]:
@@ -171,13 +190,12 @@ def drop_warmup(row: dict, steps: list[dict]) -> list[dict]:
         return steps
     steps = steps[warmup:]
     rates = [s["tok_s_gpu"] for s in steps]
-    tokens, gpus = row["global_batch_tokens"], row["gpus"]
     row.update({
         "measured_steps": len(rates),
         "tok_s_gpu": percentile(rates, 0.5),
         "tok_s_gpu_p10": percentile(rates, 0.10),
         "tok_s_gpu_p90": percentile(rates, 0.90),
-        "step_s": tokens / (percentile(rates, 0.5) * gpus),
+        "step_s": percentile([s["step_s"] for s in steps], 0.5),
         "step_s_p10": percentile([s["step_s"] for s in steps], 0.10),
         "step_s_p90": percentile([s["step_s"] for s in steps], 0.90),
     })

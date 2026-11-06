@@ -192,13 +192,48 @@ def qwen_base(runs: pd.DataFrame) -> pd.DataFrame:
     return r
 
 
+REF_NODES = "trig0147;trig0149;trig0150;trig0151"  # the reference run's fixed nodes, from its third run on
+
+
 def drift(r: pd.DataFrame) -> tuple[pd.Series, float]:
-    """Reference runs (R): hours since the first one, and the linear trend over the window (%)."""
+    """Reference runs (R): hours since the first one, and the linear trend over the window (%), on the fixed nodes only."""
     hours = (pd.to_datetime(r.started) - pd.to_datetime(r.started).min()).dt.total_seconds() / 3600
-    if len(r) < 3:
+    fixed = r.hosts == REF_NODES if not r.synthetic.all() else pd.Series(True, index=r.index)
+    if fixed.sum() < 3:
         return hours, float("nan")
-    slope, _ = np.polyfit(hours, r.tok_s_gpu, 1)
-    return hours, 100 * slope * (hours.max() - hours.min()) / r.tok_s_gpu.median()
+    slope, _ = np.polyfit(hours[fixed], r.tok_s_gpu[fixed], 1)
+    return hours, 100 * slope * (hours[fixed].max() - hours[fixed].min()) / r.tok_s_gpu[fixed].median()
+
+
+def e1_changes(runs: pd.DataFrame, steps: pd.DataFrame) -> pd.DataFrame:
+    """E1, each set together against alone: same batch ids (same seed and data), only steps inside the common window of its draw's
+    together runs, after batch 10. Mean step time, as the run-and-monitor agent's qwen/e1/compare.py; the median beside it."""
+    r = completed(runs, "E1")
+    if r.empty or steps.empty or r.rates_t0.isna().all():
+        return pd.DataFrame()
+    s = steps[steps.run_id.isin(r.run_id)].merge(r[["run_id", "rates_t0"]], on="run_id")
+    s = s.assign(time=s.rates_t0 + s.t_s)
+    rows = []
+    for draw, g in r.groupby(r.node_set.str[:2]):
+        together = g[g.condition == "together"]
+        here = s[s.run_id.isin(together.run_id)]
+        t0 = here[here.step > 10].groupby("run_id").time.min().max()
+        t1 = here.groupby("run_id").time.max().min()
+        for node_set, d in g.groupby("node_set"):
+            if set(d.condition) != {"alone", "together"}:
+                continue
+            alone_run, together_run = d[d.condition == "alone"].iloc[0], d[d.condition == "together"].iloc[0]
+            w = s[(s.run_id == together_run.run_id) & (s.time >= t0) & (s.time <= t1)].set_index("step").step_s
+            a = s[s.run_id == alone_run.run_id].set_index("step").step_s
+            ids = w.index.intersection(a.index)
+            if len(ids) < 10:
+                continue
+            rows.append({"draw": draw, "node_set": node_set, "steps": len(ids), "window_s": t1 - t0, "alone_s": a[ids].mean(), "together_s": w[ids].mean(),
+                         "change_pct": 100 * (w[ids].mean() / a[ids].mean() - 1), "change_median_pct": 100 * (w[ids].median() / a[ids].median() - 1),
+                         "tok_s_gpu_alone": alone_run.tokens_per_gpu / a[ids].mean(), "tok_s_gpu_together": together_run.tokens_per_gpu / w[ids].mean(),
+                         "slow_nodes": alone_run.slow_nodes if isinstance(alone_run.slow_nodes, str) else "", "bw_groups": alone_run.bw_groups,
+                         "synthetic": bool(alone_run.synthetic or together_run.synthetic)})
+    return pd.DataFrame(rows)
 
 
 def with_energy(runs: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:

@@ -50,6 +50,20 @@
 \triunset{\TriCkptGlmFullSave}\triunset{\TriCkptGlmFullBlocked}\triunset{\TriCkptGlmLoadPeak}\triunset{\TriCkptWriteGBs}
 \triunset{\TriStartupQwen}\triunset{\TriStartupGlm}\triunset{\TriEnergyBest}
 
+\triunset{\TriCapNodes}\triunset{\TriCapTFlops}\triunset{\TriCapControlLo}\triunset{\TriCapControlHi}\triunset{\TriCapPowerLo}\triunset{\TriCapPowerHi}
+\triunset{\TriCapControlPowerLo}\triunset{\TriCapControlPowerHi}\triunset{\TriCapFactor}\triunset{\TriCpuBeforeMed}\triunset{\TriCpuBeforeLo}\triunset{\TriCpuBeforeHi}
+\triunset{\TriCpuAfterMed}\triunset{\TriCpuAfterLo}\triunset{\TriCpuAfterHi}\triunset{\TriCpuOddNode}\triunset{\TriCpuNodesBefore}\triunset{\TriCpuNodesAfter}
+\triunset{\TriThrottlePct}\triunset{\TriThrottleStep}\triunset{\TriThrottleOddStep}\triunset{\TriSlowBehindLo}\triunset{\TriSlowBehindHi}\triunset{\TriSlowThirteenWith}
+\triunset{\TriSlowThirteenWithout}\triunset{\TriSlowThirteenPct}\triunset{\TriKernelMaxChange}\triunset{\TriKernelReruns}\triunset{\TriKernelRepeatLo}\triunset{\TriKernelRepeatHi}
+\triunset{\TriInterferenceLo}\triunset{\TriInterferenceHi}\triunset{\TriPlacementPct}\triunset{\TriPlacementGroup}\triunset{\TriPlacementRandom}\triunset{\TriBesidePPSlow}\triunset{\TriBesidePPFast}
+\triunset{\TriRefRuns}\triunset{\TriRefSpreadPct}\triunset{\TriDcgmHi}\triunset{\TriDcgmLo}\triunset{\TriDcgmFailed}\triunset{\TriNodesCheckedAfter}\triunset{\TriIntra}\triunset{\TriPairBus}
+\triunset{\TriLoopback}\triunset{\TriPairBusLo}\triunset{\TriPairBusLoHi}\triunset{\TriPairWithinLo}\triunset{\TriPairWithinHi}\triunset{\TriPairAcrossLo}\triunset{\TriPairAcrossHi}
+\triunset{\TriPairsMeasured}\triunset{\TriPairAllGpus}\triunset{\TriNetTop}\triunset{\TriGatherLo}\triunset{\TriGatherHi}\triunset{\TriAllReduceLo}\triunset{\TriAllReduceHi}\triunset{\TriAlltoallTwo}
+
+\triunset{\TriLevTokens}\triunset{\TriLevTwoLarge}\triunset{\TriLevFourLarge}\triunset{\TriLevPpTwo}\triunset{\TriLevPpFour}\triunset{\TriLevHsdp}\triunset{\TriLevHsdpLarge}\triunset{\TriLevReduce}\triunset{\TriLevFull}\triunset{\TriLevFullH}
+\triunset{\TriLevFortyEight}\triunset{\TriLevPpBest}\triunset{\TriMemFsdp}\triunset{\TriMemHsdp}\triunset{\TriMemReduce}\triunset{\TriMemFull}\triunset{\TriTokFortyEight}\triunset{\TriTokFsdp}\triunset{\TriTokReduce}\triunset{\TriTokTpFour}\triunset{\TriTokPpBest}
+\triunset{\TriLayoutTopGap}\triunset{\TriPaddingPct}\triunset{\TriLayoutRepeatMedian}\triunset{\TriLayoutRepeatMax}
+
 % Question box at the top of each analysis section.
 \newtcolorbox{question}{enhanced, breakable, colback=white, colframe=black!35,
   boxrule=0.4pt, leftrule=2pt, arc=0pt, left=6pt, right=6pt, top=3pt, bottom=3pt,
@@ -107,6 +121,7 @@
 
 \input{sections/introduction}
 \input{sections/methodology}
+\input{sections/machine}
 \input{sections/network}
 \input{sections/interference}
 \input{sections/layouts}

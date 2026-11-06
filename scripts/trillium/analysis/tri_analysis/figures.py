@@ -14,11 +14,13 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NODE_NET_GBS, NODES, SUBNET_OF
+from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_JOB,
+                      NODE_NET_GBS, NODES, SUBNET_OF)
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
-from .select import checkpoints, completed, drift, failed_runs, pinned_blocked, qwen_base, with_energy
+from .select import (CAPPED_NODES, REF_NODES, SLOW_NODES, checkpoints, completed, drift, e1_changes, failed_runs, pinned_blocked, qwen_base,
+                     with_energy)
 
 QWEN_LAYOUTS = ["fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"]
 GLM_LAYOUTS = ["pp13-ep8", "pp13-ep16", "pp13-ep32", "pp26-ep8", "pp6-ep16"]
@@ -97,73 +99,132 @@ def _label_outliers(ax, d, x, y, threshold, label) -> None:
 
 # -- D. Health and network ---------------------------------------------------
 
+PERIOD_STYLE = {"before": (SERIES[0], "o", "before the kernel change"), "after": (SERIES[1], "s", "after")}
+GROUP_EDGE = POS["trig0129"] - 0.5  # the two bandwidth groups (D2)
+
+
+def _group_edge(axes) -> None:
+    for ax in np.ravel(axes):
+        ax.axvline(GROUP_EDGE, color=INK2, lw=0.8, ls=(0, (4, 2)), zorder=1)
+
+
+def _periods(ax, d, ms=2.5) -> None:
+    for period, (col, marker, _) in PERIOD_STYLE.items():
+        part = d[d.period == period]
+        if len(part):
+            _pt(ax, part.x, part.value, col, False, marker, ms=ms, mew=0.5)
+
+
+def _period_legend(fig_or_ax, **kw):
+    fig_or_ax.legend(handles=[_handle(c, label, False, m, ms=3) for c, m, label in PERIOD_STYLE.values()], **kw)
+
+
 def health_gpus(t):
-    """Per-GPU matmul BF16 and FP8 by node, with the median and a -5 % line (D1)."""
+    """Per-GPU compute rate by node: DCGM's FP16 diagnostic (D1; the tool has no matmul check), before and after the kernel change,
+    with the median and a -5 % line. The capped nodes' tests are in the machine block."""
     h = t["node_health"]
     if h.empty:
         return None
-    h = h[h.metric.isin(["matmul_bf16_tflops", "matmul_fp8_tflops"]) & h.host.isin(POS)]
-    if h.empty:
+    d = h[(h.metric == "dcgm_tflops") & h.period.isin(PERIOD_STYLE) & h.host.isin(POS)].copy()
+    if d.empty:
         return None
-    fig, axes = plt.subplots(2, 1, figsize=(TEXT_WIDTH, 3.0), sharex=True)
-    for ax, (metric, label) in zip(axes, (("matmul_bf16_tflops", "BF16 matmul\n(TFLOP/s per GPU)"),
-                                          ("matmul_fp8_tflops", "FP8 matmul\n(TFLOP/s per GPU)"))):
-        d = h[h.metric == metric].copy()
-        d["x"] = d.host.map(POS) + (d.gpu.astype(float) - 3.5) * 0.06
-        for syn, part in d.groupby("synthetic"):
-            _pt(ax, part.x, part.value, INK2, syn, ms=2.2, mew=0.5)
-        med = d.value.median()
-        ax.axhline(med, color=MUTED, lw=0.7, zorder=1)
-        ax.axhline(0.95 * med, color=CRITICAL, lw=0.7, ls=(0, (1, 2)), zorder=1)
-        ax.text(-0.5, med, f"median {med:,.0f}", fontsize=6, color=INK2, ha="left", va="bottom",
-                bbox={"fc": "white", "ec": "none", "pad": 0.3}, zorder=5)
-        ax.text(-0.5, 0.95 * med, "−5 %", fontsize=6, color=CRITICAL, ha="left", va="bottom")
-        _label_outliers(ax, d, "x", "value", 0.95 * med, lambda r: f"{r.host} GPU{int(r.gpu)}")
-        ax.set_ylim(0.9 * med, 1.03 * med)
-        ax.set_ylabel(label)
-        style.finish(ax, trim=False)
-    _subnet_axis(axes)
-    axes[-1].set_xlabel(f"node ({h.host.nunique()} nodes, 8 GPUs each), grouped by subnet")
-    style.synthetic_mark(fig, h.synthetic.any())
+    d["x"] = d.host.map(POS) + (d.gpu.astype(float) - 3.5) * 0.06 + d.period.map({"before": -0.12, "after": 0.12})
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 1.7))
+    _periods(ax, d, ms=2.2)
+    med = d.value.median()
+    ax.axhline(0.95 * med, color=CRITICAL, lw=0.7, ls=(0, (1, 2)), zorder=1)
+    ax.text(-0.5, 0.95 * med, "\u22125 %", fontsize=6, color=CRITICAL, ha="left", va="bottom")
+    ax.set_ylim(0.93 * med, 1.03 * med)
+    ax.set_ylabel("DCGM diagnostic, FP16\n(TFLOP/s per GPU)")
+    style.finish(ax, trim=False)
+    _subnet_axis(ax)
+    _group_edge(ax)
+    ax.set_xlabel(f"node ({d.host.nunique()} nodes), grouped by subnet; dashed: the two bandwidth groups")
+    _period_legend(ax, loc="lower right", ncol=2, fontsize=6)
     fig.tight_layout()
     return fig
 
 
 def health_links(t):
-    """Per-node NVLink all-reduce bus bandwidth, and per-HCA loopback bandwidth (D1)."""
+    """Per-node NCCL all-reduce: within the node (NVLink), with a partner node, and the NIC loopback (D1): before and after the kernel change."""
     h = t["node_health"]
     if h.empty:
         return None
-    h = h[h.host.isin(POS)]
-    nv, hca = h[h.metric == "intra_busbw_gbs"].copy(), h[h.metric == "hca_loopback_gbs"].copy()
-    if nv.empty and hca.empty:
+    h = h[h.host.isin(POS) & h.period.isin(PERIOD_STYLE)]
+    if h.empty:
         return None
-    fig, axes = plt.subplots(2, 1, figsize=(TEXT_WIDTH, 3.0), sharex=True)
-    for ax, d, label, frac, name in (
-        (axes[0], nv, "NVLink all-reduce\nbus BW (GB/s, per node)", 0.9, lambda r: r.host),
-        (axes[1], hca, "loopback BW per HCA\n(GB/s)", 0.8, lambda r: f"{r.host} {r.hca}"),
-    ):
-        if d.empty:
-            continue
-        offsets = {k: i for i, k in enumerate(sorted(d.hca.dropna().unique()))} if "hca" in d else {}
-        d["x"] = d.host.map(POS) + (d.hca.map(offsets).fillna(1.5) - 1.5) * 0.15 if offsets else d.host.map(POS)
-        for syn, part in d.groupby("synthetic"):
-            _pt(ax, part.x, part.value, INK2, syn, ms=2.5, mew=0.6)
+    panels = (("intra_busbw_gbs", "within a node\n(GB/s)", 0.9), ("pair_busbw_gbs", "with a partner\n(GB/s)", 0.9),
+              ("loopback_busbw_gbs", "NIC loopback\n(GB/s)", 0.9))
+    fig, axes = plt.subplots(3, 1, figsize=(TEXT_WIDTH, 3.3), sharex=True)
+    for ax, (metric, label, frac) in zip(axes, panels):
+        d = h[h.metric == metric].copy()
+        d["x"] = d.host.map(POS) + d.period.map({"before": -0.12, "after": 0.12})
+        _periods(ax, d)
         med = d.value.median()
         ax.axhline(med, color=MUTED, lw=0.7, zorder=1)
-        ax.axhline(frac * med, color=CRITICAL, lw=0.7, ls=(0, (1, 2)), zorder=1)
-        ax.text(-0.5, med, f"median {med:.0f}", fontsize=6, color=INK2, ha="left", va="bottom",
+        ax.text(-0.5, med, f"median {med:,.3g}", fontsize=6, color=INK2, ha="left", va="bottom",
                 bbox={"fc": "white", "ec": "none", "pad": 0.3}, zorder=5)
-        ax.text(-0.5, frac * med, f"{frac - 1:+.0%}".replace("-", "−"), fontsize=6, color=CRITICAL,
-                ha="left", va="bottom")
-        _label_outliers(ax, d, "x", "value", frac * med, name)
-        ax.set_ylim(0, 1.15 * d.value.max())
+        low = d[d.value < frac * med]
+        if len(low):  # a pair test names both nodes: the node in most low tests is the one to name
+            host = low.host.value_counts().idxmax()
+            g = low[low.host == host]
+            ax.annotate(f"{host} and its partners: {g.value.min():.0f}\u2013{g.value.max():.0f}", (g.x.iloc[0], g.value.min()), xytext=(8, -2),
+                        textcoords="offset points", fontsize=6, color=CRITICAL)
+        ax.set_ylim(0.75 * med, 1.05 * d.value.max())
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
-    n_hca = hca.groupby("host").hca.nunique().median() if not hca.empty else 0
     _subnet_axis(axes)
-    axes[-1].set_xlabel(f"node, grouped by subnet ({n_hca:.0f} HCAs per node)")
-    style.synthetic_mark(fig, h[h.metric.isin(["intra_busbw_gbs", "hca_loopback_gbs"])].synthetic.any())
+    _group_edge(axes)
+    axes[-1].set_xlabel("node, grouped by subnet; dashed: the two bandwidth groups")
+    _period_legend(axes[0], loc="lower right", ncol=2, fontsize=6)
+    fig.tight_layout()
+    return fig
+
+
+def machine_status(t):
+    """What differs between nodes. Top: CPU clock at full GPU power in the health check, before and after the kernel change. Bottom: share of CPU
+    samples below 500 MHz in 13-node Qwen training, one point per run: E1 and the layout runs. Shaded: 200 W cap, out."""
+    h = t["node_health"]
+    n = t.get("node_telemetry", pd.DataFrame())
+    if h.empty:
+        return None
+    d = h[(h.metric == "cpu_mhz_full_power") & h.period.isin(PERIOD_STYLE) & h.host.isin(POS)].copy()
+    if d.empty:
+        return None
+    d["x"] = d.host.map(POS) + d.period.map({"before": -0.12, "after": 0.12})
+    has_n = len(n) > 0
+    fig, axes = plt.subplots(2 if has_n else 1, 1, figsize=(TEXT_WIDTH, 3.4 if has_n else 1.9), sharex=True, squeeze=False)
+    axes = axes[:, 0]
+    ax = axes[0]
+    _periods(ax, d)
+    row = d[(d.host == "trig0114") & (d.period == "before")].iloc[0]
+    ax.annotate("trig0114", (row.x, row.value), xytext=(5, -2), textcoords="offset points", fontsize=6, color=INK2)
+    ax.set_ylim(1200, 3400)
+    ax.set_ylabel("CPU clock at full\nGPU power (MHz)")
+    style.finish(ax, trim=False)
+    _period_legend(ax, loc="upper right", ncol=2, fontsize=6)
+    if has_n:
+        ax = axes[1]
+        runs = t["runs"]
+        fsdp = runs[(runs.layout == "fsdp") & (runs.tokens_per_gpu == 12288) & (runs.ac == "selective") & (runs.nodes == 13) & (runs.status == "completed")
+                    & runs.experiment.isin(["E1", "A-Q", "post-pstate"])]
+        c = n[n.run_id.isin(fsdp.run_id) & n.host.isin(POS)].dropna(subset=["cpu_low_share"]).copy()
+        c["x"] = c.host.map(POS)
+        _pt(ax, c.x, 100 * c.cpu_low_share, INK2, False, ms=2.2, mew=0.5)
+        for host in sorted(SLOW_NODES):
+            g = c[c.host == host]
+            if len(g):
+                ax.annotate(host, (POS[host], 100 * g.cpu_low_share.max()), xytext=(0, 3), textcoords="offset points", fontsize=6, color=CRITICAL, ha="center")
+        ax.set_ylim(0, None)
+        ax.set_ylabel("CPU samples below\n500 MHz, FSDP 12k (%)")
+        style.finish(ax, trim=False)
+    for ax in axes:
+        for host in CAPPED_NODES:
+            ax.axvspan(POS[host] - 0.5, POS[host] + 0.5, color=CRITICAL, alpha=0.13, lw=0, zorder=0)
+        ax.axvspan(POS["trig0146"] - 0.5, POS["trig0146"] + 0.5, color=MUTED, alpha=0.3, lw=0, zorder=0)
+    _subnet_axis(axes)
+    _group_edge(axes)
+    axes[-1].set_xlabel("node, grouped by subnet; dashed: the two bandwidth groups; red: 200 W cap since about midnight on Nov 5; gray: out")
     fig.tight_layout()
     return fig
 
@@ -174,6 +235,8 @@ def pair_matrix(t):
     if p.empty:
         return None
     p = p[(p.status == "ok") & p.a.isin(POS) & p.b.isin(POS)]
+    if not p.synthetic.any():
+        p = p[p.job_id.isin(NET_D2_JOBS)]  # GPUs 0, 2, 4, 6: what the fabric carries; the others are bring-up tests
     n = len(NODES)
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.75))
     groups, edges, centers, starts = _subnets()
@@ -187,6 +250,8 @@ def pair_matrix(t):
         for e in edges:
             ax.axhline(e - 0.5, color="white", lw=0.6)
             ax.axvline(e - 0.5, color="white", lw=0.6)
+        ax.axhline(GROUP_EDGE, color=INK2, lw=0.7, ls=(0, (4, 2)))
+        ax.axvline(GROUP_EDGE, color=INK2, lw=0.7, ls=(0, (4, 2)))
         ax.set_xticks(centers)
         ax.set_xticklabels([groups.iloc[a] for a in starts], fontsize=6)
         ax.set_yticks(centers)
@@ -211,6 +276,8 @@ def collectives_scale(t):
     if c.empty:
         return None
     c = c[c.status == "ok"]
+    if not c.synthetic.any():
+        c = c[c.job_id == NET_D3_JOB]
     d3 = c[(c.experiment == "D3") & (c.size_bytes == 2**30)]
     d4 = c[c.experiment == "D4"]
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.5), gridspec_kw={"width_ratios": [1.25, 1]})
@@ -261,6 +328,7 @@ def collectives_scale(t):
     ax.set_xticklabels(["1 KiB", "1 MiB", "1 GiB"])
     ax.minorticks_off()
     ax.set_xlabel("message size")
+    ax.set_yscale("log")
     ax.set_ylabel("bus bandwidth (GB/s)")
     style.finish(ax, trim=False)
     style.synthetic_mark(fig, c.synthetic.any())
@@ -271,31 +339,29 @@ def collectives_scale(t):
 # -- E, R. Jobs side by side, background load -------------------------------
 
 def interference(t):
-    """Throughput of each 13-node set alone and with the 3 others running (E1)."""
-    r = _runs(t, "E1")
-    if r.empty:
+    """Throughput of each 13-node set alone and with the 2 others of its draw, on the same steps (E1; select.e1_changes)."""
+    m = e1_changes(t["runs"], t["steps"])
+    if m.empty:
         return None
-    m = _median(r, ["node_set", "condition"])
-    sets = sorted(m.node_set.unique())
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.75, 2.2))
-    color = {"alone": SERIES[0], "together": SERIES[1]}
-    changes = []
-    for i, s in enumerate(sets):
-        g = m[m.node_set == s].set_index("condition")
-        if {"alone", "together"} <= set(g.index):
-            ax.plot([i, i], [g.value["alone"], g.value["together"]], color=LIGHT, lw=1.2, zorder=1)
-            changes.append(100 * (g.value["together"] / g.value["alone"] - 1))
-        for cond, row in g.iterrows():
-            _pt(ax, i, row.value, color[cond], row.synthetic, "o" if cond == "alone" else "s")
-    ax.set_xticks(range(len(sets)))
-    ax.set_xticklabels([s.replace("d", "draw ").replace("-s", "\nset ") for s in sets], fontsize=6)
-    handles = [_handle(color[c], c + (" (4 jobs at once)" if c == "together" else ""),
-                       m[m.condition == c].synthetic.any(), "o" if c == "alone" else "s") for c in color]
+    m = m.sort_values("node_set").reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 2.3))
+    col = {"alone": SERIES[0], "together": SERIES[1]}
+    for i, row in m.iterrows():
+        ax.plot([i, i], [row.tok_s_gpu_alone, row.tok_s_gpu_together], color=LIGHT, lw=1.2, zorder=1)
+        _pt(ax, i, row.tok_s_gpu_alone, col["alone"], row.synthetic, "o")
+        _pt(ax, i, row.tok_s_gpu_together, col["together"], row.synthetic, "s")
+        ax.annotate(f"{row.change_pct:+.2f} %".replace("-", "\u2212"), (i, max(row.tok_s_gpu_alone, row.tok_s_gpu_together)), xytext=(0, 5),
+                    textcoords="offset points", fontsize=6, color=INK2, ha="center")
+    labels = []
+    for row in m.itertuples():
+        slow = f"\n{row.slow_nodes.replace('trig', '').replace(';', ', ')} in set" if row.slow_nodes else ""
+        labels.append(row.node_set.replace("d", "draw ").replace("-s", ", set ") + slow)
+    ax.set_xticks(range(len(m)))
+    ax.set_xticklabels(labels, fontsize=5.5)
+    handles = [_handle(col["alone"], "alone", m.synthetic.any(), "o"), _handle(col["together"], "together", m.synthetic.any(), "s")]
     ax.legend(handles=handles, loc="lower left", ncol=2)
-    if changes:
-        ax.set_title(f"median change together vs alone: {np.median(changes):+.1f} %".replace("-", "−"))
-    lo = m.value.min()
-    ax.set_ylim(lo * 0.97, m.value.max() * 1.01)
+    ax.set_title(f"step time together against alone: mean {m.change_pct.mean():+.2f} %, range {m.change_pct.min():+.2f} to {m.change_pct.max():+.2f} %".replace("-", "\u2212"))
+    ax.set_ylim(m[["tok_s_gpu_alone", "tok_s_gpu_together"]].min().min() * 0.96, m[["tok_s_gpu_alone", "tok_s_gpu_together"]].max().max() * 1.03)
     ax.set_ylabel("tokens/s per GPU")
     style.finish(ax, trim=False)
     style.synthetic_mark(fig, m.synthetic.any())
@@ -304,21 +370,34 @@ def interference(t):
 
 
 def reference_drift(t):
-    """The same reference run (Qwen, 4 nodes, FSDP, 12k tokens per GPU) every ~3 h (R)."""
+    """The same reference run (Qwen, FSDP, 12k tokens per GPU, 4 nodes): fixed nodes from its third run on (R). The first two ran on other
+    nodes, one of them slow. Line: when the kernel change reached these nodes."""
     r = _runs(t, "R")
     if r.empty:
         return None
     hours, trend = drift(r)
     r = r.assign(h=hours)
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.75, 2.0))
-    med = r.tok_s_gpu.median()
+    measured = not r.synthetic.any()
+    fixed = r[r.hosts == REF_NODES] if measured else r
+    other = r[r.hosts != REF_NODES] if measured else r.iloc[0:0]
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.8, 2.1))
+    med = fixed.tok_s_gpu.median()
     ax.axhspan(0.99 * med, 1.01 * med, color=LIGHT, alpha=0.35, lw=0, zorder=0)
-    ax.text(r.h.max(), 1.01 * med, "median ±1 %", fontsize=6, color=INK2, ha="right", va="bottom")
-    ax.plot(r.h, r.tok_s_gpu, color=SERIES[0], lw=0.7, zorder=2)
-    for _, row in r.iterrows():
+    ax.text(r.h.max(), 1.01 * med, "median \u00b11 %", fontsize=6, color=INK2, ha="right", va="bottom")
+    ax.plot(fixed.h, fixed.tok_s_gpu, color=SERIES[0], lw=0.7, zorder=2)
+    for _, row in fixed.iterrows():
         _pt(ax, row.h, row.tok_s_gpu, SERIES[0], row.synthetic)
+    for _, row in other.iterrows():
+        _pt(ax, row.h, row.tok_s_gpu, MUTED, False, "D", ms=3.5)
+        nodes = "with " + row.slow_nodes if isinstance(row.slow_nodes, str) and row.slow_nodes else "other nodes"
+        ax.annotate(nodes, (row.h, row.tok_s_gpu), xytext=(5, -2), textcoords="offset points", fontsize=6, color=INK2)
+    after = r[r.pstate == "after"] if "pstate" in r else r.iloc[0:0]
+    if len(after):
+        x = after.h.min() - 0.3
+        ax.axvline(x, color=MUTED, lw=0.6, ls=(0, (1, 2)))
+        ax.annotate("kernel change", (x, 0), xycoords=("data", "axes fraction"), xytext=(-2, 3), textcoords="offset points", fontsize=6, color=INK2, ha="right")
     if not np.isnan(trend):
-        ax.set_title(f"linear trend over the window: {trend:+.1f} %".replace("-", "−"))
+        ax.set_title(f"fixed nodes: linear trend over the window {trend:+.2f} %".replace("-", "\u2212"))
     ax.set_ylim(0.96 * r.tok_s_gpu.min(), 1.03 * r.tok_s_gpu.max())
     ax.set_xlabel("hours since the first reference run")
     ax.set_ylabel("tokens/s per GPU")
@@ -330,42 +409,54 @@ def reference_drift(t):
 
 # -- A-Q. Qwen layouts ---------------------------------------------------------
 
+QWEN_PANELS = (2, 13, 26, 39, 43, 50, 52)  # node counts of the layout panels; hsdp16 runs on 12 nodes, 104 GPUs don't split in 16
+
+
 def qwen_layouts(t):
-    """Throughput per GPU by layout and tokens per GPU, at 2, 13 and all nodes (A-Q)."""
+    """Throughput per GPU by layout and tokens per GPU, at 2, 13 and the largest node counts (A-Q, with the weak-scaling runs above and below 13
+    nodes). Red cross: a configuration that failed, with no successful run. Tokens are valid tokens: a micro-batch of 49,152 slots holds about 15 % padding."""
     r = qwen_base(t["runs"])
     if r.empty:
         return None
-    scales = [n for n in sorted(r.nodes.unique()) if n > 1]
-    m = _median(r, ["nodes", "layout", "tokens_per_gpu"])
-    layouts = [l for l in QWEN_LAYOUTS if l in set(m.layout)]
-    fig, axes = plt.subplots(1, len(scales), figsize=(TEXT_WIDTH, 0.6 + 0.24 * len(layouts)), sharey=True,
-                             sharex=True, squeeze=False)
+    r = r.assign(panel=r.nodes.where(~((r.layout == "hsdp16") & (r.nodes == 12)), 13))
+    r = r[r.panel.isin(QWEN_PANELS)]
+    scales = sorted(int(n) for n in r.panel.unique())
+    m = _median(r, ["panel", "layout", "tokens_per_gpu"])
+    failed = failed_runs(t["runs"], "A-Q")
+    failed = failed[(failed.ac == "selective") & (failed.grad_reduce == "fp32")] if len(failed) else failed
+    layouts = [l for l in QWEN_LAYOUTS if l in {*m.layout, *(failed.layout if len(failed) else ())}]
+    fig, axes = plt.subplots(1, len(scales), figsize=(TEXT_WIDTH, 0.9 + 0.24 * len(layouts)), sharey=True, sharex=True, squeeze=False)
     peak, flops = r.peak_flops_per_gpu.iloc[0], r.flops_per_token.iloc[0]
     for ax, n in zip(axes[0], scales):
-        d = m[m.nodes == n]
+        d = m[m.panel == n]
         for i, layout in enumerate(layouts):
             g = d[d.layout == layout]
             if len(g):
                 ax.plot([g.value.min(), g.value.max()], [i, i], color=LIGHT, lw=0.8, zorder=1)
             for _, row in g.iterrows():
                 _pt(ax, row.value, i, TOKENS_COLOR.get(int(row.tokens_per_gpu), MUTED), row.synthetic, ms=4)
+            if n == 13 and len(failed) and (failed.layout == layout).any():
+                _failed_y(ax, i)
         if len(d):
             best = d.loc[d.value.idxmax()]
             ax.annotate(f"{100 * flops * best.value / peak:.0f} % MFU", (best.value, layouts.index(best.layout)),
                         xytext=(0, 5), textcoords="offset points", fontsize=6, color=INK2, ha="center")
-        ax.set_title(f"{n} nodes ({n * GPUS_PER_NODE} GPUs)")
+        ax.set_title(f"{n} nodes ({n * GPUS_PER_NODE} GPUs)", fontsize=7)
         ax.set_xlabel("tokens/s per GPU")
+        ax.set_xlim(0, None)
         style.finish(ax, trim=False)
     ax = axes[0][0]
     ax.set_yticks(range(len(layouts)))
-    ax.set_yticklabels(layouts)
+    ax.set_yticklabels([f"{l} (12 nodes)" if l == "hsdp16" else l for l in layouts])
     ax.invert_yaxis()
     handles = [_handle(c, f"{k // 1024}k", m[m.tokens_per_gpu == k].synthetic.any())
                for k, c in TOKENS_COLOR.items() if k in set(m.tokens_per_gpu)]
-    fig.legend(handles=handles, title="tokens per GPU per step", loc="upper center", ncol=3,
+    if len(failed):
+        handles.append(plt.Line2D([], [], ls="", marker="x", color=CRITICAL, label="failed"))
+    fig.legend(handles=handles, title="tokens per GPU per step", loc="upper center", ncol=4,
                bbox_to_anchor=(0.5, 1.0 + 0.02), fontsize=6, title_fontsize=6)
     style.synthetic_mark(fig, m.synthetic.any())
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
     return fig
 
 
@@ -374,58 +465,46 @@ def _key(row) -> tuple:
 
 
 def qwen_levers(t):
-    """Throughput change of one lever at a time, at 13 nodes, vs the fsdp / 12k / FP32 reduction /
-    selective recomputation reference; BF16 reduction vs FP32 on the same layout (A-Q)."""
+    """Throughput change of one lever at a time, at 13 nodes (A-Q): each bar compares two runs that differ only in that lever. Selective recompute,
+    FP32 reduction, and BF16 unless a bar says otherwise."""
     r = _runs(t, "A-Q")
     if r.empty:
         return None
-    r = r[r.nodes == 13]
+    r = r[(r.nodes == 13) | ((r.nodes == 12) & (r.layout == "hsdp16"))]
     m = r.groupby(list(REF), dropna=False).agg(value=("tok_s_gpu", "median"), synthetic=("synthetic", "any"))
-    ref_key = tuple(REF.values())
-    if ref_key not in m.index:
+    def get(layout="fsdp", tokens=12288, reduce="fp32", ac="selective"):
+        key = (layout, tokens, reduce, ac, "bf16")
+        return m.loc[key] if key in m.index else None
+    pairs = [("tokens per GPU", "24k against 12k (fsdp)", get(tokens=24576), get())]
+    pairs += [("tokens per GPU", "48k against 24k (fsdp, full recompute: 15 % padding)", get(tokens=49152, ac="full"), get(tokens=24576, ac="full"))]
+    for layout in QWEN_LAYOUTS[1:]:
+        pairs.append(("layout, 12k", f"{layout} against fsdp", get(layout), get()))
+    for layout in QWEN_LAYOUTS[1:]:
+        pairs.append(("layout, 24k", f"{layout} against fsdp", get(layout, 24576), get(tokens=24576)))
+    for layout in ("fsdp", "hsdp8"):
+        pairs.append(("gradient reduction, 24k", f"BF16 against FP32 ({layout})", get(layout, 24576, reduce="bf16"), get(layout, 24576)))
+    for layout in ("fsdp", "hsdp8"):
+        pairs.append(("recompute, 24k", f"full against selective ({layout})", get(layout, 24576, ac="full"), get(layout, 24576)))
+    rows = [{"group": g, "label": label, "pct": 100 * (a.value / b.value - 1), "synthetic": a.synthetic or b.synthetic}
+            for g, label, a, b in pairs if a is not None and b is not None]
+    if not rows:
         return None
-    ref = m.loc[ref_key]
-    rows = []
-    names = {"layout": "{}", "tokens_per_gpu": "{} tokens per GPU", "ac": "recompute: {}",
-             "grad_reduce": "BF16 reduction"}
-    for key, row in m.iterrows():
-        diff = [k for k, a, b in zip(REF, key, ref_key) if a != b]
-        if len(diff) == 1:
-            v = key[list(REF).index(diff[0])]
-            v = f"{int(v) // 1024}k" if diff[0] == "tokens_per_gpu" else v
-            label = "BF16 reduction (fsdp, vs FP32)" if diff[0] == "grad_reduce" else names[diff[0]].format(v)
-            rows.append({"group": diff[0], "label": label,
-                         "pct": 100 * (row.value / ref.value - 1), "synthetic": row.synthetic or ref.synthetic})
-        if key[list(REF).index("grad_reduce")] == "bf16" and key[0] != "fsdp":  # vs FP32, same layout
-            base = tuple("fp32" if k == "grad_reduce" else v for k, v in zip(REF, key))
-            if base in m.index and diff == ["layout", "grad_reduce"]:
-                rows.append({"group": "grad_reduce", "label": f"BF16 reduction ({key[0]}, vs FP32)",
-                             "pct": 100 * (row.value / m.loc[base].value - 1),
-                             "synthetic": row.synthetic or m.loc[base].synthetic})
-    best_key = m.value.idxmax()
-    rows.append({"group": "best", "label": "best: " + ", ".join(
-        f"{int(v) // 1024}k" if k == "tokens_per_gpu" else str(v) for k, v in zip(REF, best_key)
-        if v != REF[k]), "pct": 100 * (m.value.max() / ref.value - 1), "synthetic": m.loc[best_key].synthetic})
     b = pd.DataFrame(rows)
-    order = ["tokens_per_gpu", "layout", "grad_reduce", "ac", "best"]
-    b["o"] = b.group.map(order.index)
-    b = b.sort_values(["o", "pct"], ascending=[True, False]).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.85, 0.5 + 0.17 * len(b)))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH * 0.92, 0.6 + 0.17 * len(b)))
     y = np.arange(len(b))
     for yi, row in zip(y, b.itertuples()):
-        col = BLUE[650] if row.group == "best" else SERIES[0]
+        col = SERIES[list(dict.fromkeys(b.group)).index(row.group) % len(SERIES)]
         ax.barh(yi, row.pct, height=0.62, color="white" if row.synthetic else col, edgecolor=col, lw=0.8)
-        ax.text(row.pct, yi, f" {row.pct:+.0f} %".replace("-", "−") if row.pct >= 0 else
-                f"{row.pct:+.0f} % ".replace("-", "−"), va="center", ha="left" if row.pct >= 0 else "right",
+        ax.text(row.pct, yi, f" {row.pct:+.0f} %".replace("-", "\u2212") if row.pct >= 0 else
+                f"{row.pct:+.0f} % ".replace("-", "\u2212"), va="center", ha="left" if row.pct >= 0 else "right",
                 fontsize=6, color=INK2)
     ax.axvline(0, color=INK2, lw=0.6)
     ax.set_yticks(y)
-    ax.set_yticklabels(b.label)
+    ax.set_yticklabels([f"{r.group}: {r.label}" for r in b.itertuples()], fontsize=6)
     ax.invert_yaxis()
-    lim = max(abs(b.pct).max() * 1.25, 5)
-    ax.set_xlim(min(b.pct.min() * 1.4, -2), lim)
-    ax.set_xlabel(f"throughput change vs fsdp, 12k tokens, FP32 reduction, selective recompute "
-                  f"({ref.value:,.0f} tokens/s per GPU), 13 nodes (%)")
+    lim = max(abs(b.pct).max() * 1.2, 5)
+    ax.set_xlim(min(b.pct.min() * 1.3, -2), max(b.pct.max() * 1.5, 5))
+    ax.set_xlabel("change in valid tokens/s per GPU, 13 nodes (%)")
     style.finish(ax, trim=False)
     style.synthetic_mark(fig, b.synthetic.any(), "includes synthetic data (hollow bars)")
     fig.tight_layout()
@@ -1032,6 +1111,7 @@ def energy(t):
 
 
 FIGURES = {
+    "machine_status": machine_status,
     "health_gpus": health_gpus,
     "health_links": health_links,
     "pair_matrix": pair_matrix,

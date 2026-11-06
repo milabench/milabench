@@ -12,9 +12,9 @@ from pathlib import Path
 import pandas as pd
 from tt_analysis.tables import ledger
 
-from .machine import GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES
+from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_JOB)
 from .select import completed as _completed
-from .select import QWEN_BASE, checkpoints, drift, failed_runs, qwen_base, with_energy
+from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, qwen_base, with_energy)
 from .style import GLM, QWEN, WORKLOAD_LABEL
 
 # Key numbers for the text (meaning in key_numbers); every one is defined, "??" without data.
@@ -25,7 +25,22 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmCopiesEff", "TriGlmCopiesEffTwo", "TriGlmCopiesEffFromTwo", "TriQwenFpBestRecipe", "TriQwenFpSpeedupSmall", "TriQwenFpSpeedupFull",
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
-          "TriEnergyBest"]
+          "TriEnergyBest",
+          # Layouts
+          "TriLevTokens", "TriLevTwoLarge", "TriLevFourLarge", "TriLevPpTwo", "TriLevPpFour", "TriLevHsdp", "TriLevHsdpLarge", "TriLevReduce", "TriLevFull", "TriLevFullH", "TriLevFortyEight", "TriLevPpBest",
+          "TriMemFsdp", "TriMemHsdp", "TriMemReduce", "TriMemFull", "TriTokFortyEight", "TriTokFsdp", "TriTokReduce", "TriTokTpFour", "TriTokPpBest", "TriLayoutTopGap", "TriPaddingPct", "TriLayoutRepeatMedian", "TriLayoutRepeatMax",
+          # Machine
+          "TriCapNodes", "TriCapTFlops", "TriCapControlLo", "TriCapControlHi", "TriCapPowerLo", "TriCapPowerHi", "TriCapControlPowerLo",
+          "TriCapControlPowerHi", "TriCapFactor", "TriCpuBeforeMed", "TriCpuBeforeLo", "TriCpuBeforeHi", "TriCpuAfterMed", "TriCpuAfterLo",
+          "TriCpuAfterHi", "TriCpuOddNode", "TriCpuNodesBefore", "TriCpuNodesAfter", "TriThrottlePct", "TriThrottleStep", "TriThrottleOddStep",
+          "TriSlowBehindLo", "TriSlowBehindHi", "TriSlowThirteenWith", "TriSlowThirteenWithout", "TriSlowThirteenPct", "TriKernelMaxChange",
+          "TriKernelReruns", "TriKernelRepeatLo", "TriKernelRepeatHi",
+          # E1, R
+          "TriInterferenceLo", "TriInterferenceHi", "TriPlacementPct", "TriPlacementGroup", "TriPlacementRandom", "TriBesidePPSlow", "TriBesidePPFast", "TriRefRuns", "TriRefSpreadPct",
+          # D
+          "TriDcgmHi", "TriDcgmLo", "TriDcgmFailed", "TriNodesCheckedAfter", "TriIntra", "TriPairBus", "TriLoopback", "TriPairBusLo", "TriPairBusLoHi", "TriPairWithinLo",
+          "TriPairWithinHi", "TriPairAcrossLo", "TriPairAcrossHi", "TriPairsMeasured", "TriPairAllGpus", "TriNetTop", "TriGatherLo", "TriGatherHi", "TriAllReduceLo",
+          "TriAllReduceHi", "TriAlltoallTwo"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -66,6 +81,171 @@ def _value(v, fmt, synthetic) -> str:
     return rf"\TriSyn{{{text}}}" if synthetic else text
 
 
+def _machine_numbers(t) -> dict[str, tuple]:
+    """The machine block: from the health checks, the hardware reruns and hw/post-pstate's readings. All measured."""
+    out = {}
+    h, runs, steps = t["node_health"], t["runs"], t["steps"]
+    c = h[h.metric == "cpu_mhz_full_power"] if len(h) else h
+    for period, prefix in (("before", "TriCpuBefore"), ("after", "TriCpuAfter")):
+        d = c[c.period == period] if len(c) else c
+        d = d[d.host != "trig0114"].groupby("host").value.median() if len(d) else d
+        if len(d):
+            out[f"{prefix}Med"] = (d.median(), ",.0f", False)
+            out[f"{prefix}Lo"] = (d.min(), ",.0f", False)
+            out[f"{prefix}Hi"] = (d.max(), ",.0f", False)
+            out[f"TriCpuNodes{period.title()}"] = (len(d), "d", False)
+    if len(c) and (c.host == "trig0114").any():
+        out["TriCpuOddNode"] = (c[c.host == "trig0114"].value.max(), ",.0f", False)
+    load = t.get("cap_load", pd.DataFrame())
+    if len(load):
+        capped, control = load[load.limit_w == 200], load[(load.node == "trig0151")]
+        out["TriCapTFlops"] = (capped.tflop_s.median(), ",.0f", False)
+        out["TriCapControlLo"] = (control.tflop_s.min(), ",.0f", False)
+        out["TriCapControlHi"] = (control.tflop_s.max(), ",.0f", False)
+        out["TriCapPowerLo"] = (capped.power_w_median.min(), ",.0f", False)
+        out["TriCapPowerHi"] = (capped.power_w_median.max(), ",.0f", False)
+        out["TriCapControlPowerLo"] = (control.power_w_median.min(), ",.0f", False)
+        out["TriCapControlPowerHi"] = (control.power_w_median.max(), ",.0f", False)
+        out["TriCapFactor"] = (control.tflop_s.median() / capped.tflop_s.median(), ".1f", False)
+        out["TriCapNodes"] = (capped.node.nunique(), "d", False)
+    if len(steps) and len(runs) and "hosts" in runs:
+        probe = runs[runs.campaign == "hw-probe"]
+        mean = steps[steps.run_id.isin(probe.run_id)].groupby("run_id").step_s.mean()
+        p = probe.assign(mean_s=probe.run_id.map(mean), round=probe.run_name.str.extract(r"(h\d)-")[0])
+        if len(p):
+            odd = p[p.hosts == "trig0114"].mean_s.mean()
+            control = p[p.hosts == "trig0151"]
+            out["TriThrottleStep"] = (control.mean_s.mean(), ".2f", False)
+            out["TriThrottleOddStep"] = (odd, ".2f", False)
+            out["TriThrottlePct"] = (100 * (1 - odd / control.mean_s.mean()), ".1f", False)
+            slow = p[p.hosts.isin(SLOW_NODES)].merge(control[["round", "mean_s"]], on="round", suffixes=("", "_control"))
+            behind = 100 * (slow.mean_s / slow.mean_s_control - 1)
+            out["TriSlowBehindLo"] = (behind.min(), ".1f", False)
+            out["TriSlowBehindHi"] = (behind.max(), ".1f", False)
+        e = runs[runs.experiment == "E1"]
+        if len(e):
+            m = e.assign(mean_s=e.run_id.map(steps[steps.run_id.isin(e.run_id)].groupby("run_id").step_s.mean()))
+            has = m.slow_nodes.notna() & (m.slow_nodes != "")
+            w, wo = m[has].mean_s.mean(), m[~has].mean_s.mean()
+            out["TriSlowThirteenWith"] = (w, ".2f", False)
+            out["TriSlowThirteenWithout"] = (wo, ".2f", False)
+            out["TriSlowThirteenPct"] = (100 * (w / wo - 1), ".1f", False)
+    k = t.get("kernel_change", pd.DataFrame())
+    if len(k):
+        d = k.dropna(subset=["step_change_pct"])
+        change = pd.to_numeric(d.step_change_pct, errors="coerce").dropna()
+        repeat = pd.to_numeric(d.pre_change_repeat_spread_pct, errors="coerce").dropna()
+        out["TriKernelMaxChange"] = (change.abs().max(), ".2f", False)
+        out["TriKernelReruns"] = (len(change), "d", False)
+        out["TriKernelRepeatLo"] = (repeat.min(), ".2f", False)
+        out["TriKernelRepeatHi"] = (repeat.max(), ".2f", False)
+    return out
+
+
+def _health_numbers(t) -> dict[str, tuple]:
+    out = {}
+    h = t["node_health"]
+    if h.empty or "period" not in h:
+        return out
+    b = h[h.period.isin(["before", "after"])]
+    d = b[b.metric == "dcgm_tflops"]
+    if len(d):
+        out["TriDcgmHi"] = (d.value.max(), ",.0f", False)
+        out["TriDcgmLo"] = (d.value.min(), ",.0f", False)
+    tests = b[b.metric.str.startswith("dcgm_") & (b.metric != "dcgm_tflops")]
+    if len(tests):
+        out["TriDcgmFailed"] = (int((tests.value == 0).sum()), "d", False)
+    out["TriNodesChecked"] = (h[h.period == "before"].host.nunique(), "d", False)
+    out["TriNodesCheckedAfter"] = (h[h.period == "after"].host.nunique(), "d", False)
+    for metric, name, fmt in (("intra_busbw_gbs", "TriIntra", ".0f"), ("pair_busbw_gbs", "TriPairBus", ".0f"), ("loopback_busbw_gbs", "TriLoopback", ".1f")):
+        d = b[b.metric == metric]
+        if len(d):
+            out[name] = (d.value.median(), fmt, False)
+    pair = b[(b.metric == "pair_busbw_gbs") & (b.host == "trig0122")]
+    if len(pair):
+        out["TriPairBusLo"] = (pair.value.min(), ".0f", False)
+        out["TriPairBusLoHi"] = (pair.value.max(), ".0f", False)
+    return out
+
+
+def _network_numbers(t) -> dict[str, tuple]:
+    out = {}
+    p, c = t["pairs"], t["collectives"]
+    if len(p) and not p.synthetic.any():
+        d = p[p.job_id.isin(NET_D2_JOBS) & (p.status == "ok")]
+        if len(d):
+            same = d.a.map(bandwidth_group) == d.b.map(bandwidth_group)
+            out["TriPairWithinLo"], out["TriPairWithinHi"] = (d[same].bw_gbs.min(), ".1f", False), (d[same].bw_gbs.max(), ".1f", False)
+            out["TriPairAcrossLo"], out["TriPairAcrossHi"] = (d[~same].bw_gbs.min(), ".1f", False), (d[~same].bw_gbs.max(), ".1f", False)
+            out["TriPairsMeasured"] = (len(d), "d", False)
+        a = p[p.job_id == NET_D2_ALL_GPUS_JOB]
+        if len(a):
+            out["TriPairAllGpus"] = (a.bw_gbs.median(), ".1f", False)
+    if len(c) and not c.synthetic.any():
+        d = c[(c.job_id == NET_D3_JOB) & (c.experiment == "D3") & (c.size_bytes == 2**30) & (c.status == "ok") & (c.nodes >= 2)]
+        if len(d):
+            med = d.groupby(["collective", "nodes"]).busbw_gbs.median()
+            out["TriNetTop"] = (int(d.nodes.max()), "d", False)
+            gather = med[med.index.get_level_values(0).isin(["all_gather", "reduce_scatter"])]
+            out["TriGatherLo"], out["TriGatherHi"] = (gather.min(), ".0f", False), (gather.max(), ".0f", False)
+            reduce = med["all_reduce"]
+            reduce = reduce[reduce.index >= 4]
+            out["TriAllReduceLo"], out["TriAllReduceHi"] = (reduce.min(), ".0f", False), (reduce.max(), ".0f", False)
+            out["TriAlltoallTwo"] = (med["alltoall"][2], ".1f", False)
+            out["TriAlltoallFull"] = (med["alltoall"][d.nodes.max()], ".1f", False)
+    return out
+
+
+def kernel_change_table(t) -> str:
+    """Every rerun with a step time: before and after the kernel change, and how much repeats moved before it."""
+    k = t.get("kernel_change", pd.DataFrame())
+    if k.empty:
+        return ""
+    d = k.dropna(subset=["step_change_pct"])
+    lines = [r"\begin{tabular}{lllrl}", r"\toprule", r"Rerun (nodes as before) & Step before (s) & After (s) & Change (\%) & Repeats before (\%) \\", r"\midrule"]
+    for r in d.itertuples():
+        name = str(r.rerun).replace("_", r"\_").replace("hw ", "1 node, ").replace("tri-aq-", "").replace(" nodes", " nodes").replace("L1", "(13 nodes)")
+        lines.append(f"{name} & {str(r.step_s_before).replace('/', ', ')} & {str(r.step_s_after).replace('/', ', ')} & {float(r.step_change_pct):+.2f} & {r.pre_change_repeat_spread_pct} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
+def _layout_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]:
+    """Qwen layouts at 13 nodes: levers, memory, repeats."""
+    out = {}
+    r = _completed(runs, "A-Q")
+    if r.empty or (r.synthetic.any()):
+        return out
+    r = r[(r.nodes == 13) | ((r.nodes == 12) & (r.layout == "hsdp16"))]
+    m = r.groupby(["layout", "tokens_per_gpu", "grad_reduce", "ac"]).agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max"), share=("valid_token_share", "mean"), step=("step_s", "median"))
+    get = lambda layout="fsdp", tokens=12288, reduce="fp32", ac="selective": m.loc[(layout, tokens, reduce, ac)] if (layout, tokens, reduce, ac) in m.index else None  # noqa: E731
+    names = {"TriLevTokens": (get(tokens=24576), get()), "TriLevTwoLarge": (get("tp2-fsdp"), get()), "TriLevFourLarge": (get("tp4-fsdp"), get()), "TriLevPpTwo": (get("pp2-fsdp"), get()),
+             "TriLevPpFour": (get("pp4-fsdp"), get()), "TriLevHsdp": (get("hsdp8"), get()), "TriLevHsdpLarge": (get("hsdp8", 24576), get(tokens=24576)), "TriLevReduce": (get(tokens=24576, reduce="bf16"), get(tokens=24576)),
+             "TriLevFull": (get(tokens=24576, ac="full"), get(tokens=24576)), "TriLevFullH": (get("hsdp8", 24576, ac="full"), get("hsdp8", 24576)), "TriLevFortyEight": (get(tokens=49152, ac="full"), get(tokens=24576, ac="full")),
+             "TriLevPpBest": (get("pp2-fsdp", 49152), get(tokens=24576))}
+    for name, (a, b) in names.items():
+        if a is not None and b is not None:
+            out[name] = (100 * (a.v / b.v - 1), "+.0f", False)
+    for name, a, col, fmt in (("TriMemFsdp", get(tokens=24576), "mem", ".0f"), ("TriMemHsdp", get("hsdp8", 24576), "mem", ".0f"), ("TriMemReduce", get(tokens=24576, reduce="bf16"), "mem", ".0f"),
+                              ("TriMemFull", get(tokens=24576, ac="full"), "mem", ".0f"), ("TriTokFortyEight", get(tokens=49152, ac="full"), "v", ",.0f"), ("TriTokFsdp", get(tokens=24576), "v", ",.0f"),
+                              ("TriTokReduce", get(tokens=24576, reduce="bf16"), "v", ",.0f"), ("TriTokTpFour", get("tp4-fsdp"), "v", ",.0f"), ("TriTokPpBest", get("pp2-fsdp", 49152), "v", ",.0f")):
+        if a is not None:
+            out[name] = (a[col], fmt, False)
+    top = m.v.sort_values(ascending=False).iloc[:4]
+    out["TriLayoutTopGap"] = (100 * (top.iloc[0] / top.iloc[-1] - 1), ".1f", False)
+    padded = m[m.share < 0.99]
+    if len(padded):
+        out["TriPaddingPct"] = (100 * (1 - padded.share.mean()), ".0f", False)
+    if len(steps):
+        means = steps[steps.run_id.isin(r.run_id)].groupby("run_id").step_s.mean()
+        x = r.assign(mean_s=r.run_id.map(means))
+        x = x[~x.run_name.str.contains("|".join(NOISE_ASIDE))]  # stalled twice: out of anything about noise
+        spread = x.groupby(["layout", "tokens_per_gpu", "grad_reduce", "ac"]).mean_s.agg(lambda v: 100 * (v.max() - v.min()) / v.mean() if len(v) > 1 else float("nan")).dropna()
+        out["TriLayoutRepeatMedian"] = (spread.median(), ".1f", False)
+        out["TriLayoutRepeatMax"] = (spread.max(), ".1f", False)
+    return out
+
+
 def key_numbers(t) -> dict[str, tuple]:
     """Macro name -> (value, format, synthetic); a name missing here is written as "??"."""
     out = {}
@@ -76,33 +256,54 @@ def key_numbers(t) -> dict[str, tuple]:
             d = h[h.metric == metric]
             if len(d):
                 out[name] = (d.value.median(), ",.0f", d.synthetic.any())
-        v = h[h.metric == "verdict"]
-        if len(v):
-            out["TriNodesChecked"] = (v.host.nunique(), "d", v.synthetic.any())
-            out["TriNodesFlagged"] = (v[v.status != "pass"].host.nunique(), "d", v.synthetic.any())
+    out.update(_machine_numbers(t))
+    out.update(_health_numbers(t))
+    out.update(_network_numbers(t))
     p = t["pairs"]
     if not p.empty:
+        if not p.synthetic.any():
+            p = p[p.job_id.isin(NET_D2_JOBS)]
         out["TriPairBw"] = (p.bw_gbs.median(), ".0f", p.synthetic.any())
         out["TriPairBwMin"] = (p.bw_gbs.min(), ".0f", p.synthetic.any())
         out["TriPairLat"] = (p.lat_us.median(), ".1f", p.synthetic.any())
     c = t["collectives"]
     if not c.empty:
+        if not c.synthetic.any():
+            c = c[c.job_id == NET_D3_JOB]
         d3 = c[(c.experiment == "D3") & (c.size_bytes == 2**30)]
         for coll, name in (("all_reduce", "TriAllReduceFull"), ("alltoall", "TriAlltoallFull")):
             d = d3[(d3.collective == coll) & (d3.nodes == d3.nodes.max())]
             if len(d):
-                out[name] = (d.busbw_gbs.median(), ".0f", d.synthetic.any())
+                out.setdefault(name, (d.busbw_gbs.median(), ".0f", d.synthetic.any()))
         d4 = c[c.experiment == "D4"]
         if len(d4):
             out["TriBisection"] = (d4.busbw_gbs.median(), ".0f", d4.synthetic.any())
-    e1 = _completed(runs, "E1")
+    e1 = e1_changes(runs, t["steps"])
     if len(e1):
-        m = e1.groupby(["node_set", "condition"]).tok_s_gpu.median().unstack()
-        if {"alone", "together"} <= set(m.columns):
-            out["TriInterferencePct"] = ((100 * (m.together / m.alone - 1)).median(), "+.1f", e1.synthetic.any())
+        syn = e1.synthetic.any()
+        out["TriInterferencePct"] = (e1.change_pct.mean(), "+.2f", syn)
+        out["TriInterferenceLo"] = (e1.change_pct.min(), "+.2f", syn)
+        out["TriInterferenceHi"] = (e1.change_pct.max(), "+.2f", syn)
+        clean = e1[e1.slow_nodes == ""]
+        steps = (clean.alone_s + clean.together_s) / 2
+        group, random = steps[~clean.bw_groups.str.contains(r"\+")], steps[clean.bw_groups.str.contains(r"\+")]
+        if len(group) and len(random):
+            out["TriPlacementGroup"] = (group.mean(), ".3f", syn)
+            out["TriPlacementRandom"] = (random.mean(), ".3f", syn)
+            out["TriPlacementPct"] = (100 * (random.mean() / group.mean() - 1), "+.1f", syn)
+    steps = t["steps"]
+    if len(steps) and "job" in runs:
+        for job, name in (("1241064", "TriBesidePPSlow"), ("1241200", "TriBesidePPFast")):
+            ids = runs[(runs.job == job) | (runs.job == float(job))].run_id
+            d = steps[steps.run_id.isin(ids)].step_s
+            if len(d):
+                out[name] = (d.mean(), ".3f", False)
     rr = _completed(runs, "R")
     if len(rr) > 1:
-        out["TriDriftPct"] = (drift(rr)[1], "+.1f", rr.synthetic.any())  # linear trend over the window
+        out["TriDriftPct"] = (drift(rr)[1], "+.2f", rr.synthetic.any())  # linear trend over the window
+        fixed = rr[rr.hosts == REF_NODES] if not rr.synthetic.any() else rr
+        out["TriRefRuns"] = (len(fixed), "d", rr.synthetic.any())
+        out["TriRefSpreadPct"] = (100 * (fixed.tok_s_gpu.max() - fixed.tok_s_gpu.min()) / fixed.tok_s_gpu.median(), ".2f", rr.synthetic.any())
     aq = _completed(runs, "A-Q")
     base = qwen_base(runs)
     base = base[base.nodes == 13] if len(base) else base
@@ -120,6 +321,7 @@ def key_numbers(t) -> dict[str, tuple]:
         if len(one) and len(f13):
             share = 100 * (1 - one.step_s.median() / f13.step_s.median())
             out["TriQwenFsdpCommPct"] = (share, ".0f", one.synthetic.any() or f13.synthetic.any())
+    out.update(_layout_numbers(runs, t["steps"]))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -229,15 +431,25 @@ def qwen_layouts_table(runs: pd.DataFrame) -> str:
     r = qwen_base(runs)
     if r.empty:
         return ""
-    r = r[r.nodes == 13]
-    m = r.groupby(["layout", "tokens_per_gpu"]).agg(v=("tok_s_gpu", "median"), mfu=("mfu_pct", "median"),
+    r = r[(r.nodes == 13) | ((r.nodes == 12) & (r.layout == "hsdp16"))]
+    m = r.groupby(["layout", "tokens_per_gpu"]).agg(v=("tok_s_gpu", "median"), mfu=("mfu_pct", "median"), mem=("mem_alloc_gib", "max"),
                                                     syn=("synthetic", "any")).reset_index()
+    failed = failed_runs(runs, "A-Q")
+    failed = failed[(failed.ac == "selective") & (failed.grad_reduce == "fp32")] if len(failed) else failed
+    why = {("tp2-fsdp", 24576): "time limit", ("tp4-fsdp", 24576): "out of memory"}
     cols = sorted(m.tokens_per_gpu.unique())
     rows = []
-    for layout, g in m.groupby("layout", sort=False):
-        cells = g.set_index("tokens_per_gpu")
-        rows.append([layout] + [_value(f"{cells.v[c]:,.0f} ({cells.mfu[c]:.0f})", "", cells.syn[c])
-                                if c in cells.index else "" for c in cols])
+    for layout in ("fsdp", "hsdp8", "hsdp16", "tp2-fsdp", "tp4-fsdp", "pp2-fsdp", "pp4-fsdp"):
+        cells = m[m.layout == layout].set_index("tokens_per_gpu")
+        row = [layout + (" (12 nodes)" if layout == "hsdp16" else "")]
+        for c in cols:
+            if c in cells.index:
+                row.append(_value(f"{cells.v[c]:,.0f} ({cells.mfu[c]:.0f}), {cells.mem[c]:.0f}", "", cells.syn[c]))
+            elif len(failed) and ((failed.layout == layout) & (failed.tokens_per_gpu == c)).any():
+                row.append(why.get((layout, c), "failed"))
+            else:
+                row.append("")
+        rows.append(row)
     df = pd.DataFrame(rows, columns=["layout"] + [f"{int(c) // 1024}k" for c in cols])
     # Not tt_analysis.tables.tabular: it escapes backslashes, and the cells hold \TriSyn{}.
     lines = [rf"\begin{{tabular}}{{l{'r' * len(cols)}}}", r"\toprule",
@@ -252,5 +464,6 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     runs = tables["runs"]
     (out / "macros.tex").write_text(macros(tables))
     (out / "qwen_layouts.tex").write_text(qwen_layouts_table(runs))
+    (out / "kernel_change.tex").write_text(kernel_change_table(tables))
     if len(runs):
         (out / "ledger.tex").write_text(ledger(runs.assign(excluded_nodes=runs.excluded_nodes.astype(object).fillna(""))))

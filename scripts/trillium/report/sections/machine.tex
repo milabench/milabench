@@ -1,0 +1,56 @@
+\section{The machine}
+\label{sec:machine}
+
+\begin{question}
+  \textbf{What is different about this machine, compared with its description?} Which nodes can be used, what limits them, and what
+  does that do to every number in this report?
+\end{question}
+
+Of the 52 nodes, 43 could be used and 40 were clean. Seven nodes have GPUs held at a 200\,W power limit, which makes a capped GPU about
+\TriCapFactor{} times slower. Two more are out. CPU clocks fall under high GPU power on all but one node, so \textbf{every Qwen step
+time in this report is throttled}. Three nodes spend about twice as long at low CPU clocks and slow any job that holds them. A kernel change during the
+campaign had no measurable effect, so results before and after it are compared directly. \Cref{fig:machine_status} shows the nodes.
+
+\begin{figure}[h]
+  \centering\fig{machine_status}
+  \caption{Top: CPU clock under full GPU power in the health check, per node, with load on 72 of 96 cores. Bottom: share of CPU samples below 500\,MHz per
+    node and run, in 13-node Qwen FSDP training at 12k tokens per GPU, from the node telemetry. Red: GPUs capped at 200\,W; gray: node out.}
+  \label{fig:machine_status}
+\end{figure}
+
+\paragraph{Nodes.} \texttt{trig0146} is out: it shows 7 of its 8 GPUs. \texttt{trig0122} is in maintenance and excluded until the administrators confirm a firmware update
+(its \texttt{mlx5\_1} runs 28.35.2000, other nodes 28.47.1026). That leaves 50, of which the \TriCapNodes{} capped ones leave 43, and the 3 slow ones leave 40 clean nodes.
+\texttt{trig0122} also read 200\,W when last read, before it left for maintenance.
+
+\paragraph{200\,W caps.} Since about midnight on November~5, GPUs on \texttt{trig0123}, \texttt{0133}, \texttt{0138}, \texttt{0140}, \texttt{0143}, \texttt{0145} and \texttt{0152}
+have had an enforced limit of 200\,W instead of the default 1,000\,W. Measured under the same matmul load, on every GPU independently: capped GPUs draw \TriCapPowerLo--\TriCapPowerHi\,W, stay at
+120\,MHz and reach \TriCapTFlops\,TFLOP/s; GPUs of the normal node \texttt{trig0151} draw \TriCapControlPowerLo--\TriCapControlPowerHi\,W and reach \TriCapControlLo--\TriCapControlHi\,TFLOP/s. \texttt{trig0140}'s
+GPU~3 has been back at 1,000\,W and normal since the reboots; its other 7 GPUs have not. One capped node holds back a whole job: a 13-node Qwen run with \texttt{trig0123} took 26.3\,s per step, against about
+3\,s without. It was stopped after 8 steps and is used only as evidence for the cap. The reboots did not clear the caps. Their cause is not known to us.
+
+\paragraph{CPU clock drops.} In the health check at full GPU power (about 8\,kW per node), mean clocks were \TriCpuBeforeLo--\TriCpuBeforeHi\,MHz (median \TriCpuBeforeMed) on \TriCpuNodesBefore{} nodes before the
+kernel change and \TriCpuAfterLo--\TriCpuAfterHi\,MHz (median \TriCpuAfterMed) on \TriCpuNodesAfter{} nodes after it, against 3,200\,MHz at low power. \texttt{trig0114} is the exception, at \TriCpuOddNode\,MHz. In a 1-node Qwen run at 12k tokens per GPU, \texttt{trig0114}
+steps take \TriThrottleOddStep\,s against \TriThrottleStep\,s on \texttt{trig0151}, \TriThrottlePct\,\% less (means over the run, repeated runs). This compares two nodes, not a node with and without the drop, so it is an indication of the cost, not a measurement of it.
+Pipeline layouts of Qwen (mean 5.8\,kW of GPU power per node) and GLM-5 (4.5\,kW) stay at 3,200\,MHz. Qwen's FSDP and HSDP layouts do not.
+\textbf{Not known:} the cause. A node power limit near 10.2\,kW is an inference: the meter's peak matches the GPUs' maximum plus the mean load from everything else, so it is not independent evidence.
+
+\paragraph{Slow nodes.} \texttt{trig0134}, \texttt{0135} and \texttt{0148} spend about half their time below 500\,MHz under Qwen, against about a quarter on \texttt{trig0151}. On 1 node, in the same runs, they are \TriSlowBehindLo--\TriSlowBehindHi\,\% behind \texttt{trig0151}. On 13 nodes, the side-by-side runs with one of them
+average \TriSlowThirteenWith\,s per step against \TriSlowThirteenWithout\,s without (+\TriSlowThirteenPct\,\%). That is an association: no test swapped them. All the settings we can read match \texttt{trig0151}, and their CPUs run cooler; the cause is unknown. Runs with these nodes are marked, or left out of scaling comparisons.
+A node's low-clock share also depends on the job (\cref{fig:machine_status}, bottom): nodes in a set with a slow node drop less, probably because they wait for it and draw less GPU power (inferred).
+
+\paragraph{Kernel change.} On November~5, from 17:33 to 20:58, the administrators added the boot option \texttt{intel\_pstate=passive}, each node rebooting after its job. The CPU frequency driver changed from \texttt{intel\_pstate} to \texttt{intel\_cpufreq}. Kernel, GPU driver, BIOS, microcode and
+power limits are unchanged. \TriKernelReruns{} reruns on the same nodes moved by at most \TriKernelMaxChange\,\%, with repeats before the change at \TriKernelRepeatLo--\TriKernelRepeatHi\,\% (\cref{tab:kernel}); the drops and caps are still there. Results before and after are therefore compared directly, and \texttt{runs.csv} says which is which.
+The slow nodes' reruns all moved down, by 0.7--1.0\,\%; two runs a side cannot say whether that is real.
+
+\begin{table}[h]
+  \caption{Kernel change: reruns of the same entries on the same nodes. Step times are means over each run's measured steps, one value per run. Repeats: spread of runs on those nodes before the change.}
+  \label{tab:kernel}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \IfFileExists{generated/tables/kernel_change.tex}{\input{generated/tables/kernel_change}}{\textit{No data yet.}}
+  \end{adjustbox}
+\end{table}
+
+\paragraph{Submission.} The site's \texttt{sbatch} wrapper refuses jobs above 25 nodes, and the administrators asked us to submit with the \texttt{.sbatch} binary. A 1-node job submitted that way took 4.767\,s per step, against 4.742 and 4.784\,s through the wrapper. It changed nothing measurable.
+
+\paragraph{Still open.} The administrators' answers on the caps and the clock drops, and the state of \texttt{trig0122} and \texttt{trig0146}.

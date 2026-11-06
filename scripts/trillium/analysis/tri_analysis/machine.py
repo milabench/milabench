@@ -26,9 +26,18 @@ GLM_SMALL_SEQS = 64  # the small-batch point at 13 nodes: 8 micro-batches, ~60 %
 GLM_AG_RUNS = [("pp13-ep8", 13, 256), ("pp13-ep16", 26, 512), ("pp26-ep8", 26, 512),
                ("pp13-ep8", 52, 1024), ("pp13-ep16", 52, 1024), ("pp13-ep32", 52, 1024), ("pp26-ep8", 52, 1024),
                ("pp6-ep16", 12, 256), ("pp6-ep16", 48, 1024)]
+# Added for the 40 clean nodes and the 50 available; no synthetic stand-ins: they come from measured runs only.
+GLM_AG_RUNS_NEW = [("pp10-ep8", 10, 200), ("pp10-ep8", 20, 400), ("pp10-ep8", 30, 600), ("pp10-ep8", 40, 800), ("pp10-ep8", 50, 1000),
+                   ("pp25-ep8", 25, 512), ("pp25-ep8", 50, 1024), ("pp6-ep16", 36, 768)]
 GLM_DROPPED_BELOW_52 = {"pp26-ep8", "pp13-ep32"}  # no full-machine run left to compare them on
 if N_NODES < 52:
     GLM_AG_RUNS = [r for r in GLM_AG_RUNS if r[1] <= N_NODES and r[0] not in GLM_DROPPED_BELOW_52]
+
+# Network sweeps: the jobs that are the result, among the bring-up tests under nccl/. D2 on GPUs 0, 2, 4, 6 (each shares a PCIe
+# switch with a NIC), two sets of 25 nodes; D3 up to 25 nodes, the job limit then.
+NET_D2_JOBS = {1239766, 1239768}
+NET_D2_ALL_GPUS_JOB = 1239660
+NET_D3_JOB = 1239634
 
 # Checkpoint size per parameter, measured on truncated models (Rorqual, Fir): full 12.0, weights 2.0.
 CKPT_FULL_B_PER_PARAM = 12.0

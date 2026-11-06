@@ -31,11 +31,11 @@ from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, PSTATE_BOOTS, SUBNET_OF
-from .runs import canonical_model, drop_warmup, failed_operation, parse_extras
+from .runs import canonical_model, drop_warmup, failed_operation, parse_extras, real_step_times
 from .select import UNFINISHED_JOB_STATES, mark_beside, mark_selection
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
-          "run_power", "node_telemetry", "gpu_monitor"]
+          "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
@@ -115,13 +115,15 @@ def mark_jobs(r: pd.DataFrame, sacct: Path) -> pd.DataFrame:
     jobs = pd.read_csv(sacct, sep="|", dtype=str)
     state = r.job.map(jobs.set_index("JobID").State)
     unfinished = state.fillna("RUNNING").str.startswith(UNFINISHED_JOB_STATES) & r.job.notna()
-    return r.assign(job_state=state, status=r.status.where(~unfinished, "running"))
+    # Time limit: a summary may exist, but the run did not do its work (tri-aq-tp2-fsdp-24k: 8 steps at 36-39 s).
+    timed_out = state.fillna("").str.startswith("TIMEOUT")
+    return r.assign(job_state=state, status=r.status.where(~timed_out, "failed").where(~unfinished, "running"))
 
 
 def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) -> dict[str, pd.DataFrame]:
     rows = {name: [] for name in TABLES}
     for cdir, is_syn in _sources(raw, synthetic):
-        for hdir in sorted(d for d in (cdir / "health").glob("*") if (d / "report.json").exists()):
+        for hdir in sorted(d for d in (cdir / "health").glob("*") if (d / "nodes").is_dir()):
             rows["node_health"] += parse_health(hdir, synthetic=is_syn)
         for f in sorted((cdir / "nccl").glob("*/pairs.jsonl")):
             rows["pairs"] += parse_pairs(f, synthetic=is_syn)
@@ -135,7 +137,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
             if parsed is None:
                 continue
             row, steps, _, ep = parsed
-            extra, loss, ckpt, batch_ids = parse_extras(f, row["run_id"])
+            extra, loss, ckpt, batch_ids, elapsed, items = parse_extras(f, row["run_id"])
             if not str(extra["run_cluster"] or CLUSTER).startswith(CLUSTER) and not other_clusters:
                 raise SystemExit(f"[build] {f}: written on {extra['run_cluster']}, not {CLUSTER}: not report data")
             if len(batch_ids) == len(steps):  # the step index of the rate events, not their position
@@ -143,6 +145,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                     s["step"] = b
             row.update({k: v for k, v in extra.items() if v is not None or k not in row})
             row["model"] = canonical_model(row.get("model"))
+            real_step_times(row, steps, elapsed, items)
             steps = drop_warmup(row, steps)
             rows["runs"].append(row)
             rows["steps"] += steps
@@ -166,6 +169,10 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                     rows["gpu_monitor"].append(mon[mon.metric.isin(MONITOR_METRICS)].drop(columns="text"))
 
     tables = {name: pd.DataFrame(r) for name, r in rows.items() if name != "gpu_monitor"}
+    # The hardware agent's readings and rerun table (hw/post-pstate): the machine block's sources, copied as they are.
+    for name, file in (("power_limits", "power_limits.tsv"), ("kernel_change", "before_after.tsv"), ("cap_load", "load_table.tsv")):
+        path = raw / CLUSTER / "post-pstate" / file
+        tables[name] = pd.read_csv(path, sep="\t") if path.exists() else pd.DataFrame()
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]
