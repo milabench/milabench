@@ -132,7 +132,7 @@ CMD=(
     --output="$BASE/logs/%x-%j.out"
     --reservation="${TRI_RESERVATION-b200-friendly-users}"
     --qos="${TRI_QOS-bump}"
-    --exclude="${TRI_EXCLUDE-trig[0134-0135,0148]}"  # trig0134,0135,0148: lowest CPU clocks, 13-node Qwen ~8.5% slower with one (E1)
+    --exclude="${TRI_EXCLUDE-trig0135}"  # trig0135: in a maintenance reservation since 2026-11-06 14:39
     "$REPO/scripts/slurm/tt_native.sh"
     "${JOB_ENV[@]}"
     "$BENCH"

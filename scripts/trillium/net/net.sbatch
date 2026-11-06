@@ -14,7 +14,7 @@
 #SBATCH --partition=compute_b200_full_node
 #SBATCH --reservation=b200-friendly-users
 #SBATCH --qos=bump
-#SBATCH --exclude=trig[0134-0135,0148]
+#SBATCH --exclude=trig0135
 #SBATCH --gpus-per-node=b200:8
 #SBATCH --exclusive
 #SBATCH --time=1:00:00
