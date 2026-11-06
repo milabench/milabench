@@ -1,0 +1,170 @@
+# =============================================================================
+# Experimental benchmarks, part 2: slime, Megatron and native TorchTitan Qwen3.8
+#
+# Entries that fit 1-2 nodes of 8 GPUs. Everything else in the included files
+# (16+ node GLM-5 runs, 4-GPU-node variants, the Qwen3.8 multi-node campaign)
+# is disabled through its base.
+#
+#   MILABENCH_CONFIG_OVERRIDE=$PWD/milabench/config/experimental_2.yaml bash install.sh
+#
+# slime and Megatron install into their own venv (install group `slime`, as in
+# slime-rocm.yaml) so they cannot move the shared torch venv. The Qwen3.8
+# entries use the shared torch venv (TorchTitan 51b37c2) instead of
+# torchtitan_native.yaml's CUDA nightly install.
+#
+# ROCm status (2026-10-31): Qwen3.8 native is CUDA only (attn-gym's short conv
+# is a CuTe DSL kernel); the GLM-5 Megatron smokes use tilelang DSA / sparse MLA
+# kernels written for Hopper.
+# =============================================================================
+
+include:
+  - ../benchmarks/slime/dev.yaml
+  - ../benchmarks/megatron/dev.yaml
+  - ../benchmarks/torchtitan/torchtitan_native.yaml
+
+# Off unless enabled below.
+_slime:
+  enabled: false
+  install_group: slime
+
+_megatron_glm5:
+  enabled: false
+  install_group: slime
+
+_tt_native:
+  enabled: false
+  install_group: torch
+
+# -----------------------------------------------------------------------------
+# slime (Megatron training driven by THUDM/slime)
+# -----------------------------------------------------------------------------
+
+slime-qwen2.5-0.5b-sft-smoke:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen2.5-0.5b-fineweb-smoke:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen2.5-0.5b-sft-8gpu:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen2.5-0.5b-sft-2n4g:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen3-30b-a3b-sft:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+# GRPO: SGLang rollout + Megatron train + weight sync.
+slime-qwen2.5-0.5b-grpo-smoke:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen2.5-0.5b-grpo-colocate-8gpu:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+slime-qwen2.5-0.5b-grpo-disagg-4p4:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/slime
+
+# -----------------------------------------------------------------------------
+# Megatron (GLM-5 layers, experts frozen)
+# -----------------------------------------------------------------------------
+
+megatron-tiny-moe-smoke-1n:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/megatron
+
+megatron-glm5-frozen-smoke-1n:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/megatron
+
+megatron-glm5-frozen-smoke-2n:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/megatron
+
+megatron-glm5-frozen-smoke-2n-fp8:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/megatron
+
+# -----------------------------------------------------------------------------
+# Native TorchTitan Qwen3.8-27B (torchtitan_native.yaml)
+# -----------------------------------------------------------------------------
+
+tt-qwen38-smoke:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+tt-qwen38-1node:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+tt-qwen38-n2:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/torchtitan
+
+# -----------------------------------------------------------------------------
+# Variants of the entries above: they inherit `enabled` from their parent.
+# -----------------------------------------------------------------------------
+
+megatron-glm5-frozen-smoke-2n-l40s:
+  enabled: false
+
+megatron-glm5-frozen-smoke-1gpu:
+  enabled: false
+
+megatron-glm5-frozen-smoke-2n-topo:
+  enabled: false
+
+tt-qwen38-1node-eager:
+  enabled: false
+
+tt-qwen38-1node-graphs:
+  enabled: false
+
+tt-qwen38-1node-selective:
+  enabled: false
+
+tt-qwen38-1node-noac:
+  enabled: false
+
+tt-qwen38-n2-lowmem:
+  enabled: false
+
+tt-qwen38-n2-diag:
+  enabled: false
+
+tt-qwen38-n2-diag-mb1:
+  enabled: false
+
+tt-qwen38-n2-diag-8k2:
+  enabled: false
+
+tt-qwen38-1node-accum:
+  enabled: false
+
+# Last: all 744B parameters train on 2 nodes (optimizer state offloaded to host memory).
+megatron-glm5-unfrozen-2n:
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/megatron

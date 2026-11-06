@@ -313,6 +313,10 @@ class SizerOptions:
     # Configuration for batch scaling
     config: str = defaultfield("sizer.config", str, None)
 
+    # Never predict a batch size larger than the largest one observed to run (perf > 0)
+    # in the scaling config: the memory fit is linear and extrapolates far past what works
+    cap_observed: bool = defaultfield("sizer.cap_observed", int, 0)
+
     @property
     def autoscale(self):
         return self.enabled and self.multiple or self.capacity

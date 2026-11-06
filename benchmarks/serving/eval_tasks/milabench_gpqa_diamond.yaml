@@ -1,0 +1,29 @@
+# Zero-shot GPQA diamond for chat / reasoning models, scored on the last "Answer: <letter>".
+# hendrydong/gpqa_diamond_mc: the 198 diamond questions with lettered choices, not gated (Idavidrein/gpqa is)
+task: milabench_gpqa_diamond
+dataset_path: hendrydong/gpqa_diamond_mc
+output_type: generate_until
+test_split: test
+num_fewshot: 0
+# the mirror appends its own \boxed{} instruction to the question: keep one instruction for the three tasks
+doc_to_text: "{{problem.split('Please write your final answer')[0].strip()}}\n\nThink step by step, then end your response with a final line of the form \"Answer: <letter>\"."
+# solution is "\boxed{D}"
+doc_to_target: "{{solution.strip()[-2]}}"
+generation_kwargs:
+  until: []
+  do_sample: false
+filter_list:
+  - name: answer-line
+    filter:
+      - function: regex
+        regex_pattern: "(?:Answer:\\s*\\**\\s*\\(?|\\\\boxed\\{\\(?)([A-D])\\b"
+        group_select: -1
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+metadata:
+  version: 1.0

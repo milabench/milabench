@@ -1,0 +1,32 @@
+# Zero-shot GSM8K for chat / reasoning models: free-form reasoning, scored on the last "Answer: <number>"
+# (the stock gsm8k tasks are few-shot with stop strings that cut long reasoning short)
+task: milabench_gsm8k
+dataset_path: openai/gsm8k
+dataset_name: main
+output_type: generate_until
+test_split: test
+num_fewshot: 0
+doc_to_text: "{{question}}\n\nSolve the problem step by step. End your response with a final line of the form \"Answer: <number>\"."
+doc_to_target: "{{answer.split('####')[-1].strip()}}"
+generation_kwargs:
+  until: []
+  do_sample: false
+filter_list:
+  - name: answer-line
+    filter:
+      - function: regex
+        regex_pattern: "(?:Answer:\\s*\\**\\s*\\$?|\\\\boxed\\{)(-?[0-9][0-9,]*(?:\\.[0-9]+)?)"
+        group_select: -1
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: false
+    regexes_to_ignore:
+      - ","
+      - "\\$"
+      - "\\.0+$"
+metadata:
+  version: 1.0

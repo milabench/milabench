@@ -1,75 +1,127 @@
-"""Torchtitan milabench pack — torchrun/srun launcher for ``torchtitan.train``."""
+"""TorchTitan pre-training / SFT throughput benchmark.
+
+Two kinds of models, one TorchTitan pin (requirements.toml):
+
+* native TorchTitan Qwen3.8 (``tt_native``), CUDA only;
+* Hugging Face models through TorchTitan's transformers backend (``tt_configs``).
+
+main.py runs ``torchtitan.train`` with the config named by ``--config``;
+voirfile.py instruments the trainer (``tt_native/instrument.py``).
+"""
 
 from __future__ import annotations
 
 import os
-from copy import deepcopy
 
 from milabench.commands import (
     PackCommand,
     TorchrunAllGPU,
     TorchrunAllNodes,
     VoirCommand,
-    WorkingDir,
+    max_node_count,
 )
-from milabench.commands.srun import ForeachSrun
-from milabench.pack import Package
+from milabench.commands.srun import (
+    ForeachSrun,
+    SrunCommand,
+    TorchrunSrun,
+    _node_hostlist_token,
+)
+from milabench.dependencies.requirements import load_benchmark_requirements
+from milabench.utils import select_nodes
+from milabench.pack import Package, install_benchmate
+
+
+# The torchtitan_native install group (torchtitan_native.yaml, Slurm
+# scripts) installs the CUDA nightly from the same day as the TorchTitan
+# commit (2026-10-05, requirements.toml) instead of the pinned torch.
+NIGHTLY_INSTALL_GROUP = "torchtitan_native"
+TORCH_NIGHTLY = "torch==2.15.0.dev20261005+cu130"
+TORCH_NIGHTLY_INDEX = "https://download.pytorch.org/whl/nightly/cu130"
+
+
+def default_cache_dir() -> str:
+    import getpass
+
+    return f"/tmp/{getpass.getuser()}/tt_native_cache"
 
 
 class TorchtitanRun(TorchrunAllGPU):
-    """Always wrap with benchrun/torchrun (even on a single GPU)."""
+    """Always go through benchrun/torchrun, even on a single GPU.
+
+    ``gpus_per_node`` (bench config) caps the processes per node; default: all GPUs.
+    """
 
     def should_wrap(self):
         return True
 
     def _argv(self, **kwargs):
-        # Prefer explicit nproc from configured devices (smoke uses devices: [0]).
-        # Parent uses --nproc-per-node=gpu which ignores a 1-entry devices list.
-        # milabench also rewrites devices to all GPUs, so key off smoke tags.
-        tags = list(self.pack.config.get("tags") or [])
-        name = str(self.pack.config.get("name", ""))
-        if "smoke" in tags or "smoke" in name:
-            nproc = 1
-        else:
-            devices = self.pack.config.get("devices") or [0]
-            nproc = max(1, len(devices))
         argv = list(super()._argv(**kwargs))
-        replaced = False
-        out = []
-        for a in argv:
-            s = str(a)
-            if s.startswith("--nproc-per-node="):
-                out.append(f"--nproc-per-node={nproc}")
-                replaced = True
-            else:
-                out.append(a)
-        if not replaced:
-            out.append(f"--nproc-per-node={nproc}")
-        return out
+        nproc = self.pack.config.get("gpus_per_node")
+        if nproc is None:
+            return argv
+        return [
+            f"--nproc-per-node={nproc}" if str(a).startswith("--nproc-per-node=") else a
+            for a in argv
+        ]
 
 
-class TorchtitanSrun(ForeachSrun):
-    """Main locally; workers via ``srun -x main`` (same layout as TorchtuneSrun)."""
+class TorchtitanSrun(TorchrunSrun):
+    """Main node locally; workers through one ``srun -w <selected nodes>``.
+
+    Same as milabench's ``TorchrunSrun`` but always wrapped by torchrun.
+    No ``WorkingDir`` wrapper: its ``env -`` clears the environment, which
+    drops voir's ``DATA_FD`` and this pack's ``make_env`` variables.
+    Workers get ``--node-rank`` from ``SLURM_NODEID`` (see benchrun).
+    """
 
     def __init__(self, executor, *args, **kwargs) -> None:
+        # Static rendezvous waits for every node: fail within a few minutes
+        # if one never joins (torchrun default: 600 s). Configurable per
+        # bench with `rdzv_timeout` (seconds).
+        rdzv_timeout = int(executor.pack.config.get("rdzv_timeout", 300))
         base_exec = TorchrunAllNodes.make_base_executor(
             TorchtitanRun,
             executor,
+            f"--rdzv-conf=timeout={rdzv_timeout}",
             *args,
             **kwargs,
         )
-        super().__init__(WorkingDir(base_exec))
+        ForeachSrun.__init__(self, base_exec)
 
-    def main_executor(self):
-        main = deepcopy(self.executor)
-        main.wrapper_argv = (*main.wrapper_argv, "--node-rank=0")
-        return main
+    @property
+    def executors(self):
+        # Workers on exactly the selected nodes (``srun -w``), not on every
+        # other node of the allocation (``srun -x main``): a run may use fewer
+        # nodes than allocated (e.g. n3 inside a 4-node job, or a node subset
+        # chosen for a topology test).
+        config = self.executor.pack.config
+        nodes = select_nodes(config["system"]["nodes"], max_node_count(config))
+        if len(nodes) <= 1:
+            return [self.single_node()]
+        workers = ",".join(_node_hostlist_token(n) for n in nodes[1:])
+        return [
+            self.main_executor(),
+            SrunCommand(self.worker_executor(), nodelist=workers),
+        ]
 
 
 class Torchtitan(Package):
-    base_requirements = "requirements.in"
     prepare_script = "prepare.py"
     main_script = "main.py"
+
+    async def install(self):
+        if self.config.get("install_group") != NIGHTLY_INSTALL_GROUP:
+            await super().install()
+            return
+        # Dependencies from requirements.toml ([common] + [cuda]), installed
+        # with the torch nightly and its index, which milabench's TOML install
+        # path does not handle (no nightly index).
+        # milabench installs without build isolation, so seed build backends
+        # first (torchtitan's git build needs setuptools).
+        deps = load_benchmark_requirements(self.dirs.code).get_dependencies("cuda")
+        await self.pip_install("setuptools", "wheel", build_isolation=True)
+        await self.pip_install("--extra-index-url", TORCH_NIGHTLY_INDEX, TORCH_NIGHTLY, *deps)
+        await install_benchmate(self)
 
     def make_env(self):
         env = super().make_env()
@@ -77,22 +129,34 @@ class Torchtitan(Package):
         prev = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = code if not prev else f"{code}{os.pathsep}{prev}"
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-        # Host has no A/AAAA for hostname; c10d getaddrinfo hangs without this.
-        env.setdefault("MASTER_ADDR", "127.0.0.1")
-        env.setdefault("GLOO_SOCKET_IFNAME", "lo")
-        env.setdefault("NCCL_SOCKET_IFNAME", "lo")
         env.setdefault("VOIR_PLAIN_SMUGGLE", "1")
-        # Pin smoke to 1 GPU (benchrun uses --nproc-per-node=gpu).
-        tags = list(self.config.get("tags") or [])
-        name = str(self.config.get("name", "") or getattr(self, "name", ""))
-        if "smoke" in tags or "smoke" in name:
-            env["CUDA_VISIBLE_DEVICES"] = "0"
-        # Debug: always expose which devices we chose
-        env.setdefault("TORCH_DISTRIBUTED_DEBUG", "OFF")
+        if max_node_count(self.config) <= 1:
+            # Single node only: some dev hosts have no A/AAAA record for their
+            # hostname and c10d getaddrinfo hangs. Loopback would break
+            # cross-node Gloo/NCCL, so multi-node runs keep the real
+            # interface (auto-detected, or set *_SOCKET_IFNAME explicitly).
+            env.setdefault("MASTER_ADDR", "127.0.0.1")
+            env.setdefault("GLOO_SOCKET_IFNAME", "lo")
+            env.setdefault("NCCL_SOCKET_IFNAME", "lo")
+        # CUDA device index = DCGM GPU index (per_rank.local_rank joins telemetry).
+        env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+        # Compile caches on node-local disk: home is read-only on some compute
+        # nodes (Trillium), and the shared filesystem is slow for many ranks
+        # writing small files. The path must not depend on the job: cache
+        # entries store absolute paths, so a pre-warmed archive only works if
+        # it is restored at the same location (not under $SLURM_TMPDIR).
+        cache = os.environ.get("TT_NATIVE_CACHE_DIR") or default_cache_dir()
+        env.setdefault("TRITON_CACHE_DIR", f"{cache}/triton")
+        env.setdefault("TORCHINDUCTOR_CACHE_DIR", f"{cache}/inductor")
+        # Node-local copy of the datasets cache (scripts/slurm/tt_native.sh).
+        if os.environ.get("TT_NATIVE_DATASETS_CACHE"):
+            env["TT_NATIVE_DATASETS_CACHE"] = os.environ["TT_NATIVE_DATASETS_CACHE"]
+        # Compute nodes have no internet access.
+        env.setdefault("HF_HUB_OFFLINE", "1")
+        env.setdefault("HF_DATASETS_OFFLINE", "1")
         return env
 
     def build_run_plan(self):
-        # voir main.py … so voirfile.py instruments the trainer; torchrun on top.
         plan = VoirCommand(PackCommand(self, lazy=True))
         return TorchtitanSrun(plan).use_stdout()
 

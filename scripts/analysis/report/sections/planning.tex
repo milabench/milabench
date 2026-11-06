@@ -1,0 +1,136 @@
+\section{Window experiment planning}
+\label{app:planning}
+
+The full-access window (expected 2026-10-29 17:00 to 10-30 17:00) is planned so that the most important
+results come first and the plan degrades gracefully if the window is cut short. The detailed checklist,
+with the run-by-run queue and owners, is in \texttt{scripts/analysis/EXPERIMENTS.md}.
+
+\paragraph{Prioritization.} The campaign started as a validation of two new milabench workloads (Qwen3.8-27B
+on TorchTitan and GLM-5 on Megatron) at a scale they had never run at. Full access to Rorqual turned it into
+an opportunity to also use these workloads as probes of the questions that matter to the cluster's
+administrators. The ranking keeps both purposes in view, with four criteria: whether a result shows that
+each workload runs and measures correctly at full scale (the original purpose), how directly it answers the
+cluster questions (does Rorqual's network limit large-scale training, and what follows for allocation and
+for the exascale evaluation), whether it informs a decision, and whether only the window can produce its
+data. The first criterion does not change the order: the tier-1 runs already include each workload on every
+healthy node. Two rules refine the ranking:
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+  \item \textbf{Tier 0 before anything else}: the health check of every node is a prerequisite, not a
+        result. It sets the healthy set, the exclusions and the node lists of every later run, and it is
+        the first snapshot of the state of the cluster.
+  \item \textbf{GLM-5 first when near-equal}: GLM-5 runs are more complex and more likely to fail; running
+        them first leaves more time to fix them before the window ends.
+\end{itemize}
+
+\begin{table}[h]
+  \caption{Figure priority. Tier 1 alone answers the main questions; tier 2 explains them; tier 3 is
+    context, or already covered by preliminary data.}
+  \label{tab:priority}
+  \centering\small
+  \begin{tabular}{cll}
+    \toprule
+    Tier & Figure & Role \\
+    \midrule
+    0 & Window health check (data) & sanity check, state of the cluster, node lists \\
+    \midrule
+    1 & \Cref{fig:expert-placement} GLM-5 expert placement & using every node vs.\ the largest aligned subset \\
+    1 & \Cref{fig:scaling} Weak scaling & throughput per GPU up to the full machine \\
+    1 & \Cref{fig:placement-at-scale} At scale: balance or pack & allocation of large jobs \\
+    1 & \Cref{fig:placement-scaling} More nodes vs.\ crossing switches & where the scaling loss comes from \\
+    \midrule
+    2 & \Cref{fig:comm} Bandwidth by scope & physical cause (one HCA per node, spine) \\
+    2 & \Cref{fig:health-window} Window health check & validity of the rest \\
+    2 & \Cref{fig:moe} GLM-5 scaling, EP size, FP8 & MoE at scale \\
+    2 & \Cref{fig:expert-groups} All-to-all per EP group & mechanism behind \cref{fig:expert-placement} \\
+    2 & \Cref{fig:decomposition} Step decomposition & communication-bound step \\
+    \midrule
+    3 & \Cref{fig:batch} Per-GPU batch & answered by preliminary data \\
+    3 & \Cref{fig:startup} Startup & fed by every run \\
+    3 & \Cref{fig:stragglers} Stragglers & node telemetry from regular runs \\
+    3 & \Cref{fig:stability} Stability & conditional on window length \\
+    3 & \Cref{fig:health-gpus} Per-GPU compute by cluster & premise shown by preliminary data \\
+    3 & \Cref{fig:health-tt} Preliminary health checks & background \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Roles.} Three people run the window: one for health checks and monitoring (runs the health
+checks, watches GPU telemetry and logs during every run, regenerates the quick figures after each block and
+compares them with expectations, flags anything suspicious), one for the Qwen workload and one for the GLM-5
+workload.
+
+\paragraph{Rules.}
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+  \item \textbf{Small blocks, alternating workloads}: each block is one comparison (10--36 minutes) and
+        launches from a prepared command; GLM-5 and Qwen blocks alternate, so one team prepares while the
+        other runs.
+  \item \textbf{Skip on failure}: a failed or suspicious block is logged and the next block of the
+        \emph{other} workload starts; the failed block returns to the queue once fixed.
+  \item \textbf{First pass, then repeats}: pass 1 runs every tier-0 and tier-1 comparison once, so every key
+        figure has data early; pass 2 repeats it; then the remaining points and the optional runs.
+  \item \textbf{Parallel runs}: 1-node runs (smoke tests, re-checks) use idle nodes at any time; a run that
+        stays on one switch runs next to any run that does not use that switch; runs that cross the spine run
+        one at a time. The assumption that a switch does not slow traffic between its own nodes is checked in
+        the window (the same one-switch run with and without a concurrent run elsewhere).
+  \item \textbf{Exclusions}: a node flagged by the health check is excluded and the node lists are
+        recomputed; a comparison interrupted by an exclusion is rerun on the new node set.
+\end{itemize}
+
+\begin{table}[h]
+  \caption{Window phases (Qwen runs measured at $\sim$12 minutes; GLM-5 runs assumed at $\sim$15 minutes until
+    measured), with parallel runs. About 11.5 hours of execution, leaving $\sim$12.5 hours of the window for
+    fixes and failures.}
+  \label{tab:phases}
+  \centering\small
+  \begin{tabular}{lp{0.72\linewidth}r}
+    \toprule
+    Phase & Content & Time \\
+    \midrule
+    Pass 1 & health check; GLM-5 aligned, crossed, mixed, every node; Qwen every node, H27/P27, S3/S12/O12, H12,
+             leaf-to-leaf controls; whole-machine health checks & 2.5 h \\
+    Pass 2 & second repetition of pass 1 (one-switch check run alone); health re-check & 2.4 h \\
+    P2 & GLM-5 FP8; Qwen H15/P15, H48/P48, 6- and 9-node placements, O16, O3; their repeats & 4.5 h \\
+    P3 & GLM-5 EP16; bridge to past data with gradient accumulation; 1-hour stability run; final health check & 2.1 h \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Coverage.} \Cref{tab:coverage} states, for each figure, what the report would contain if the
+window stopped after each phase.
+
+\begin{table}[h]
+  \caption{Report coverage by phase (cumulative). \emph{none}: no window data; \emph{usable}: supports a
+    statement, with the limit given; \emph{complete}: as designed.}
+  \label{tab:coverage}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{c>{\raggedright}p{3.1cm}>{\raggedright}p{2.35cm}>{\raggedright}p{2.35cm}>{\raggedright}p{2.2cm}>{\raggedright\arraybackslash}p{2.0cm}}
+    \toprule
+    Tier & Figure & After pass 1 & After pass 2 & After P2 & After P3 \\
+    \midrule
+    0 & Health check (data) & complete & complete & complete & complete \\
+    1 & \ref{fig:expert-placement} Expert placement & usable: 1 run each, no significance & \textbf{complete} & complete & complete \\
+    1 & \ref{fig:scaling} Weak scaling & usable: 12--264 GPUs, 5 scales & usable, repeats & \textbf{complete} & complete \\
+    1 & \ref{fig:placement-at-scale} Balance or pack & usable: 27 nodes, 1 run & usable: with run-to-run spread & \textbf{complete}: 15, 27, 48 & complete \\
+    1 & \ref{fig:placement-scaling} Nodes vs.\ crossing & usable: 3 and 12 nodes, controls & usable, repeats & \textbf{complete}: 6, 9, 16 & complete \\
+    2 & \ref{fig:comm} Bandwidth by scope & \textbf{complete} & complete & complete & complete \\
+    2 & \ref{fig:health-window} Window health check & \textbf{complete} & complete & complete & complete \\
+    2 & \ref{fig:moe} GLM-5 scaling & usable: EP8 BF16 & usable, repeats & usable: + FP8 & \textbf{complete}: + EP16 \\
+    2 & \ref{fig:expert-groups} All-to-all per group & complete if timers logged & complete & complete & complete \\
+    2 & \ref{fig:decomposition} Step decomposition & usable (estimated) & usable & usable & \textbf{complete} if measured \\
+    3 & \ref{fig:batch} Per-GPU batch & usable (preliminary) & same & same & \textbf{complete} \\
+    3 & \ref{fig:startup} Startup & usable & usable & \textbf{complete} & complete \\
+    3 & \ref{fig:stragglers} Stragglers & usable (5-min windows) & usable & usable & \textbf{complete} \\
+    3 & \ref{fig:stability} Stability & none & none & none & \textbf{complete} \\
+    3 & \ref{fig:health-gpus} Per-GPU compute & complete if tool reports it & same & same & same \\
+    3 & \ref{fig:health-tt} Preliminary health checks & complete & complete & complete & complete \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{What is lost if the window stops early.} Before pass 2 ends, the placement results
+(\cref{fig:expert-placement,fig:placement-at-scale}) have no significance test: differences of 0.2--1\,\% cannot
+be told from run-to-run noise with one run each. Before P2 ends, the tier-1 curves stay sparse and GLM-5 has
+no FP8 result. Before P3, there is no stability figure, the step decomposition stays estimated, GLM-5 has no
+EP-size comparison at full scale, and the batch figure has no window point. Independently of the window,
+\cref{fig:expert-groups} depends on a tool change made before it (per-group all-to-all timers in Megatron).

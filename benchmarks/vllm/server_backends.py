@@ -31,6 +31,46 @@ SERVER_BACKENDS = {
 }
 
 
+def multinode_dp_flags(
+    backend: str,
+    *,
+    nnodes: int,
+    dp_local: int,
+    node_index: int,
+    master_ip: str,
+    master_port: int = 29550,
+    # ATOM's engine sockets take master_port + 100 + 3 * rank: keep the rendezvous port below that range
+    base_port: int = 29450,
+) -> list[str]:
+    """Server flags for multi-node data parallelism, for the node at ``node_index`` (0 = coordinator).
+
+    One server process per node, each owning ``dp_local`` DP ranks; tensor parallel stays inside the node.
+    Node 0 serves the HTTP endpoint, the others only run engines (ATOM: engine-only when the DP rank
+    is not 0, vLLM: ``--headless``)."""
+    size = nnodes * dp_local
+    rank = node_index * dp_local
+    if backend == "atom":
+        return [
+            "--data-parallel-size", str(size),
+            "--data-parallel-size-local", str(dp_local),
+            "--data-parallel-rank", str(rank),
+            "--data-parallel-master-ip", master_ip,
+            "--data-parallel-master-port", str(master_port),
+            "--data-parallel-base-port", str(base_port),
+        ]
+    if backend == "vllm":
+        flags = [
+            "--data-parallel-size", str(size),
+            "--data-parallel-size-local", str(dp_local),
+            "--data-parallel-address", master_ip,
+            "--data-parallel-rpc-port", str(master_port),
+        ]
+        if node_index > 0:
+            flags += ["--data-parallel-start-rank", str(rank), "--headless"]
+        return flags
+    raise InferenceServerError(f"multi-node data parallel is not supported for backend {backend}")
+
+
 def _milabench_config() -> dict:
     raw = os.environ.get("MILABENCH_CONFIG")
     if not raw:

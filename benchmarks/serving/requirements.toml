@@ -1,0 +1,56 @@
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "torch",
+    # Required for multi-node vLLM via milabench.commands.ray.RayCluster
+    "ray",
+    # accuracy passes (client.passes[].eval): lm-eval against the server's OpenAI API
+    "lm-eval[api]",
+]
+
+[cuda]
+dependencies = [
+    "vllm",
+    "vllm[bench]",
+    "vllm[audio]",
+    "flashinfer-python",
+    "flashinfer-cubin",
+    # "flashinfer-jit-cache",
+    "torchcodec",
+]
+
+[rocm]
+dependencies = [
+    "vllm",
+    "vllm",
+    "vllm[bench]",
+    "vllm[audio]",
+
+    # vLLM detects the ROCm platform through amdsmi; without it `vllm serve`
+    # fails with "Failed to infer device type"
+    "amdsmi",
+
+    # ATOM serving (serving-* benchmarks): install atom + amd-aiter wheels from the
+    # milabench ROCm release (build with `make GPU_BACKEND=rocm atom`).
+    # MoE EP may also need amd_mori.
+    # PyPI's `atom` is an unrelated package (0.3+); the bound keeps us on ROCm's ATOM.
+    # ATOM >= 0.1.6 needs amd-aiter >= 0.1.23 (aiter.topk_select).
+    "atom>=0.1.8,<0.2",
+    "amd-aiter>=0.1.23",
+
+    # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
+    "torchcodec",
+]
+
+[cpu]
+dependencies = [
+    # Version (+cpu) comes from platforms.toml [cpu.constraints] / [compat.vllm]
+    "vllm",
+    "vllm[bench]",
+]
+
+[hpu]
+enabled = false
+
+[xpu]
+enabled = false

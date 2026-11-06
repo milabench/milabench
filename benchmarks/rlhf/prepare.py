@@ -8,7 +8,7 @@ from benchmate.hugginface import download_hf_dataset, download_hf_model
 
 @dataclass
 class Arguments:
-    dataset: str = "trl-internal-testing/descriptiveness-sentiment-trl-style"
+    dataset: str = "Milabench/descriptiveness-sentiment-trl-style"
     split: str = "descriptiveness"
     subset: str = None
     model_name_or_path: str = "EleutherAI/pythia-1b-deduped"

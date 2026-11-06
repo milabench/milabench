@@ -1,0 +1,52 @@
+\section{Operational readiness}
+\label{sec:operations}
+
+\begin{question}
+  \textbf{Is the system ready for production training?} How long until training starts, how often do runs
+  fail, how much do repeated runs vary, and is throughput stable over an hour or more?
+\end{question}
+
+\paragraph{Startup.} \Cref{fig:startup} separates process start to an initialized model (imports, process
+groups, model construction and sharding) from the first step (compilation, or loading the compile cache).
+
+\begin{figure}[h]
+  \centering\fig{startup}
+  \caption{Startup phases by number of nodes. \syntheticnote{startup}}
+  \label{fig:startup}
+\end{figure}
+
+\placeholder{outliers are explained: 297\,s init with the virtual environment on Lustre instead of node-local
+disk; first steps of 85--117\,s with a cold compile cache (new shapes).}
+
+\paragraph{Stability.} \Cref{fig:stability} follows a long run step by step, with the GPU clocks from the node
+telemetry on the same time axis, so that a throughput drop can be traced to a GPU.
+
+\begin{figure}[h]
+  \centering\fig{stability}
+  \caption{\syntheticnote{stability}Throughput per step over one hour on every healthy node (top) and SM clocks of
+    all GPUs (bottom): the gray band is the range of the other GPUs, the colored line the GPU with the
+    lowest clock.}
+  \label{fig:stability}
+\end{figure}
+
+\paragraph{Stragglers.} With FSDP, all ranks wait for the slowest one, so per-rank step times are identical
+(measured: 24 ranks within 0.2\,ms) and cannot identify a slow GPU. The slow GPU is instead the one that
+\emph{waits least}: it is busy for a larger share of each step while the others idle at the collective
+(\cref{fig:stragglers}, top). The measure is the GPU's duty cycle over each sampling interval, from the
+utilization samples the driver buffers; on Hopper, GPM tensor-pipe occupancy replaces
+it and ranks equally busy GPUs more sharply. A duty cycle separates a GPU that waits from one that does
+not, but it is not a profiling counter. The second, independent cause
+is the host: a node whose CPU busy-core clock falls holds back every rank on it (\cref{fig:stragglers},
+bottom; measured before the window on one node, 3{,}700 to 2{,}560\,MHz for
+\(-25\,\%\) throughput).
+
+\begin{figure}[h]
+  \centering\fig{stragglers}
+  \caption{\syntheticnote{stragglers}Top: GPU activity (node telemetry; the axis names the measure used),
+    the highest 10-minute median of each GPU, by leaf. Bottom: per node, the lowest 1-minute median of the
+    CPU busy-core clock relative to the first minute of the run. The outlier of each panel is named.}
+  \label{fig:stragglers}
+\end{figure}
+
+\placeholder{run-to-run variance (repetitions in \cref{fig:placement-scaling,fig:placement-at-scale}; so far $\le$0.1\,\% on Rorqual within an
+allocation), failures and their causes (\cref{tab:ledger}), excluded nodes.}

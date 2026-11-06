@@ -1039,7 +1039,7 @@ torchprofile==0.1.0
     # via -r requirements.in
 torchtitan @ git+https://github.com/pytorch/torchtitan.git@ecae62f1591c3a73ed78a25d7c68f249bd61caa6
     # via -r requirements.in
-torchtune @ git+https://github.com/meta-pytorch/torchtune.git@50a2b8f77f00c052b5ca43562aeb3f32c34d88ef
+torchtune @ git+https://github.com/meta-pytorch/torchtune.git@bd2a0fc7c31430972728494fa01aaeeb0ebf1ba1
     # via -r requirements.in
 torchviz==0.0.3
     # via -r requirements.in

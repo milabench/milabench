@@ -166,8 +166,9 @@ def main(
     else:
         config.algo.num_from_policy = batch_size
 
-    # This may need to be adjusted if the batch_size is made bigger
-    config.mp_buffer_size = 32 * 1024**2  # 32Mb
+    # 32Mb was sized for the default batch (128); a batch of 256 needs just over 32Mb,
+    # so grow it with the batch (with headroom) for the resized runs
+    config.mp_buffer_size = max(32, 64 * int(batch_size) // 128 + 8) * 1024**2
     trial = SEHFragTrainerMonkeyPatch(data, config, print_config=False)
     trial.run()
     trial.terminate()
