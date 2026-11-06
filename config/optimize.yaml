@@ -22,6 +22,8 @@ llm-lora-ddp-gpus:
     compile=True: true
 
 llm-lora-ddp-nodes:
+  # 2 nodes at the single-node batch sizes (copied profile): leave room for cross-node traffic
+  max_duration: 7200
   argv:
     compile=True: true
 
@@ -34,6 +36,8 @@ llm-full-mp-gpus:
     compile=True: true
 
 llm-full-mp-nodes:
+  # 2 nodes at the single-node batch sizes (copied profile): leave room for cross-node traffic
+  max_duration: 7200
   argv:
     compile=True: true
 
@@ -74,3 +78,6 @@ recursiongfn:
 
 dimenet:
   max_duration: 1800
+
+diffusion-nodes:
+  max_duration: 7200
