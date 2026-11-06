@@ -16,7 +16,7 @@ except what SciNet measured.
 | Per node | 8 x B200, 179.1 GiB each, on NVLink, 1,000 W limit; 2 x 48-core Intel, ~2 TB RAM, liquid cooled | health checks; SciNet talk |
 | GPUs | 416 in total | |
 | Network | InfiniBand. NCCL uses 4 ports at 400 Gb/s, 1,600 Gb/s per node (`mlx5_0`, `1`, `4`, `9`: site `NCCL_IB_HCA`, port counters agree), not the 800 Gb/s first quoted. GPUs 0, 2, 4, 6 each share a PCIe switch with one port; 1, 3, 5, 7 have none. Measured results below | D3, D2 (jobs 1239634, 1239766, 1239768) |
-| Switch layout | **unknown** (asked to the admins). `/etc/hosts` puts the nodes in 8 subnets of 7, 7, 7, 7, 4, 7, 7, 6 nodes (racks?) | `/etc/hosts` |
+| Switch layout | **unknown** (asked to the admins; fabric tools need root, `umad` is root-only, job 1249252). `/etc/hosts` lists the nodes by frame, 8 frames of 7, 7, 7, 7, 4, 7, 7, 6 nodes in one /16; the bandwidth groups split between Frame 34 and 35 | `/etc/hosts` |
 | Shared with others | the distributed filesystem and the interconnect (CPU and H100 nodes stay in production) | user |
 | Storage | `/scratch`, `/project`: VAST over NFS (65 PB), 25 TiB quota on `$SCRATCH`. Nodes are diskless; `/tmp` is ~1.5 TiB of zram, RAM like `/dev/shm`, although Slurm reports `TmpDisk=2048` MB | health checks, `diskusage_report`, `scontrol show node` |
 | Slurm | partition `compute_b200_full_node`, 1-day limit; no topology plugin. QOS `normal` stops at 100 GPUs per user (12 nodes); use `bump`. **Jobs above 25 nodes are refused** (removal asked to the admins) | `sinfo`, `sacctmgr`, `sbatch --test-only` |
