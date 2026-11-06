@@ -63,7 +63,8 @@ class NvmlGpus:
 
     def close(self) -> None:
         """End the session: every handle in `gpus` is invalid after this. Safe to call twice."""
-        nvml, self._session = self._session, None
+        nvml = self._session
+        self._session = None  # cleared before shutting down, so a second call does nothing
         if nvml is None:
             return
         try:

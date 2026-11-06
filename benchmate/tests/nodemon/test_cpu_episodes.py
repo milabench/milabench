@@ -39,6 +39,19 @@ def test_a_low_run_lasts_until_the_next_sample_and_packages_stay_apart():
     assert by_package["1"]["episodes"] == 2
 
 
+def test_two_samples_at_the_same_time_with_an_empty_clock_do_not_crash_the_sort():
+    samples = [
+        {"package": 0, "time_ms": 2000, "cpu_mhz_busy_mean": 3000},
+        {"package": 0, "time_ms": 2000, "cpu_mhz_busy_mean": None},
+        {"package": 0, "time_ms": 0, "cpu_mhz_busy_mean": 200},
+    ]
+
+    (row,) = episodes(samples)
+
+    assert row["episodes"] == 1
+    assert row["durations_s"] == [2.0]
+
+
 def test_an_empty_busy_clock_is_not_a_low_sample():
     samples = [
         {"package": 0, "time_ms": 0, "cpu_mhz_busy_mean": 200},

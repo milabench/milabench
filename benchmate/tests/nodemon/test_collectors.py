@@ -154,6 +154,7 @@ def test_ecc_keeps_the_startup_snapshot_and_the_latest():
 
     collector._query = query
     assert collector.probe()
+    assert "snapshot_start" not in collector.describe()  # no NVML read in probe(): it runs with no timeout
     collector.sample(0.0)
     state["agg"] = 177910
     state["rows"] = (3, 0, 0, 0)
