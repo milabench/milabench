@@ -4,9 +4,10 @@ A point is a configuration at a node count; repetitions don't count. Done: a com
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
 20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
 GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Network goes up to 52
-as the design has it. Points that need more clean nodes than we have count apart: they wait for nodes to return. User, Nov 6: a compromise is
-a test at a smaller scale than initially planned, or one holding the 3 slow nodes when a run of that size could avoid
-them. Compromises go last of all: if enough nodes are back by then, the full versions run instead. They count apart too.
+as the design has it. Points above the clean nodes count apart. User, Nov 6: a compromise is a test at a smaller scale than initially planned,
+or one holding the 3 slow nodes when a run of that size could avoid them; full experiments at 52 nodes also count, as long
+as the slow nodes aren't fixed. Compromises go last of all and count apart too. A quick 52-node run to check that it works
+is a verification, not the full-scale point: it goes in select.SET_ASIDE.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 45  # clean nodes today: above this a run holds the slow nodes, a compromise, or waits for trig0140, trig0145, trig0122, trig0146
+TOP_NOW = 48  # clean nodes today, 49 if trig0146 passes: above this a run holds the slow nodes, a compromise until they are fixed
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
               "GLM-5 layouts": {36}, "Precision speed": {25, 26, 39}, "Checkpoints": {25, 39}}
@@ -30,8 +31,8 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Network (D2-D4)": "D2, D3, D4 at the end, at the largest scale available",
-             "Long run": "Qwen and GLM-5, at least 1 h each, at 50+ nodes if they return"}
+LEFT_NOTE = {"Network (D2-D4)": "D2, D3, D4 at the end, at the largest scale available; 50+ holds the slow nodes",
+             "Long run": "Qwen and GLM-5, at least 1 h each, at the end; 50+ holds the slow nodes"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
@@ -157,7 +158,11 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
     failed = report[report.status == "failed"]
     active = report[report.status == "running"]
     ck = checkpoints(t["checkpoints"], runs)
-    ops = set(zip(ck.model, ck.content, ck.op, ck["mode"], ck.nodes.astype(int))) if len(ck) else set()
+    ops, ops_slow = set(), set()
+    if len(ck):
+        held = ck.run_id.map(runs.drop_duplicates("run_id").set_index("run_id").slow_nodes).fillna("") != ""
+        key = lambda d: set(zip(d.model, d.content, d.op, d["mode"], d.nodes.astype(int)))
+        ops, ops_slow = key(ck[~held]), key(ck[held])
     fo = t["failed_ops"]
     failed_ops = set()
     if len(fo) and "model" in fo:
@@ -173,12 +178,15 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
         if x.net:
             state = "done" if x.net in net else None
         elif x.op:
-            state = "done" if x.op in ops else "answered" if x.op in failed_ops else None
+            state = "done" if x.op in ops else "with slow nodes" if x.op in ops_slow else "answered" if x.op in failed_ops else None
         else:
             exp = {"experiment": x.experiment} if x.experiment else {}
             want = {**exp, **x.want}
-            if len(_matches(done, want)):
+            hits = _matches(done, want)
+            if len(hits) and (x.compromise or (hits.slow_nodes.fillna("") == "").any()):
                 state = "done"
+            elif len(hits):
+                state = "with slow nodes"  # a compromise, not the full-scale point
             elif len(_matches(active, want)):
                 state = "active"
             elif len(_matches(failed, want)):
@@ -216,7 +224,7 @@ def _left(g: pd.DataFrame) -> str:
 
 def _compromise(g: pd.DataFrame) -> str:
     c = g[g.compromise]
-    done, active = int(c.state.isin(["done", "answered"]).sum()), int((c.state == "active").sum())
+    done, active = int(c.state.isin(["done", "answered"]).sum()) + int((g.state == "with slow nodes").sum()), int((c.state == "active").sum())
     last = int((c.state == "not run").sum()) + LAST.get(g.block.iloc[0], 0)
     parts = [f"{done} done"] * bool(done) + [f"{active} running"] * bool(active) + [f"{last} last"] * bool(last)
     return ", ".join(parts) or "none"
@@ -228,13 +236,13 @@ def summary(p: pd.DataFrame, t: dict[str, pd.DataFrame], sacct: Path) -> pd.Data
     runs = t["runs"]
     h, pairs, coll = t["node_health"], t["pairs"], t["collectives"]
     if len(h):
-        rows.append({"Figures": "health_gpus, health_links", "Group": "Health (D1)", "Done / planned": f"{h.host.nunique()} / 51 nodes",
-                     "Running or queued": "", "What's left": "no matmul or per-HCA checks in the tool", "50+ nodes": "none", "Compromise": "none"})
+        rows.append({"Figures": "health_gpus, health_links", "Group": "Health (D1)", "Done / planned": f"{h.host.nunique()} / 52 nodes",
+                     "Running or queued": "", "What's left": "trig0146; no matmul or per-HCA checks in the tool", "50+ nodes": "none", "Compromise": "none"})
     done = runs[(runs.status == "completed") & runs.in_report.astype(bool)]
     e1, ref = (done.experiment == "E1").sum(), (done.experiment == "R").sum()
     # The design has 4 sets of 13 nodes, so 52; the 3 sets that ran are a compromise.
     rows.append({"Figures": "interference", "Group": "Side by side (E1)", "Done / planned": "none", "Running or queued": "",
-                 "What's left": "4 sets of 13, if nodes return", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
+                 "What's left": "4 sets of 13, at the end; it needs 52 nodes, so the slow nodes", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
     rows.append({"Figures": "reference_drift", "Group": "Reference (R)", "Done / planned": f"{ref} runs, no fixed count",
                  "Running or queued": "; ".join(jobs.get("Reference", [])), "What's left": "more as the window goes on", "50+ nodes": "none", "Compromise": "none"})
     for block, g in p.groupby("block", sort=False):

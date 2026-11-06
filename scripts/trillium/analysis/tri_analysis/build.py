@@ -207,8 +207,10 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     for name, file in (("power_limits", "power_limits.tsv"), ("kernel_change", "before_after.tsv"), ("cap_load", "load_table.tsv")):
         path = raw / CLUSTER / "post-pstate" / file
         tables[name] = pd.read_csv(path, sep="\t") if path.exists() else pd.DataFrame()
-    path = raw / CLUSTER / "caps-cleared" / "load_table.tsv"  # same matmul load, once the administrators had cleared the caps
-    tables["cap_cleared"] = pd.read_csv(path, sep="\t") if path.exists() else pd.DataFrame()
+    # Same matmul load, once the administrators had cleared the caps: two rounds, the second with the nodes that came back later.
+    paths = [raw / CLUSTER / "caps-cleared" / "load_table.tsv", raw / CLUSTER / "caps-cleared" / "load2" / "load_table.tsv"]
+    found = [pd.read_csv(p, sep="\t") for p in paths if p.exists()]
+    tables["cap_cleared"] = pd.concat(found, ignore_index=True) if found else pd.DataFrame()
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]

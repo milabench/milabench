@@ -130,7 +130,7 @@ def _machine_numbers(t) -> dict[str, tuple]:
         out["TriCapNodes"] = (capped.node.nunique(), "d", False)
     cleared = t.get("cap_cleared", pd.DataFrame())
     if len(cleared):
-        d = cleared[cleared.node != "trig0151"]  # trig0151 is the normal node run beside them
+        d = cleared[~cleared.node.isin(["trig0151", "trig0146"])]  # trig0151 is the normal node run beside them; trig0146 was never capped
         out["TriClearedNodes"] = (d.node.nunique(), "d", False)
         out["TriClearedPowerLo"], out["TriClearedPowerHi"] = (d.power_w_median.min(), ",.0f", False), (d.power_w_median.max(), ",.0f", False)
         out["TriClearedTFlopsLo"], out["TriClearedTFlopsHi"] = (d.tflop_s.min(), ",.0f", False), (d.tflop_s.max(), ",.0f", False)

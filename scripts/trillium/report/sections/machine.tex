@@ -6,29 +6,27 @@
   does that do to every number in this report?
 \end{question}
 
-Of the 52 nodes, 43 could be used and 40 were clean until November~6, the morning the administrators cleared a 200\,W power limit from six nodes; now 48 can be used and 45 are clean. A capped GPU is about
-\TriCapFactor{} times slower, and one node is still capped. One cleared node now fails an NCCL test, and two others are out. CPU clocks fall under high GPU power on all but one node, so \textbf{every Qwen step
+Of the 52 nodes, 43 could be used and 40 were clean until November~6, when the administrators cleared a 200\,W power limit and the nodes they held came back; now 51 can be used and 48 are clean, with one node still under test. A capped GPU is about
+\TriCapFactor{} times slower. CPU clocks fall under high GPU power on all but one node, so \textbf{every Qwen step
 time in this report is throttled, except under pipeline layouts}. Three nodes spend about twice as long at low CPU clocks and slow any job that holds them. A kernel change during the
 campaign had no measurable effect, so results before and after it are compared directly. \Cref{fig:machine_status} shows the nodes.
 
 \begin{figure}[h]
   \centering\fig{machine_status}
   \caption{Top: CPU clock under full GPU power in the health check, per node, with load on 72 of 96 cores. Bottom: share of CPU samples below 500\,MHz per
-    node and run, in 13-node Qwen FSDP training at 12k tokens per GPU, from the node telemetry. Red: GPUs capped at 200\,W for part of the campaign; gray: node out.}
+    node and run, in 13-node Qwen FSDP training at 12k tokens per GPU, from the node telemetry. Red: GPUs capped at 200\,W for part of the campaign; gray: node out until November~6.}
   \label{fig:machine_status}
 \end{figure}
 
-\paragraph{Nodes.} \texttt{trig0146} is out: it shows 7 of its 8 GPUs. \texttt{trig0122} is in maintenance and excluded until the administrators confirm a firmware update
-(its \texttt{mlx5\_1} runs 28.35.2000, other nodes 28.47.1026). That leaves 50. \texttt{trig0145}, still capped and reserved by the administrators, and \texttt{trig0140}, which fails an NCCL test, leave 48, and the 3 slow ones leave 45 clean nodes. While the caps lasted those numbers were 43 and 40, so the runs so far stop at 39--43 nodes.
-\texttt{trig0122} also read 200\,W when last read, before it left for maintenance.
+\paragraph{Nodes.} Until November~6, \texttt{trig0146} was out, showing 7 of its 8 GPUs, and \texttt{trig0122} was in maintenance, with \texttt{mlx5\_1} at firmware 28.35.2000 against 28.47.1026 on other nodes. It now reads 28.47.1026, and its node pairs reach 290.6\,GB/s against 290.2 on its peers and 265 before. \texttt{trig0146} is under test and has had no health check in this campaign. So 51 nodes can be used, and the 3 slow ones leave 48 clean; 52 and 49 if \texttt{trig0146} passes. While the caps lasted those numbers were 43 and 40, so most runs here stop at 39--43 nodes. No run above 49 nodes can avoid the slow nodes.
 
 \paragraph{200\,W caps.} From about midnight on November~5, GPUs on \texttt{trig0123}, \texttt{0133}, \texttt{0138}, \texttt{0140}, \texttt{0143}, \texttt{0145} and \texttt{0152}
-had an enforced limit of 200\,W instead of the default 1,000\,W. According to the administrators, a power glitch at 00:09 caused it, and on the morning of November~6 they cleared it everywhere except on \texttt{trig0145}, which they keep for more tests. Measured under the same matmul load, on every GPU independently: capped GPUs draw \TriCapPowerLo--\TriCapPowerHi\,W, stay at
+had an enforced limit of 200\,W instead of the default 1,000\,W. According to the administrators, a power glitch at 00:09 caused it, and on November~6 they cleared it, \texttt{trig0145} last, after more tests. \texttt{trig0122} also read 200\,W before it left for maintenance, and no longer does. Measured under the same matmul load, on every GPU independently: capped GPUs draw \TriCapPowerLo--\TriCapPowerHi\,W, stay at
 120\,MHz and reach \TriCapTFlops\,TFLOP/s; GPUs of the normal node \texttt{trig0151} draw \TriCapControlPowerLo--\TriCapControlPowerHi\,W and reach \TriCapControlLo--\TriCapControlHi\,TFLOP/s. \texttt{trig0140}'s
 GPU~3 has been back at 1,000\,W and normal since the reboots; its other 7 GPUs have not. One capped node holds back a whole job: a 13-node Qwen run with \texttt{trig0123} took 26.3\,s per step, against about
 3\,s without. It was stopped after 8 steps and is used only as evidence for the cap, and it is the only run of ours on a capped node, so no result in this report is affected. The reboots did not clear the caps.
 
-Under the same load after the clearing, the GPUs of the \TriClearedNodes{} cleared nodes draw \TriClearedPowerLo--\TriClearedPowerHi\,W at a 1,000\,W limit and reach \TriClearedTFlopsLo--\TriClearedTFlopsHi\,TFLOP/s, like \texttt{trig0151} beside them (\TriClearedCtlLo--\TriClearedCtlHi). Their health checks pass, and they show the same CPU clock drops as the other nodes. \textbf{One cleared node stays out.} On \texttt{trig0140}, NCCL's all-reduce inside the node fails with default settings, twice out of two, unable to bind NVLink SHARP memory. It works with that feature off, at 647\,GB/s; \texttt{trig0143}, retested beside it, reaches 668\,GB/s with default settings and 647\,GB/s with it off. The same test passed on \texttt{trig0140} on the evening of November~5, on the same boot, so the failure is new, and we do not know why or whether the clearing caused it. Those nodes have been running normally for less than a day, so whether the clearing holds is not yet known either.
+Under the same load after the clearing, the GPUs of the \TriClearedNodes{} cleared nodes draw \TriClearedPowerLo--\TriClearedPowerHi\,W at a 1,000\,W limit and reach \TriClearedTFlopsLo--\TriClearedTFlopsHi\,TFLOP/s, like \texttt{trig0151} beside them (\TriClearedCtlLo--\TriClearedCtlHi). Their health checks pass, and they show the same CPU clock drops as the other nodes. \textbf{One cleared node failed for a while.} At about 11:00 on November~6, NCCL's all-reduce inside \texttt{trig0140} failed with default settings, twice out of two, unable to bind NVLink SHARP memory. With that feature off it worked at 647\,GB/s, and \texttt{trig0143}, retested beside it, reached 668\,GB/s with default settings and 647\,GB/s with it off. By 12:43 the health check passed again, at 727\,GB/s, without the error. It had also passed the evening before, on the same boot, so the failure came and went, and we do not know why or whether it will return. These nodes have been running normally for only hours, so whether the clearing holds is not yet known either.
 
 \paragraph{CPU clock drops.} In the health check at full GPU power (about 8\,kW per node), mean clocks were \TriCpuBeforeLo--\TriCpuBeforeHi\,MHz (median \TriCpuBeforeMed) on \TriCpuNodesBefore{} nodes before the
 kernel change and \TriCpuAfterLo--\TriCpuAfterHi\,MHz (median \TriCpuAfterMed) on \TriCpuNodesAfter{} nodes after it, against 3,200\,MHz at low power. \texttt{trig0114} is the exception, at \TriCpuOddNode\,MHz. In a 1-node Qwen run at 12k tokens per GPU, \texttt{trig0114}
@@ -55,4 +53,4 @@ The slow nodes' reruns all moved down, by 0.7--1.0\,\%; two runs a side cannot s
 
 \paragraph{Submission.} The site's \texttt{sbatch} wrapper refuses jobs above 25 nodes, and the administrators asked us to submit with the \texttt{.sbatch} binary. A 1-node job submitted that way took 4.767\,s per step, against 4.742 and 4.784\,s through the wrapper. It changed nothing measurable.
 
-\paragraph{Still open.} The administrators' answer on the clock drops, the cap on \texttt{trig0145}, the NCCL failure on \texttt{trig0140}, and the state of \texttt{trig0122} and \texttt{trig0146}.
+\paragraph{Still open.} The administrators' answer on the clock drops and the slow nodes, what happened on \texttt{trig0140}, and \texttt{trig0146}.
