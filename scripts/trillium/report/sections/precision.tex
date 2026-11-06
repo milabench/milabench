@@ -5,9 +5,9 @@
   \textbf{What do FP8 and MXFP8 buy, and do they train the same?} Low precision doubles the matmul rate but not the network: does the gain measured on one node hold at scale? Does the loss follow BF16, within its noise?
 \end{question}
 
-\paragraph{Speed (C-speed), answer.} Little, so far: MXFP8 speeds up Qwen by $\times$\TriQwenFpOne{} on 1 node and $\times$\TriQwenFpTop{} on \TriQwenFpTopNodes{} nodes, and GLM-5 by $\times$\TriGlmFpMx{} at 13 nodes, against nearly $\times$2 on a matrix multiply alone. FP8 is really in use. Matrix multiplies are just too small a share of a step. Qwen's step times here are throttled by the CPU clock drop (\cref{sec:machine}); GLM-5's are not.
+\paragraph{Speed (C-speed), answer.} Little, so far: MXFP8 speeds up Qwen by $\times$\TriQwenFpOne{} on 1 node and $\times$\TriQwenFpTop{} on \TriQwenFpTopNodes{} nodes (by mean step, $\times$\TriQwenFpOneMean{} and $\times$\TriQwenFpTopMean), and GLM-5 by $\times$\TriGlmFpMx{} at 13 nodes, against nearly $\times$2 on a matrix multiply alone. FP8 is really in use. Matrix multiplies are just too small a share of a step. The gain does not shrink with scale, up to \TriQwenFpTopNodes{} nodes and across the bandwidth groups. Qwen's step times here are throttled by the CPU clock drop (\cref{sec:machine}); GLM-5's are not.
 
-\paragraph{What was measured.} BF16 and MXFP8 for Qwen3.8-27B at \texttt{hsdp8} and 24k tokens per GPU (the pinned TorchTitan has no other FP8 recipe); BF16, FP8 tensorwise, FP8 blockwise and MXFP8 for GLM-5 at \texttt{pp13-ep8} and batch 256 (\cref{fig:precision_speed}). Qwen ran three times at 1 node, with BF16 runs \TriQwenFpOneSpread\,\% apart, as large as the gain itself. GLM-5 has one run per recipe, over 19 steps.
+\paragraph{What was measured.} BF16 and MXFP8 for Qwen3.8-27B at \texttt{hsdp8} and 24k tokens per GPU, on the \texttt{torchtitan} stacked layout, which MXFP8 needs (the pinned TorchTitan has no other FP8 recipe); BF16, FP8 tensorwise, FP8 blockwise and MXFP8 for GLM-5 at \texttt{pp13-ep8} and batch 256 (\cref{fig:precision_speed}). Qwen ran three times at 1 node, with BF16 runs \TriQwenFpOneSpread\,\% apart, as large as the gain itself. GLM-5 has one run per recipe, over 19 steps. The other Qwen runs use the \texttt{rows} stacked layout, and BF16 on \texttt{hsdp8} is $\times$\TriStackedGain{} on \texttt{torchtitan}, so compare these two recipes with each other, not with the numbers of \cref{sec:layouts}.
 
 \begin{figure}[h]
   \centering\fig{precision_speed}
@@ -25,7 +25,7 @@
 
 \textbf{Memory.} Qwen's peak falls from \TriQwenMemBf{} to \TriQwenMemMx\,GiB with MXFP8 under selective recompute, but that comes from selective recompute, not from FP8: with full recompute both peak at \TriQwenFullMem\,GiB. GLM-5's peak rises with FP8, from \TriGlmMemBf{} to \TriGlmMemTensor--\TriGlmMemMx\,GiB (+\TriGlmMemPctTensor\ to +\TriGlmMemPctMx\,\%), and we do not know why.
 
-\textbf{Still to come:} Qwen at 39 nodes; GLM-5 at 39 nodes.
+\textbf{Still to come:} GLM-5 at 39 nodes.
 
 \paragraph{Loss (C-loss), answer.} \textbf{Not settled.} Whether MXFP8 trains the same as BF16 depends so far on the seed, and 500 steps are too few to say which seed is typical. On Qwen, MXFP8 ends \TriLossSeedOneLo{} to \TriLossSeedOneHi{} above BF16 at seed 1234, and \TriLossSeedTwoLo{} and \TriLossSeedThreeLo{} at seeds 4321 and 5678 (mean loss over steps 401--500). On GLM-5, with one run of each and no noise runs yet, it ends \TriLossGlmLast{} above.
 

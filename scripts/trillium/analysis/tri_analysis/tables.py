@@ -34,10 +34,10 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmStrongTok","TriGlmStrongStep","TriGlmStrongRatio","TriGlmStrongFormula","TriGlmWeakTwoTok","TriGlmWeakTwoStep","TriGlmWeakTwoMem","TriGlmMemFallPct","TriGlmStrongTwoTok","TriGlmStrongTwoStep","TriGlmStrongTwoRatio","TriGlmStrongTwoFormula",
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
-          "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
+          "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
           "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
-          *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
+          *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
           "TriCkGWLoadLo", "TriCkGWLoadHi", "TriCkGWSize", "TriCkGWLoadPeak", "TriCkGFSize", "TriCkGFSync", "TriCkGFSyncGBs", "TriCkGFSyncPeak", "TriCkGFBlocked", "TriCkGFTotal", "TriCkGFAsyncPeak",
           # Loss
@@ -293,7 +293,7 @@ def _loss_numbers(t) -> dict[str, tuple]:
     return out
 
 
-def _speed_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
+def _speed_numbers(runs: pd.DataFrame, steps: pd.DataFrame) -> dict[str, tuple]:
     """C-speed medians and memory, the full-recompute comparison (tagged p3-acfull), and GLM-5 over 500 steps (C-loss)."""
     out = {}
     if runs.empty or runs.synthetic.any():
@@ -310,6 +310,16 @@ def _speed_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
         out["TriQwenMemBf"], out["TriQwenMemMx"] = (one.mem.bf16, ".0f", False), (one.mem.mxfp8, ".0f", False)
         b = q[(q.nodes == 1) & (q.precision == "bf16")].tok_s_gpu
         out["TriQwenFpOneSpread"] = (100 * (b.max() - b.min()) / b.median(), ".1f", False)
+        means = q.assign(mean_s=q.run_id.map(steps[steps.run_id.isin(q.run_id)].groupby("run_id").step_s.mean())).groupby(["nodes", "precision"]).mean_s.mean().unstack()
+        out["TriQwenFpOneMean"] = (means.bf16[1] / means.mxfp8[1], ".2f", False)
+        out["TriQwenFpTopMean"] = (means.bf16[top] / means.mxfp8[top], ".2f", False)
+        # C-speed's BF16 uses the torchtitan stacked layout, which MXFP8 needs; the weak-scaling hsdp8 runs, otherwise the same, use rows.
+        rows = _completed(runs, "B-Q-weak")
+        rows = rows[rows.layout == "hsdp8"].groupby("nodes").tok_s_gpu.median() if len(rows) else rows
+        gain = (m.v.bf16 / rows).dropna() if len(rows) else rows
+        gain = gain[gain.index > 1] if len(gain) else gain
+        if len(gain):
+            out["TriStackedGain"] = (gain.median(), ".2f", False)
     full = runs[(runs.experiment == "p3-acfull") & (runs.status == "completed")]
     if len(full):
         m = full.groupby("precision").agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max"))
@@ -344,7 +354,7 @@ def _checkpoint_numbers(t) -> dict[str, tuple]:
             out[f"{name}Lo"], out[f"{name}Hi"] = (d[col].min(), fmt, False), (d[col].max(), fmt, False)
 
     q, g = c[c.model == QWEN], c[c.model == GLM]
-    for n, tag in ((1, "One"), (13, "Thirteen"), (25, "Top")):
+    for n, tag in ((1, "One"), (13, "Thirteen"), (25, "Top"), (39, "Big")):
         f = q[(q.nodes == n) & (q.content == "full")]
         rng(f"TriCkQ{tag}Sync", f[(f.op == "save") & (f["mode"] == "sync")], "total_s")
         rng(f"TriCkQ{tag}Load", f[f.op == "load"], "total_s")
@@ -597,7 +607,7 @@ def key_numbers(t) -> dict[str, tuple]:
             out["TriQwenFsdpCommPct"] = (share, ".0f", one.synthetic.any() or f13.synthetic.any())
     out.update(_layout_numbers(runs, t["steps"]))
     out.update(_loss_numbers(t))
-    out.update(_speed_numbers(runs))
+    out.update(_speed_numbers(runs, t["steps"]))
     out.update(_checkpoint_numbers(t))
     out.update(_scaling_numbers(runs))
     out.update(_glm_numbers(runs, t["ep_groups"]))
