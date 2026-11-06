@@ -27,7 +27,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriEnergyBest",
           "TriQwenTop", "TriGlmTop", "TriRunsInReport", "TriGlmCopiesTop",
           # Scaling, GLM-5, operations
-          "TriWeakTop","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
+          "TriWeakTop","TriWeakFTop","TriWeakHTop","TriWeakFCross","TriWeakHCross","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
           "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
           "TriGlmThirteenTok","TriGlmThirteenStep","TriGlmThirteenMem","TriGlmThirteenMfu","TriGlmThirteenAtoa","TriGlmThirteenAtoaPct","TriGlmSmallTok","TriGlmSmallStep","TriGlmSmallMem","TriGlmSmallMfu","TriGlmSmallAtoa","TriGlmSmallAtoaPct",
           "TriGlmSixTok","TriGlmSixStep","TriGlmSixMem","TriGlmSixMfu","TriGlmSixAtoa","TriGlmSixAtoaPct","TriGlmTenTok","TriGlmTenStep","TriGlmTenMem","TriGlmTenMfu","TriGlmTenAtoa","TriGlmTenAtoaPct","TriGlmEpRatio","TriGlmSmallRatio","TriGlmSmallFormula",
@@ -387,7 +387,7 @@ def _scaling_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
         if m.empty:
             continue
         top = int(m.index.max())
-        out["TriWeakTop"] = (top, "d", False)
+        out[f"TriWeak{tag}Top"] = (top, "d", False)
         out[f"TriWeak{tag}One"] = (m.v[1], ",.0f", False)
         out[f"TriWeak{tag}TopTok"] = (m.v[top], ",.0f", False)
         out[f"TriWeak{tag}Step"] = (m.s[top], ".2f", False)
@@ -395,6 +395,10 @@ def _scaling_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
         out[f"TriWeak{tag}EffOne"] = (100 * m.v[top] / m.v[1], ".0f", False)
         if 2 in m.index:
             out[f"TriWeak{tag}EffTwo"] = (100 * m.v[top] / m.v[2], ".0f", False)
+        if top > 28 and 26 in m.index:  # 26 nodes: one bandwidth group; above 28: both
+            out[f"TriWeak{tag}Cross"] = (100 * (m.s[top] / m.s[26] - 1), "+.1f", False)
+    if len(w):
+        out["TriWeakTop"] = (int(w[w.layout.isin(["fsdp", "hsdp8"])].nodes.max()), "d", False)
     s = _completed(runs, "B-Q-strong")
     s = s[s.layout == "fsdp"] if len(s) else s
     if len(s):
