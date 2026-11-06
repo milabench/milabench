@@ -1,85 +1,18 @@
-\section{Run plan}
+\section{What ran, and what is left}
 \label{app:plan}
 
-The experiment groups run in the order of \cref{tab:plan}. Every time and count in this appendix is an
-estimate made before access, and the table describes 52 nodes. The 5 nodes reserved for SciNet's inference service
-are an open question. If they are not released, 47 nodes are available: GLM-5's largest \texttt{pp13-ep8} run drops from 52
-nodes to 39 (3 copies), \texttt{pp26-ep8} and \texttt{pp13-ep32} are dropped, \texttt{pp13-ep16} and \texttt{pp6-ep16} keep only their 26-
-and 12-node runs, and the top scale of Qwen and of the network tests becomes 47. The figures and the scales in the text follow one
-setting (\texttt{N\_NODES}).
+The design planned for 52 nodes; \cref{sec:machine} says why the top is about 39--43. \Cref{tab:progress} counts planned points: a configuration at a node count, repetitions not counted. Failed: the run failed and the failure answers the question, so the point counts as done (for example, out of memory). Points that need 50 or more nodes wait for the 200\,W caps to clear, and count apart. The plan is the design's, as the launchers carry it, changed as results came in: 48k tokens per GPU with selective recompute was skipped, for memory, and \texttt{pp10-ep8} and \texttt{pp25-ep8} were added to fit 40 and 50 nodes. Nothing was run above 25 nodes in the network tests, so D4 did not run.
 
 \begin{table}[h]
-  \caption{Experiments. Times are estimates.}
-  \label{tab:plan}
+  \caption{Planned points against what ran, at the time this report was generated.}
+  \label{tab:progress}
   \centering\small
   \begin{adjustbox}{max width=\linewidth}
-  \begin{tabular}{lp{0.62\linewidth}ll}
-    \toprule
-    ID & What & Scale & Time \est{} \\
-    \midrule
-    D1 & Per-node health check: per-GPU matmul BF16 / FP8, NVLink all-reduce, per-HCA loopback bandwidth, GPU--HCA affinity & every node & 30\,min \\
-    D2 & Pairwise latency and bandwidth: 26 disjoint pairs per round, 51 rounds (all 1{,}326 pairs) & 52 nodes & 15\,min \\
-    D3 & NCCL all-reduce, all-gather, reduce-scatter, all-to-all, 1\,GiB, at 1--52 nodes; size sweep at 2 and 52 nodes & 1--52 & 45\,min \\
-    D4 & Bisection: two random halves of 26 all-to-all with each other, 3 cuts & 52 & 15\,min \\
-    P  & Only if D2 shows groups: Qwen and GLM-5 at 13 nodes inside one group vs.\ spread & 13 & -- \\
-    \midrule
-    E1 & Qwen (HSDP-8, 24k tokens/GPU) on 4 disjoint sets of 13 nodes, alone then together; 2 repetitions & 52 & 1.5\,h \\
-    R  & Reference: Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens/GPU, 10\,min, every $\sim$3\,h & 4 & 10\,min each \\
-    \midrule
-    A-Q & Qwen layouts $\times$ tokens per GPU $\times$ reduction dtype $\times$ checkpointing (\cref{tab:aq}); $\sim$45 runs $\times$ 2 $\times$ $\sim$10\,min & 1--52 & see \cref{tab:budget} \\
-    A-G & GLM-5 layouts (\cref{tab:ag}), weak-scaling batch of each node count; recompute; 64 sequences at 13 nodes; $\sim$12 runs $\times$ 2 $\times$ $\sim$25\,min & 12--52 & see \cref{tab:budget} \\
-    \midrule
-    B-Q-weak & Qwen, best layout and \texttt{fsdp}, fixed tokens per GPU & 1--52 & \\
-    B-Q-strong & Qwen, fixed global batch ($52\times8\times24$k tokens) & 13, 26, 52 & \\
-    B-G-weak & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 256 / 512 / 768 / 1{,}024 sequences in total & 13--52 & \\
-    B-G-strong & GLM-5 \texttt{pp13-ep8}, 1--4 copies, 768 sequences in total & 13--52 & \\
-    \midrule
-    C-speed & Qwen: BF16 / MXFP8; GLM-5: BF16 / FP8 tensorwise / FP8 blockwise / MXFP8; best layout & 1 or 13, and 52 & \\
-    C-loss & Same recipes, 500 steps, same seed and FineWeb data, realistic learning rate; BF16 repeats: same seed, another seed & 13 & \\
-    \midrule
-    F1 & Checkpoint save / load, sync vs.\ async (staging in host memory: no local disk), 3 repetitions; GLM-5 weights first, fallback for full at 26 nodes; escalation agreed with the administrators & 1--52 & \\
-    F2 & Long run: best Qwen layout, $\geq$1\,h & 52 & \\
-    F3 & Startup, from every run & -- & -- \\
-    F4 & Energy, from every run & -- & -- \\
-    \bottomrule
-  \end{tabular}
+    \IfFileExists{generated/tables/progress.tex}{\input{generated/tables/progress}}{\textit{No runs yet.}}
   \end{adjustbox}
 \end{table}
-
-\begin{table}[h]
-  \caption{Budget \est{}. ``Packed'' applies if E1 shows less than 2\,\% slowdown, so that runs of up to
-    26 nodes run in parallel.}
-  \label{tab:budget}
-  \centering\small
-  \begin{tabular}{lrr}
-    \toprule
-    Group & Serial (est.) & Packed (est.) \\
-    \midrule
-    Bring-up on B200 (install, 1-node smoke tests, FP8 / MXFP8 smoke tests) & 4\,h & \\
-    D & 2\,h & \\
-    E + R & 2.5\,h & \\
-    A-Q & 15\,h & 6\,h \\
-    A-G & 12\,h & 6\,h \\
-    B & 8\,h & 5\,h \\
-    C (with the BF16 repeats of C-loss) & 10\,h & 5\,h \\
-    F & 6\,h & \\
-    \midrule
-    Total & $\sim$59\,h & $\sim$36\,h \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\paragraph{Priorities if the window is short.} Tier 0: bring-up, D1. Tier 1: A-Q at 13 nodes, B-Q-weak,
-A-G at 13 and 52 nodes, B-G. Tier 2: D2--D4, E1, C, F1. Tier 3: F2, B-Q-strong, the rest of A.
 
 \section{Run ledger}
 \label{app:ledger}
 
-\begin{table}[h]
-  \caption{Run ledger: every attempt on Trillium, including failures. \TriFailedNote}
-  \label{tab:ledger}
-  \centering
-  \begin{adjustbox}{max width=\linewidth}
-    \IfFileExists{generated/tables/ledger.tex}{\input{generated/tables/ledger}}{\textit{No runs yet.}}
-  \end{adjustbox}
-\end{table}
+\IfFileExists{generated/tables/ledger.tex}{\input{generated/tables/ledger}}{\textit{No runs yet.}}

@@ -8,6 +8,7 @@
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
+\usepackage{longtable}
 \usepackage{amsfonts}
 \usepackage{nicefrac}
 \usepackage{microtype}
@@ -38,7 +39,7 @@
 \providecommand{\TriPairRounds}{51}
 \providecommand{\TriPairsAll}{1,326}
 \newcommand{\triunset}[1]{\providecommand{#1}{??}}
-\triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
+\triunset{\TriQwenTop}\triunset{\TriGlmTop}\triunset{\TriRunsInReport}\triunset{\TriGlmCopiesTop}\triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
 \triunset{\TriPairBw}\triunset{\TriPairBwMin}\triunset{\TriPairLat}\triunset{\TriAllReduceFull}
 \triunset{\TriAlltoallFull}\triunset{\TriBisection}\triunset{\TriInterferencePct}\triunset{\TriDriftPct}
 \triunset{\TriQwenBestLayout}\triunset{\TriQwenBestTokens}\triunset{\TriQwenBestTokS}\triunset{\TriQwenBestMFU}
@@ -104,26 +105,13 @@
 \maketitle
 
 \begin{abstract}
-  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training: 52 nodes of
-  8 B200 GPUs (416 GPUs), with as much inter-node bandwidth per FLOP as Rorqual but nodes twice as large.
-  Two workloads are used: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM).
-  We report node and fabric health, interference between jobs running side by side, the choice of
-  parallel layout for each workload, scaling to the full partition, the gain of FP8 and MXFP8, and
-  operational costs (checkpointing, stability, startup, energy).
-  On 13 nodes, Qwen3.8-27B is fastest with \texttt{\TriQwenBestLayout} at \TriQwenBestTokens{} tokens per
-  GPU: \TriQwenBestTokS{} tokens/s per GPU (\TriQwenBestMFU\,\% MFU). Its weak-scaling efficiency at
-  \TriNNodes{} nodes is \TriQwenWeakEff\,\%. GLM-5 is fastest with \texttt{\TriGlmBestLayout}
-  (\TriGlmBestTokS{} tokens/s per GPU, \TriGlmBestMFU\,\% MFU), and \TriGlmTopCopies{} model copies run at
-  \TriGlmCopiesEff\,\% of the throughput per GPU of one. MXFP8 speeds up Qwen by $\times$\TriQwenFpSpeedupFull{}
-  on the whole partition. Four 13-node jobs run side by side change throughput by
-  \TriInterferencePct\,\%.
+  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training, on two workloads: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM). The partition has 52 nodes of 8 B200 GPUs; 43 were usable during this campaign and 40 clean, so runs so far reach \TriQwenTop{} nodes on Qwen and \TriGlmTop{} on GLM-5.
+  GPUs on 7 nodes were held at a 200\,W limit, and CPU clocks fall under high GPU power on all but one node, so every Qwen step time here is throttled.
+  On 13 nodes, Qwen is fastest at 24k tokens per GPU, where \texttt{fsdp} and \texttt{hsdp8} tie at about 5,000 tokens/s per GPU (\TriQwenBestMFU\,\% MFU), and it holds \TriWeakHEffOne\,\% of its 1-node throughput at \TriWeakTop{} nodes. GLM-5 should keep expert parallelism inside a node: \texttt{pp13-ep8} is $\times$\TriGlmEpRatio{} as fast as \texttt{pp6-ep16}. MXFP8 buys $\times$\TriQwenFpTop{} on Qwen and $\times$\TriGlmFpMx{} on GLM-5, and whether it trains the same as BF16 is not settled. A full GLM-5 checkpoint cannot be loaded on one 13-node copy. Side-by-side 13-node Qwen FSDP jobs change throughput by \TriInterferencePct\,\%. Parts of this report are still partial; each section says what is missing.
 \end{abstract}
 
 \begin{tcolorbox}[colback=red!4, colframe=red!50!black, boxrule=0.4pt, arc=0pt, fontupper=\small]
-  \textbf{Draft generated \DataGenerated.} \NRunsReal{} runs measured on Trillium
-  (\NRunsFailed{} failed), and \NRunsSynthetic{} synthetic runs standing in for experiments not run yet.
-  Every figure with synthetic data says so and draws it with hollow markers or dashed lines; every number
-  taken from synthetic data is shown as \TriSyn{1.0}. ``??'': not computed yet. \TriFailedNote
+  \textbf{Draft generated \DataGenerated.} \NRunsReal{} runs on Trillium, \TriRunsInReport{} of them completed runs in the campaign's figures; \NRunsFailed{} failed. Measured data only: a point not run yet is absent, and \cref{app:plan} lists it. ``??'': not computed yet. \TriFailedNote
 \end{tcolorbox}
 
 \input{sections/introduction}

@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from tt_analysis.tables import ledger
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_JOB)
 from .select import completed as _completed
@@ -26,6 +25,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGlmFpBestRecipe", "TriGlmFpSpeedupSmall", "TriGlmFpSpeedupFull", "TriCkptQwenSave",
           "TriCkptGlmFullSave", "TriCkptGlmFullBlocked", "TriCkptGlmLoadPeak", "TriCkptWriteGBs", "TriStartupQwen", "TriStartupGlm",
           "TriEnergyBest",
+          "TriQwenTop", "TriGlmTop", "TriRunsInReport", "TriGlmCopiesTop",
           # Scaling, GLM-5, operations
           "TriWeakTop","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
           "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
@@ -502,6 +502,13 @@ def key_numbers(t) -> dict[str, tuple]:
             if len(d):
                 out[name] = (d.value.median(), ",.0f", d.synthetic.any())
     out.update(_machine_numbers(t))
+    if len(runs) and "in_report" in runs and not runs.synthetic.any():
+        r = runs[(runs.status == "completed") & runs.in_report.astype(bool)]
+        q = r[r.model == QWEN].nodes
+        g = r[r.model == GLM].nodes
+        out["TriQwenTop"] = (int(q.max()), "d", False)
+        out["TriGlmTop"] = (int(g.max()), "d", False)
+        out["TriRunsInReport"] = (len(r), "d", False)
     out.update(_health_numbers(t))
     out.update(_network_numbers(t))
     p = t["pairs"]
@@ -596,12 +603,14 @@ def key_numbers(t) -> dict[str, tuple]:
     if len(bg) > 1:
         bg = bg[(bg.layout == "pp13-ep8") & (bg.ac == "full") & (bg.precision == "bf16")]
         med = bg.groupby("copies").tok_s_gpu.median()
-        if 1 in med.index and GLM_TOP_COPIES in med.index:  # never a ratio of other copy counts
-            out["TriGlmCopiesEff"] = (100 * med[GLM_TOP_COPIES] / med[1], ".0f", bg.synthetic.any())
+        top = med.index.max() if len(med) else None
+        if 1 in med.index and top and top > 1:  # the most copies run so far
+            out["TriGlmCopiesEff"] = (100 * med[top] / med[1], ".0f", bg.synthetic.any())
+            out["TriGlmCopiesTop"] = (int(top), "d", bg.synthetic.any())
         if 1 in med.index and 2 in med.index:
             out["TriGlmCopiesEffTwo"] = (100 * med[2] / med[1], ".0f", bg.synthetic.any())
-        if 2 in med.index and GLM_TOP_COPIES in med.index:
-            out["TriGlmCopiesEffFromTwo"] = (100 * med[GLM_TOP_COPIES] / med[2], ".0f", bg.synthetic.any())
+        if 2 in med.index and top and top > 2:
+            out["TriGlmCopiesEffFromTwo"] = (100 * med[top] / med[2], ".0f", bg.synthetic.any())
     cs = _completed(runs, "C-speed")
     for model, prefix in ((QWEN, "TriQwen"), (GLM, "TriGlm")):
         d = cs[cs.model == model] if len(cs) else cs
@@ -710,6 +719,41 @@ def qwen_layouts_table(runs: pd.DataFrame) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _esc(v) -> str:
+    return str(v).replace("_", r"\_").replace("%", r"\%")
+
+
+def ledger(runs: pd.DataFrame) -> str:
+    """Every attempt, on as many pages as it takes: start, entry, job, nodes, experiment, status, and why it is not in the figures."""
+    r = runs[~runs.synthetic.astype(bool)].sort_values("started")
+    lines = [r"\scriptsize", r"\begin{longtable}{lllrlll}",
+             r"\caption{Run ledger: every attempt on Trillium, including failures. Use: report, in the figures; machine, the hardware reruns; test, bring-up and tests of one thing. "
+             r"Why: a run kept out in spite of its tags.}\label{tab:ledger}\\",
+             r"\toprule", r"Started & Entry & Job & Nodes & Experiment & Status & Use, why \\", r"\midrule", r"\endhead"]
+    for x in r.itertuples():
+        job = str(x.job).removesuffix(".0") if pd.notna(x.job) else ""
+        nodes = f"{int(x.nodes)}" if pd.notna(x.nodes) else ""
+        use = "report" if x.in_report else x.role
+        why = f", {x.set_aside}" if isinstance(x.set_aside, str) and x.set_aside else ""
+        entry = x.bench if isinstance(x.bench, str) else x.run_name
+        lines.append(f"{str(x.started).replace('T', ' ')[5:16]} & {_esc(entry.removeprefix('megatron-glm5-'))} & {job} & {nodes} & {_esc(x.experiment) if pd.notna(x.experiment) else ''} & {x.status} & "
+                     + r"\parbox[t]{5cm}{" + _esc(use + why) + r"} \\")
+    lines += [r"\bottomrule", r"\end{longtable}"]
+    return "\n".join(lines) + "\n"
+
+
+def progress_table(t) -> str:
+    """What ran against what's planned, for the appendix."""
+    from . import progress  # here, not at the top: progress imports select, and only this table needs it
+
+    s = progress.summary(progress.table(t), t, Path("/nonexistent"))
+    lines = [r"\begin{tabular}{lllr}", r"\toprule", r"Group & Done / planned on 43 nodes & What's left & Needs 50+ nodes \\", r"\midrule"]
+    for _, x in s.iterrows():
+        lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & " + r"\parbox[t]{7cm}{" + _esc(x["What's left"]) + "} & " + f"{x['50+']} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     runs = tables["runs"]
@@ -718,4 +762,6 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kernel_change.tex").write_text(kernel_change_table(tables))
     (out / "loss_gaps.tex").write_text(loss_table(tables))
     if len(runs):
-        (out / "ledger.tex").write_text(ledger(runs.assign(excluded_nodes=runs.excluded_nodes.astype(object).fillna(""))))
+        if "in_report" in runs:
+            (out / "ledger.tex").write_text(ledger(runs))
+            (out / "progress.tex").write_text(progress_table(tables))

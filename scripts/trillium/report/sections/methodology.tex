@@ -5,7 +5,7 @@
 parameter (memory allows it; no frozen experts in GLM-5).
 
 \begin{table}[h]
-  \caption{Workloads. The Trillium additions were tested on other clusters' H100 with truncated models, not yet on B200.}
+  \caption{Workloads.}
   \label{tab:workloads}
   \centering\small
   \begin{adjustbox}{max width=\linewidth}
@@ -19,8 +19,8 @@ parameter (memory allows it; no frozen experts in GLM-5).
            & 8 GPUs per node, checkpoint save / load, FP8 / MXFP8, B200 layouts, loss per step \\
     Precision recipes & BF16, MXFP8 & BF16, FP8 tensorwise, FP8 blockwise, MXFP8 \\
     Sequence & $3\times4{,}096$ per GPU (12{,}288 tokens) by default & 8{,}192, micro-batch 1 (the only one possible) \\
-    Global batch & grows with the GPUs (weak scaling) & weak: 256 / 512 / 768 / 1{,}024 at 13 / 26 / 39 / 52 nodes; \\
-                 & & strong: 768 at all four; small-batch point: 64 at 13 nodes \\
+    Global batch & grows with the GPUs (weak scaling) & weak: 256 per copy (13 nodes each); \\
+                 & & strong: 768 at any node count; small-batch point: 64 at 13 nodes \\
     Recompute & selective by default; full, none & full by default; selective (MoE activation and norms) \\
     \bottomrule
   \end{tabular}
@@ -36,7 +36,7 @@ keeps 768 sequences in total: 96, 48, 32 and 24 micro-batches, bubbles of 11, 20
 
 \paragraph{Network arithmetic for Qwen \est{}.} Any data-parallel layout (FSDP, HSDP, TP + FSDP) moves
 about 8 bytes per parameter per node per step: BF16 parameter gathers in the forward and backward
-passes, and an FP32 gradient reduction. That is about 215\,GB, or at least 2.2\,s per step at 800\,Gb/s,
+passes, and an FP32 gradient reduction. That is about 215\,GB, or at least 1.1\,s per step at 1,600\,Gb/s,
 against about 3\,s of compute at 12{,}288 tokens per GPU and 50\,\% of 1{,}668\,TFLOP/s. The levers that
 change this ratio are the tokens per GPU, a BF16 gradient reduction (about 6 bytes per parameter), and
 pipeline parallelism across nodes (volume divided by the number of stages). HSDP instead of FSDP changes
@@ -49,13 +49,11 @@ all GPUs; \texttt{hsdp8} and \texttt{hsdp16} shard within 1 or 2 nodes and repli
 $P$ pipeline stages and expert groups of $E$ GPUs. Megatron carves the expert groups out of each stage's
 data-parallel ranks: on $N$ nodes, $8N$ must be divisible by $P$, and $8N/P$ by $E$. A model copy is
 therefore $P\times E$ GPUs. With 13 stages (the 78 layers split 7, then 11 stages of 6, then 5: the first
-stage holds the dense layers, the last the loss) and EP8, one copy uses $13\times8=104$ GPUs, 13 nodes,
-so 4 copies fill 52 nodes (\texttt{pp13-ep8}). Its memory: Rorqual's full GLM-5 run peaked at
-66.6\,GiB on each of 200 GPUs, about 13\,TiB; 13 B200 nodes hold about 17\,TiB \est{}.
+stage holds the dense layers, the last the loss) and EP8, one copy uses $13\times8=104$ GPUs, 13 nodes (\texttt{pp13-ep8}), and peaks at 90\,GiB per GPU in the first 20 steps.
 
 \paragraph{Throughput.} Qwen runs skip 30 warm-up steps (compilation, allocator growth), then measure for
 5 minutes. GLM-5 runs train 20 iterations and leave out the first. The official throughput is the median
-of the per-step global token rates of the measured steps, reported per GPU (tokens/s per GPU).
+of the per-step global rates of valid tokens over the measured steps, reported per GPU (tokens/s per GPU). Padding is not counted. Under the CPU clock drop Qwen's steps are irregular, so the median and the mean differ by 1--2\,\%; where a comparison uses means, as the hardware reruns do, it says so.
 
 \paragraph{MFU} $= \text{FLOPs per token} \times \text{tokens/s per GPU} / \text{peak}$, with the dense
 BF16 peak of the B200 specification, $2.25\times10^{15}$\,FLOP/s per GPU, for every precision recipe. For
@@ -64,30 +62,16 @@ derived from a measured rate and an analytic FLOP count.
 
 \paragraph{Telemetry and health.} Every node of every job is sampled once a second by the node monitor
 (GPU clocks, throttle reasons, power, temperature and duty cycle, XID and ECC errors, NVLink, InfiniBand,
-CPU clocks). Every node is checked before use (\cref{sec:network}); failing nodes are excluded for the rest
-of the window, and a node is used whole or not at all.
+CPU clocks). Nodes were health-checked twice (\cref{sec:network}), and a node is used whole or not at all.
 
-\paragraph{Reference runs and repetitions.} A reference run (Qwen, 4 fixed nodes, FSDP, 12{,}288 tokens
-per GPU, 10 minutes) is repeated about every 3 hours through the window, to tell changes in our
-configurations from changes in the shared fabric and filesystem (\cref{sec:interference}). Layout
-experiments are repeated twice; checkpoint experiments three times at different times of day. Four GLM-5 runs are not
-run a second time and serve two experiments: \texttt{pp13-ep8} at 13 and 52 nodes (A-G, also weak scaling), at 39 nodes (weak, also
-strong scaling) and at 26 nodes (weak, also the layout reference at 26 nodes).
+\paragraph{Reference runs and repetitions.} A reference run (Qwen, 4 nodes, FSDP, 12{,}288 tokens per GPU, 10 minutes) is repeated through the window, to tell changes in our configurations from changes in the shared fabric and filesystem (\cref{sec:interference}). Layout experiments ran on two fixed sets of nodes, one run each. Checkpoints repeat inside a run (Qwen) or across runs (GLM-5). GLM-5's \texttt{pp13-ep8} runs at 13 and 39 nodes serve two experiments rather than being repeated, and so does the 26-node one.
 
-\paragraph{Measured, estimated and synthetic values.}
-\begin{itemize}[leftmargin=*, itemsep=1pt]
-  \item \emph{Measured}: filled markers, solid lines and bars.
-  \item \emph{Estimated} (derived from a model or from other runs, e.g.\ the compute part of the step in
-        \cref{fig:step_decomposition}): ``(est.)'' in the label or legend.
-  \item \emph{Synthetic} (placeholder for an experiment not run yet): hollow markers, dashed lines or
-        hollow bars, a ``synthetic'' watermark on the figure, and a note in its caption. Numbers in the
-        text that come from synthetic data are shown as \TriSyn{1.0}.
-\end{itemize}
-Estimates never replace measurements; both are kept in the data. Synthetic values are removed as the
-experiments they stand in for are run.
+\paragraph{Fixed node sets.} Runs within an experiment use fixed sets of nodes, so that they compare: \texttt{trig0101--0113}, \texttt{trig0114--0121} with \texttt{0124--0128}, both in the first bandwidth group, and \texttt{trig0129--0132}, \texttt{0136}, \texttt{0137}, \texttt{0139}, \texttt{0141}, \texttt{0142}, \texttt{0144}, \texttt{0147}, \texttt{0149}, \texttt{0150} in the second. The slow and capped nodes are outside them (\cref{sec:machine}).
+
+\paragraph{Measured and estimated values.} Everything in this report's figures is measured, unless marked ``(est.)'', as the compute part of \cref{fig:step_decomposition} or the bubble formula are. Estimates never replace measurements. A point not run yet is absent, and listed in \cref{app:plan}.
 
 \paragraph{Data.} Raw results are written to \texttt{\$SCRATCH/trillium/} on Trillium and copied
 read-only to the analysis machine; every figure, table and number here is regenerated from them by one
 command. Formats: \texttt{scripts/analysis/FORMAT.md}, with the Trillium additions in
 \texttt{scripts/trillium/FORMAT.md} (layout and precision fields, loss per step, checkpoint events,
-collective sweeps). \Cref{tab:ledger} lists every run, including failures. Only runs on Trillium enter the analysis.
+collective sweeps). \Cref{tab:ledger} lists every run, including failures, and says which enter the figures: the campaign's runs; not bring-up, tests of one thing, or hardware reruns, which appear only in \cref{sec:machine}.
