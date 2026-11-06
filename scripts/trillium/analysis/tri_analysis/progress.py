@@ -3,8 +3,9 @@
 A point is a configuration at a node count; repetitions don't count. Done: a completed run in the report. Answered: it
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
 20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
-GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Points
-that need 50 or more nodes count apart: they wait for the 200 W caps to clear.
+GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Network goes up to 52
+as the design has it, with a step at 39, the largest clean set today. Points that need 50 or more nodes count apart: they
+wait for the 200 W caps to clear.
 """
 
 from __future__ import annotations
@@ -18,12 +19,14 @@ from .select import checkpoints, completed
 from .style import GLM, QWEN
 
 TOP_NOW = 43  # usable nodes today; a point above this waits for the caps
-FIGURES = {"Qwen layouts": "qwen_layouts, qwen_levers, step_decomposition", "Qwen weak scaling": "qwen_scaling",
+FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": "qwen_layouts, qwen_levers, step_decomposition", "Qwen weak scaling": "qwen_scaling",
            "Qwen strong scaling": "qwen_scaling", "GLM-5 layouts": "glm_layouts", "GLM-5 scaling": "glm_scaling",
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
+# Replaces the computed "what's left" of a group.
+LEFT_NOTE = {"Long run": "best Qwen layout, at least 1 h, planned at 52 nodes; waits for the caps answer, 39 would be a compromise"}
 # Job names in sacct -> group. First match wins.
-JOB_GROUPS = [("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
+JOB_GROUPS = [("net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
               ("glm5-f1", "Checkpoints"), ("glm5-ag", "GLM-5 layouts"), ("glm5-bg", "GLM-5 scaling"), ("glm5-c-speed", "Precision speed"),
               ("glm5-c-loss", "Precision loss")]
@@ -37,6 +40,7 @@ class Point:
     want: dict  # columns of runs.csv -> value
     experiment: str = ""
     op: tuple | None = None  # F1: (model, content, op, mode)
+    net: tuple | None = None  # D2-D4: (experiment, nodes)
     job_names: tuple = ()  # sacct JobName of a job that would run it (GLM's jobs hold several entries)
 
 
@@ -53,6 +57,13 @@ def _glm(block, experiment, layout, nodes, seqs, ac="full", precision="bf16", la
 
 def plan() -> list[Point]:
     p = []
+    # Network, as the design has it (D3's 26 ran at 25, the job limit then). D4 splits an odd count with one node out.
+    net = "Network (D2-D4)"
+    for n in (1, 2, 4, 8, 13, 25, 39, 52):
+        p.append(Point(net, f"D3 collectives n{n}", n, {}, net=("D3", n)))
+    p += [Point(net, "D2 pairs, two jobs of 25", 25, {}, net=("D2", 25)), Point(net, "D2 all pairs n39", 39, {}, net=("D2", 39)),
+          Point(net, "D2 all pairs n52", 52, {}, net=("D2", 52)), Point(net, "D4 bisection 19 + 19", 39, {}, net=("D4", 39)),
+          Point(net, "D4 bisection 26 + 26", 52, {}, net=("D4", 52))]
     # Qwen layouts: the 13-node cross as it was run (48k selective was skipped, projected out of memory), then small and top scale.
     a = "Qwen layouts"
     for layout, n in (("fsdp", 13), ("hsdp8", 13), ("hsdp16", 12), ("tp2-fsdp", 13), ("tp4-fsdp", 13), ("pp2-fsdp", 13), ("pp4-fsdp", 13)):
@@ -63,6 +74,8 @@ def plan() -> list[Point]:
           _qwen(a, "A-Q", 13, "fsdp", 24576, ac="full"), _qwen(a, "A-Q", 13, "hsdp8", 24576, ac="full"),
           _qwen(a, "A-Q", 13, "fsdp", 49152, ac="full"), _qwen(a, "A-Q", 13, "hsdp8", 49152, ac="full"),
           _qwen(a, "A-Q", 13, "fsdp", 24576, reduce="bf16"), _qwen(a, "A-Q", 13, "hsdp8", 24576, reduce="bf16")]
+    # The design's top-scale runs of the 3 best, as at 39 nodes: 50 nodes, as weak scaling; fsdp and hsdp8 are the same runs as B-Q-weak's.
+    p += [_qwen(a, "A-Q", 50, "fsdp", 24576), _qwen(a, "A-Q", 50, "hsdp8", 24576), _qwen(a, "A-Q", 50, "fsdp", 24576, reduce="bf16")]
     p += [_qwen(a, "A-Q", n, "fsdp", 24576, ac="full") for n in (1, 2)]
     p += [_qwen(a, "A-Q", n, "fsdp", 49152, ac="full") for n in (1, 2)]
     p += [_qwen(a, "A-Q", 2, "fsdp", 24576, reduce="bf16"), _qwen(a, "A-Q", 1, "tp2-fsdp", 12288), _qwen(a, "A-Q", 2, "tp2-fsdp", 12288),
@@ -113,7 +126,7 @@ def plan() -> list[Point]:
         for content, op, mode in (("weights", "save", "sync"), ("weights", "save", "async"), ("weights", "load", "sync"),
                                   ("full", "save", "sync"), ("full", "save", "async"), ("full", "load", "sync")):
             p.append(Point(k, f"GLM-5 {content} {op} {mode} n{n}", n, {}, "F1", op=(GLM, content, op, mode, n)))
-    p.append(Point("Long run", "best Qwen layout, at least 1 h", 39, dict(model=QWEN, experiment="F2"), "F2"))
+    p.append(Point("Long run", "best Qwen layout, at least 1 h", 52, dict(model=QWEN, experiment="F2"), "F2"))
     return p
 
 
@@ -138,9 +151,17 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
     failed_ops = set()
     if len(fo) and "model" in fo:
         failed_ops = set(zip(fo.model, fo.content, fo.op, fo["mode"], fo.nodes.astype(int)))
+    coll, pairs = t["collectives"], t["pairs"]
+    net = set()
+    if len(coll):
+        net |= set(zip(coll.experiment, coll.nodes.astype(int)))
+    if len(pairs):
+        net.add(("D2", 25))  # the only sweep so far; a larger one needs its size in the table
     rows = []
     for x in plan():
-        if x.op:
+        if x.net:
+            state = "done" if x.net in net else None
+        elif x.op:
             state = "done" if x.op in ops else "answered" if x.op in failed_ops else None
         else:
             exp = {"experiment": x.experiment} if x.experiment else {}
@@ -171,6 +192,9 @@ def jobs_now(sacct: Path) -> dict[str, list[str]]:
 
 
 def _left(g: pd.DataFrame) -> str:
+    note = LEFT_NOTE.get(g.block.iloc[0])
+    if note:
+        return note
     left = g[g.state == "not run"]
     if left.empty:
         return "nothing at the scales usable now"
@@ -186,25 +210,23 @@ def summary(p: pd.DataFrame, t: dict[str, pd.DataFrame], sacct: Path) -> pd.Data
     h, pairs, coll = t["node_health"], t["pairs"], t["collectives"]
     if len(h):
         rows.append({"Figures": "health_gpus, health_links", "Group": "Health (D1)", "Done / planned": f"{h.host.nunique()} / 51 nodes",
-                     "Running or queued": "", "What's left": "no matmul or per-HCA checks in the tool", "50+": ""})
-    if len(pairs) or len(coll):
-        top = int(coll[coll.experiment == "D3"].nodes.max()) if len(coll) else 0
-        rows.append({"Figures": "pair_matrix, collectives_scale", "Group": "Network (D2-D4)", "Done / planned": f"done up to {top} nodes",
-                     "Running or queued": "", "What's left": "nothing above 25 nodes is planned", "50+": ""})
+                     "Running or queued": "", "What's left": "no matmul or per-HCA checks in the tool", "50+ nodes": "none"})
     done = runs[(runs.status == "completed") & runs.in_report.astype(bool)]
     e1, ref = (done.experiment == "E1").sum(), (done.experiment == "R").sum()
     rows.append({"Figures": "interference", "Group": "Side by side (E1)", "Done / planned": f"{e1} / 12 (100%)" if e1 == 12 else f"{e1} / 12",
-                 "Running or queued": "", "What's left": "nothing", "50+": ""})
+                 "Running or queued": "", "What's left": "nothing at the scales usable now", "50+ nodes": "0 / 16"})
     rows.append({"Figures": "reference_drift", "Group": "Reference (R)", "Done / planned": f"{ref} runs, no fixed count",
-                 "Running or queued": "; ".join(jobs.get("Reference", [])), "What's left": "more as the window goes on", "50+": ""})
+                 "Running or queued": "; ".join(jobs.get("Reference", [])), "What's left": "more as the window goes on", "50+ nodes": "none"})
     for block, g in p.groupby("block", sort=False):
-        now = g[g.state != "needs nodes"]
+        now, big = g[g.nodes <= TOP_NOW], g[g.nodes > TOP_NOW]
         n_done = int(now.state.isin(["done", "answered"]).sum())
         failed = int((now.state == "answered").sum())
-        rows.append({"Figures": FIGURES[block], "Group": block, "Done / planned": f"{n_done} / {len(now)} ({100 * n_done / len(now):.0f}%)"
-                     + (f", {failed} failed" if failed else ""), "Running or queued": "; ".join(jobs.get(block, [])),
-                     "What's left": _left(g), "50+": str(int((g.state == "needs nodes").sum()) or "")})
-    return pd.DataFrame(rows)[["Group", "Done / planned", "Running or queued", "What's left", "50+", "Figures"]]
+        share = f"{n_done} / {len(now)} ({100 * n_done / len(now):.0f}%)" if len(now) else "none"
+        rows.append({"Figures": FIGURES[block], "Group": block, "Done / planned": share + (f", {failed} failed" if failed else ""),
+                     "Running or queued": "; ".join(jobs.get(block, [])), "What's left": _left(g),
+                     "50+ nodes": f"{int(big.state.isin(['done', 'answered']).sum())} / {len(big)}" if len(big) else "none"})
+    rows.sort(key=lambda r: {"Health (D1)": 0, "Network (D2-D4)": 1}.get(r["Group"], 2))  # stable: the design's order, D first
+    return pd.DataFrame(rows)[["Group", "Done / planned", "50+ nodes", "Running or queued", "What's left", "Figures"]]
 
 
 def markdown(df: pd.DataFrame) -> str:

@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -412,6 +412,21 @@ def _checkpoint_numbers(t) -> dict[str, tuple]:
         out["TriCkGFSize"] = (f.bytes.median() / 1e12, ".2f", False)
         out["TriCkGFSync"], out["TriCkGFSyncGBs"], out["TriCkGFSyncPeak"] = (y.total_s, ".0f", False), (y.gb_s, ".0f", False), (y.peak_allocated_gib, ".0f", False)
         out["TriCkGFBlocked"], out["TriCkGFTotal"], out["TriCkGFAsyncPeak"] = (a.blocked_s, ".0f", False), (a.total_s, ".0f", False), (a.peak_allocated_gib, ".0f", False)
+    big = c[(c.model == GLM) & (c.nodes == 39)]  # one run of each save, two loads
+    if len(big):
+        w, f = big[big.content == "weights"], big[big.content == "full"]
+        for name, d in (("W", w), ("F", f)):
+            sync, asy, load = d[(d.op == "save") & (d["mode"] == "sync")], d[(d.op == "save") & (d["mode"] == "async")], d[d.op == "load"]
+            if len(sync):
+                out[f"TriCkGBig{name}Sync"], out[f"TriCkGBig{name}SyncGBs"] = (sync.total_s.iloc[0], ".0f", False), (sync.gb_s.iloc[0], ".0f", False)
+            if len(asy):
+                out[f"TriCkGBig{name}Blocked"], out[f"TriCkGBig{name}Total"] = (asy.blocked_s.iloc[0], ".0f", False), (asy.total_s.iloc[0], ".0f", False)
+            rng(f"TriCkGBig{name}Load", load, "total_s")
+            rng(f"TriCkGBig{name}LoadPeak", load, "peak_allocated_gib")
+            rng(f"TriCkGBig{name}LoadGBs", load, "gb_s")
+        if len(f[f.op == "save"]):
+            s = f[f.op == "save"].set_index("mode").peak_allocated_gib
+            out["TriCkGBigFSyncPeak"], out["TriCkGBigFAsyncPeak"] = (s.sync, ".0f", False), (s["async"], ".0f", False)
     return out
 
 
@@ -883,9 +898,9 @@ def progress_table(t) -> str:
     from . import progress  # here, not at the top: progress imports select, and only this table needs it
 
     s = progress.summary(progress.table(t), t, Path("/nonexistent"))
-    lines = [r"\begin{tabular}{lllr}", r"\toprule", r"Group & Done / planned on 43 nodes & What's left & Needs 50+ nodes \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llll}", r"\toprule", r"Group & Done / planned on 43 nodes & 50+ nodes & What's left \\", r"\midrule"]
     for _, x in s.iterrows():
-        lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & " + r"\parbox[t]{7cm}{" + _esc(x["What's left"]) + "} & " + f"{x['50+']} " + r"\\")
+        lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & {x['50+ nodes']} & " + r"\parbox[t]{7cm}{" + _esc(x["What's left"]) + "} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
