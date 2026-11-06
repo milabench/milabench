@@ -33,7 +33,7 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
 LEFT_NOTE = {"Network (D2-D4)": "D3 at 26 now (25 ran, the job limit then); D2, D3, D4 at the end, at the largest scale available",
              "Long run": "Qwen and GLM-5, at least 1 h each, at 50+ nodes if they return"}
 # Job names in sacct -> group. First match wins.
-JOB_GROUPS = [("net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
+JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
               ("glm5-f1", "Checkpoints"), ("glm5-ag", "GLM-5 layouts"), ("glm5-bg", "GLM-5 scaling"), ("glm5-c-speed", "Precision speed"),
               ("glm5-c-loss", "Precision loss")]
