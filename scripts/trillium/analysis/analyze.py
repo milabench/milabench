@@ -50,6 +50,8 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 ("trillium/hw/caps-cleared/healthcheck.tsv", "caps-cleared"),
                 ("trillium/hw/caps-cleared/hc2.tsv", "caps-cleared"),
                 ("trillium/hw/caps-cleared/load2/load_table.tsv", "caps-cleared/load2"),
+                ("trillium/hw/slowfix/table.tsv", "slowfix"),
+                ("trillium/hw/slowfix/healthcheck.tsv", "slowfix"),
                 ("trillium/hw/fp8-glm/summary.txt", "fp8-glm"),
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),

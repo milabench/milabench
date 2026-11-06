@@ -33,6 +33,8 @@ NO_DATA_RUNS = {
 # Left out of anything that measures noise between repetitions: rank 2 on trig0101 stalled twice.
 NOISE_ASIDE = {"1240555"}
 SLOW_NODES = {"trig0134", "trig0135", "trig0148"}  # low CPU clocks, about 8.5 % on 13 nodes (DESIGN.md, E)
+SLOW_FIXED = "2026-11-06T13:49"  # the nodes' reboot with the administrators' power supply change: later runs on them are clean
+CAPPED_FROM, CAPPED_UNTIL = "2026-11-04T23:55", "2026-11-06T13:00"  # last normal reading before the glitch; all back by then
 CAPPED_NODES = {"trig0122", "trig0123", "trig0133", "trig0138", "trig0140", "trig0143", "trig0145", "trig0152"}  # 200 W
 UNFINISHED_JOB_STATES = ("RUNNING", "PENDING", "COMPLETING", "SUSPENDED", "REQUEUED", "CONFIGURING")
 
@@ -51,10 +53,11 @@ def mark_selection(r: pd.DataFrame) -> pd.DataFrame:
     role = np.select([tagged, r.campaign.isin(MACHINE_CAMPAIGNS)], ["report", "machine"], "test")
     aside = r.job.map(SET_ASIDE) if "job" in r else pd.Series(None, index=r.index, dtype=object)
     hosts = r.hosts.fillna("").str.split(";")
+    started = r.started.fillna("").astype(str)
     return r.assign(role=np.where(measured, role, "report"), set_aside=aside,
                     in_report=(tagged & aside.isna()) | ~measured,
-                    slow_nodes=[";".join(sorted(SLOW_NODES & set(h))) for h in hosts],
-                    capped_nodes=[";".join(sorted(CAPPED_NODES & set(h))) for h in hosts],
+                    slow_nodes=[";".join(sorted(SLOW_NODES & set(h))) if s < SLOW_FIXED else "" for h, s in zip(hosts, started)],
+                    capped_nodes=[";".join(sorted(CAPPED_NODES & set(h))) if CAPPED_FROM <= s < CAPPED_UNTIL else "" for h, s in zip(hosts, started)],
                     bw_groups=["+".join(str(g) for g in sorted({bandwidth_group(x) for x in h if x})) for h in hosts])
 
 

@@ -27,7 +27,7 @@ def _jsonl(path: Path):
 # The 1249... and 1250... "after" jobs are the nodes capped or out until Nov 6, once back.
 HEALTH_PERIOD = {"1238238": "before", "1238239": "before", "1238240": "before", "1238571": "before",
                  "1245968": "after", "1246233": "after", "1246278": "after",
-                 **{str(j): "after" for j in (1249612, 1249619, 1249628, 1249634, 1249662, 1249664, 1250766, 1250767, 1250775, 1250936)},
+                 **{str(j): "after" for j in (1249612, 1249619, 1249628, 1249634, 1249662, 1249664, 1250766, 1250767, 1250775, 1250936, 1251711, 1251712, 1251714)},
                  **{str(j): "caps" for j in (1246142, 1246143, 1246144, 1246147, 1246148, 1246149, 1246150, 1246151)},
                  "1238183": "first try"}
 _DCGM_FLOPS = re.compile(r"GPU (\d+) calculated at approximately ([\d.]+) gigaflops")

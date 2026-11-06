@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmEpTwoSixRatio", "TriGlmEpAtoaShare", "TriGlmPpRatio", "TriGlmEpEightTok", "TriGlmEpEightStep", "TriGlmEpEightMem", "TriGlmEpEightMfu", "TriGlmEpEightAtoa", "TriGlmEpEightAtoaPct", "TriGlmEpSixteenTok", "TriGlmEpSixteenStep", "TriGlmEpSixteenMem", "TriGlmEpSixteenMfu", "TriGlmEpSixteenAtoa", "TriGlmEpSixteenAtoaPct", "TriGlmPpTwoSixTok", "TriGlmPpTwoSixStep", "TriGlmPpTwoSixMem", "TriGlmPpTwoSixMfu", "TriGlmPpTwoSixAtoa", "TriGlmPpTwoSixAtoaPct", "TriBackNodes", "TriBackPctLo", "TriBackPctHi", "TriBackSlowLo", "TriBackSlowHi", "TriNetInsideTop", "TriInGather", "TriInScatter", "TriInReduce", "TriCrossGather", "TriCrossScatter", "TriCrossReduce", "TriInAlltoall", "TriInThirteenLo", "TriInThirteenHi", "TriGlmThirtyTok", "TriGlmThirtyStep", "TriGlmThirtyMem", "TriGlmThirtyMfu", "TriGlmThirtyAtoa", "TriGlmThirtyAtoaPct", "TriGlmThirtyEff", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriFixPctLo", "TriFixPctHi", "TriGlmPpStepPct", "TriGlmPpTwoFiveTok", "TriGlmPpTwoFiveStep", "TriGlmPpTwoFiveMem", "TriGlmPpTwoFiveMfu", "TriGlmPpTwoFiveAtoa", "TriGlmPpTwoFiveAtoaPct", "TriGlmEpTwoSixRatio", "TriGlmEpAtoaShare", "TriGlmPpRatio", "TriGlmEpEightTok", "TriGlmEpEightStep", "TriGlmEpEightMem", "TriGlmEpEightMfu", "TriGlmEpEightAtoa", "TriGlmEpEightAtoaPct", "TriGlmEpSixteenTok", "TriGlmEpSixteenStep", "TriGlmEpSixteenMem", "TriGlmEpSixteenMfu", "TriGlmEpSixteenAtoa", "TriGlmEpSixteenAtoaPct", "TriGlmPpTwoSixTok", "TriGlmPpTwoSixStep", "TriGlmPpTwoSixMem", "TriGlmPpTwoSixMfu", "TriGlmPpTwoSixAtoa", "TriGlmPpTwoSixAtoaPct", "TriBackNodes", "TriBackPctLo", "TriBackPctHi", "TriBackSlowLo", "TriBackSlowHi", "TriNetInsideTop", "TriInGather", "TriInScatter", "TriInReduce", "TriCrossGather", "TriCrossScatter", "TriCrossReduce", "TriInAlltoall", "TriInThirteenLo", "TriInThirteenHi", "TriGlmThirtyTok", "TriGlmThirtyStep", "TriGlmThirtyMem", "TriGlmThirtyMfu", "TriGlmThirtyAtoa", "TriGlmThirtyAtoaPct", "TriGlmThirtyEff", "TriGlmThirtySixTok", "TriGlmThirtySixStep", "TriGlmThirtySixMem", "TriGlmThirtySixMfu", "TriGlmThirtySixAtoa", "TriGlmThirtySixAtoaPct", "TriGlmThirtySixEff", "TriGlmEpRatioTop", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -156,7 +156,14 @@ def _machine_numbers(t) -> dict[str, tuple]:
                 out["TriBackNodes"] = (len(back), "d", False)
                 out["TriBackPctLo"], out["TriBackPctHi"] = (back.min(), "+.1f", False), (back.max(), "+.1f", False)
                 out["TriBackSlowLo"], out["TriBackSlowHi"] = (held.min(), "+.1f", False), (held.max(), "+.1f", False)
-            slow = p[p.hosts.isin(SLOW_NODES) & ~p.run_name.str.startswith("hw-h6-")].merge(control[["round", "mean_s"]], on="round", suffixes=("", "_control"))
+            # The same test, twice, after the administrators' change on the slow nodes.
+            fix = p[p.run_name.str.startswith("hw-slowfix-")]
+            if len(fix):
+                fix = fix.assign(rep=fix.run_name.str.extract(r"slowfix-([a-z])-")[0])
+                ctl = fix[fix.hosts == "trig0151"].set_index("rep").mean_s
+                pct = 100 * (fix[fix.hosts != "trig0151"].mean_s / fix[fix.hosts != "trig0151"].rep.map(ctl) - 1)
+                out["TriFixPctLo"], out["TriFixPctHi"] = (pct.min(), "+.1f", False), (pct.max(), "+.1f", False)
+            slow = p[p.hosts.isin(SLOW_NODES) & p["round"].notna() & ~p.run_name.str.startswith("hw-h6-")].merge(control[["round", "mean_s"]], on="round", suffixes=("", "_control"))
             behind = 100 * (slow.mean_s / slow.mean_s_control - 1)
             out["TriSlowBehindLo"] = (behind.min(), ".1f", False)
             out["TriSlowBehindHi"] = (behind.max(), ".1f", False)
@@ -519,7 +526,7 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
         d = ag[(ag.layout == layout) & (ag.nodes == nodes) & (ag.seqs == seqs) & (ag.ac == ac)]
         return d if len(d) else None
     for name, layout, nodes, seqs in (("Thirteen", "pp13-ep8", 13, 256), ("Small", "pp13-ep8", 13, 64), ("Six", "pp6-ep16", 12, 256), ("Ten", "pp10-ep8", 10, 200), ("Thirty", "pp10-ep8", 30, 600), ("Forty", "pp10-ep8", 40, 800), ("ThirtySix", "pp6-ep16", 36, 768),
-                                         ("EpEight", "pp13-ep8", 26, 512), ("EpSixteen", "pp13-ep16", 26, 512), ("PpTwoSix", "pp26-ep8", 26, 512)):
+                                         ("EpEight", "pp13-ep8", 26, 512), ("EpSixteen", "pp13-ep16", 26, 512), ("PpTwoSix", "pp26-ep8", 26, 512), ("PpTwoFive", "pp25-ep8", 25, 512)):
         d = one(layout, nodes, seqs)
         if d is not None:
             out[f"TriGlm{name}Tok"] = (d.tok_s_gpu.median(), ",.0f", False)
@@ -540,6 +547,9 @@ def _glm_numbers(runs: pd.DataFrame, ep: pd.DataFrame) -> dict[str, tuple]:
             out["TriGlmEpAtoaShare"] = (100 * (a16 - a8) / (e16.step_s.median() - e8.step_s.median()), ".0f", False)
     if e8 is not None and p26 is not None:
         out["TriGlmPpRatio"] = (e8.tok_s_gpu.median() / p26.tok_s_gpu.median(), ".2f", False)
+    p25 = one("pp25-ep8", 25, 512)
+    if p25 is not None and p26 is not None:
+        out["TriGlmPpStepPct"] = (100 * (p25.step_s.median() / p26.step_s.median() - 1), ".0f", False)
     six, six36 = one("pp6-ep16", 12, 256), one("pp6-ep16", 36, 768)
     if six is not None and six36 is not None:
         out["TriGlmThirtySixEff"] = (100 * six36.tok_s_gpu.median() / six.tok_s_gpu.median(), ".1f", False)
@@ -948,7 +958,7 @@ def progress_table(t) -> str:
     from . import progress  # here, not at the top: progress imports select, and only this table needs it
 
     s = progress.summary(progress.table(t), t, Path("/nonexistent"))
-    lines = [r"\begin{tabular}{lllll}", r"\toprule", r"Group & Done / planned & 50+ nodes & Compromise & What's left \\", r"\midrule"]
+    lines = [r"\begin{tabular}{lllll}", r"\toprule", r"Group & Done / planned, under 50 nodes & 50+ nodes & Compromise & What's left \\", r"\midrule"]
     for _, x in s.iterrows():
         lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & {x['50+ nodes']} & {x['Compromise']} & " + r"\parbox[t]{6cm}{" + _esc(x["What's left"]) + "} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]

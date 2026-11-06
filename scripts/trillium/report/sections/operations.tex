@@ -34,7 +34,7 @@
 
 \textbf{One slow entry.} The asynchronous weights save at 39 nodes ran at a median of 69\,s per step against 50\,s in the other entries, from its first steps on. All of it comes from one node: \texttt{trig0129}'s expert all-to-all took 24.7\,s per step against about 2.9\,s on the others, and 2.8--2.9\,s for the same node in the other entries. Only GPU 2 of that node lost NVLink, in that one process, and the links tested at full speed afterwards. Why is not known; a per-process choice of path is a guess. Its save times may be affected, and its \TriCkGBigWBlocked\,s and \TriCkGBigWTotal\,s are one run.
 
-\paragraph{Stability (F2).} \textbf{Not run.} Long runs of Qwen and of GLM-5 come last, as compromises unless the slow nodes are fixed, because the design's 52 nodes hold them and anything smaller is below its scale. No figure yet: what follows on stragglers comes from existing runs. The closest evidence on stability is the 500-step GLM-5 runs of \cref{sec:precision}, where BF16 steps slow down from 48.6\,s to about 55\,s; 7 hours, without a gap.
+\paragraph{Stability (F2).} \textbf{Not run.} Long runs of Qwen and of GLM-5 run at the design's 52 nodes once \texttt{trig0135} is back; at a smaller scale only as a compromise, last. No figure yet: what follows on stragglers comes from existing runs. The closest evidence on stability is the 500-step GLM-5 runs of \cref{sec:precision}, where BF16 steps slow down from 48.6\,s to about 55\,s; 7 hours, without a gap.
 
 \begin{figure}[h]
   \centering\fig{stability}
@@ -46,7 +46,7 @@
 
 \begin{figure}[h]
   \centering\fig{stragglers}
-  \caption{Largest Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; red: the slow nodes and \texttt{trig0114}. \syntheticnote{stragglers}}
+  \caption{Largest Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; red: the slow nodes, before their fix, and \texttt{trig0114}. \syntheticnote{stragglers}}
   \label{fig:stragglers}
 \end{figure}
 

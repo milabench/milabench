@@ -6,9 +6,9 @@
   does that do to every number in this report?
 \end{question}
 
-Of the 52 nodes, 43 could be used and 40 were clean until November~6, when the administrators cleared a 200\,W power limit and the nodes they held came back; now all 52 can be used and 49 are clean. A capped GPU is about
+Of the 52 nodes, 43 could be used and 40 were clean until November~6. That day the administrators cleared a 200\,W power limit, returned the nodes they held and fixed 3 slow nodes, so 51 can now be used and all of them are clean; \texttt{trig0135} is held back for now. A capped GPU is about
 \TriCapFactor{} times slower. CPU clocks fall under high GPU power on all but one node, so \textbf{every Qwen step
-time in this report is throttled, except under pipeline layouts}. Three nodes spend about twice as long at low CPU clocks and slow any job that holds them. A kernel change during the
+time in this report is throttled, except under pipeline layouts}. Until their fix, three nodes spent about twice as long at low CPU clocks and slowed any job that held them. A kernel change during the
 campaign had no measurable effect, so results before and after it are compared directly. \Cref{fig:machine_status} shows the nodes.
 
 \begin{figure}[h]
@@ -18,7 +18,7 @@ campaign had no measurable effect, so results before and after it are compared d
   \label{fig:machine_status}
 \end{figure}
 
-\paragraph{Nodes.} Until November~6, \texttt{trig0146} was out, showing 7 of its 8 GPUs, and \texttt{trig0122} was in maintenance, with \texttt{mlx5\_1} at firmware 28.35.2000 against 28.47.1026 on other nodes. It now reads 28.47.1026, and its node pairs reach 290.6\,GB/s against 290.2 on its peers and 265 before. \texttt{trig0146} now shows all 8 GPUs and passes its checks, its first in this campaign; which GPU was missing is unknown. So all 52 nodes can be used, and the 3 slow ones leave 49 clean. In a 1-node Qwen test side by side, the \TriBackNodes{} nodes that returned run at \TriBackPctLo{} to \TriBackPctHi\,\% against \texttt{trig0151}, and the 3 slow ones at \TriBackSlowLo{} to \TriBackSlowHi\,\%, so no new slow node has appeared. That is one run each, and multi-node training on them is not tested yet. While the caps lasted those numbers were 43 and 40, so most runs here stop at 39--43 nodes. No run above 49 nodes can avoid the slow nodes.
+\paragraph{Nodes.} Until November~6, \texttt{trig0146} was out, showing 7 of its 8 GPUs, and \texttt{trig0122} was in maintenance, with \texttt{mlx5\_1} at firmware 28.35.2000 against 28.47.1026 on other nodes. It now reads 28.47.1026, and its node pairs reach 290.6\,GB/s against 290.2 on its peers and 265 before. \texttt{trig0146} now shows all 8 GPUs and passes its checks, its first in this campaign; which GPU was missing is unknown. \texttt{trig0135} went into a reservation at 14:39 on November~6, after passing its checks, for a reason unknown to us, so 51 nodes can be used, all clean, and 52 when it returns. In a 1-node Qwen test side by side, the \TriBackNodes{} nodes that returned run at \TriBackPctLo{} to \TriBackPctHi\,\% against \texttt{trig0151}, and the 3 slow ones at \TriBackSlowLo{} to \TriBackSlowHi\,\%, so no new slow node has appeared. That is one run each, and multi-node training on them is not tested yet. While the caps lasted those numbers were 43 and 40, so most runs here stop at 39--43 nodes.
 
 \paragraph{200\,W caps.} From about midnight on November~5, GPUs on \texttt{trig0123}, \texttt{0133}, \texttt{0138}, \texttt{0140}, \texttt{0143}, \texttt{0145} and \texttt{0152}
 had an enforced limit of 200\,W instead of the default 1,000\,W. According to the administrators, a power glitch at 00:09 caused it, and on November~6 they cleared it, \texttt{trig0145} last, after more tests. \texttt{trig0122} also read 200\,W before it left for maintenance, and no longer does. Measured under the same matmul load, on every GPU independently: capped GPUs draw \TriCapPowerLo--\TriCapPowerHi\,W, stay at
@@ -34,8 +34,10 @@ steps take \TriThrottleOddStep\,s against \TriThrottleStep\,s on \texttt{trig015
 Pipeline layouts of Qwen (mean 5.8\,kW of GPU power per node) and GLM-5 (4.5\,kW) stay at 3,200\,MHz. Qwen's FSDP and HSDP layouts do not.
 \textbf{Not known:} the cause. A node power limit near 10.2\,kW is an inference: the meter's peak matches the GPUs' maximum plus the mean load from everything else, so it is not independent evidence.
 
-\paragraph{Slow nodes.} \texttt{trig0134}, \texttt{0135} and \texttt{0148} spend about half their time below 500\,MHz under Qwen, against about a quarter on \texttt{trig0151}. On 1 node, in the same runs, they are \TriSlowBehindLo--\TriSlowBehindHi\,\% behind \texttt{trig0151}. On 13 nodes, the side-by-side runs with one of them
-average \TriSlowThirteenWith\,s per step against \TriSlowThirteenWithout\,s without (+\TriSlowThirteenPct\,\%). That is an association: no test swapped them. All the settings we can read match \texttt{trig0151}, and their CPUs run cooler; the cause is unknown. Runs with these nodes are marked, or left out of scaling comparisons.
+\paragraph{Slow nodes.} Until November~6, \texttt{trig0134}, \texttt{0135} and \texttt{0148} spent about half their time below 500\,MHz under Qwen, against about a quarter on \texttt{trig0151}. On 1 node, in the same runs, they were \TriSlowBehindLo--\TriSlowBehindHi\,\% behind \texttt{trig0151}. On 13 nodes, the side-by-side runs with one of them
+averaged \TriSlowThirteenWith\,s per step against \TriSlowThirteenWithout\,s without (+\TriSlowThirteenPct\,\%). That is an association: no test swapped them. All the settings we could read matched \texttt{trig0151}, and their CPUs ran cooler. Runs with these nodes before the fix are marked, or left out of scaling comparisons.
+
+\textbf{The fix.} According to the administrators, the power supplies of these 3 nodes ran in N+N mode instead of N+1, like the rest; they changed that and rebooted them on November~6. In the same 1-node Qwen test, run twice, the 3 nodes are now at \TriFixPctLo{} to \TriFixPctHi\,\% against \texttt{trig0151}. They spend about 26--27\,\% of samples below 500\,MHz and enter low clocks about 24 times a minute, against 48--50\,\% and 72 times before, like \texttt{trig0151}. The node meter's peak in that test rose from 10.14--10.19\,kW to 10.23--10.25\,kW, also like \texttt{trig0151}. So a lower power budget would explain what we saw, but that is inferred: nothing we read says this mode limits the CPUs. It says nothing about the drops on the other nodes, which stay at about a quarter of samples. The fix has not been tested in multi-node training yet.
 A node's low-clock share also depends on the job (\cref{fig:machine_status}, bottom): nodes in a set with a slow node drop less, probably because they wait for it and draw less GPU power (inferred).
 
 \paragraph{Kernel change.} On November~5, from 17:33 to 20:58, the administrators added the boot option \texttt{intel\_pstate=passive}, each node rebooting after its job. The CPU frequency driver changed from \texttt{intel\_pstate} to \texttt{intel\_cpufreq}. Kernel, GPU driver, BIOS, microcode and
@@ -53,4 +55,4 @@ The slow nodes' reruns all moved down, by 0.7--1.0\,\%; two runs a side cannot s
 
 \paragraph{Submission.} The site's \texttt{sbatch} wrapper refuses jobs above 25 nodes, and the administrators asked us to submit with the \texttt{.sbatch} binary. A 1-node job submitted that way took 4.767\,s per step, against 4.742 and 4.784\,s through the wrapper. It changed nothing measurable.
 
-\paragraph{Still open.} The administrators' answer on the clock drops and the slow nodes, and what happened on \texttt{trig0140}.
+\paragraph{Still open.} The administrators' answer on the clock drops, what happened on \texttt{trig0140}, and \texttt{trig0135}.

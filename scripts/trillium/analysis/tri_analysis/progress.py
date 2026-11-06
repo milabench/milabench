@@ -4,10 +4,10 @@ A point is a configuration at a node count; repetitions don't count. Done: a com
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
 20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
 GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Network goes up to 52
-as the design has it. Points above the clean nodes count apart. User, Nov 6: a compromise is a test at a smaller scale than initially planned,
-or one holding the 3 slow nodes when a run of that size could avoid them; full experiments at 52 nodes also count, as long
-as the slow nodes aren't fixed. Compromises go last of all and count apart too. A quick 52-node run to check that it works
-is a verification, not the full-scale point: it goes in select.SET_ASIDE.
+as the design has it. Points at 50 or more nodes count apart. User, Nov 6: a compromise is a test at a smaller scale than initially planned, or
+one holding the slow nodes when a run of that size could avoid them; full experiments at 52 nodes also counted until those
+nodes were fixed, the same day, so runs after that are clean (select.SLOW_FIXED). Compromises go last of all and count
+apart too. A quick 52-node run to check that it works is a verification, not the full-scale point: it goes in select.SET_ASIDE.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 49  # clean nodes today: above this a run holds the slow nodes, a compromise until they are fixed
+TOP_NOW = 51  # clean nodes today, all but trig0135, in a reservation since 14:39 on Nov 6; a point above this waits for it
+FIFTY = 50
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
               "GLM-5 layouts": {36}, "Precision speed": {25, 26, 39}, "Checkpoints": {25, 39}}
@@ -31,8 +32,8 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Network (D2-D4)": "D2, D3, D4 at the end, at the largest scale available; 50+ holds the slow nodes",
-             "Long run": "Qwen and GLM-5, at least 1 h each, at the end; 50+ holds the slow nodes"}
+LEFT_NOTE = {"Network (D2-D4)": "D2, D3, D4 at 52 once trig0135 returns; otherwise last, at the largest scale available",
+             "Long run": "Qwen and GLM-5, at least 1 h each, at 52 once trig0135 returns; otherwise last, as a compromise"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
@@ -242,12 +243,12 @@ def summary(p: pd.DataFrame, t: dict[str, pd.DataFrame], sacct: Path) -> pd.Data
     e1, ref = (done.experiment == "E1").sum(), (done.experiment == "R").sum()
     # The design has 4 sets of 13 nodes, so 52; the 3 sets that ran are a compromise.
     rows.append({"Figures": "interference", "Group": "Side by side (E1)", "Done / planned": "none", "Running or queued": "",
-                 "What's left": "4 sets of 13, at the end; it needs 52 nodes, so the slow nodes", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
+                 "What's left": "4 sets of 13, at 52 once trig0135 returns", "50+ nodes": "0 / 16", "Compromise": f"{e1} done"})
     rows.append({"Figures": "reference_drift", "Group": "Reference (R)", "Done / planned": f"{ref} runs, no fixed count",
                  "Running or queued": "; ".join(jobs.get("Reference", [])), "What's left": "more as the window goes on", "50+ nodes": "none", "Compromise": "none"})
     for block, g in p.groupby("block", sort=False):
         full = g[~g.compromise]
-        now, big = full[full.nodes <= TOP_NOW], full[full.nodes > TOP_NOW]
+        now, big = full[full.nodes < FIFTY], full[full.nodes >= FIFTY]
         n_done = int(now.state.isin(["done", "answered"]).sum())
         failed = int((now.state == "answered").sum())
         share = f"{n_done} / {len(now)} ({100 * n_done / len(now):.0f}%)" if len(now) else "none"
