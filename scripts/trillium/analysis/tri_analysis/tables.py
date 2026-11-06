@@ -910,9 +910,9 @@ def progress_table(t) -> str:
     from . import progress  # here, not at the top: progress imports select, and only this table needs it
 
     s = progress.summary(progress.table(t), t, Path("/nonexistent"))
-    lines = [r"\begin{tabular}{llll}", r"\toprule", r"Group & Done / planned on up to 48 nodes & 50+ nodes & What's left \\", r"\midrule"]
+    lines = [r"\begin{tabular}{lllll}", r"\toprule", r"Group & Done / planned & 50+ nodes & Compromise & What's left \\", r"\midrule"]
     for _, x in s.iterrows():
-        lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & {x['50+ nodes']} & " + r"\parbox[t]{7cm}{" + _esc(x["What's left"]) + "} " + r"\\")
+        lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & {x['50+ nodes']} & {x['Compromise']} & " + r"\parbox[t]{6cm}{" + _esc(x["What's left"]) + "} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
