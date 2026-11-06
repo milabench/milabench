@@ -952,8 +952,7 @@ def stability(t):
 
 
 def stragglers(t):
-    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, and CPU samples below 500 MHz.
-    With data parallelism ranks wait for the slowest, so the node that waits least, with the highest activity, is the slow one."""
+    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, CPU samples below 500 MHz, GPU power."""
     n = t.get("node_telemetry", pd.DataFrame())
     r = _runs(t)
     if n.empty or r.empty:
@@ -969,7 +968,7 @@ def stragglers(t):
     fig, axes = plt.subplots(len(panels), 1, figsize=(TEXT_WIDTH, 1.1 * len(panels) + 0.5), sharex=True, squeeze=False)
     axes = axes[:, 0]
     for ax, (col, label) in zip(axes, panels):
-        v = d[col] * (100 if col == "cpu_low_share" else 1)
+        v = d[col] * (100 if col in ("cpu_low_share", "gpu_util") else 1)
         _pt(ax, d.x, v, INK2, False, ms=3)
         top = v.idxmax()
         ax.annotate(f"{d.host[top]}: {v[top]:.3g}", (d.x[top], v[top]), xytext=(5, -2), textcoords="offset points", fontsize=6, color=CRITICAL)
@@ -1023,7 +1022,7 @@ def energy(t):
     base = e[e.run_id.isin(qwen_base(t["runs"]).run_id)]
     panels = [
         ("Qwen layouts, 13 nodes, 24k", base[(base.nodes == 13) & (base.tokens_per_gpu == 24576)], "layout"),
-        ("precision, whole machine", e[(e.experiment == "C-speed") & (e.nodes >= 0.9 * e.nodes.max())], "prec"),
+        ("precision, largest run so far", e[(e.experiment == "C-speed") & (e.nodes == e[e.experiment == "C-speed"].groupby("model").nodes.transform("max"))], "prec"),
         ("Qwen scale (B-Q-weak)", e[e.experiment == "B-Q-weak"], "scale"),
     ]
     panels = [x for x in panels if not x[1].empty]
@@ -1038,10 +1037,8 @@ def energy(t):
                 ax.plot(med.index, med.values, color=col, lw=0.9)
                 for _, row in g.iterrows():
                     _pt(ax, row.nodes, row.mtok_kwh, col, row.synthetic, ms=3)
-                top = med.values[-1] >= d.groupby("layout").mtok_kwh.median().max() - 1e-9
-                ax.annotate(layout, (med.index[-1], med.values[-1]), xytext=(-2, 5 if top else -6),
-                            textcoords="offset points", fontsize=6, color=INK2, ha="right",
-                            va="bottom" if top else "top")
+                ax.plot([], [], color=col, lw=0.9, label=layout)
+            ax.legend(loc="lower right", fontsize=6)
             ax.set_xscale("log", base=2)
             ticks = [n for n in sorted(d.nodes.unique()) if n in (1, 4, 13, d.nodes.max())]
             ax.set_xticks(ticks)
