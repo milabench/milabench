@@ -20,7 +20,7 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 48  # clean nodes today, 49 if trig0146 passes: above this a run holds the slow nodes, a compromise until they are fixed
+TOP_NOW = 49  # clean nodes today: above this a run holds the slow nodes, a compromise until they are fixed
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
               "GLM-5 layouts": {36}, "Precision speed": {25, 26, 39}, "Checkpoints": {25, 39}}
@@ -237,7 +237,7 @@ def summary(p: pd.DataFrame, t: dict[str, pd.DataFrame], sacct: Path) -> pd.Data
     h, pairs, coll = t["node_health"], t["pairs"], t["collectives"]
     if len(h):
         rows.append({"Figures": "health_gpus, health_links", "Group": "Health (D1)", "Done / planned": f"{h.host.nunique()} / 52 nodes",
-                     "Running or queued": "", "What's left": "trig0146; no matmul or per-HCA checks in the tool", "50+ nodes": "none", "Compromise": "none"})
+                     "Running or queued": "", "What's left": "no matmul or per-HCA checks in the tool", "50+ nodes": "none", "Compromise": "none"})
     done = runs[(runs.status == "completed") & runs.in_report.astype(bool)]
     e1, ref = (done.experiment == "E1").sum(), (done.experiment == "R").sum()
     # The design has 4 sets of 13 nodes, so 52; the 3 sets that ran are a compromise.
