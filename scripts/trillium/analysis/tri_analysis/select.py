@@ -103,7 +103,9 @@ def with_second_experiments(runs: pd.DataFrame) -> pd.DataFrame:
     extra = [r[base & (r.layout == layout) & (r.nodes == nodes) & (seqs == batch) & (r.experiment == tag)]
              .assign(experiment=also) for layout, nodes, batch, tag, also in SERVES_TWICE]
     # Qwen: the weak-scaling runs other than at 13 nodes are the layout comparison's 2-node and top-scale points.
-    extra.append(r[(r.model == QWEN) & (r.experiment == "B-Q-weak") & (r.nodes != 13)].assign(experiment="A-Q"))
+    # Not a run with slow nodes on purpose (tri-aq-fsdp-24k at 43 nodes, labelled n43-slow3).
+    clean = r.slow_nodes.fillna("") == "" if "slow_nodes" in r else True
+    extra.append(r[(r.model == QWEN) & (r.experiment == "B-Q-weak") & (r.nodes != 13) & clean].assign(experiment="A-Q"))
     return pd.concat([r, *extra], ignore_index=True)
 
 

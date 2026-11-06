@@ -11,9 +11,9 @@ One row per block of `~/projects/tri-work/ops/ANALYSIS_BRIEF.md`. What ran again
 | Precision loss | partial | Qwen C-loss 9 runs, GLM-5 2 | gaps from raw loss events, separately: +0.312, +0.275, -0.038, -0.075 = journal and `gap3.py` | GLM-5 same and other seed, tensorwise, blockwise |
 | Precision speed | partial | C-speed 1, 25, 26, 39 nodes; GLM-5 13; p3-acfull; `fp8-glm/summary.txt` | `results.tsv`, `p3-results.tsv` (step means); FP8 FLOP shares recomputed from summary (97%, 76%) | GLM-5 39 |
 | Checkpoints | partial | F1 Qwen 1, 13, 25; GLM-5 13, weights in 3 rounds (1243819, 1245503, 1246920) | `p3-results.tsv`, journal: all sizes and times match; 1246920 sync save 26.9 s from its recovered summary | GLM-5 weights and full 39 |
-| Qwen scaling | partial | B-Q-weak 1-39; B-Q-strong 13, 26, 39 | steps = `qwen-large/results.tsv` (39 nodes: 5.160, 5.075 s both); 94.4% recomputed | labelled 43, 50 if caps clear |
+| Qwen scaling | done for now | B-Q-weak 1-39, labelled 43 (1247750); B-Q-strong 13, 26, 39 | steps = `qwen-large/results.tsv` (39 nodes: 5.160, 5.075 s both); 94.4% recomputed | 50 if caps clear |
 | GLM-5 layouts | partial | A-G 10, 12, 13 nodes | steps within 0.1 s of `p3-results.tsv` (their mean starts one step later); garbled summaries decoded by `runs.garbled_summary`; for 1240808 identical to the agent's recovered file | 20, 25, 26, 30, 36, 40 |
 | GLM-5 scaling | partial | 13 and 26 nodes, weak and strong (1247135) | agent's 49.59 s, 84,584 tok/s, 69.97 GiB; 0.980, 0.892 by means against mine 0.978, 0.895 by medians; bubble formula against three batch pairs | 39 |
 | Startup, energy | partial | all completed runs | telemetry: 1241805 7.40 kW, max 8.07, 19% low = journal; 1241694 4.41 kW against 4.47 (different window, not chased) | grows with each run |
-| Stability, stragglers | partial | stragglers from largest FSDP run | | F2 not run |
+| Stability, stragglers | partial | stragglers from the 43-node FSDP run | agent's 5.352 s from raw steps | F2 not run |
 | Introduction, conclusions | partial | | | final answers, after 39 nodes |

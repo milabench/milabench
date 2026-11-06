@@ -28,6 +28,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriEnergyBest",
           "TriQwenTop", "TriGlmTop", "TriRunsInReport", "TriGlmCopiesTop",
           # Scaling, GLM-5, operations
+          "TriSlowRunNodes", "TriSlowRunTok", "TriSlowRunStep", "TriSlowRunPct", "TriSlowRunEff", "TriStragNodes", "TriStragLowLo", "TriStragLowHi", "TriStragLowRest", "TriStragUtilSlow", "TriStragUtilRest",
           "TriWeakTop","TriWeakFTop","TriWeakHTop","TriWeakFCross","TriWeakHCross","TriWeakFOne","TriWeakFTopTok","TriWeakFStep","TriWeakFStepOne","TriWeakFEffOne","TriWeakFEffTwo","TriWeakHOne","TriWeakHTopTok","TriWeakHStep","TriWeakHStepOne","TriWeakHEffOne","TriWeakHEffTwo",
           "TriStrongOne","TriStrongOneStep","TriStrongTopNodes","TriStrongTop","TriStrongTopStep","TriStrongEff",
           "TriGlmThirteenTok","TriGlmThirteenStep","TriGlmThirteenMem","TriGlmThirteenMfu","TriGlmThirteenAtoa","TriGlmThirteenAtoaPct","TriGlmSmallTok","TriGlmSmallStep","TriGlmSmallMem","TriGlmSmallMfu","TriGlmSmallAtoa","TriGlmSmallAtoaPct",
@@ -423,6 +424,17 @@ def _scaling_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
             out[f"TriWeak{tag}Cross"] = (100 * (m.s[top] / m.s[26] - 1), "+.1f", False)
     if len(w):
         out["TriWeakTop"] = (int(w[w.layout.isin(["fsdp", "hsdp8"])].nodes.max()), "d", False)
+    slow = _completed(runs, "B-Q-weak")
+    slow = slow[slow.slow_nodes.fillna("") != ""] if len(slow) else slow
+    clean = w[w.layout == "fsdp"].groupby("nodes").agg(v=("tok_s_gpu", "median"), s=("step_s", "median"))
+    if len(slow) and len(clean):
+        x = slow.iloc[0]
+        top = clean.index.max()
+        out["TriSlowRunNodes"] = (int(x.nodes), "d", False)
+        out["TriSlowRunTok"] = (x.tok_s_gpu, ",.0f", False)
+        out["TriSlowRunStep"] = (x.step_s, ".2f", False)
+        out["TriSlowRunPct"] = (100 * (x.step_s / clean.s[top] - 1), "+.1f", False)
+        out["TriSlowRunEff"] = (100 * x.tok_s_gpu / clean.v[1], ".0f", False)
     s = _completed(runs, "B-Q-strong")
     s = s[s.layout == "fsdp"] if len(s) else s
     if len(s):
@@ -504,6 +516,18 @@ def _operations_numbers(t) -> dict[str, tuple]:
         if len(d):
             m = d.first_step_total_s / 60
             out[f"TriStart{tag}Lo"], out[f"TriStart{tag}Hi"], out[f"TriStart{tag}Med"] = (m.min(), ".1f", False), (m.max(), ".1f", False), (m.median(), ".1f", False)
+    tele = t.get("node_telemetry", pd.DataFrame())
+    big = done[(done.model == QWEN) & (done.layout == "fsdp") & (done.tokens_per_gpu == 24576) & (done.ac == "selective") & (done.grad_reduce == "fp32") & done.run_id.isin(tele.run_id if len(tele) else [])]
+    if len(big):
+        run = big.sort_values(["nodes", "started"]).iloc[-1]
+        n = tele[tele.run_id == run.run_id]
+        slow, rest = n[n.host.isin(SLOW_NODES)], n[~n.host.isin(SLOW_NODES | {"trig0114"})]
+        out["TriStragNodes"] = (int(run.nodes), "d", False)
+        if len(slow):
+            out["TriStragLowLo"], out["TriStragLowHi"] = (100 * slow.cpu_low_share.min(), ".0f", False), (100 * slow.cpu_low_share.max(), ".0f", False)
+            out["TriStragLowRest"] = (100 * rest.cpu_low_share.mean(), ".0f", False)
+            out["TriStragUtilSlow"] = (100 * slow.gpu_util.mean(), ".1f", False)
+            out["TriStragUtilRest"] = (100 * rest.gpu_util.mean(), ".1f", False)
     e = with_energy(done, t["run_power"])
     if len(e):
         q = e[(e.model == QWEN) & (e.nodes == 13) & (e.tokens_per_gpu == 24576) & (e.experiment == "A-Q") & (e.ac == "selective") & (e.grad_reduce == "fp32")]

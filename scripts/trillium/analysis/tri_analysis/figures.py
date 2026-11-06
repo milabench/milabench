@@ -409,7 +409,7 @@ def reference_drift(t):
 
 # -- A-Q. Qwen layouts ---------------------------------------------------------
 
-QWEN_PANELS = (2, 13, 26, 39, 43, 50, 52)  # node counts of the layout panels; hsdp16 runs on 12 nodes, 104 GPUs don't split in 16
+QWEN_PANELS = (2, 13, 26, 39, 50, 52)  # node counts of the layout panels; hsdp16 runs on 12 nodes, 104 GPUs don't split in 16
 
 
 def qwen_layouts(t):
@@ -625,6 +625,8 @@ def qwen_scaling(t):
     w, s = _runs(t, "B-Q-weak"), _runs(t, "B-Q-strong")
     if w.empty and s.empty:
         return None
+    slow = w[w.slow_nodes.fillna("") != ""] if "slow_nodes" in w else w.iloc[0:0]  # labelled, out of the line
+    w = w.drop(slow.index)
     fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.3), sharey=True)
     ax = axes[0]
     colors = {}
@@ -638,6 +640,10 @@ def qwen_scaling(t):
         ax.annotate(f"{layout}: {eff:.0f} % of {int(med.gpus.iloc[0])} GPUs", (med.gpus.iloc[-1], med.value.iloc[-1]),
                     xytext=(-4, 6 if layout != "fsdp" else -10), textcoords="offset points", fontsize=6,
                     color=INK2, ha="right")
+    for _, row in slow.iterrows():
+        _pt(ax, row.gpus, row.tok_s_gpu, colors.get(row.layout, MUTED), False, "D", ms=4.5)
+        ax.annotate(f"{int(row.nodes)} nodes with\n{row.slow_nodes.count(';') + 1} slow nodes", (row.gpus, row.tok_s_gpu), xytext=(0, -7), textcoords="offset points", fontsize=6,
+                    color=CRITICAL, ha="center", va="top")
     _gpu_axis(ax, w.gpus)
     ax.set_title("weak: 24k tokens per GPU")
     ax.set_xlabel("GPUs")
@@ -952,12 +958,13 @@ def stability(t):
 
 
 def stragglers(t):
-    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, CPU samples below 500 MHz, GPU power."""
+    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, CPU samples below 500 MHz, GPU power.
+    The slow nodes and the node without clock drops are named."""
     n = t.get("node_telemetry", pd.DataFrame())
     r = _runs(t)
     if n.empty or r.empty:
         return None
-    q = r[(r.model == QWEN) & (r.layout == "fsdp") & r.run_id.isin(n.run_id) & (r.tokens_per_gpu == 24576) & (r.ac == "selective")]
+    q = r[(r.model == QWEN) & (r.layout == "fsdp") & r.run_id.isin(n.run_id) & (r.tokens_per_gpu == 24576) & (r.ac == "selective") & (r.grad_reduce == "fp32")]
     if q.empty:
         return None
     run = q.sort_values(["nodes", "started"]).iloc[-1]
@@ -967,11 +974,14 @@ def stragglers(t):
     panels = [p for p in panels if p[0] in d and d[p[0]].notna().any()]
     fig, axes = plt.subplots(len(panels), 1, figsize=(TEXT_WIDTH, 1.1 * len(panels) + 0.5), sharex=True, squeeze=False)
     axes = axes[:, 0]
+    named = [h for h in (*sorted(SLOW_NODES), "trig0114") if h in set(d.host)]
     for ax, (col, label) in zip(axes, panels):
         v = d[col] * (100 if col in ("cpu_low_share", "gpu_util") else 1)
         _pt(ax, d.x, v, INK2, False, ms=3)
-        top = v.idxmax()
-        ax.annotate(f"{d.host[top]}: {v[top]:.3g}", (d.x[top], v[top]), xytext=(5, -2), textcoords="offset points", fontsize=6, color=CRITICAL)
+        for k, host in enumerate(named):
+            row = d.index[d.host == host][0]
+            ax.plot(d.x[row], v[row], "o", color=CRITICAL, ms=3.5, zorder=4)
+            ax.annotate(host.replace("trig", ""), (d.x[row], v[row]), xytext=(4, -2 if k % 2 else 2), textcoords="offset points", fontsize=6, color=CRITICAL)
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
     _subnet_axis(axes)
@@ -1024,7 +1034,7 @@ def energy(t):
     panels = [
         ("Qwen layouts, 13 nodes, 24k", base[(base.nodes == 13) & (base.tokens_per_gpu == 24576)], "layout"),
         ("precision, largest run so far", speed[speed.nodes == speed.groupby("model").nodes.transform("max")], "prec"),
-        ("Qwen scale (B-Q-weak)", e[e.experiment == "B-Q-weak"], "scale"),
+        ("Qwen scale (B-Q-weak)", e[(e.experiment == "B-Q-weak") & (e.slow_nodes.fillna("") == "")], "scale"),
     ]
     panels = [x for x in panels if not x[1].empty]
     if not panels:

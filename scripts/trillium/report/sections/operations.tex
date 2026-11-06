@@ -42,11 +42,11 @@
   \label{fig:stability}
 \end{figure}
 
-\paragraph{Stragglers.} With data parallelism every rank waits for the slowest one, so per-rank step times are equal and cannot point to a slow GPU; the slow GPU is the one that waits least, and a node whose CPU clock falls holds back every rank on it. The slow nodes of \cref{sec:machine} were found from the CPU clocks in the telemetry of the side-by-side runs. \Cref{fig:stragglers} shows the largest clean run so far, a Qwen \texttt{fsdp} run. No node holds it back: activity stays within about 1\,\% across nodes. The one that stands out is \texttt{trig0114}, the node without the clock drop, with no low samples and the highest activity and power. This is one run, not the long run the design called for.
+\paragraph{Stragglers.} With data parallelism every rank waits for the slowest one, so per-rank step times are equal and cannot point to a slow GPU; the slow GPU is the one that waits least, and a node whose CPU clock falls holds back every rank on it. The slow nodes of \cref{sec:machine} were found from the CPU clocks in the telemetry of the side-by-side runs. \Cref{fig:stragglers} shows the largest Qwen \texttt{fsdp} run so far, on \TriStragNodes{} nodes, the 3 slow ones among them. They stand out: \TriStragLowLo--\TriStragLowHi\,\% of CPU samples below 500\,MHz against \TriStragLowRest\,\% on the others, and GPU activity of \TriStragUtilSlow\,\% against \TriStragUtilRest\,\%. So a slow CPU shows as lower GPU activity. \texttt{trig0114}, the node without the clock drop, has no low samples. This is one run, not the long run the design called for.
 
 \begin{figure}[h]
   \centering\fig{stragglers}
-  \caption{Largest clean Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; the highest node of each panel is named. \syntheticnote{stragglers}}
+  \caption{Largest Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; red: the slow nodes and \texttt{trig0114}. \syntheticnote{stragglers}}
   \label{fig:stragglers}
 \end{figure}
 
