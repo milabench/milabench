@@ -38,8 +38,6 @@ def tsv_line(cells: list[str]) -> str:
 class TsvSink:
     """Rows for out_dir/nodes/<host>.<name>.tsv, buffered and written every `flush_every_s`.
 
-    One write per file per period, shifted by a random ±`flush_jitter_s` so the nodes
-    don't all hit network storage at once. ``flush_every_s=0`` writes as rows arrive.
     Pending rows are lost on SIGKILL; ``close()`` writes them otherwise.
     """
 
@@ -55,12 +53,19 @@ class TsvSink:
         out_dir: Path,
         host_name: str,
         flush_every_s: float = 10.0,
-        flush_jitter_s: float = 0.25
+        flush_jitter_frac: float = 0.025
     ) -> None:
+        """`flush_every_s`: one write per file per period; 0 writes rows as they arrive.
+
+        `flush_jitter_frac`: random ± shift of each flush, as a fraction of the period in [0, 1),
+        so the nodes don't all hit network storage at once.
+        """
+        if not 0 <= flush_jitter_frac < 1:
+            raise ValueError(f"flush_jitter_frac must be in [0, 1), got {flush_jitter_frac}")
         self.directory = Path(out_dir)
         self.host_name = host_name
         self.flush_every_s = flush_every_s
-        self.flush_jitter_s = flush_jitter_s
+        self.flush_jitter_frac = flush_jitter_frac
         #: Seeded from the OS, so every host draws its own delays.
         self._random = random.Random()
         self._files: dict[str, IO[str]] = {}
@@ -130,8 +135,9 @@ class TsvSink:
 
     def _schedule(self) -> None:
         if self.flush_every_s > 0:
-            jitter = self._random.uniform(-self.flush_jitter_s, self.flush_jitter_s) if self.flush_jitter_s > 0 else 0.0
-            self.next_flush_monotonic_s = time.monotonic() + self.flush_every_s + jitter
+            spread_s = self.flush_jitter_frac * self.flush_every_s
+            jitter_s = self._random.uniform(-spread_s, spread_s) if spread_s > 0 else 0.0
+            self.next_flush_monotonic_s = time.monotonic() + self.flush_every_s + jitter_s
 
     def flush(self) -> None:
         with self._lock:

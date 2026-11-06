@@ -249,6 +249,21 @@ def test_a_counter_that_was_reset_keeps_its_rise_and_counts_on_from_zero():
     assert counters.risen("mem", "oom_kill") == {("cn-a", ""): 5}
 
 
+def test_every_rule_reads_a_clock_reasons_cell_the_same_way():
+    from benchmate.nodemon.watch import CLOCK_RULES, gpu_working, hex_cell
+
+    brake = next(rule for rule in CLOCK_RULES if rule.name == "GPU hardware slowdown")
+    cell = lambda text: {"clocks_event_reasons": text}  # noqa: E731
+
+    # Empty: the query failed. The GPU is still compared with its peers, with no reason set.
+    assert gpu_working(cell("")) and gpu_working({}) and hex_cell(cell(""), "clocks_event_reasons") == 0
+    assert not gpu_working(cell("0x1"))  # idle
+    # Unprefixed text is unreadable for every reader, not a brake to one and nothing to another.
+    assert hex_cell(cell("84"), "clocks_event_reasons") is None
+    assert not brake.hit(cell("84")) and not gpu_working(cell("84"))
+    assert brake.hit(cell("0x84"))
+
+
 def test_a_combined_power_mask_reports_the_cap_and_the_brake_separately(tmp_path):
     now = time.time()
     stamp = int((now - 5) * 1000)
@@ -261,9 +276,9 @@ def test_a_combined_power_mask_reports_the_cap_and_the_brake_separately(tmp_path
     text = block(window)
     scored = ranked(findings(window), {"cn-a"})
 
-    assert "GPU software power cap: cn-a:0, cn-a:1\n" in text
+    assert "power cap" not in text  # a GPU on its own cap is normal, not a finding
     assert "GPU hardware slowdown: cn-a:0\n" in text
-    # The software cap is reported and does not score; only the brake does, once.
+    # Only the brake scores, once: the cap bit beside it in 0x84 does not hide it.
     severity = {rule.name: rule.severity for rule in RULES}
     assert [(score, host) for score, host, _ in scored] == [(severity["GPU hardware slowdown"], "cn-a")]
 

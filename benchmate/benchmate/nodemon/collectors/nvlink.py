@@ -95,10 +95,10 @@ class NvlinkCollector(NvmlCollector):
                     active.append(link)
             except self._nvml.NVMLError as err:
                 # The bindings' NVML_NVLINK_MAX_LINKS (36) exceeds a GPU's links (18 on H100 and B200);
-                # NVML answers the indexes past its last link with an invalid argument.
-                if err.value == self._nvml.NVML_ERROR_INVALID_ARGUMENT:
-                    break
-                self._log_nvml_error(f"GPU {gpu.index} NVLink {link} state", err.value)
+                # NVML answers the indexes past its last link with an invalid argument. Not a break:
+                # a disabled link in the middle may answer the same, and the links after it still count.
+                if err.value != self._nvml.NVML_ERROR_INVALID_ARGUMENT:
+                    self._log_nvml_error(f"GPU {gpu.index} NVLink {link} state", err.value)
                 continue
         links.peak = self._peak(gpu, active)
         peak = "unknown" if links.peak is None else f"{links.peak / 1e9:.0f} GB/s"
