@@ -304,7 +304,7 @@ def _speed_numbers(runs: pd.DataFrame) -> dict[str, tuple]:
         m = q.groupby(["nodes", "precision"]).agg(v=("tok_s_gpu", "median"), mem=("mem_alloc_gib", "max")).unstack()
         one = m.loc[1]
         out["TriQwenFpOne"] = (one.v.mxfp8 / one.v.bf16, ".2f", False)
-        top = int(m.index.max())
+        top = int(m.v.dropna().index.max())  # the largest node count with both recipes
         out["TriQwenFpTopNodes"] = (top, "d", False)
         out["TriQwenFpTop"] = (m.loc[top].v.mxfp8 / m.loc[top].v.bf16, ".2f", False)
         out["TriQwenMemBf"], out["TriQwenMemMx"] = (one.mem.bf16, ".0f", False), (one.mem.mxfp8, ".0f", False)
@@ -641,7 +641,7 @@ def key_numbers(t) -> dict[str, tuple]:
         m = d.groupby(["nodes", "precision"]).tok_s_gpu.median().unstack()
         if "bf16" not in m:
             continue
-        speed = m.drop(columns="bf16").div(m.bf16, axis=0)
+        speed = m.drop(columns="bf16").div(m.bf16, axis=0).dropna(how="all")  # a node count with both recipes
         if speed.empty:
             continue
         recipe = speed.iloc[-1].idxmax()
