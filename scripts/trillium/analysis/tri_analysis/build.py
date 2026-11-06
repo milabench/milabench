@@ -37,7 +37,7 @@ from .runs import canonical_model, drop_warmup, failed_operation, parse_extras, 
 from .select import NO_DATA_RUNS, UNFINISHED_JOB_STATES, mark_beside, mark_selection
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
-          "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load"]
+          "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
@@ -207,6 +207,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     for name, file in (("power_limits", "power_limits.tsv"), ("kernel_change", "before_after.tsv"), ("cap_load", "load_table.tsv")):
         path = raw / CLUSTER / "post-pstate" / file
         tables[name] = pd.read_csv(path, sep="\t") if path.exists() else pd.DataFrame()
+    path = raw / CLUSTER / "caps-cleared" / "load_table.tsv"  # same matmul load, once the administrators had cleared the caps
+    tables["cap_cleared"] = pd.read_csv(path, sep="\t") if path.exists() else pd.DataFrame()
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]

@@ -46,6 +46,8 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 ("trillium/hw/post-pstate/healthcheck_cpu_clocks.tsv", "post-pstate"),
                 ("trillium/hw/post-pstate/boot_checks.tsv", "post-pstate"),
                 ("trillium/hw/post-pstate/load_table.tsv", "post-pstate"),
+                ("trillium/hw/caps-cleared/load_table.tsv", "caps-cleared"),
+                ("trillium/hw/caps-cleared/healthcheck.tsv", "caps-cleared"),
                 ("trillium/hw/fp8-glm/summary.txt", "fp8-glm"),
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),

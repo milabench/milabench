@@ -38,7 +38,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriStartQLo","TriStartQHi","TriStartQMed","TriStartGLo","TriStartGHi","TriStartGMed","TriEnergyFsdp","TriEnergyHsdp","TriEnergyPp","TriEnergyGlm","TriPowerFsdp","TriPowerHsdp","TriPowerPp","TriPowerGlm",
           # Speed
           "TriQwenFpOne", "TriQwenFpTopNodes", "TriQwenFpTop", "TriQwenMemBf", "TriQwenMemMx", "TriQwenFpOneSpread", "TriQwenFpOneMean", "TriQwenFpTopMean", "TriStackedGain", "TriQwenFpFull", "TriQwenFullMem", "TriGlmFpTensor", "TriGlmFpBlock", "TriGlmFpMx",
-          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
+          "TriGlmMemTensor", "TriGlmMemBlock", "TriGlmMemMx", "TriGlmMemPctTensor", "TriGlmMemPctBlock", "TriGlmMemPctMx", "TriGlmMemBf", "TriGlmStepBf", "TriClearedNodes", "TriClearedPowerLo", "TriClearedPowerHi", "TriClearedTFlopsLo", "TriClearedTFlopsHi", "TriClearedCtlLo", "TriClearedCtlHi", "TriGlmFortyTok", "TriGlmFortyStep", "TriGlmFortyMem", "TriGlmFortyMfu", "TriGlmFortyAtoa", "TriGlmFortyAtoaPct", "TriGlmFortyEff", "TriCkGBigWSync", "TriCkGBigWSyncGBs", "TriCkGBigWBlocked", "TriCkGBigWTotal", "TriCkGBigWLoadLo", "TriCkGBigWLoadHi", "TriCkGBigWLoadPeakLo", "TriCkGBigWLoadPeakHi", "TriCkGBigWLoadGBsLo", "TriCkGBigWLoadGBsHi", "TriCkGBigFSync", "TriCkGBigFSyncGBs", "TriCkGBigFBlocked", "TriCkGBigFTotal", "TriCkGBigFLoadLo", "TriCkGBigFLoadHi", "TriCkGBigFLoadPeakLo", "TriCkGBigFLoadPeakHi", "TriCkGBigFLoadGBsLo", "TriCkGBigFLoadGBsHi", "TriCkGBigFSyncPeak", "TriCkGBigFAsyncPeak", "TriEnergyFpQ", "TriPowerFpQBf", "TriPowerFpQMx", "TriEnergyFpG", "TriPowerFpGBf", "TriPowerFpGMx", "TriGlmFpTopNodes", "TriGlmMemBfTop", "TriGlmFpTensorTop", "TriGlmFpTensorTopMean", "TriGlmMemTensorTop", "TriGlmMemPctTensorTop", "TriGlmFpBlockTop", "TriGlmFpBlockTopMean", "TriGlmMemBlockTop", "TriGlmMemPctBlockTop", "TriGlmFpMxTop", "TriGlmFpMxTopMean", "TriGlmMemMxTop", "TriGlmMemPctMxTop", "TriGlmLongStepBf", "TriGlmLongStepMx", "TriGlmLongFp", "TriGlmLongMemBf",
           # Checkpoints
           *[f"TriCkQ{n}{k}{e}" for n in ("One", "Thirteen", "Top", "Big") for k in ("Sync", "Load", "Async", "AsyncTotal", "PinTotal", "WSave", "WLoad") for e in ("Lo", "Hi")],
           "TriCkQBigSyncGBs", "TriCkQPinBlockedLo", "TriCkQPinBlockedHi", "TriCkQSizeFull", "TriCkQSizeW", "TriCkGWSyncLo", "TriCkGWSyncHi", "TriCkGWAsyncBlockedLo", "TriCkGWAsyncBlockedHi", "TriCkGWAsyncTotalLo", "TriCkGWAsyncTotalHi",
@@ -128,6 +128,15 @@ def _machine_numbers(t) -> dict[str, tuple]:
         out["TriCapControlPowerHi"] = (control.power_w_median.max(), ",.0f", False)
         out["TriCapFactor"] = (control.tflop_s.median() / capped.tflop_s.median(), ".1f", False)
         out["TriCapNodes"] = (capped.node.nunique(), "d", False)
+    cleared = t.get("cap_cleared", pd.DataFrame())
+    if len(cleared):
+        d = cleared[cleared.node != "trig0151"]  # trig0151 is the normal node run beside them
+        out["TriClearedNodes"] = (d.node.nunique(), "d", False)
+        out["TriClearedPowerLo"], out["TriClearedPowerHi"] = (d.power_w_median.min(), ",.0f", False), (d.power_w_median.max(), ",.0f", False)
+        out["TriClearedTFlopsLo"], out["TriClearedTFlopsHi"] = (d.tflop_s.min(), ",.0f", False), (d.tflop_s.max(), ",.0f", False)
+        ctl = cleared[cleared.node == "trig0151"]
+        if len(ctl):
+            out["TriClearedCtlLo"], out["TriClearedCtlHi"] = (ctl.tflop_s.min(), ",.0f", False), (ctl.tflop_s.max(), ",.0f", False)
     if len(steps) and len(runs) and "hosts" in runs:
         probe = runs[runs.campaign == "hw-probe"]
         mean = steps[steps.run_id.isin(probe.run_id)].groupby("run_id").step_s.mean()
@@ -901,7 +910,7 @@ def progress_table(t) -> str:
     from . import progress  # here, not at the top: progress imports select, and only this table needs it
 
     s = progress.summary(progress.table(t), t, Path("/nonexistent"))
-    lines = [r"\begin{tabular}{llll}", r"\toprule", r"Group & Done / planned on 43 nodes & 50+ nodes & What's left \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llll}", r"\toprule", r"Group & Done / planned on up to 48 nodes & 50+ nodes & What's left \\", r"\midrule"]
     for _, x in s.iterrows():
         lines.append(f"{_esc(x['Group'])} & {_esc(x['Done / planned'])} & {x['50+ nodes']} & " + r"\parbox[t]{7cm}{" + _esc(x["What's left"]) + "} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]

@@ -224,7 +224,7 @@ def machine_status(t):
         ax.axvspan(POS["trig0146"] - 0.5, POS["trig0146"] + 0.5, color=MUTED, alpha=0.3, lw=0, zorder=0)
     _subnet_axis(axes)
     _group_edge(axes)
-    axes[-1].set_xlabel("node, grouped by subnet; dashed: the two bandwidth groups; red: 200 W cap since about midnight on Nov 5; gray: out")
+    axes[-1].set_xlabel("node, grouped by subnet; dashed: the two bandwidth groups; red: 200 W cap from Nov 5, cleared Nov 6 except trig0145; gray: out")
     fig.tight_layout()
     return fig
 

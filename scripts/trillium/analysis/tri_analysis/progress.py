@@ -4,7 +4,7 @@ A point is a configuration at a node count; repetitions don't count. Done: a com
 failed, and the failure is the result (out of memory, too slow). The plan is DESIGN.md, the launchers (glm/10_ag.sh,
 20_bg.sh, 30_c.sh, 40_f1.sh), the Qwen agent's list for 26, 39 and 43 nodes ($SCRATCH/trillium/qwen/large/dry.sh) and the journal: since 00:28 on Nov 6
 GLM-5's full checkpoint goes to 39 nodes, the pp13-ep16 26-node fallback only if that load fails. Network goes up to 52
-as the design has it. Points that need 50 or more nodes count apart: they wait for the 200 W caps to clear. User, Nov 6:
+as the design has it. Points that need more nodes than usable count apart: since the caps cleared on Nov 6, they wait for nodes to return. User, Nov 6:
 tests for which 39 nodes would be a compromise (D2-D4 above 25 nodes, the long runs) come after all the others, then run
 at full scale, or at 39 if fewer than 50 nodes are usable by then. So they count at 52 here.
 """
@@ -19,14 +19,14 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 43  # usable nodes today; a point above this waits for the caps
+TOP_NOW = 48  # usable nodes today, 45 without the slow ones; a point above this waits for trig0140, trig0145, trig0122 or trig0146
 FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": "qwen_layouts, qwen_levers, step_decomposition", "Qwen weak scaling": "qwen_scaling",
            "Qwen strong scaling": "qwen_scaling", "GLM-5 layouts": "glm_layouts", "GLM-5 scaling": "glm_scaling",
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
-LEFT_NOTE = {"Network (D2-D4)": "above 25 nodes, last of all: at 52 if the caps clear, at 39 if nothing else is left and they have not",
-             "Long run": "Qwen and GLM-5, at least 1 h each, last of all: at 50+ nodes if the caps clear, at 39 if nothing else is left and they have not"}
+LEFT_NOTE = {"Network (D2-D4)": "above 25 nodes, last of all: at 52 if the nodes return, at fewer if nothing else is left and they have not",
+             "Long run": "Qwen and GLM-5, at least 1 h each, last of all: at 50+ nodes if they return, at fewer if nothing else is left and they have not"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),

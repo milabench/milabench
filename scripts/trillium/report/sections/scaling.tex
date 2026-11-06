@@ -21,7 +21,7 @@ In weak scaling the work per GPU is fixed, so perfect scaling is a flat line of 
 
 \textbf{With the slow nodes.} One \texttt{fsdp} run used all \TriSlowRunNodes{} usable nodes, including the 3 slow ones of \cref{sec:machine}: \TriSlowRunTok{} tokens/s per GPU, \TriSlowRunEff\,\% of 1 node, with a median step of \TriSlowRunStep\,s, \TriSlowRunPct\,\% against 39 clean nodes. It is labelled in \cref{fig:qwen_scaling} and left out of the efficiency above. It adds 4 nodes as well as the 3 slow ones, so that one run cannot separate the two. It costs less than the +\TriSlowThirteenPct\,\% seen at 13 nodes with one slow node; we do not know why.
 
-\textbf{Still to come:} 50 nodes if the caps clear.
+\textbf{Still to come:} 50 nodes if two more nodes return.
 
 \paragraph{GLM-5, answer so far.} Model copies scale. With 32 micro-batches per data-parallel rank, \texttt{pp13-ep8} reaches \TriGlmThirteenTok{} tokens/s per GPU with 1 copy, \TriGlmWeakTwoTok{} with 2 (\TriGlmCopiesEffTwo\,\%) and \TriGlmWeakThreeTok{} with 3 (\TriGlmCopiesEff\,\% of one copy, \TriGlmCopiesEffFromTwo\,\% of two; \cref{fig:glm_scaling}). Steps take \TriGlmThirteenStep, \TriGlmWeakTwoStep{} and \TriGlmWeakThreeStep\,s. There is no one-off drop from 1 to 2 copies. The 3-copy run is the first GLM-5 run across the bandwidth groups, and expert all-to-all stays at \TriGlmWeakThreeAtoa\,s, since its groups stay inside a node.
 
@@ -37,4 +37,4 @@ In weak scaling the work per GPU is fixed, so perfect scaling is a flat line of 
   \label{fig:glm_scaling}
 \end{figure}
 
-\textbf{Still to come:} 4 copies need 52 nodes, only if the caps clear.
+\textbf{Still to come:} 4 copies need 52 nodes, so all of \texttt{trig0122}, \texttt{0140}, \texttt{0145} and \texttt{0146} back.
