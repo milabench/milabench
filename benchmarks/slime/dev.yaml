@@ -337,6 +337,35 @@ slime-qwen3-30b-a3b-sft-routing:
     <<: *sft_argv
     --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
 
+# GRPO, colocated: the trainer (TP4 x EP8, DP=2) and one SGLang engine of 8 GPUs take turns on the node. slime's
+# scripts/run-qwen3-30B-A3B.sh (DAPO-Math-17k, deepscaler rule-based reward, the GLM-5 entry's GRPO flags) with
+# 4k-token responses instead of 128k, no eval, and the attention / sampling backends of the validated GRPO entries.
+slime-qwen3-30b-a3b-grpo:
+  inherits: _qwen3_30b_a3b
+  tags: [rl]
+  dataset: dapo-math-17k
+  argv:
+    <<: *grpo_argv
+    --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --rollout-batch-size: 32
+    --n-samples-per-prompt: 8
+    --global-batch-size: 256
+    --balance-data: true
+    --rollout-max-response-len: 4096
+    --use-score-centering: true
+    --pg-loss-type: reinforce
+    --use-tis: true
+    --tis-clip: 2
+    --disable-grpo-std-normalization: true
+    --calculate-per-token-loss: true
+    --use-rollout-routing-replay: true
+    --log-probs-chunk-size: 1024
+    --max-tokens-per-gpu: 20480
+    --rollout-num-gpus-per-engine: 8
+    --sglang-mem-fraction-static: 0.7
+    --sglang-attention-backend: triton
+    --sglang-sampling-backend: pytorch
+
 # --- Real run: GLM-5.3 (744B-A40B MoE) ---
 # Architecture flags follow slime's scripts/models/glm5.2-744B-A40B.sh (rotary base 8M: the original
 # zai-org/GLM-5 has 1M and slime's hf_validate_args rejects the mix). Parallelism follows
