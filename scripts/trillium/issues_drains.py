@@ -41,7 +41,8 @@ NOT_IN_SLURM = [
     ("trig0138", "2026-11-06T19:31:31", None, False, "draining", "health.chk.gpu.ecc.error", "root", "journal 11-06 19:40"),
     ("trig0134", "2026-11-06T21:21:27", None, False, "draining", STEPD, "root", "journal 11-06 22:20"),
     ("trig0122", "2026-11-06T21:56:31", None, False, "draining", STEPD, "root", "journal 11-06 22:20"),
-    ("trig0136", "2026-11-06T22:31:31", "2026-11-06T23:33:37", True, "draining", STEPD, "root", "journal 11-06 22:40, gone from node_states.log"),
+    ("trig0136", "2026-11-06T22:31:31", "2026-11-06T23:33:37", True, "draining", STEPD, "not read", "journal 11-06 22:40, gone from node_states.log"),
+    ("trig0136", "2026-11-07T00:05:33", "2026-11-07T02:49:51", True, "draining", STEPD, "not read", "journal 11-07 00:35, gone from node_states.log"),
 ]
 
 # First match wins: (node regex, reason regex, start regex, text). Say who says it: measured, admin statement, inferred.
@@ -153,7 +154,8 @@ def add(events, new):
             e.start, e.start_by = (e.start, e.start_by) if e.start <= new.start else (new.start, new.start_by)
             if new.end and (not e.end or e.end_by or not new.end_by):
                 e.end, e.end_by = new.end, new.end_by
-            e.ongoing = e.ongoing or new.ongoing
+            if new.ongoing:
+                e.ongoing, e.state = True, new.state
             e.who = e.who or new.who
             e.source += [s for s in new.source if s not in e.source]
             return
