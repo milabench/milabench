@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import traceback
 from contextlib import contextmanager
@@ -122,10 +123,15 @@ async def execute_command(
     max_delay = timeout_delay
 
     with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+        # once for all packs: its fields come from this host and the packs' shared venv. Per pack (one per node) it
+        # took ~12.5 s each, one after the other, before any process started: 666 s at 50 nodes (Trillium job 1256251)
+        meta = None
         for pack, argv, _kwargs in command.commands():
             await pack.send(event="config", data=pack.config)
 
-            meta_info = machine_metadata(pack)
+            if meta is None:
+                meta = machine_metadata(pack)
+            meta_info = {**meta, "date": datetime.datetime.utcnow().timestamp()}
             meta_info["overrides"] = overrides_snapshot()
 
             await pack.send(event="meta", data=meta_info)
