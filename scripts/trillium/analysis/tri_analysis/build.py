@@ -28,7 +28,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from tt_analysis.monitor import parse_nodemon
 from tt_analysis.runs import data_files, parse_run
 
 from .fabric import parse_collectives, parse_health, parse_pairs
@@ -41,10 +40,7 @@ TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "no
           "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
-FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept row by row
-# ... and the metrics kept from it (stability, stragglers).
-MONITOR_METRICS = {"sm_clock_mhz", "clocks_event_reasons", "power_w", "util_mean", "tensor_util",
-                   "cpu_mhz_busy_mean"}
+FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept per GPU and minute (gpu_monitor: stability)
 
 
 # Settings that make two runs the same configuration (for replacing synthetic runs by measured ones). The seed
@@ -92,6 +88,31 @@ def _node_telemetry(d: Path, run: dict, is_syn: bool) -> list[dict]:
                 row.update(cpu_mhz=c.cpu_mhz_busy_mean.mean(), cpu_low_share=(c.cpu_mhz_busy_mean < 500).mean())
         rows.append(row)
     return rows
+
+
+def _monitor_minutes(d: Path, run: dict, is_syn: bool) -> pd.DataFrame:
+    """Long runs (FULL_TELEMETRY): each GPU's mean per minute of SM clock, power and activity, and each node's CPU clock,
+    in minutes from the start of the measurement. Read column by column as in _node_telemetry: the 1 s samples of one
+    49-node hour, parsed whole and kept row by row, took the build to 19 GB."""
+    t0 = run.get("measure_start") or 0
+    out = []
+    for path in sorted((d / "nodes").glob("*.gpu.tsv")):
+        host = path.name.split(".")[0]
+        frames = [(pd.read_csv(path, sep="\t", usecols=lambda c: c in GPU_COLUMNS), ["gpu"])]
+        cpu_path = path.with_name(f"{host}.cpu.tsv")
+        if cpu_path.exists():
+            frames.append((pd.read_csv(cpu_path, sep="\t", usecols=lambda c: c in CPU_COLUMNS), []))
+        for f, keys in frames:
+            f = f.assign(time=f.time_ms / 1000).drop(columns="time_ms")
+            f["minute"] = ((f.time - t0) // 60).astype(int)
+            metrics = [c for c in f.columns if c not in ("gpu", "minute", "time")]
+            m = f.groupby([*keys, "minute"]).mean().reset_index().melt(id_vars=[*keys, "minute", "time"], value_vars=metrics,
+                                                                        var_name="metric")
+            out.append(m.assign(host=host))
+    if not out:
+        return pd.DataFrame()
+    m = pd.concat(out, ignore_index=True).drop(columns="minute")
+    return m.assign(cluster=CLUSTER, source=run["run_name"], synthetic=is_syn).dropna(subset=["value"])
 
 
 def _power(nodes: list[dict], run: dict) -> dict:
@@ -200,8 +221,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                     rows["node_telemetry"] += nodes
                     rows["run_power"].append(_power(nodes, run))
                 if run.get("experiment") in FULL_TELEMETRY:
-                    mon = parse_nodemon(d, CLUSTER, synthetic=is_syn)
-                    rows["gpu_monitor"].append(mon[mon.metric.isin(MONITOR_METRICS)].drop(columns="text"))
+                    rows["gpu_monitor"].append(_monitor_minutes(d, run, is_syn))
 
     tables = {name: pd.DataFrame(r) for name, r in rows.items() if name != "gpu_monitor"}
     # The hardware agent's readings and rerun table (hw/post-pstate): the machine block's sources, copied as they are.
