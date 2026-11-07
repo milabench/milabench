@@ -31,6 +31,9 @@ from milabench.pack import Package, install_benchmate
 # the same day as the TorchTitan commit (2026-10-05, requirements.toml).
 TORCH_NIGHTLY = "torch==2.15.0.dev20261005+cu130"
 TORCH_NIGHTLY_INDEX = "https://download.pytorch.org/whl/nightly/cu130"
+# MXFP8 linears (precision: mxfp8) need torchao's 32x32 swizzled cast kernels,
+# which are in no release up to 0.18: the nightly of the same day, same index.
+TORCHAO_NIGHTLY = "torchao==0.19.0.dev20261005+cu130"
 
 
 def default_cache_dir() -> str:
@@ -98,7 +101,9 @@ class TorchtitanNative(Package):
         # first (torchtitan's git build needs setuptools).
         deps = load_benchmark_requirements(self.dirs.code).get_dependencies("cuda")
         await self.pip_install("setuptools", "wheel", build_isolation=True)
-        await self.pip_install("--extra-index-url", TORCH_NIGHTLY_INDEX, TORCH_NIGHTLY, *deps)
+        await self.pip_install(
+            "--extra-index-url", TORCH_NIGHTLY_INDEX, TORCH_NIGHTLY, TORCHAO_NIGHTLY, *deps
+        )
         await install_benchmate(self)
 
     def make_env(self):

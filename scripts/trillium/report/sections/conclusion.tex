@@ -1,0 +1,16 @@
+\section{Conclusions so far}
+\label{sec:conclusion}
+
+The campaign is not finished: the runs at 39 nodes and above are coming in, and each answer below may move with them.
+
+\begin{itemize}[leftmargin=*, itemsep=2pt]
+  \item \textbf{The machine.} Of 52 nodes, 43 were usable and 40 clean until November~6; all 52 passed that afternoon; that evening one stopped responding and the site's check took another out for corrected GPU memory errors. Eight had GPUs at 200\,W, which holds a whole job back to about a ninth of its speed; the administrators cleared them, and this should be checked before a job starts. Every node but one drops its CPU clocks under high GPU power, and three spent about \TriProbeSlowRatio{} times as long at low clocks until the administrators changed their power supply mode. The cause of the drops on the others is unknown.
+  \item \textbf{The fabric.} Two bandwidth groups, 45--47\,GB/s across against 63--67 within, on the four GPUs that share a switch with a port. Collectives hold to \TriNetInsideTop{} nodes, with no clear gain from staying inside a group; all-to-all is far lower. Nothing is measured above \TriNetInsideTop{} nodes yet: those tests come after all the others.
+  \item \textbf{Side by side.} 13-node Qwen FSDP jobs do not slow each other (\TriInterferencePct\,\%). One job beside a pipeline job did, once.
+  \item \textbf{Qwen.} 24k tokens per GPU, \texttt{fsdp} or \texttt{hsdp8}, selective recompute. Above that, memory or padding limits it; TP and PP cost throughput. \texttt{fsdp} holds \TriWeakFEffOne\,\% of its 1-node throughput at \TriWeakFTop{} nodes.
+  \item \textbf{GLM-5.} Expert groups inside a node, full recompute. \TriGlmCopiesTop{} copies reach \TriGlmCopiesEff\,\% of the throughput per GPU of one; memory per GPU falls with copies.
+  \item \textbf{Precision.} MXFP8 buys a few percent, up to $\times$\TriQwenFpTop, because matrix multiplies are a small part of the step. Whether it trains the same is not settled: on Qwen it depends on the seed over 500 steps, and on GLM-5 MXFP8 ends within about 0.01 of two BF16 runs on its own nodes, while BF16 at one seed ends about 0.25 apart on two sets of nodes. A longer run is the test to do.
+  \item \textbf{Checkpoints.} Cheap on Qwen; a full GLM-5 checkpoint saves in one to two minutes, does not load on one \texttt{pp13-ep8} copy, and loads at 39 nodes on three.
+\end{itemize}
+
+\placeholder{final answers and recommendations once the runs above 26 nodes are in.}

@@ -1,0 +1,48 @@
+\section{Health and network}
+\label{sec:network}
+
+\begin{question}
+  \textbf{Are all GPUs and links alike, and does the fabric have a structure?} Do all GPUs deliver the same rate? Does every node reach its NVLink and network bandwidth? Do some node pairs
+  communicate faster than others? Does collective bandwidth hold as nodes are added?
+\end{question}
+
+\paragraph{Answer.} Apart from the nodes capped for part of the campaign (\cref{sec:machine}) and \texttt{trig0122} before its firmware update, GPUs and links are alike. The fabric does have a structure: two bandwidth groups, \texttt{trig0101--0128} and \texttt{trig0129--0152}. Collectives hold up to \TriNetInsideTop{} nodes, the largest we measured. All of this stops there, because the first sweeps ran when jobs were limited to 25 nodes and only one 26-node ladder came later: \textbf{we have no direct network measurement above \TriNetInsideTop{} nodes yet}. The plan goes to 52 nodes (\cref{app:plan}). D2, D3 and D4 run at 52 nodes once \texttt{trig0135} is back, or last at the largest scale available; the bisection test (D4) has not run at all.
+
+\paragraph{GPUs (D1).} A health check ran on \TriNodesChecked{} nodes on November~4 and \TriNodesCheckedAfter{} nodes after the kernel change; the second round includes the capped nodes once cleared, and \cref{sec:machine} treats them separately. The check we had has no matmul or per-network-port test, so the design's BF16 and FP8 matmul strips were not measured. Instead \cref{fig:health_gpus} shows DCGM's diagnostic rate, FP16, which reads \TriDcgmHi{} or \TriDcgmLo\,TFLOP/s on every GPU: it takes only a few distinct values, so it can show a large outlier, not a small one. There were \TriDcgmFailed{} failed DCGM tests.
+Before the kernel change, GPUs~6 and~7 of the first node sets have no rate logged: that is the tool's truncated log, not a result.
+The tool's own verdict is ``fail'' on every node: it was written for H100 nodes (it requires 200\,Gb/s on ports that run at 100\,Gb/s here, and flags the clock drop), so the verdict does not separate nodes and we do not use it. \texttt{trig0109}'s GPU~7 shows 177,903 corrected ECC errors and 2 remapped rows, unchanged over two runs and with no errors under load; the node stayed in use.
+
+\begin{figure}[h]
+  \centering\fig{health_gpus}
+  \caption{DCGM diagnostic rate (FP16) of every GPU, before and after the kernel change, nodes grouped by \texttt{/etc/hosts} subnet. Dotted line: 5\,\% below the median. The rate takes few values, so most points overlap. \syntheticnote{health_gpus}}
+  \label{fig:health_gpus}
+\end{figure}
+
+\paragraph{Links (D1).} \Cref{fig:health_links} shows NCCL all-reduce per node: medians of \TriIntra\,GB/s within a node, \TriPairBus\,GB/s with a partner node, \TriLoopback\,GB/s through the node's network ports and back. One node stands out. \texttt{trig0122}'s pairs reach \TriPairBusLo--\TriPairBusLoHi\,GB/s, against \TriPairBus; its \texttt{mlx5\_1} runs older firmware than every other node's. Hence its exclusion until the update is confirmed, and a health check after it. Four ports (\texttt{mlx5\_5--8}) run at 100\,Gb/s on all nodes; NCCL uses \texttt{mlx5\_0}, \texttt{1}, \texttt{4} and \texttt{9} at 400\,Gb/s each, 1,600\,Gb/s per node, not the 800\,Gb/s first quoted.
+
+\begin{figure}[h]
+  \centering\fig{health_links}
+  \caption{NCCL all-reduce per node: within the node (top), with a partner node (middle), through the node's network ports (bottom), before and after the kernel change. Solid line: median. \syntheticnote{health_links}}
+  \label{fig:health_links}
+\end{figure}
+
+\paragraph{Pairs (D2).} We measured \TriPairsMeasured{} node pairs, in two jobs of 25 nodes, on GPUs 0, 2, 4 and 6 (each shares a PCIe switch with a network port; the other four do not). The planned sweep of all pairs at once was not possible under the job limit, so 625 pairs across the two sets are unmeasured (white in \cref{fig:pair_matrix}). Two groups appear with no exception: within a group \TriPairWithinLo--\TriPairWithinHi\,GB/s, across \TriPairAcrossLo--\TriPairAcrossHi\,GB/s. Latency shows no groups (median \TriPairLat\,\textmu s). The groups do not follow the \texttt{/etc/hosts} subnets; the physical layout is unknown.
+So placement matters in principle; \cref{sec:interference} gives what we measured of its effect, and every run above 28 nodes crosses the groups.
+
+\begin{figure}[h]
+  \centering\fig{pair_matrix}
+  \caption{Pairwise bandwidth (left) and latency (right), both directions at once, nodes in host order; white lines: subnets; dashed lines: the two bandwidth groups; white cells: not measured. \syntheticnote{pair_matrix}}
+  \label{fig:pair_matrix}
+\end{figure}
+
+\textbf{Send and receive against job size.} Point-to-point traffic is far below the collectives' numbers, and depends on the job's size. On all 8 GPUs, a pair exchanges about 45\,GB/s per node in jobs of 2--4 nodes and \TriPairAllGpus\,GB/s in jobs from 13 nodes (bring-up tests, and a sweep over one 25-node set). On GPUs 0, 2, 4 and 6 alone: 148--163\,GB/s on 2--4 nodes, and about 64 within a group from 13 nodes. The drop comes with the job's size, not with traffic, and its cause is unknown. It may affect pipeline stages and expert parallelism across nodes (\cref{sec:layouts}).
+
+\paragraph{Collectives (D3).} NCCL with 1\,GiB messages at 1, 2, 4, 8, 13 and \TriNetTop{} nodes, with a size sweep at 2 and \TriNetTop{} nodes (\cref{fig:collectives_scale}). All-gather and reduce-scatter hold \TriGatherLo--\TriGatherHi\,GB/s per node from 2 to \TriNetTop{} nodes, close to the 200\,GB/s of 1,600\,Gb/s. All-reduce holds \TriAllReduceLo--\TriAllReduceHi\,GB/s from 4 nodes. All-to-all is far lower: \TriAlltoallTwo\,GB/s at 2 nodes and \TriAlltoallFull\,GB/s at \TriNetTop. The bisection test (D4) needs two halves of the machine and did not run.
+
+\textbf{Inside one group.} A second ladder ran on November~6, with the same scripts, up to \TriNetInsideTop{} nodes, all inside \texttt{trig0101--0128}; the first crosses the groups from 8 nodes up, on other nodes. At \TriNetInsideTop{} nodes all-gather, reduce-scatter and all-reduce read \TriInGather, \TriInScatter{} and \TriInReduce\,GB/s, against \TriCrossGather, \TriCrossScatter{} and \TriCrossReduce{} at \TriNetTop{} across the groups, and all-to-all \TriInAlltoall{} against \TriAlltoallFull. At 13 nodes they read \TriInThirteenLo--\TriInThirteenHi\,\% higher inside a group. So collectives show no clear gain from staying inside a group, unlike the pair test. That is one run of each on different nodes, and a 13-node GLM-5 job was running in the other group during the second, with its traffic unknown.
+
+\begin{figure}[h]
+  \centering\fig{collectives_scale}
+  \caption{Left: bus bandwidth vs.\ nodes (1\,GiB messages), one line per collective, with the 1,600\,Gb/s of a node and its share per GPU. Open markers: the second ladder, inside one bandwidth group. Right: bus bandwidth vs.\ message size at 2 and \TriNetTop{} nodes, first ladder. \syntheticnote{collectives_scale}}
+  \label{fig:collectives_scale}
+\end{figure}

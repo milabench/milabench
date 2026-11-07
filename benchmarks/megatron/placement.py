@@ -17,7 +17,9 @@ Config (``placement:`` in the bench entry)::
       nodes: as-is | sorted | topology | [explicit, node, list]
       order: tp-cp-ep-dp-pp | tp-cp-ep-pp-dp
       topology: {node-name: switch-or-rack}   # optional, else node["switch"], else `scontrol show topology`
-      gpus_per_node: 4
+      gpus_per_node: 4                        # required: 4 on Rorqual (H100), 8 on Trillium (B200)
+
+``check_layout`` checks a (world, PP, EP, batch) combination against Megatron's rules before launch.
 """
 
 from __future__ import annotations
@@ -25,9 +27,18 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import warnings
 from collections import OrderedDict, defaultdict
 
 ORDERS = ("tp-cp-ep-dp-pp", "tp-cp-ep-pp-dp")
+
+
+def gpus_per_node(placement: dict) -> int:
+    """``placement.gpus_per_node``, required: the rank -> node mapping and the layout checks depend on it."""
+    gpus = (placement or {}).get("gpus_per_node")
+    if not gpus:
+        raise ValueError("placement.gpus_per_node is not set (4 on Rorqual, 8 on Trillium)")
+    return int(gpus)
 
 
 # --- switch discovery --------------------------------------------------------------------------------------------
@@ -290,9 +301,28 @@ def layout_sizes(world: int, tp: int, pp: int, cp: int, ep: int, etp: int | None
     return dense, expert
 
 
+def check_layout(world: int, pp: int, ep: int, gbs: int, mbs: int = 1, tp: int = 1, cp: int = 1,
+                 etp: int | None = None) -> dict:
+    """Raise ValueError if Megatron would refuse the layout (or the batch), else return its sizes.
+
+    Rules (TP x CP x PP divides the world; EP is carved from the data-parallel ranks of one stage, so ETP x EP x PP
+    divides it too; the global batch is a whole number of micro-batches per data-parallel rank). Warns when a pipeline
+    gets fewer micro-batches than it has stages (most of the step is bubble).
+    ``copies`` = expert data-parallel size: how many full copies of the model (PP x EP x ETP GPUs each) the world holds."""
+    dense, expert = layout_sizes(world, tp, pp, cp, ep, etp)
+    dp = dense["dp"]
+    if gbs % (dp * mbs):
+        raise ValueError(f"global batch {gbs} is not divisible by data parallel {dp} x micro-batch {mbs}")
+    microbatches = gbs // (dp * mbs)
+    if microbatches < pp:
+        warnings.warn(f"{microbatches} micro-batches per pipeline for {pp} stages: the pipeline is never full")
+    return {"world": world, "tp": tp, "cp": cp, "pp": pp, "ep": ep, "dp": dp, "expert_dp": expert["dp"],
+            "copies": expert["dp"], "microbatches_per_pipeline": microbatches}
+
+
 def describe(nodes: list[dict], placement: dict, tp: int, pp: int, cp: int, ep: int, etp: int | None = None) -> dict:
     """Per parallel group: how many groups span more than one node / switch, and the widest one."""
-    gpus = int(placement.get("gpus_per_node", 4))
+    gpus = gpus_per_node(placement)
     order = placement.get("order", ORDERS[0])
     if order not in ORDERS:
         raise ValueError(f"placement.order must be one of {ORDERS}")
@@ -360,7 +390,7 @@ def format_layout(nodes: list[dict], placement: dict, tp: int, pp: int, cp: int,
         node        switch  | gpu0                | gpu1                | ...
         rc10101     leaf0   | r0   pp0 dp0 ep0    | r1   pp0 dp1 ep1    | ...
     """
-    gpus = int(placement.get("gpus_per_node", 4))
+    gpus = gpus_per_node(placement)
     order = placement.get("order", ORDERS[0])
     dense, expert = layout_sizes(len(nodes) * gpus, tp, pp, cp, ep, etp)
     switches = switch_map(nodes, placement)
@@ -387,11 +417,17 @@ def format_layout(nodes: list[dict], placement: dict, tp: int, pp: int, cp: int,
 def _cli(argv=None):
     import argparse
 
-    p = argparse.ArgumentParser(description="Node lists (aligned / crossed / mixed / leaf) and their crossing counts")
+    p = argparse.ArgumentParser(description="Node lists (aligned / crossed / mixed / leaf) and their crossing counts; "
+                                            "with --pp, the layout check and the rank groups of that layout instead")
     p.add_argument("--hosts", required=True, help="healthy full-GPU nodes, Slurm hostlist syntax; the first is the main node")
     p.add_argument("--topology-file", help="`scontrol show topology` output (default: run scontrol)")
     p.add_argument("--group-nodes", type=int, default=2, help="nodes per expert group (EP size / GPUs per node)")
     p.add_argument("--mixed-swaps", type=int, default=3)
+    p.add_argument("--gpus-per-node", type=int, help="required with --pp (4 on Rorqual, 8 on Trillium)")
+    p.add_argument("--pp", type=int, help="check this layout on the hosts (with --ep, --gbs, --mbs)")
+    p.add_argument("--ep", type=int, default=1)
+    p.add_argument("--gbs", type=int, help="global batch (sequences)")
+    p.add_argument("--mbs", type=int, default=1)
     args = p.parse_args(argv)
 
     hosts = expand_hostlist(args.hosts)
@@ -403,6 +439,15 @@ def _cli(argv=None):
         topo = slurm_topology()
     placement = {"topology": {h: topo.get(h, "unknown") for h in hosts}, "group_nodes": args.group_nodes,
                  "mixed_swaps": args.mixed_swaps}
+    if args.pp:
+        if not args.gpus_per_node or not args.gbs:
+            p.error("--pp needs --gpus-per-node and --gbs")
+        placement["gpus_per_node"] = args.gpus_per_node
+        sizes = check_layout(len(hosts) * args.gpus_per_node, args.pp, args.ep, args.gbs, args.mbs)
+        print(" ".join(f"{k}={v}" for k, v in sizes.items()))
+        print(format_report(describe(nodes, placement, tp=1, pp=args.pp, cp=1, ep=args.ep)))
+        print(format_layout(nodes, placement, tp=1, pp=args.pp, cp=1, ep=args.ep))
+        return
     result = plan(nodes, placement)
     for name, r in result.items():
         if "error" in r:

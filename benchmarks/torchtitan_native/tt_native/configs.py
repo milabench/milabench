@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, fields
 from typing import Literal
 
+import torch
 from torchtitan.components.data import (
     ConcatThenSplitPackingConfig,
     SingleDatasetConfig,
@@ -40,7 +42,7 @@ from .data import (
     PooledGrainDataLoader,
     RandomTokenDataLoader,
 )
-from .layout import patch_fsdp_placements, use_row_stacked_linears
+from .layout import patch_fsdp_placements, patch_tp_sharding, use_row_stacked_linears
 from torchtitan.trainer import Trainer
 
 from . import instrument
@@ -51,6 +53,27 @@ CompileMode = Literal["eager", "regions", "regions+graphs"]
 ACMode = Literal["none", "selective", "full"]
 Dataset = Literal["fineweb", "random"]
 StackedLayout = Literal["rows", "torchtitan"]
+Precision = Literal["bf16", "mxfp8"]
+CheckpointContent = Literal["off", "full", "model"]
+CheckpointAsync = Literal["disabled", "async", "async_with_pinned_mem"]
+
+# Linears converted to MXFP8 (FQN substrings). Not in_proj_a / in_proj_b (48
+# outputs, not a multiple of the 32-wide MXFP8 blocks; a tiny share of the
+# FLOPs), not the LM head. feed_forward.w13 only with the torchtitan stacked
+# layout: MXFP8Linear needs [N, F, D] weights (rows stores [F, N, D]).
+MXFP8_TARGETS = (
+    "attention.wq",
+    "attention.wk",
+    "attention.wv",
+    "attention.wo",
+    "delta_net.in_proj_q",
+    "delta_net.in_proj_k",
+    "delta_net.in_proj_v",
+    "delta_net.in_proj_z",
+    "delta_net.out_proj",
+    "feed_forward.w13",
+    "feed_forward.w2",
+)
 
 
 @dataclass(kw_only=True)
@@ -84,11 +107,40 @@ class Options:
     # Performance
     compile: CompileMode = "regions+graphs"
     ac: ACMode = "selective"
-    dp_replicate: int = 1
-    tp: int = 1
+    sac_save_scaled_mm: bool = False
+    """Selective AC also saves every ``_scaled_mm_v2`` output (Trillium C-speed test)."""
+    precision: Precision = "bf16"
+    """``mxfp8``: MXFP8 linears (MXFP8_TARGETS, B200 / sm_100 only)."""
+    grad_reduce: Literal["fp32", "bf16"] = "fp32"
+    """Gradient reduce-scatter / all-reduce dtype (FSDP mixed precision)."""
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
     adam_moments: Literal["fp32", "bf16"] = "fp32"
     """AdamW moment dtype. bf16 saves 4 B/param (low-memory fallback)."""
+
+    # Parallelism. ``layout`` names a layout and sets the degrees below:
+    # ``fsdp`` (all GPUs), ``hsdp<k>`` (shard over k GPUs, replicate across),
+    # ``tp<k>-fsdp``, ``pp<k>-fsdp``. The replicate degree of ``dp_shard > 0`` is
+    # derived from the world size (entries do not know the node count).
+    layout: str | None = None
+    dp_replicate: int = 1
+    dp_shard: int = -1
+    tp: int = 1
+    pp: int = 1
+    pp_schedule: str = "1F1B"
+    pp_microbatches: int | None = None
+    """Pipeline microbatches per step and DP rank (default: ``pp``). Each has
+    ``microbatch_sequences`` sequences."""
+    pp_layers_per_stage: int | None = None
+
+    # Checkpoint save / load timing, after the measurement (tt_native/checkpoint.py).
+    checkpoint: CheckpointContent = "off"
+    """``full``: model + optimizer + data loader state; ``model``: weights only (bf16)."""
+    checkpoint_async: CheckpointAsync = "disabled"
+    checkpoint_dir: str | None = None
+    """Default: ``$TT_CKPT_ROOT/<milabench run name>``. Must not exist."""
+    checkpoint_repeats: int = 1
+    checkpoint_timeout_seconds: int = 1800
+    """Process-group timeout while saving / loading (training uses train_timeout_seconds)."""
 
     # Distributed timeouts. init covers process-group setup, model init and the
     # first step (compilation, CUDA graph capture); train covers later steps.
@@ -132,11 +184,75 @@ def _model_config(opts: Options):
     if opts.compile == "eager":
         model.local_compile_regions = []
     if opts.stacked_layout == "rows":
-        if opts.tp > 1:
-            raise ValueError("stacked_layout=rows does not support tensor parallelism")
         use_row_stacked_linears(model)
         patch_fsdp_placements()
+        patch_tp_sharding()
+    if opts.precision == "mxfp8":
+        model = _mxfp8(model, opts)
     return model
+
+
+def _mxfp8(model, opts: Options):
+    """Convert MXFP8_TARGETS to MXFP8Linear (after truncation and the row layout).
+
+    Without sm_100 or the torchao kernels the run must still record its
+    ``run_start``: the error is deferred to the trainer start
+    (``instrument.FATAL``) and the model is left in BF16.
+    """
+    from torchtitan.models.common.linear import Linear
+    from torchtitan.quantization import MXFP8Linear
+
+    targets = [
+        t for t in MXFP8_TARGETS if not (opts.stacked_layout == "rows" and t == "feed_forward.w13")
+    ]
+    try:
+        from torchtitan.config.transform.quantization import MXFP8LinearConverter
+
+        converter = MXFP8LinearConverter.Config(fqns=targets).build()
+        # Conversion errors too (e.g. a dimension not a multiple of 32) are
+        # raised after run_start; the run fails then, whatever the model holds.
+        model = converter.convert(model)
+    except (ImportError, ValueError, TypeError, RuntimeError) as exc:
+        gpu = "no GPU"
+        if torch.cuda.is_available():
+            gpu = "GPU sm_{}{}".format(*torch.cuda.get_device_capability())
+        instrument.FATAL = f"precision=mxfp8 unavailable ({gpu}): {exc}"
+        return model
+    instrument.RUN_DESCRIPTION["mxfp8_targets"] = targets
+    instrument.RUN_DESCRIPTION["quantized_linears"] = sum(
+        isinstance(cfg, MXFP8Linear.Config) for _, cfg, _, _ in model.traverse(Linear.Config)
+    )
+    return model
+
+
+def parallel_degrees(opts: Options, world_size: int) -> dict[str, int | str]:
+    """Degrees of ``opts.layout`` (or of the explicit options) for ``world_size`` GPUs."""
+    tp, pp, dp_shard, dp_replicate = opts.tp, opts.pp, opts.dp_shard, opts.dp_replicate
+    layout = opts.layout
+    if layout is not None:
+        match = re.fullmatch(r"fsdp|hsdp(\d+)|tp(\d+)-fsdp|pp(\d+)-fsdp", layout)
+        if match is None:
+            raise ValueError(f"unknown layout {layout!r}: fsdp, hsdp<k>, tp<k>-fsdp, pp<k>-fsdp")
+        hsdp, tp_k, pp_k = (int(g) if g else None for g in match.groups())
+        if (hsdp and dp_shard not in (-1, hsdp)) or (tp_k and tp not in (1, tp_k)) or (
+            pp_k and pp not in (1, pp_k)
+        ):
+            raise ValueError(f"layout={layout} conflicts with dp_shard/tp/pp options")
+        dp_shard, tp, pp = hsdp or dp_shard, tp_k or tp, pp_k or pp
+    if dp_shard > 0:
+        if world_size % (dp_shard * tp * pp):
+            raise ValueError(
+                f"{world_size} GPUs do not split into dp_shard={dp_shard} x tp={tp} x pp={pp}"
+            )
+        dp_replicate = world_size // (dp_shard * tp * pp)
+    if layout is None:
+        shard = world_size // (dp_replicate * tp * pp)
+        layout = "-".join(
+            [f"tp{tp}"] * (tp > 1)
+            + [f"pp{pp}"] * (pp > 1)
+            + [f"hsdp{shard}" if dp_replicate > 1 else "fsdp"]
+        )
+    return {"layout": layout, "dp_replicate": dp_replicate, "dp_shard": dp_shard, "tp": tp, "pp": pp}
 
 
 def _not_none(sample) -> bool:
@@ -181,26 +297,74 @@ def _data(opts: Options, vocab_size: int):
     )
 
 
-def _activation_checkpoint(mode: ACMode):
+class _SaveScaledMM(SelectiveAC):
+    """Selective AC that also saves MXFP8's GEMMs. ``_scaled_mm_v2`` is outside the policy's
+    every-second-mm count, so this saves all of them, where BF16 saves every second ``mm``."""
+
+    @dataclass(kw_only=True, slots=True)
+    class Config(SelectiveAC.Config):
+        pass
+
+    def get_save_ops(self) -> set:
+        return super().get_save_ops() | {torch.ops.aten._scaled_mm_v2.default}
+
+
+def _activation_checkpoint(mode: ACMode, save_scaled_mm: bool = False):
     if mode == "none":
         return None
     if mode == "selective":
-        return SelectiveAC.Config()
+        return _SaveScaledMM.Config() if save_scaled_mm else SelectiveAC.Config()
     if mode == "full":
         return FullAC.Config()
     raise ValueError(f"unknown activation checkpointing mode {mode!r}")
 
 
+def _checkpointer(opts: Options):
+    """CheckpointManager that never saves while training (``load_only``):
+    tt_native/checkpoint.py saves and loads once the measurement is done."""
+    if opts.checkpoint == "off":
+        return None
+    from torchtitan.components.checkpointer import CheckpointManager
+
+    if opts.checkpoint == "model" and opts.checkpoint_async != "disabled":
+        raise ValueError("checkpoint=model is saved synchronously only (TorchTitan last-step save)")
+    folder = opts.checkpoint_dir
+    if folder is None:
+        root = os.environ.get("TT_CKPT_ROOT")
+        if not root:
+            raise ValueError("checkpoint needs checkpoint_dir or TT_CKPT_ROOT")
+        run = json.loads(os.environ.get("MILABENCH_CONFIG") or "{}").get("run_name")
+        folder = os.path.join(root, run or f"job-{os.environ.get('SLURM_JOB_ID', 'local')}")
+    folder = os.path.abspath(folder)
+    if os.path.exists(folder):
+        raise FileExistsError(f"checkpoint folder {folder} exists: refusing to overwrite or load it")
+    return CheckpointManager.Config(
+        folder=folder,
+        interval=1,
+        load_only=True,
+        keep_latest_k=0,
+        async_mode=opts.checkpoint_async,
+        last_save_model_only=opts.checkpoint == "model",
+        export_dtype="bfloat16",
+    )
+
+
 def qwen38() -> Trainer.Config:
     opts = Options.from_env()
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    degrees = parallel_degrees(opts, world_size)
     model = _model_config(opts)
     vocab_size = decoder_vocab_size(model)
+    pp_microbatches = opts.pp_microbatches or degrees["pp"]
     tokens_per_microbatch = opts.microbatch_sequences * opts.seq_len
     tokens_per_train_step = -1
     if opts.grad_accum > 1:
         # TorchTitan takes the global step size; derive it from the world size.
-        dp_degree = int(os.environ["WORLD_SIZE"]) // opts.tp
-        tokens_per_train_step = tokens_per_microbatch * dp_degree * opts.grad_accum
+        # Under PP a step of a DP rank is pp_microbatches microbatches.
+        dp_degree = world_size // (degrees["tp"] * degrees["pp"])
+        microbatches = (pp_microbatches if degrees["pp"] > 1 else 1) * opts.grad_accum
+        tokens_per_train_step = tokens_per_microbatch * dp_degree * microbatches
+    checkpointer = _checkpointer(opts)
 
     description = {
         **instrument.RUN_DESCRIPTION,
@@ -210,7 +374,20 @@ def qwen38() -> Trainer.Config:
         "text_only": True,
         "attn_backend": opts.attn_backend,
         "stacked_layout": opts.stacked_layout,
-        "precision": "bf16 (fp32 master weights, FSDP mixed precision)",
+        "precision": opts.precision,
+        "precision_detail": (
+            "bf16 (fp32 master weights, FSDP mixed precision)"
+            if opts.precision == "bf16"
+            else "MXFP8 linears (torchao kernels, 32x32 weight / 1x32 activation scales), "
+            "bf16 elsewhere, fp32 master weights"
+        ),
+        "grad_reduce_dtype": opts.grad_reduce,
+        "layout": degrees["layout"],
+        "pp_schedule": opts.pp_schedule if degrees["pp"] > 1 else None,
+        "pp_microbatches": pp_microbatches if degrees["pp"] > 1 else None,
+        "checkpoint": None
+        if checkpointer is None
+        else {"content": opts.checkpoint, "async": opts.checkpoint_async, "folder": checkpointer.folder},
         "compile": opts.compile,
         "cuda_graphs": opts.compile == "regions+graphs",
         "local_compile_regions": list(model.local_compile_regions),
@@ -219,6 +396,9 @@ def qwen38() -> Trainer.Config:
         "seq_len": opts.seq_len,
         "microbatch_sequences_per_gpu": opts.microbatch_sequences,
         "grad_accum": opts.grad_accum,
+        # TP and PP ranks share their data-parallel rank's tokens; the summary recomputes it from the trainer.
+        "tokens_per_gpu_per_step": opts.microbatch_sequences * opts.seq_len * opts.grad_accum
+        * (pp_microbatches if degrees["pp"] > 1 else 1) // (degrees["tp"] * degrees["pp"]),
         "data": (
             "random tokens (packed, fixed length)"
             if opts.dataset == "random"
@@ -264,12 +444,16 @@ def qwen38() -> Trainer.Config:
             steps=1_000_000,
             disable_cuda_graphs=opts.compile != "regions+graphs",
             mixed_precision_param="bfloat16",
-            mixed_precision_reduce="float32",
+            mixed_precision_reduce="bfloat16" if opts.grad_reduce == "bf16" else "float32",
         ),
         parallelism=ParallelismConfig(
-            data_parallel_replicate_degree=opts.dp_replicate,
-            data_parallel_shard_degree=-1,
-            tensor_parallel_degree=opts.tp,
+            data_parallel_replicate_degree=degrees["dp_replicate"],
+            data_parallel_shard_degree=degrees["dp_shard"],
+            tensor_parallel_degree=degrees["tp"],
+            pipeline_parallel_degree=degrees["pp"],
+            pipeline_parallel_schedule=opts.pp_schedule,
+            num_pp_microbatches=pp_microbatches,
+            pipeline_parallel_layers_per_stage=opts.pp_layers_per_stage,
             fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
         ),
         comm=CommConfig(
@@ -286,7 +470,7 @@ def qwen38() -> Trainer.Config:
             save_for_all_ranks=opts.wandb_all_ranks
             or os.environ.get("BENCHMATE_WANDB_ALL_RANKS") == "1",
         ),
-        checkpointer=None,
-        activation_checkpoint=_activation_checkpoint(opts.ac),
+        checkpointer=checkpointer,
+        activation_checkpoint=_activation_checkpoint(opts.ac, opts.sac_save_scaled_mm),
         dump_folder=opts.dump_folder,
     )

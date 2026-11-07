@@ -233,7 +233,7 @@ def parse_run(path: Path, cluster: str, leaf_of: dict[str, str], synthetic: bool
     ep_rows = [
         {"run_id": row["run_id"], "group": i, "hosts": ";".join(g["hosts"]),
          "n_switches": len({leaf_of.get(h, "?") for h in g["hosts"]}), "a2a_s": g.get("a2a_s_per_step")}
-        for i, g in enumerate(summary.get("per_ep_group", []))
+        for i, g in enumerate(summary.get("per_ep_group") or [])
     ]
     ranks = [
         {

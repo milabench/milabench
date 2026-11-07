@@ -2,8 +2,8 @@
 
 Same structure as the other milabench voirfiles: TorchTitan's Trainer is
 wrapped (see tt_native/instrument.py), benchmate times the steps and pushes
-one ``rate`` (global tokens/s) per measured step, plus ``loss`` and a final
-``summary`` event. The official throughput is the median of the rates.
+one ``rate`` (global tokens/s) per measured step, plus one ``loss`` per step
+(from step 1, with its ``batch_id``) and a final ``summary`` event. The official throughput is the median of the rates.
 
 Options (milabench ``voir.options``):
     skip          warm-up steps, not timed

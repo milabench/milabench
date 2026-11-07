@@ -1,0 +1,67 @@
+\section{Operations}
+\label{sec:operations}
+
+\begin{question}
+  \textbf{What does it cost to run production training here?} How long do checkpoints take to save and
+  load, and how long is training blocked? Is throughput stable over an hour, and are some GPUs or nodes
+  slower? How long until training starts? How many tokens does a kWh buy?
+\end{question}
+
+\paragraph{Checkpoints (F1), answer.} A Qwen checkpoint costs seconds: a full \TriCkQSizeFull\,TB save blocks training for about 1.5\,s when asynchronous. On GLM-5, weights cost about half a minute and a full \TriCkGFSize\,TB checkpoint one to two minutes to write. \textbf{A full checkpoint cannot be loaded on one 13-node copy}, which runs out of GPU memory, \textbf{but it loads at 39 nodes}, on three copies, in about \TriCkGBigFLoadHi\,s. 26 nodes were not tried.
+
+\paragraph{What was measured.} Save and load on the shared VAST filesystem; the nodes have no disk, so an asynchronous save stages in host memory. Qwen3.8-27B at \texttt{fsdp}, 12k tokens per GPU, on 1, 13 and 25 nodes, two saves and two loads per run. GLM-5 at \texttt{pp13-ep8}: at 13 nodes, weights in three rounds at different times and full in one; at 39 nodes, one round of each, with two loads. Sizes come out at 12.0 bytes per parameter for a full checkpoint and 2.0 for weights, as on the truncated test models. \Cref{fig:checkpoint} shows them all. The first save of a run is often slower than the second, so ranges below are wide at small scale.
+
+\begin{figure}[h]
+  \centering\fig{checkpoint}
+  \caption{Checkpoint time vs.\ number of nodes for Qwen3.8-27B and GLM-5, weights and full state: synchronous save, asynchronous save (total, and time training is blocked; pinned: its second save, the first also allocates the buffers), and load. Last panels: filesystem throughput of saves and loads, and peak GPU memory of loads and of the runs that save, against the 180\,GB of a B200. Red cross: an operation that failed, with no successful run. \TriCkptOverMemoryNote{} \syntheticnote{checkpoint}}
+  \label{fig:checkpoint}
+\end{figure}
+
+\begin{table}[h]
+  \caption{Checkpoint times in seconds, range over repetitions: synchronous save and its filesystem throughput, asynchronous save (time training is blocked, and total), pinned asynchronous save (blocked from the second save on, total), load.}
+  \label{tab:checkpoints}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \IfFileExists{generated/tables/checkpoints.tex}{\input{generated/tables/checkpoints}}{\textit{No data yet.}}
+  \end{adjustbox}
+\end{table}
+
+\textbf{Qwen} (\cref{tab:checkpoints}). An asynchronous save blocks training for about 10\,s on 1 node and under 2\,s from 13 nodes on; pinned, from its second save on, about 1\,s or less, but its total grows much faster with nodes than the others, to \TriCkQBigPinTotalLo--\TriCkQBigPinTotalHi\,s at 39 nodes. \textbf{Above 13 nodes, checkpoints get slower as nodes are added, for the same size:} a full synchronous save takes \TriCkQThirteenSyncLo--\TriCkQThirteenSyncHi\,s at 13 nodes, \TriCkQTopSyncLo--\TriCkQTopSyncHi\,s at 25 and \TriCkQBigSyncLo--\TriCkQBigSyncHi\,s at 39, and a load \TriCkQThirteenLoadLo--\TriCkQThirteenLoadHi, \TriCkQTopLoadLo--\TriCkQTopLoadHi\ and \TriCkQBigLoadLo--\TriCkQBigLoadHi\,s; weights show the same. A save's time is about proportional to the node count, at a fixed size. That is not the filesystem's bandwidth: GLM-5 writes up to \TriCkGBigFSyncGBs\,GB/s from 39 nodes, against \TriCkQBigSyncGBs\,GB/s here. Nor is it simply the number of writers, as we first inferred: going from 13 to 39 nodes, GLM-5's saves get faster. The two frameworks write differently. We have not looked for the cause, and each scale ran at one time on a shared filesystem.
+
+\textbf{GLM-5, weights}, \TriCkGWSize\,TB: synchronous save \TriCkGWSyncLo--\TriCkGWSyncHi\,s; asynchronous blocked \TriCkGWAsyncBlockedLo--\TriCkGWAsyncBlockedHi\,s, total \TriCkGWAsyncTotalLo--\TriCkGWAsyncTotalHi\,s; load \TriCkGWLoadLo--\TriCkGWLoadHi\,s, peaking at \TriCkGWLoadPeak\,GiB, all at 13 nodes. At 39 nodes, the same save takes \TriCkGBigWSync\,s, asynchronous blocked \TriCkGBigWBlocked\,s and total \TriCkGBigWTotal\,s, and a load \TriCkGBigWLoadLo--\TriCkGBigWLoadHi\,s, so all are faster. The load's peak does rise, to \TriCkGBigWLoadPeakLo--\TriCkGBigWLoadPeakHi\,GiB, though training memory falls; the cause is unknown. So on GLM-5, at both sizes, an asynchronous save blocks training for longer than a synchronous one and takes much longer overall. That is not what asynchronous saves are for, and we have not explained it. The three rounds agree, including the one after the kernel change. The slowest load, 48.7\,s, ran beside a 26-node GLM-5 job, one case on a shared filesystem.
+
+\textbf{GLM-5, full state}, \TriCkGFSize\,TB. At 13 nodes: synchronous save \TriCkGFSync\,s (\TriCkGFSyncGBs\,GB/s), peak \TriCkGFSyncPeak\,GiB; asynchronous blocked \TriCkGFBlocked\,s, total \TriCkGFTotal\,s, peak \TriCkGFAsyncPeak\,GiB. At 39 nodes: synchronous \TriCkGBigFSync\,s (\TriCkGBigFSyncGBs\,GB/s), peak \TriCkGBigFSyncPeak\,GiB; asynchronous blocked \TriCkGBigFBlocked\,s, total \TriCkGBigFTotal\,s, peak \TriCkGBigFAsyncPeak\,GiB. The \textbf{load fails at 13 nodes}: out of memory on the 96 ranks of stages 1--12 in \texttt{optimizer.load\_state\_dict}, at 175.4--176.1\,GiB allocated. Stage 0's load peak was 2.22 times its training peak, against the 1.95 assumed from a 2-node test, so a load would need about 200\,GiB on one copy (an estimate). A separate error in the scheduler state stopped stage 0 in that run. \textbf{At 39 nodes the load works}: \TriCkGBigFLoadLo--\TriCkGBigFLoadHi\,s (about \TriCkGBigFLoadGBsLo\,GB/s), peak \TriCkGBigFLoadPeakLo--\TriCkGBigFLoadPeakHi\,GiB of the 180\,GB of a B200, with the scheduler error fixed, and the run goes on to train. Training memory per GPU falls with copies (\cref{sec:scaling}), and the load's peak falls with it. Two loads in one job, so this says little about their spread.
+
+\textbf{One slow entry.} The asynchronous weights save at 39 nodes ran at a median of 69\,s per step against 50\,s in the other entries, from its first steps on. All of it comes from one node: \texttt{trig0129}'s expert all-to-all took 24.7\,s per step against about 2.9\,s on the others, and 2.8--2.9\,s for the same node in the other entries. Only GPU 2 of that node lost NVLink, in that one process, and the links tested at full speed afterwards. Why is not known; a per-process choice of path is a guess. Its save times may be affected, and its \TriCkGBigWBlocked\,s and \TriCkGBigWTotal\,s are one run.
+
+\paragraph{Stability (F2).} \textbf{Not run.} Long runs of Qwen and of GLM-5 run at the design's 52 nodes, last in the schedule; at a smaller scale only as a compromise, if nodes are lost by then. No figure yet: what follows on stragglers comes from existing runs. The closest evidence on stability is the 500-step GLM-5 runs of \cref{sec:precision}, where BF16 steps hold at about \TriGlmLongBfMid\,s until about step 350, then speed up to \TriGlmLongBfEnd\,s; about 7 hours, without a gap.
+
+\begin{figure}[h]
+  \centering\fig{stability}
+  \caption{Long run, vs.\ time: tokens/s per GPU per step with a 15-step median (top); SM clock (middle) and power (bottom) of the GPUs: gray band, range over all GPUs; line, the median; the GPU with the lowest value is named. \syntheticnote{stability}}
+  \label{fig:stability}
+\end{figure}
+
+\paragraph{Stragglers.} With data parallelism every rank waits for the slowest one, so per-rank step times are equal and cannot point to a slow GPU; the slow GPU is the one that waits least, and a node whose CPU clock falls holds back every rank on it. The slow nodes of \cref{sec:machine} were found from the CPU clocks in the telemetry of the side-by-side runs. \Cref{fig:stragglers} shows the largest Qwen \texttt{fsdp} run so far, on \TriStragNodes{} nodes, the 3 slow ones among them. They stand out: \TriStragLowLo--\TriStragLowHi\,\% of CPU samples below 500\,MHz against \TriStragLowRest\,\% on the others, and GPU activity of \TriStragUtilSlow\,\% against \TriStragUtilRest\,\%. So a slow CPU shows as lower GPU activity. \texttt{trig0114}, the node without the clock drop, has no low samples. This is one run, not the long run the design called for.
+
+\begin{figure}[h]
+  \centering\fig{stragglers}
+  \caption{Largest Qwen \texttt{fsdp} run so far, per node, from the node telemetry over its measurement. Top: activity of each node's GPUs. Middle: share of CPU samples below 500\,MHz. Bottom: GPU power per node. Nodes grouped by subnet; red: the slow nodes, before their fix, and \texttt{trig0114}. \syntheticnote{stragglers}}
+  \label{fig:stragglers}
+\end{figure}
+
+\paragraph{Startup (F3).} Time from the first process start to the first step, from every run; a run's processes start within \TriStartSpreadMax\,s of each other at every node count. Qwen3.8-27B takes \TriStartQLo--\TriStartQHi\,min (median \TriStartQMed) at \TriStartQNodesLo--\TriStartQNodesHi{} nodes, and that time does not visibly grow with scale. GLM-5 takes \TriStartGLo--\TriStartGHi\,min (median \TriStartGMed) at \TriStartGNodesLo--\TriStartGNodesHi{} nodes, with no visible growth either. Most of that spread is compile caches: the same GLM-5 entry takes about 15\,min with kernels compiling and about 6\,min with them cached. The longest, a \texttt{\TriStartGTopLayout} run at \TriStartGTopNodes{} nodes, is not explained. Not included: before any process starts, milabench builds metadata for each node in turn, about 12.5\,s per node (a query to an unreachable server with a 5\,s timeout, and a version check). From Slurm's step start times, the training steps start 149\,s after milabench at 10 nodes and 666\,s after at 50, all nodes in the same second. That is a cost of the harness, not of the workload, and a fix is being written. On Qwen, a cold compile cache slows the whole run too (\cref{sec:layouts}).
+
+\begin{figure}[h]
+  \centering\fig[0.72\linewidth]{startup}
+  \caption{Time from the first process start to the first step vs.\ number of nodes, for both workloads, one point per run. Milabench's launch before the processes start is not included. \syntheticnote{startup}}
+  \label{fig:startup}
+\end{figure}
+
+\paragraph{Energy (F4).} Tokens per kWh, from the GPU power sampled by the node telemetry in each run's measurement. Only GPU power is counted: not CPUs, memory, network or cooling. Qwen at 13 nodes and 24k tokens per GPU: \texttt{fsdp} \TriEnergyFsdp{} and \texttt{hsdp8} \TriEnergyHsdp{} million tokens per kWh at about \TriPowerFsdp{} and \TriPowerHsdp\,W per GPU; \texttt{pp2-fsdp} draws less (\TriPowerPp\,W) but runs slower, \TriEnergyPp. GLM-5 at 13 nodes: \TriEnergyGlm{} at \TriPowerGlm\,W per GPU. So Qwen is throttled at its highest power, and a token of GLM-5 costs much more than a token of Qwen; they are different models, so the second is not a comparison of efficiency. MXFP8 also draws less power: at each model's largest precision run, \TriPowerFpQMx{} against \TriPowerFpQBf\,W per GPU on Qwen and \TriPowerFpGMx{} against \TriPowerFpGBf\,W on GLM-5, so tokens per kWh gain $\times$\TriEnergyFpQ{} and $\times$\TriEnergyFpG, more than the speed itself. That is one run of each recipe.
+
+\begin{figure}[h]
+  \centering\fig{energy}
+  \caption{Million tokens per kWh (GPU power only): Qwen3.8-27B by layout at 13 nodes and 24k tokens per GPU (left); by workload and precision at the largest run of each (middle); Qwen3.8-27B weak scaling vs.\ nodes (right). \syntheticnote{energy}}
+  \label{fig:energy}
+\end{figure}

@@ -1,0 +1,32 @@
+\section{Running jobs side by side}
+\label{sec:interference}
+
+\begin{question}
+  \textbf{Can jobs run side by side without slowing each other, and does the background load move our
+  numbers?} If several 13-node jobs run as fast together as alone, later experiments can be packed in
+  parallel. The fabric and filesystem are shared with other partitions, so the same run may also change
+  speed during the window.
+\end{question}
+
+\paragraph{Answer.} 13-node Qwen FSDP jobs do not slow each other measurably, and the reference run stayed within \TriRefSpreadPct\,\% over the \TriRefRuns{} runs on fixed nodes. Pipeline layouts are the exception: one job beside a PP2 job ran much slower. All the step times here are throttled by the CPU clock drop (\cref{sec:machine}).
+
+\paragraph{Interference (E1).} We ran \texttt{fsdp} at 12k tokens per GPU on 3 disjoint sets of 13 nodes, each set alone and then all 3 together, and repeated this with 3 new sets. The design called for HSDP-8 at 24k tokens per GPU on 4 sets: that configuration is short of memory, and 4 sets did not fit the usable nodes. So 12 runs, 6 comparisons, with
+the same batches compared in each. Together is \TriInterferencePct\,\% slower than alone on average, from \TriInterferenceLo{} to \TriInterferenceHi\,\% (\cref{fig:interference}). The threshold for packing was 2\,\%, so our fixed node sets (\cref{sec:method}) ran at the same time. Only steps after warm-up count here, inside the time all three jobs of a draw were measuring (at most 240\,s). Counting from batch 11, warm-up included, gives +0.26\,\%, the figure in the design notes.
+
+\begin{figure}[h]
+  \centering\fig{interference}
+  \caption{Tokens/s per GPU of each 13-node set, alone (circles) and with the 2 others of its draw (squares), on the same batches. Label: change in mean step time. Sets holding a slow node (\cref{sec:machine}) are named; those are the slower ones. \syntheticnote{interference}}
+  \label{fig:interference}
+\end{figure}
+
+\textbf{What this does not cover.} Not GLM-5, and nothing above 13 nodes. Not repeats of one set alone either, so the spread between two runs of the same set is not known from E1 itself. And not pipeline layouts: \texttt{tp4-fsdp} at 12k tokens per GPU took \TriBesidePPSlow\,s per step with its whole measurement beside a PP2 job in the same bandwidth group, and \TriBesidePPFast\,s when rerun on the same nodes beside FSDP. That is one case, and the first run is left out of the layout figures. FSDP in one bandwidth group beside GLM-5 in the other took 2.993\,s per step against 2.982\,s on the same nodes in E1, +0.37\,\%, across runs and hours.
+
+\textbf{Placement.} E1's first draw used sets inside a bandwidth group (\cref{sec:network}), its second random sets. Among sets without a slow node, step time is \TriPlacementGroup\,s inside a group and \TriPlacementRandom\,s across (\TriPlacementPct\,\%), from one random set only, so we do not rest anything on it. The fixed node sets stay inside one group each.
+
+\paragraph{Reference drift (R).} A short reference run (\texttt{fsdp}, 12k tokens per GPU, 4 nodes) was repeated through the window. Its first two runs were on other nodes, one of them with slow \texttt{trig0148}, which shows; from the third on it stayed on the same 4 nodes, and those runs differ by at most \TriRefSpreadPct\,\% with a linear trend of \TriDriftPct\,\% (\cref{fig:reference_drift}). So we saw no drift from background load in this window, down to differences of a fraction of a percent. Differences between configurations below about 1\,\% should not be read as real. The last \TriRefAfter{} are after the kernel change. More reference runs are planned.
+
+\begin{figure}[h]
+  \centering\fig[0.8\linewidth]{reference_drift}
+  \caption{Throughput of the reference run vs.\ time since the first one. Circles: the 4 fixed nodes. Diamonds: the first two runs, on other nodes. Band: median of the fixed nodes $\pm1\,\%$. Dotted: when the kernel change reached these nodes. \syntheticnote{reference_drift}}
+  \label{fig:reference_drift}
+\end{figure}

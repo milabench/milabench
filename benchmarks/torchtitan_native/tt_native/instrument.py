@@ -81,6 +81,10 @@ PROCESS_START: float | None = None
 # Set by tt_native.configs: model / run settings recorded in the summary.
 RUN_DESCRIPTION: dict[str, Any] = {}
 
+# Set by tt_native.configs when the run cannot work (e.g. MXFP8 without sm_100):
+# raised when the trainer starts, after ``run_start`` is pushed.
+FATAL: str | None = None
+
 
 def _process_start() -> float:
     if PROCESS_START is not None:
@@ -170,6 +174,10 @@ def run_block() -> dict[str, Any]:
         "slurm_reservation": os.environ.get("SLURM_JOB_RESERVATION") or None,
         "exclusive_cluster": os.environ.get("TT_EXCLUSIVE_CLUSTER", "0") == "1",
         "run_tag": os.environ.get("TT_RUN_TAG"),
+        # Trillium (scripts/trillium/FORMAT.md): DESIGN.md experiment ID; E1 node set and condition.
+        "experiment": os.environ.get("TT_EXPERIMENT") or None,
+        "node_set": os.environ.get("TT_NODE_SET") or None,
+        "condition": os.environ.get("TT_CONDITION") or None,
     }
 
 
@@ -193,11 +201,16 @@ def workload_block() -> dict[str, Any]:
         "seq_len": d.get("seq_len"),
         "microbatch_sequences": d.get("microbatch_sequences_per_gpu"),
         "grad_accum": d.get("grad_accum", 1),
-        "precision": "bf16",
+        "tokens_per_gpu_per_step": d.get("tokens_per_gpu_per_step"),
+        "precision": d.get("precision"),
+        "quantized_linears": d.get("quantized_linears", 0),
+        "grad_reduce_dtype": d.get("grad_reduce_dtype"),
+        "stacked_layout": d.get("stacked_layout"),
         "optimizer": "AdamW",
         "optimizer_state_dtype": d.get("adam_moments"),
         "activation_checkpointing": d.get("activation_checkpointing"),
         "compile": d.get("compile"),
+        "seed": d.get("options", {}).get("seed"),
         "moe": None,
     }
 
@@ -266,6 +279,19 @@ def deviations() -> list[dict[str, str]]:
         result.append({"id": "truncated", "text": f"{d['n_layers']} of {d['n_layers_full']} layers"})
     if d.get("options", {}).get("dataset") == "random":
         result.append({"id": "data", "text": "random tokens"})
+    if d.get("layout", "").startswith("tp4"):
+        result.append(
+            {"id": "tp4", "text": "TP 4, not 8: 4 KV heads (head_dim 256) cap TP at 4"}
+        )
+    targets = d.get("mxfp8_targets")
+    if targets is not None and "feed_forward.w13" not in targets:
+        result.append(
+            {
+                "id": "mxfp8_w13",
+                "text": "MXFP8 without feed_forward.w13 (rows stacked layout [F, 2, D] "
+                "is not an MXFP8Linear weight): the fused gate/up projection stays BF16",
+            }
+        )
     return result
 
 
@@ -413,13 +439,14 @@ class TrainerInstrument:
         self._data_time_acc = 0.0
         self._data_times: list[float] = []
         self._local_tokens = 0
-        self._loss = None
+        self._losses: list[tuple[int, torch.Tensor]] = []  # (step, local loss) not yet pushed
         self.run_start: dict[str, Any] | None = None
         self.wandb_init_s: float | None = None  # this rank's wandb.init, when it ran
         self._pending_rows: list[dict[str, Any]] = []  # steps not yet written to the rank file
         self._rank_file = None
         self.rank_metrics_dir: str | None = None
         self.global_tokens_per_step = 0
+        self.summary: dict[str, Any] | None = None  # rank 0, kept by push_summary(push=False)
         self._walls_logged = 0  # warm-up wall times / step ends already in a wandb log
         self._ends_logged = 0
 
@@ -433,17 +460,26 @@ class TrainerInstrument:
                 "schema": SCHEMA,
                 "run": run_block(),
                 "workload": workload_block(),
+                # What identifies the configuration even if the run fails before the summary.
+                "parallelism": {
+                    "layout": RUN_DESCRIPTION.get("layout"),
+                    "pp_schedule": RUN_DESCRIPTION.get("pp_schedule"),
+                    "microbatches_per_pipeline": RUN_DESCRIPTION.get("pp_microbatches"),
+                },
                 "placement": placement_block(_launch_hosts()),
                 "process_start_epoch": _process_start(),
             }
             self.push(run_start=self.run_start, task="train")
+        if FATAL is not None:
+            raise RuntimeError(FATAL)
 
     def on_init_done(self, trainer) -> None:
         self.t_model_initialized = time.time()
         self.trainer = trainer
         ctx = trainer.engine.parallelism_context
-        # Ranks of a TP/CP group share the same tokens: count them once.
-        self.dp_divisor = ctx.tp * ctx.cp
+        # Ranks of a TP/CP group, and the stages of a pipeline, share the same
+        # tokens (every PP rank reads its DP rank's microbatches): count them once.
+        self.dp_divisor = ctx.tp * ctx.cp * ctx.pp
         training = trainer.config.training
         self.global_tokens_per_step = (
             training.num_tokens_per_microbatch_per_dp_rank
@@ -552,7 +588,33 @@ class TrainerInstrument:
         self._local_tokens = int(local_tokens)
 
     def on_loss(self, loss) -> None:
-        self._loss = loss
+        """Keep this step's local loss (a copy: under CUDA graphs ``engine.loss`` is
+        a static buffer). Local loss = sum of this DP rank's token losses / global
+        tokens, so the sum over the loss mesh is TorchTitan's ``global_avg_loss``.
+        Under PP only the last stage has it (others hold a -1 sentinel): 0 there."""
+        engine = self.trainer.engine
+        if engine.parallelism_context.pp_enabled and not engine.pp_has_last_stage:
+            loss = torch.zeros((), device=loss.device)
+        self._losses.append((engine.num_completed_steps, loss.detach().reshape(()).float().clone()))
+
+    def push_losses(self) -> None:
+        """Push one ``{loss, batch_id}`` event per stored step (rank 0). Collective:
+        every rank calls it at the same step (TorchTitan's logging steps, end of run)."""
+        if not self._losses:
+            return
+        from torchtitan.distributed import utils as dist_utils
+
+        steps = [s for s, _ in self._losses]
+        values = torch.stack([v for _, v in self._losses])
+        self._losses = []
+        ctx = self.trainer.engine.parallelism_context
+        if ctx.dp_cp_enabled:
+            values = dist_utils.dist_sum_tensor(values, ctx.get_optional_mesh("loss"))
+        if ctx.pp_enabled:
+            values = dist_utils.dist_sum_tensor(values, ctx.get_mesh("pp"))
+        if _rank() == 0:
+            for step, value in zip(steps, values.tolist()):
+                self.push(loss=value, batch_id=step, task="train")
 
     def on_data_time(self, seconds: float) -> None:
         self._data_time_acc += seconds
@@ -588,6 +650,8 @@ class TrainerInstrument:
             self._warmup_walls.append(wall)
             row["elapsed"], row["elapsed_source"] = wall, "wall"
             self._data_time_acc = 0.0
+            if step % 10 == 0:
+                self.push_losses()
             return
         end = torch.cuda.Event(enable_timing=True)
         end.record()
@@ -604,8 +668,7 @@ class TrainerInstrument:
         # synchronize; every rank pushes at the same step (collective reduce).
         if self.timer.is_done() or step % 10 == 0:
             self.timer._push()
-            if self._loss is not None and _rank() == 0:
-                self.push(loss=float(self._loss), task="train")
+            self.push_losses()
 
     def should_stop(self) -> bool:
         return self.timer is not None and self.timer.is_done()
@@ -646,7 +709,11 @@ class TrainerInstrument:
 
     # -- summary -----------------------------------------------------------
 
-    def push_summary(self) -> None:
+    def push_summary(self, push: bool = True) -> None:
+        """Gather the run's numbers; rank 0 pushes the summary (or keeps it in
+        ``self.summary`` for :meth:`push_kept_summary` when ``push`` is False)."""
+        if self.trainer is not None:
+            self.push_losses()
         if self.timer is None:
             self.flush_rank_rows()
             return
@@ -685,12 +752,18 @@ class TrainerInstrument:
         ctx = trainer.engine.parallelism_context
         training = trainer.config.training
         dp = ctx.world_size // (ctx.tp * ctx.cp * ctx.pp)
-        tokens_per_gpu = (
+        tokens_per_dp_rank = (
             training.num_tokens_per_microbatch_per_dp_rank
             * trainer.num_pp_microbatches
             * trainer.gradient_accumulation_steps
         )
-        tokens_per_step = tokens_per_gpu * dp
+        tokens_per_step = tokens_per_dp_rank * dp
+        # TP / CP / PP ranks share their DP rank's tokens.
+        tokens_per_gpu = (
+            tokens_per_step // ctx.world_size
+            if tokens_per_step % ctx.world_size == 0
+            else tokens_per_step / ctx.world_size
+        )
         t0 = min(r[2] for r in rows)
 
         def spread(i):
@@ -725,6 +798,12 @@ class TrainerInstrument:
                 "pp": ctx.pp,
                 "cp": ctx.cp,
                 "ep": 1,
+                "layout": RUN_DESCRIPTION.get("layout"),
+                "pp_schedule": RUN_DESCRIPTION.get("pp_schedule"),
+                "microbatches_per_pipeline": RUN_DESCRIPTION.get("pp_microbatches"),
+                # Groups holding the whole model state (HSDP replicas).
+                "copies": ctx.dp_replicate,
+                "fsdp_shard_group": ctx.dp_shard,
             },
             "placement": placement_block(sorted(set(hosts))),
             "framework_config": RUN_DESCRIPTION,
@@ -802,8 +881,16 @@ class TrainerInstrument:
             "deviations": deviations(),
             "estimates": [],
         }
-        self.push(summary=summary, task="train")
         self._wandb_summary(summary, steps, tokens_per_step)
+        if push:
+            self.push(summary=summary, task="train")
+        else:
+            self.summary = summary
+
+    def push_kept_summary(self, **extra) -> None:
+        if self.summary is not None:
+            self.push(summary={**self.summary, **extra}, task="train")
+            self.summary = None
 
     def _wandb_rank_summary(self, local: list[float], steps: list[float]) -> None:
         """This rank's own numbers in its wandb run (per-rank runs; rank 0 too)."""
@@ -976,7 +1063,19 @@ def install(instrument: TrainerInstrument) -> None:
 
     def train(self):
         orig_train(self)
-        instrument.push_summary()
+        if getattr(self.engine, "checkpointer", None) is None:
+            instrument.push_summary()
+            return
+        # Checkpoint timing after the measurement (tt_native/checkpoint.py). The
+        # summary carries the operations done, and is pushed even if one fails.
+        from tt_native.checkpoint import run_checkpoint
+
+        instrument.push_summary(push=False)
+        events: list[dict[str, Any]] = []
+        try:
+            run_checkpoint(self, instrument.push, events)
+        finally:
+            instrument.push_kept_summary(checkpoint=events)
 
     def should_continue_training(self):
         return orig_should_continue(self) and not instrument.should_stop()

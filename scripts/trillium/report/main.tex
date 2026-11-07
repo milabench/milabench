@@ -1,0 +1,189 @@
+\documentclass{article}
+
+% NeurIPS 2026 style, preprint option: no line numbers, authors shown.
+\usepackage[preprint]{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{adjustbox}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[most]{tcolorbox}
+\usepackage[capitalise,noabbrev]{cleveref}
+\usepackage[section]{placeins}  % floats stay in their section
+
+% Macros written by the analysis pipeline. Fallbacks so that the report compiles before it has run.
+\IfFileExists{generated/tables/macros.tex}{\input{generated/tables/macros}}{}
+\providecommand{\DataGenerated}{(no data yet)}
+\providecommand{\NRunsReal}{0}
+\providecommand{\NRunsFailed}{0}
+\providecommand{\NRunsSynthetic}{0}
+\providecommand{\TriFailedNote}{}
+\providecommand{\TriCkptOverMemoryNote}{}
+% Key numbers (tables.py: key_numbers); "??" until the pipeline has written them.
+\providecommand{\TriSyn}[1]{{\color{red!70!black}#1\textsuperscript{syn}}}
+\providecommand{\TriNNodes}{52}
+\providecommand{\TriNGpus}{416}
+\providecommand{\TriGlmTopNodes}{52}
+\providecommand{\TriGlmTopCopies}{4}
+\providecommand{\TriPairsPerRound}{26}
+\providecommand{\TriPairRounds}{51}
+\providecommand{\TriPairsAll}{1,326}
+\newcommand{\triunset}[1]{\providecommand{#1}{??}}
+\triunset{\TriQwenTop}\triunset{\TriGlmTop}\triunset{\TriRunsInReport}\triunset{\TriGlmCopiesTop}\triunset{\TriMatmulBF}\triunset{\TriMatmulFP}\triunset{\TriNodesChecked}\triunset{\TriNodesFlagged}
+\triunset{\TriPairBw}\triunset{\TriPairBwMin}\triunset{\TriPairLat}\triunset{\TriAllReduceFull}
+\triunset{\TriAlltoallFull}\triunset{\TriBisection}\triunset{\TriInterferencePct}\triunset{\TriDriftPct}
+\triunset{\TriQwenBestLayout}\triunset{\TriQwenBestTokens}\triunset{\TriQwenBestTokS}\triunset{\TriQwenBestMFU}
+\triunset{\TriQwenFsdpCommPct}\triunset{\TriQwenWeakEff}\triunset{\TriGlmBestLayout}\triunset{\TriGlmBestTokS}
+\triunset{\TriGlmBestMFU}\triunset{\TriGlmCopiesEff}\triunset{\TriGlmCopiesEffTwo}\triunset{\TriGlmCopiesEffFromTwo}
+\triunset{\TriQwenWeakEffFromTwo}\triunset{\TriQwenWeakTwoNodes}\triunset{\TriQwenFpBestRecipe}
+\triunset{\TriQwenFpSpeedupSmall}\triunset{\TriQwenFpSpeedupFull}\triunset{\TriGlmFpBestRecipe}
+\triunset{\TriGlmFpSpeedupSmall}\triunset{\TriGlmFpSpeedupFull}\triunset{\TriCkptQwenSave}
+\triunset{\TriCkptGlmFullSave}\triunset{\TriCkptGlmFullBlocked}\triunset{\TriCkptGlmLoadPeak}\triunset{\TriCkptWriteGBs}
+\triunset{\TriStartupQwen}\triunset{\TriStartupGlm}\triunset{\TriEnergyBest}
+
+\triunset{\TriCapNodes}\triunset{\TriCapTFlops}\triunset{\TriCapControlLo}\triunset{\TriCapControlHi}\triunset{\TriCapPowerLo}\triunset{\TriCapPowerHi}
+\triunset{\TriCapControlPowerLo}\triunset{\TriCapControlPowerHi}\triunset{\TriCapFactor}\triunset{\TriCpuBeforeMed}\triunset{\TriCpuBeforeLo}\triunset{\TriCpuBeforeHi}
+\triunset{\TriCpuAfterMed}\triunset{\TriCpuAfterLo}\triunset{\TriCpuAfterHi}\triunset{\TriCpuOddNode}\triunset{\TriCpuNodesBefore}\triunset{\TriCpuNodesAfter}
+\triunset{\TriThrottlePct}\triunset{\TriThrottleStep}\triunset{\TriThrottleOddStep}\triunset{\TriSlowBehindLo}\triunset{\TriSlowBehindHi}\triunset{\TriSlowThirteenWith}
+\triunset{\TriSlowThirteenWithout}\triunset{\TriSlowThirteenPct}\triunset{\TriKernelMaxChange}\triunset{\TriKernelReruns}\triunset{\TriKernelRepeatLo}\triunset{\TriKernelRepeatHi}
+\triunset{\TriInterferenceLo}\triunset{\TriInterferenceHi}\triunset{\TriPlacementPct}\triunset{\TriPlacementGroup}\triunset{\TriPlacementRandom}\triunset{\TriBesidePPSlow}\triunset{\TriBesidePPFast}
+\triunset{\TriRefAfter}\triunset{\TriRefRuns}\triunset{\TriRefSpreadPct}\triunset{\TriDcgmHi}\triunset{\TriDcgmLo}\triunset{\TriDcgmFailed}\triunset{\TriNodesCheckedAfter}\triunset{\TriIntra}\triunset{\TriPairBus}
+\triunset{\TriLoopback}\triunset{\TriPairBusLo}\triunset{\TriPairBusLoHi}\triunset{\TriPairWithinLo}\triunset{\TriPairWithinHi}\triunset{\TriPairAcrossLo}\triunset{\TriPairAcrossHi}
+\triunset{\TriPairsMeasured}\triunset{\TriPairAllGpus}\triunset{\TriNetTop}\triunset{\TriGatherLo}\triunset{\TriGatherHi}\triunset{\TriAllReduceLo}\triunset{\TriAllReduceHi}\triunset{\TriAlltoallTwo}
+
+\triunset{\TriLevTokens}\triunset{\TriLevTwoLarge}\triunset{\TriLevFourLarge}\triunset{\TriLevPpTwo}\triunset{\TriLevPpFour}\triunset{\TriLevHsdp}\triunset{\TriLevHsdpLarge}\triunset{\TriLevReduce}\triunset{\TriLevFull}\triunset{\TriLevFullH}
+\triunset{\TriLevFortyEight}\triunset{\TriLevPpBest}\triunset{\TriMemFsdp}\triunset{\TriMemHsdp}\triunset{\TriMemReduce}\triunset{\TriMemFull}\triunset{\TriTokFortyEight}\triunset{\TriTokFsdp}\triunset{\TriTokReduce}\triunset{\TriTokTpFour}\triunset{\TriTokPpBest}
+\triunset{\TriLayoutTopRepeat}\triunset{\TriLayoutTopGap}\triunset{\TriPaddingPct}\triunset{\TriLayoutRepeatMedian}\triunset{\TriLayoutRepeatMax}
+
+\triunset{\TriLossSeedOneLo}\triunset{\TriLossSeedOneHi}\triunset{\TriLossSeedOneEnd}\triunset{\TriLossSeedTwoLo}\triunset{\TriLossSeedTwoHi}\triunset{\TriLossSeedTwoEnd}\triunset{\TriLossSeedThreeLo}\triunset{\TriLossSeedThreeHi}\triunset{\TriLossSeedThreeEnd}
+\triunset{\TriLossSameMax}\triunset{\TriLossSameMin}\triunset{\TriLossOtherMax}\triunset{\TriLossOtherMxMax}\triunset{\TriLossGlmLast}\triunset{\TriLossGlmEnd}
+
+\triunset{\TriCkQOneSyncLo}\triunset{\TriCkQOneSyncHi}\triunset{\TriCkQOneLoadLo}\triunset{\TriCkQOneLoadHi}\triunset{\TriCkQOneAsyncLo}\triunset{\TriCkQOneAsyncHi}\triunset{\TriCkQOneAsyncTotalLo}\triunset{\TriCkQOneAsyncTotalHi}\triunset{\TriCkQOnePinTotalLo}\triunset{\TriCkQOnePinTotalHi}\triunset{\TriCkQOneWSaveLo}\triunset{\TriCkQOneWSaveHi}\triunset{\TriCkQOneWLoadLo}\triunset{\TriCkQOneWLoadHi}\triunset{\TriCkQThirteenSyncLo}\triunset{\TriCkQThirteenSyncHi}\triunset{\TriCkQThirteenLoadLo}\triunset{\TriCkQThirteenLoadHi}\triunset{\TriCkQThirteenAsyncLo}\triunset{\TriCkQThirteenAsyncHi}\triunset{\TriCkQThirteenAsyncTotalLo}\triunset{\TriCkQThirteenAsyncTotalHi}\triunset{\TriCkQThirteenPinTotalLo}\triunset{\TriCkQThirteenPinTotalHi}\triunset{\TriCkQThirteenWSaveLo}\triunset{\TriCkQThirteenWSaveHi}\triunset{\TriCkQThirteenWLoadLo}\triunset{\TriCkQThirteenWLoadHi}\triunset{\TriCkQTopSyncLo}\triunset{\TriCkQTopSyncHi}\triunset{\TriCkQTopLoadLo}\triunset{\TriCkQTopLoadHi}\triunset{\TriCkQTopAsyncLo}\triunset{\TriCkQTopAsyncHi}\triunset{\TriCkQTopAsyncTotalLo}\triunset{\TriCkQTopAsyncTotalHi}\triunset{\TriCkQTopPinTotalLo}\triunset{\TriCkQTopPinTotalHi}\triunset{\TriCkQTopWSaveLo}\triunset{\TriCkQTopWSaveHi}\triunset{\TriCkQTopWLoadLo}\triunset{\TriCkQTopWLoadHi}\triunset{\TriCkQPinBlockedLo}\triunset{\TriCkQPinBlockedHi}\triunset{\TriCkQSizeFull}\triunset{\TriCkQSizeW}\triunset{\TriCkGWSyncLo}\triunset{\TriCkGWSyncHi}\triunset{\TriCkGWAsyncBlockedLo}\triunset{\TriCkGWAsyncBlockedHi}\triunset{\TriCkGWAsyncTotalLo}\triunset{\TriCkGWAsyncTotalHi}\triunset{\TriCkGWLoadLo}\triunset{\TriCkGWLoadHi}\triunset{\TriCkGWSize}\triunset{\TriCkGWLoadPeak}\triunset{\TriCkGFSize}\triunset{\TriCkGFSync}\triunset{\TriCkGFSyncGBs}\triunset{\TriCkGFSyncPeak}\triunset{\TriCkGFBlocked}\triunset{\TriCkGFTotal}\triunset{\TriCkGFAsyncPeak}\triunset{\TriQwenFpOne}\triunset{\TriQwenFpTopNodes}\triunset{\TriQwenFpTop}\triunset{\TriQwenMemBf}\triunset{\TriQwenMemMx}\triunset{\TriQwenFpOneSpread}\triunset{\TriQwenFpFull}\triunset{\TriQwenFullMem}\triunset{\TriGlmFpTensor}\triunset{\TriGlmFpBlock}\triunset{\TriGlmFpMx}\triunset{\TriGlmMemTensor}\triunset{\TriGlmMemBlock}\triunset{\TriGlmMemMx}\triunset{\TriGlmMemPctTensor}\triunset{\TriGlmMemPctBlock}\triunset{\TriGlmMemPctMx}\triunset{\TriGlmMemBf}\triunset{\TriGlmStepBf}
+\triunset{\TriProbeRowsLo}
+\triunset{\TriProbeRowsHi}
+\triunset{\TriProbeTimeLo}
+\triunset{\TriProbeTimeHi}
+\triunset{\TriProbeRefTime}\triunset{\TriLossGlmMxEarly}\triunset{\TriLossGlmMxFirstEnd}\triunset{\TriLossGlmSameEarly}\triunset{\TriLossGlmBlockRep}\triunset{\TriGlmLongFpSameEnd}\triunset{\TriGlmLongFpBlock}\triunset{\TriGlmLongFpTensor}\triunset{\TriLossGlmTensorRep}\triunset{\TriGlmFiftyTok}\triunset{\TriGlmFiftyStep}\triunset{\TriGlmFiftyMem}\triunset{\TriGlmFiftyMfu}\triunset{\TriGlmFiftyAtoa}\triunset{\TriGlmFiftyAtoaPct}\triunset{\TriGlmFiftyEff}\triunset{\TriGlmPpTwoFiveFiftyTok}\triunset{\TriGlmPpTwoFiveFiftyStep}\triunset{\TriGlmPpTwoFiveFiftyMem}\triunset{\TriGlmPpTwoFiveFiftyMfu}\triunset{\TriGlmPpTwoFiveFiftyAtoa}\triunset{\TriGlmPpTwoFiveFiftyAtoaPct}\triunset{\TriGlmPpTwoFiveFiftyEff}\triunset{\TriStartQNodesLo}\triunset{\TriStartQNodesHi}\triunset{\TriStartQTopNodes}\triunset{\TriStartQTopLayout}\triunset{\TriStartGNodesLo}\triunset{\TriStartGNodesHi}\triunset{\TriStartGTopNodes}\triunset{\TriStartGTopLayout}\triunset{\TriStartSpreadMax}\triunset{\TriLossGlmSameMax}\triunset{\TriLossGlmThirdFirstLast}\triunset{\TriLossGlmThirdFirstEnd}\triunset{\TriLossGlmThirdFirstEarly}\triunset{\TriLossGlmThirdRepLast}\triunset{\TriLossGlmThirdRepEnd}\triunset{\TriLossGlmThirdRepEarly}\triunset{\TriLossGlmMxThirdLast}\triunset{\TriLossGlmMxThirdEnd}\triunset{\TriGlmLongThirdMid}\triunset{\TriGlmLongThirdEnd}\triunset{\TriGlmLongThirdStep}\triunset{\TriLossGlmSameLast}\triunset{\TriLossGlmSameEnd}\triunset{\TriLossGlmMxFirstLast}\triunset{\TriLossGlmBlockLast}\triunset{\TriLossGlmBlockEnd}\triunset{\TriLossGlmTensorLast}\triunset{\TriLossGlmTensorEnd}\triunset{\TriGlmLongRepMid}\triunset{\TriGlmLongRepEnd}\triunset{\TriGlmLongRepStep}\triunset{\TriGlmLongFpSame}\triunset{\TriGlmLongBlockMid}\triunset{\TriGlmLongBlockEnd}\triunset{\TriGlmLongBlockStep}\triunset{\TriGlmLongBlockMem}\triunset{\TriGlmLongTensorMid}\triunset{\TriGlmLongTensorEnd}\triunset{\TriGlmLongTensorStep}\triunset{\TriGlmLongTensorMem}\triunset{\TriBoardNodes}\triunset{\TriBoardMixed}\triunset{\TriBoardSlopeLo}\triunset{\TriBoardSlopeHi}\triunset{\TriBoardRestSlopeLo}\triunset{\TriBoardRestSlopeHi}\triunset{\TriBoardStepLo}\triunset{\TriBoardStepHi}\triunset{\TriBoardLowOldLo}\triunset{\TriBoardLowOldHi}\triunset{\TriBoardLowCtlLo}\triunset{\TriBoardLowCtlHi}\triunset{\TriLossGlmOtherLast}\triunset{\TriLossGlmOtherEnd}\triunset{\TriGlmLongSeedMid}\triunset{\TriGlmLongSeedEnd}
+\triunset{\TriGlmLongBfMid}
+\triunset{\TriGlmLongBfEnd}
+\triunset{\TriGlmLongMxMid}
+\triunset{\TriGlmLongMxEnd}
+\triunset{\TriProbeSlowRatio}
+\triunset{\TriProbeSlowTimeLo}
+\triunset{\TriProbeSlowTimeHi}
+\triunset{\TriProbeFixTimeLo}
+\triunset{\TriProbeFixTimeHi}
+\triunset{\TriLoopRatioLo}
+\triunset{\TriLoopRatioHi}
+\triunset{\TriProbeLowMs}
+\triunset{\TriProbeHighMs}
+\triunset{\TriDropRows}
+\triunset{\TriDropR}
+\triunset{\TriDropRMain}
+\triunset{\TriDropRMainRows}
+\triunset{\TriAllNodes}
+\triunset{\TriAllStepLo}
+\triunset{\TriAllStepHi}
+\triunset{\TriAllLowLo}
+\triunset{\TriAllLowHi}
+\triunset{\TriAllWattLo}
+\triunset{\TriAllWattHi}
+\triunset{\TriAllTflopLo}
+\triunset{\TriAllTflopHi}
+\triunset{\TriAllNvlsLo}
+\triunset{\TriAllNvlsHi}
+\triunset{\TriMeterIdleLo}
+\triunset{\TriMeterIdleHi}
+\triunset{\TriMeterPeakLo}
+\triunset{\TriMeterPeakHi}
+\triunset{\TriMeterOddIdle}
+\triunset{\TriMeterOddPeak}
+\triunset{\TriMeterOddPct}
+\triunset{\TriMeterOddIdlePct}
+\triunset{\TriReturnStep}
+\triunset{\TriReturnWattLo}
+\triunset{\TriReturnWattHi}
+\triunset{\TriOtherHealthNodes}
+\triunset{\TriOtherHealthPending}\triunset{\TriGlmTwentyEff}\triunset{\TriGlmTwentyTok}\triunset{\TriGlmTwentyStep}\triunset{\TriGlmTwentyMem}\triunset{\TriGlmTwentyMfu}\triunset{\TriGlmTwentyAtoa}\triunset{\TriGlmTwentyAtoaPct}\triunset{\TriFixPctLo}\triunset{\TriFixPctHi}\triunset{\TriGlmPpStepPct}\triunset{\TriGlmPpTwoFiveTok}\triunset{\TriGlmPpTwoFiveStep}\triunset{\TriGlmPpTwoFiveMem}\triunset{\TriGlmPpTwoFiveMfu}\triunset{\TriGlmPpTwoFiveAtoa}\triunset{\TriGlmPpTwoFiveAtoaPct}\triunset{\TriGlmEpTwoSixRatio}\triunset{\TriGlmEpAtoaShare}\triunset{\TriGlmPpRatio}\triunset{\TriGlmEpEightTok}\triunset{\TriGlmEpEightStep}\triunset{\TriGlmEpEightMem}\triunset{\TriGlmEpEightMfu}\triunset{\TriGlmEpEightAtoa}\triunset{\TriGlmEpEightAtoaPct}\triunset{\TriGlmEpSixteenTok}\triunset{\TriGlmEpSixteenStep}\triunset{\TriGlmEpSixteenMem}\triunset{\TriGlmEpSixteenMfu}\triunset{\TriGlmEpSixteenAtoa}\triunset{\TriGlmEpSixteenAtoaPct}\triunset{\TriGlmPpTwoSixTok}\triunset{\TriGlmPpTwoSixStep}\triunset{\TriGlmPpTwoSixMem}\triunset{\TriGlmPpTwoSixMfu}\triunset{\TriGlmPpTwoSixAtoa}\triunset{\TriGlmPpTwoSixAtoaPct}\triunset{\TriBackNodes}\triunset{\TriBackPctLo}\triunset{\TriBackPctHi}\triunset{\TriBackSlowLo}\triunset{\TriBackSlowHi}\triunset{\TriNetInsideTop}\triunset{\TriInGather}\triunset{\TriInScatter}\triunset{\TriInReduce}\triunset{\TriCrossGather}\triunset{\TriCrossScatter}\triunset{\TriCrossReduce}\triunset{\TriInAlltoall}\triunset{\TriInThirteenLo}\triunset{\TriInThirteenHi}\triunset{\TriGlmThirtyTok}\triunset{\TriGlmThirtyStep}\triunset{\TriGlmThirtyMem}\triunset{\TriGlmThirtyMfu}\triunset{\TriGlmThirtyAtoa}\triunset{\TriGlmThirtyAtoaPct}\triunset{\TriGlmThirtyEff}\triunset{\TriGlmThirtySixTok}\triunset{\TriGlmThirtySixStep}\triunset{\TriGlmThirtySixMem}\triunset{\TriGlmThirtySixMfu}\triunset{\TriGlmThirtySixAtoa}\triunset{\TriGlmThirtySixAtoaPct}\triunset{\TriGlmThirtySixEff}\triunset{\TriGlmEpRatioTop}\triunset{\TriClearedNodes}\triunset{\TriClearedPowerLo}\triunset{\TriClearedPowerHi}\triunset{\TriClearedTFlopsLo}\triunset{\TriClearedTFlopsHi}\triunset{\TriClearedCtlLo}\triunset{\TriClearedCtlHi}\triunset{\TriGlmFortyTok}\triunset{\TriGlmFortyStep}\triunset{\TriGlmFortyMem}\triunset{\TriGlmFortyMfu}\triunset{\TriGlmFortyAtoa}\triunset{\TriGlmFortyAtoaPct}\triunset{\TriGlmFortyEff}\triunset{\TriCkGBigWSync}\triunset{\TriCkGBigWSyncGBs}\triunset{\TriCkGBigWBlocked}\triunset{\TriCkGBigWTotal}\triunset{\TriCkGBigWLoadLo}\triunset{\TriCkGBigWLoadHi}\triunset{\TriCkGBigWLoadPeakLo}\triunset{\TriCkGBigWLoadPeakHi}\triunset{\TriCkGBigWLoadGBsLo}\triunset{\TriCkGBigWLoadGBsHi}\triunset{\TriCkGBigFSync}\triunset{\TriCkGBigFSyncGBs}\triunset{\TriCkGBigFBlocked}\triunset{\TriCkGBigFTotal}\triunset{\TriCkGBigFLoadLo}\triunset{\TriCkGBigFLoadHi}\triunset{\TriCkGBigFLoadPeakLo}\triunset{\TriCkGBigFLoadPeakHi}\triunset{\TriCkGBigFLoadGBsLo}\triunset{\TriCkGBigFLoadGBsHi}\triunset{\TriCkGBigFSyncPeak}\triunset{\TriCkGBigFAsyncPeak}\triunset{\TriEnergyFpQ}\triunset{\TriPowerFpQBf}\triunset{\TriPowerFpQMx}\triunset{\TriEnergyFpG}\triunset{\TriPowerFpGBf}\triunset{\TriPowerFpGMx}\triunset{\TriGlmFpTopNodes}\triunset{\TriGlmMemBfTop}\triunset{\TriGlmFpTensorTop}\triunset{\TriGlmFpTensorTopMean}\triunset{\TriGlmMemTensorTop}\triunset{\TriGlmMemPctTensorTop}\triunset{\TriGlmFpBlockTop}\triunset{\TriGlmFpBlockTopMean}\triunset{\TriGlmMemBlockTop}\triunset{\TriGlmMemPctBlockTop}\triunset{\TriGlmFpMxTop}\triunset{\TriGlmFpMxTopMean}\triunset{\TriGlmMemMxTop}\triunset{\TriGlmMemPctMxTop}\triunset{\TriGlmLongStepBf}\triunset{\TriGlmLongStepMx}\triunset{\TriGlmLongFp}\triunset{\TriGlmLongMemBf}
+
+\triunset{\TriWeakFTop}\triunset{\TriWeakHTop}\triunset{\TriWeakFCross}\triunset{\TriWeakHCross}\triunset{\TriWeakTop}\triunset{\TriWeakFOne}\triunset{\TriWeakFTopTok}\triunset{\TriWeakFStep}\triunset{\TriWeakFStepOne}\triunset{\TriWeakFEffOne}\triunset{\TriWeakFEffTwo}\triunset{\TriWeakHOne}\triunset{\TriWeakHTopTok}\triunset{\TriWeakHStep}\triunset{\TriWeakHStepOne}\triunset{\TriWeakHEffOne}\triunset{\TriWeakHEffTwo}\triunset{\TriStrongOne}\triunset{\TriStrongOneStep}\triunset{\TriStrongTopNodes}\triunset{\TriStrongTop}\triunset{\TriStrongTopStep}\triunset{\TriStrongEff}\triunset{\TriGlmThirteenTok}\triunset{\TriGlmThirteenStep}\triunset{\TriGlmThirteenMem}\triunset{\TriGlmThirteenMfu}\triunset{\TriGlmThirteenAtoa}\triunset{\TriGlmThirteenAtoaPct}\triunset{\TriGlmSmallTok}\triunset{\TriGlmSmallStep}\triunset{\TriGlmSmallMem}\triunset{\TriGlmSmallMfu}\triunset{\TriGlmSmallAtoa}\triunset{\TriGlmSmallAtoaPct}\triunset{\TriGlmSixTok}\triunset{\TriGlmSixStep}\triunset{\TriGlmSixMem}\triunset{\TriGlmSixMfu}\triunset{\TriGlmSixAtoa}\triunset{\TriGlmSixAtoaPct}\triunset{\TriGlmTenTok}\triunset{\TriGlmTenStep}\triunset{\TriGlmTenMem}\triunset{\TriGlmTenMfu}\triunset{\TriGlmTenAtoa}\triunset{\TriGlmTenAtoaPct}\triunset{\TriGlmEpRatio}\triunset{\TriGlmSmallRatio}\triunset{\TriGlmSmallFormula}\triunset{\TriGlmStrongTok}\triunset{\TriGlmStrongStep}\triunset{\TriGlmStrongRatio}\triunset{\TriGlmStrongFormula}\triunset{\TriStartQLo}\triunset{\TriStartQHi}\triunset{\TriStartQMed}\triunset{\TriStartGLo}\triunset{\TriStartGHi}\triunset{\TriStartGMed}\triunset{\TriEnergyFsdp}\triunset{\TriEnergyHsdp}\triunset{\TriEnergyPp}\triunset{\TriEnergyGlm}\triunset{\TriPowerFsdp}\triunset{\TriPowerHsdp}\triunset{\TriPowerPp}\triunset{\TriPowerGlm}
+
+\triunset{\TriGlmWeakTwoTok}\triunset{\TriGlmWeakTwoStep}\triunset{\TriGlmWeakTwoMem}\triunset{\TriGlmMemFallPct}\triunset{\TriGlmStrongTwoTok}\triunset{\TriGlmStrongTwoStep}\triunset{\TriGlmStrongTwoRatio}\triunset{\TriGlmStrongTwoFormula}
+
+\triunset{\TriCkQBigSyncLo}\triunset{\TriCkQBigSyncHi}\triunset{\TriCkQBigLoadLo}\triunset{\TriCkQBigLoadHi}\triunset{\TriCkQBigAsyncLo}\triunset{\TriCkQBigAsyncHi}\triunset{\TriCkQBigAsyncTotalLo}\triunset{\TriCkQBigAsyncTotalHi}\triunset{\TriCkQBigPinTotalLo}\triunset{\TriCkQBigPinTotalHi}\triunset{\TriCkQBigWSaveLo}\triunset{\TriCkQBigWSaveHi}\triunset{\TriCkQBigWLoadLo}\triunset{\TriCkQBigWLoadHi}\triunset{\TriQwenFpOneMean}\triunset{\TriQwenFpTopMean}\triunset{\TriStackedGain}
+
+\triunset{\TriCkQBigSyncGBs}
+
+\triunset{\TriLevReduceTopNodes}\triunset{\TriLevReduceTop}\triunset{\TriTokReduceTop}\triunset{\TriTokFsdpTop}\triunset{\TriMemReduceTop}\triunset{\TriMemFsdpTop}
+
+\triunset{\TriSlowRunNodes}\triunset{\TriSlowRunTok}\triunset{\TriSlowRunStep}\triunset{\TriSlowRunPct}\triunset{\TriSlowRunEff}\triunset{\TriStragNodes}\triunset{\TriStragLowLo}\triunset{\TriStragLowHi}\triunset{\TriStragLowRest}\triunset{\TriStragUtilSlow}\triunset{\TriStragUtilRest}
+
+\triunset{\TriGlmWeakThreeTok}\triunset{\TriGlmWeakThreeStep}\triunset{\TriGlmWeakThreeMem}\triunset{\TriGlmWeakThreeAtoa}\triunset{\TriGlmStrongThreeRatio}\triunset{\TriGlmStrongThreeFormula}
+
+% Question box at the top of each analysis section.
+\newtcolorbox{question}{enhanced, breakable, colback=white, colframe=black!35,
+  boxrule=0.4pt, leftrule=2pt, arc=0pt, left=6pt, right=6pt, top=3pt, bottom=3pt,
+  fontupper=\small}
+% Analysis still to write (shown in color so that it can't be mistaken for results).
+\newcommand{\placeholder}[1]{{\color{orange!80!black}\textit{[To write: #1]}}}
+% Figure that needs data not collected yet (all of it, or part of it, synthetic).
+% Shown only when the figure was drawn with synthetic data (flags written by the pipeline).
+\IfFileExists{generated/figures/synthetic.tex}{\input{generated/figures/synthetic.tex}}{}
+\makeatletter
+\newcommand{\syntheticnote}[1]{\expandafter\ifx\csname syn@#1\endcsname\relax\else
+  \if1\csname syn@#1\endcsname{\color{red!70!black}\textbf{Synthetic data}: placeholder values from a
+  toy model, not measurements; hollow markers.}\ \fi\fi}
+\makeatother
+% Generated figure, or a box saying its data is missing (the figure file is deleted when it has no data).
+\newcommand{\fig}[2][\linewidth]{\IfFileExists{generated/figures/#2.pdf}%
+  {\includegraphics[width=#1]{generated/figures/#2}}%
+  {\fbox{\parbox{0.9\linewidth}{\centering\small\vspace{1em}No data yet for \texttt{\detokenize{#2}}.\vspace{1em}}}}}
+% Value from DESIGN.md that is an estimate, not a measurement.
+\newcommand{\est}{\textit{(est.)}}
+
+\title{Large-scale LLM pre-training\\ on Trillium's B200 partition}
+
+\author{%
+  Milabench team \\
+  Mila -- Quebec AI Institute \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training, on two workloads: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM). The partition has 52 nodes of 8 B200 GPUs; 43 were usable and 40 clean until November~6, and all 52 after the administrators' fixes that day, until one stopped responding and the site's check took another out that evening, so runs so far reach \TriQwenTop{} nodes on Qwen and \TriGlmTop{} on GLM-5.
+  GPUs on 7 nodes were held at a 200\,W limit, and CPU clocks fall under high GPU power on all but one node, so Qwen's step times here are throttled, except under pipeline layouts.
+  On 13 nodes, Qwen is fastest at 24k tokens per GPU, where \texttt{fsdp} and \texttt{hsdp8} tie at about 5,000 tokens/s per GPU (\TriQwenBestMFU\,\% MFU), and \texttt{fsdp} holds \TriWeakFEffOne\,\% of its 1-node throughput at \TriWeakFTop{} nodes. GLM-5 should keep expert parallelism inside a node: with the same stages at 26 nodes, \texttt{pp13-ep8} is $\times$\TriGlmEpTwoSixRatio{} as fast as \texttt{pp13-ep16}. MXFP8 buys $\times$\TriQwenFpTop{} on Qwen at \TriQwenFpTopNodes{} nodes and $\times$\TriGlmFpMxTop{} on GLM-5, and whether it trains the same as BF16 is not settled. \TriGlmCopiesTop{} copies of GLM-5 reach \TriGlmCopiesEff\,\% of the throughput per GPU of one. A full GLM-5 checkpoint cannot be loaded on one 13-node copy, but it loads at 39 nodes. Side-by-side 13-node Qwen FSDP jobs change throughput by \TriInterferencePct\,\%. Parts of this report are still partial; each section says what is missing.
+\end{abstract}
+
+\begin{tcolorbox}[colback=red!4, colframe=red!50!black, boxrule=0.4pt, arc=0pt, fontupper=\small]
+  \textbf{Draft generated \DataGenerated.} \NRunsReal{} runs on Trillium, \TriRunsInReport{} of them completed runs in the campaign's figures; \NRunsFailed{} failed. Measured data only: a point not run yet is absent, and \cref{app:plan} lists it. ``??'': not computed yet. \TriFailedNote
+\end{tcolorbox}
+
+\input{sections/introduction}
+\input{sections/methodology}
+\input{sections/machine}
+\input{sections/network}
+\input{sections/interference}
+\input{sections/layouts}
+\input{sections/scaling}
+\input{sections/precision}
+\input{sections/operations}
+\input{sections/conclusion}
+
+\appendix
+\input{sections/plan}
+
+\end{document}

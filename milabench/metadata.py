@@ -3,7 +3,6 @@ import os
 import subprocess
 import traceback
 import datetime
-import functools
 
 import cpuinfo
 import voir.instruments.gpu as gpu
@@ -48,10 +47,26 @@ def fetch_torch_version(pack):
         print(result.stdout)
         return {}
 
-@functools.cache
-@error_guard({})
+# One entry per venv and code dir, not per pack: a multi-node run has one pack per node, copies of one config, and
+# each computation took ~12.5 s (a GitHub query that times out offline, a torch import), one node after the other,
+# before any process started: 666 s at 50 nodes (Trillium job 1256251)
+_metadata_cache = {}
+
+
 def machine_metadata(pack=None):
     """Retrieve machine metadata"""
+    # fetch_torch_version reads the code dir and the pack's env; a pack may have no venv dir (tests' MockPack)
+    key = None if pack is None else (str(getattr(pack.dirs, "venv", None)), str(pack.dirs.code))
+    if key not in _metadata_cache:
+        _metadata_cache[key] = _machine_metadata(pack)
+    return _metadata_cache[key]
+
+
+machine_metadata.cache_clear = _metadata_cache.clear
+
+
+@error_guard({})
+def _machine_metadata(pack=None):
     from .scripts.vcs import retrieve_git_versions
     import milabench.scripts.torchversion as torchversion
 
