@@ -17,6 +17,9 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=
 export UV_CACHE_DIR=$B/uv-cache UV_LINK_MODE=copy UV_OFFLINE=1 UV_NO_INDEX=1 UV_FIND_LINKS=$B/wheelhouse
 # no internet: build TE from its sdist, for B200 only
 export NVTE_PYTORCH_FORCE_BUILD=TRUE NVTE_CUDA_ARCHS=100
+# torch_memory_saver links -lcuda, which cvmfs's ld does not find in /usr/lib64 (job 1261365); /usr/lib64/nvidia holds
+# the driver's libraries only
+export LIBRARY_PATH=/usr/lib64/nvidia${LIBRARY_PATH:+:$LIBRARY_PATH}
 export XDG_CACHE_HOME=$B/cache
 # node-local files in RAM (/tmp holds 2 GB): TMPDIR (Ray's session directory among them) and the kernel caches
 L=/dev/shm/$USER/glm-rl
