@@ -13,6 +13,8 @@ unset PYTHONPATH PIP_CONFIG_FILE
 # own uv cache, files copied: patch_sglang rewrites sglang's installed files, which with uv's default hardlinks are the
 # cache's too (the campaign's venv/torch shares its inodes with $SCRATCH/uv-cache, whose sglang 0.5.21 is patched)
 export UV_CACHE_DIR=$B/uv-cache UV_LINK_MODE=copy MILABENCH_BASE=$B MILABENCH_GPU_ARCH=cuda
+# 30 s (the default) timed out on torch's 400 MB nvidia-cublas beside a checkpoint download (2026-11-07)
+export UV_HTTP_TIMEOUT=300
 export PATH=$B/src/.venv/bin:$HOME/.local/bin:$PATH
 cd "$B/src"
 if [ ! -x .venv/bin/milabench ]; then
