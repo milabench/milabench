@@ -2,19 +2,21 @@
 # Submit one Kimi K3 pre-training run (TorchTitan kimi_k3, config/torchtitan_native_kimi.yaml) on Trillium's B200
 # partition, as a bring-up job named nw-k3trn-<bench> (README.md).
 #
-#   scripts/trillium/kimi-train/k3_train.sh [--time HH:MM:SS] [--nodelist L] [--dry-run] [NAME=value ...] <bench>
+#   scripts/trillium/kimi-train/k3_train.sh --nodelist L [--time HH:MM:SS] [--dry-run] [NAME=value ...] <bench>
 #
 #   scripts/trillium/kimi-train/k3_train.sh --nodelist trig0145 k3-1n-l4
 #   scripts/trillium/kimi-train/k3_train.sh --nodelist trig0145,trig0146 --time 00:40:00 k3-pp2-l4
 #
-# Nodes = the entry's num_machines. The job runs k3_job.sh (power check, then scripts/slurm/tt_native.sh); leading
+# --nodelist is required: exactly the entry's num_machines nodes, so that no job lands on a node the campaign
+# excludes (sinfo shows trig0125 / trig0132 "reserved", which Slurm still allocates). Time defaults to the entry's
+# max_duration + 15 min (startup), as tt_trillium.sh. The job runs k3_job.sh (power check, then scripts/slurm/tt_native.sh); leading
 # NAME=value arguments are exported for it. Paths ($K3 = $SCRATCH/trillium/new/k3-trn, the TT38 of tt_native.sh):
 #   $K3/{env,milabench,output}   milabench venv, this repository, MILABENCH_BASE (bench venv, FineWeb, tokenizer)
 #   $K3/logs/<job name>-<id>.out Slurm output;  $K3/runs/<run>  milabench run data (+ traces/ of profiled runs)
 #   $K3/cache/attn_gym           attn-gym's CuTe kernel cache ($HOME is read-only on compute nodes, job 1260617)
 set -euo pipefail
 
-TIME=00:30:00
+TIME=
 NODELIST=
 DRY_RUN=0
 while [ $# -gt 0 ]; do
@@ -30,12 +32,14 @@ while [[ "${1:-}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
     ENVS+=("$1")
     shift
 done
-BENCH=${1:?usage: k3_train.sh [--time T] [--nodelist L] [--dry-run] [NAME=value ...] <bench>}
+BENCH=${1:?usage: k3_train.sh --nodelist L [--time T] [--dry-run] [NAME=value ...] <bench>}
+[ -n "$NODELIST" ] || { echo "k3_train.sh: pass --nodelist (an explicit node list)" >&2; exit 2; }
 
 K3=${K3_BASE:-${SCRATCH:?}/trillium/new/k3-trn}
 REPO=$K3/milabench
 CONFIG=$REPO/config/torchtitan_native_kimi.yaml
 eval "$(PYTHONPATH=$REPO "$K3/env/bin/python" "$REPO/scripts/trillium/qwen/entry_info.py" "$CONFIG" "$BENCH")"  # NUM_MACHINES ...
+[ -n "$TIME" ] || TIME=$(printf '%02d:%02d:00' $(((MAX_DURATION + 900) / 3600)) $(((MAX_DURATION + 900) % 3600 / 60)))
 
 JOB_ENV=(
     TT38="$K3"
@@ -57,7 +61,7 @@ CMD=(
     --partition="${TRI_PARTITION:-compute_b200_full_node}"
     --gpus-per-node=b200:8 --ntasks-per-node=1 --exclusive --mem=0
     --nodes="$NUM_MACHINES"
-    ${NODELIST:+--nodelist="$NODELIST"}
+    --nodelist="$NODELIST"
     --time="$TIME"
     --job-name="nw-k3trn-$BENCH"
     --output="$K3/logs/%x-%j.out"

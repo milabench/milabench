@@ -8,6 +8,7 @@ Attention Residuals, text only, random init. Entries: `config/torchtitan_native_
 |---|---|---|
 | 2 | `k3_train.sh --nodelist <node> k3-1n-l4` (`-bf16`) | 1 node, 4 layers (KDA dense, KDA-MoE x2, MLA-MoE), EP8: loss on FineWeb |
 | 3 | `k3_train.sh --nodelist <2 nodes> k3-pp2-l4` (`-bf16`) | PP2 x EP8, 2 layers per stage, 16 micro-batches: memory per stage, pipeline hop |
+| 3b | `k3_train.sh --nodelist <4 nodes> k3-pp4-l6-gpipe` (`-4k`) | PP4 GPipe, 64 micro-batches in flight: PP48's worst in-flight memory |
 | hop | `python hop_times.py $K3/runs/<run>/traces/iteration_20` | NCCL kernel times of the traced step, per rank and stream |
 
 `k3_train.sh --dry-run ...` prints the sbatch command. Jobs are named `nw-k3trn-<bench>`, bring-up rules in
@@ -33,14 +34,15 @@ TorchTitan's `HuggingFaceTokenizer` cannot read; DeepSeek's ids (< 129,280) inde
 ## Measured (2026-11-07, trig0145 / trig0146, throttled step times)
 
 Seq 8192, one sequence per GPU per micro-batch, EP8 inside a node, full AC. Memory: largest rank, GiB, peak allocated /
-peak reserved (summary `per_rank`). Tokens/s per GPU from the median step.
+peak reserved (summary `per_rank`). Tokens/s per GPU from the median step; MFU = TorchTitan's FLOPs per token x
+tokens/s / 2.25e15 per GPU (the campaign's `PEAK_BF16`, `tri_analysis/machine.py`), as the run summary.
 
 | job | entry | result |
 |---|---|---|
-| 1261073 | `k3-1n-l4-bf16` (1 node, 3 MoE layers per GPU) | 0.738 s per step, 11,100 tokens/s per GPU; 122.6 / 151.7 GiB; FineWeb loss 12.49 -> 7.20 at step 100 |
+| 1261073 | `k3-1n-l4-bf16` (1 node, 3 MoE layers per GPU) | 0.738 s per step, 11,100 tokens/s per GPU, MFU 17.4%; 122.6 / 151.7 GiB; FineWeb loss 12.49 -> 7.20 at step 100 |
 | 1261072 | `k3-1n-l4` (FP32 master) | out of memory: model 56.4 GiB, 136 GiB at step 1, then `expandable_segments: memory mapping failed` every ~15-25 s and no step 2; cancelled |
 | 1261155 | `k3-pp2-l4` (FP32 master) | stage 1 (2 MoE layers + output): 146.5 GiB at step 1, then the same failures and no step 2 for 4 min; cancelled |
-| 1261179 | `k3-pp2-l4-bf16` | 6.625 s per step (16 micro-batches, 1.05 M tokens), 9,890 tokens/s per GPU, 349 TFLOP/s per GPU (20.9% of 1,668; TorchTitan's MFU 15.5% of 2,250); stage 0 76.4 / 108.0, stage 1 116.8 / 167.2 GiB; loss 12.50 -> 6.52 at step 45 |
+| 1261179 | `k3-pp2-l4-bf16` | 6.625 s per step (16 micro-batches, 1.05 M tokens), 9,890 tokens/s per GPU, 349 TFLOP/s per GPU, MFU 15.5%; stage 0 76.4 / 108.0, stage 1 116.8 / 167.2 GiB; loss 12.50 -> 6.52 at step 45 |
 
 Pipeline hop (1261179, step 20 traced, `hop_times.py`): every micro-batch sends 2 tensors of 117.4 MB (hidden state and
 the AttnRes stack, one block this shallow) from each of the 8 GPUs of a node to the next node; a send whose receiver is
