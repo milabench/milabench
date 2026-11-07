@@ -443,6 +443,41 @@ kimi-vllm-2n-dp16-ep16:
       --enable-expert-parallel: true
 
 # -----------------------------------------------------------------------------
+# vLLM on B200 (CUDA, vLLM 0.32.0: platforms.toml, torch 2.13.0 + cu130). One B200 node holds ~1.44 TB, the
+# checkpoint 1.56 TB: 2 nodes at least. TP8 inside each node (NVLink), PP2 across the two (Ray): the layout of
+# vLLM's Kimi-K3 recipe for 2 x 8 B200 (without its DCP8 and DSpark draft, which the MI355X study did not use).
+# -----------------------------------------------------------------------------
+
+kimi-vllm-2n-tp8pp2:
+  inherits: _kimi_vllm
+  num_machines: 2
+  tags:
+    - multinode
+    - moe
+    - mxfp4
+    - kimi-study
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+    - "len(nodes) >= ${..num_machines}"
+  env:
+    # the API server waits this long for the engine (default 600 s): loading 1.56 TB takes longer
+    VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+  server:
+    argv:
+      --tensor-parallel-size: "{gpu_count}"
+      --pipeline-parallel-size: "{num_machines}"
+
+# bring-up: the server loads and two passes of the study run against it
+kimi-vllm-2n-tp8pp2-bringup:
+  inherits: kimi-vllm-2n-tp8pp2
+  max_duration: 3000
+  client:
+    passes:
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+
+# -----------------------------------------------------------------------------
 # Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
 # -----------------------------------------------------------------------------
 
