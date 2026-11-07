@@ -9,7 +9,7 @@ The campaign is not finished: the runs at 39 nodes and above are coming in, and 
   \item \textbf{Side by side.} 13-node Qwen FSDP jobs do not slow each other (\TriInterferencePct\,\%). One job beside a pipeline job did, once.
   \item \textbf{Qwen.} 24k tokens per GPU, \texttt{fsdp} or \texttt{hsdp8}, selective recompute. Above that, memory or padding limits it; TP and PP cost throughput. \texttt{fsdp} holds \TriWeakFEffOne\,\% of its 1-node throughput at \TriWeakFTop{} nodes.
   \item \textbf{GLM-5.} Expert groups inside a node, full recompute. \TriGlmCopiesTop{} copies reach \TriGlmCopiesEff\,\% of the throughput per GPU of one; memory per GPU falls with copies.
-  \item \textbf{Precision.} MXFP8 buys a few percent, up to $\times$\TriQwenFpTop, because matrix multiplies are a small part of the step. Whether it trains the same is not settled: it depends on the seed over 500 steps. A longer run is the test to do.
+  \item \textbf{Precision.} MXFP8 buys a few percent, up to $\times$\TriQwenFpTop, because matrix multiplies are a small part of the step. Whether it trains the same is not settled: on Qwen it depends on the seed over 500 steps, and on GLM-5 two BF16 runs at one seed differ as much as the recipes do. A longer run is the test to do.
   \item \textbf{Checkpoints.} Cheap on Qwen; a full GLM-5 checkpoint saves in one to two minutes, does not load on one \texttt{pp13-ep8} copy, and loads at 39 nodes on three.
 \end{itemize}
 

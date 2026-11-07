@@ -157,7 +157,7 @@ def series_gaps(runs: pd.DataFrame) -> dict[str, list[int]]:
 
 def loss_gaps(runs: pd.DataFrame, loss: pd.DataFrame) -> pd.DataFrame:
     """C-loss: every comparison of two runs, on their own step index. ``recipe``: FP8 recipe minus BF16 at the same seed, on the same nodes when
-    a BF16 run has them. ``same seed``: two runs of a recipe. ``other seed``: first runs of a recipe at two seeds. Gap = a - b, over steps 401-500 and at step 500."""
+    a BF16 run has them. ``same seed``: two runs of a recipe. ``other seed``: first runs of a recipe at two seeds. Gap = a - b, over steps 401-500, at step 500, and over steps 51-100 (early)."""
     r = completed(runs, "C-loss")
     if r.empty or loss.empty:
         return pd.DataFrame()
@@ -169,7 +169,7 @@ def loss_gaps(runs: pd.DataFrame, loss: pd.DataFrame) -> pd.DataFrame:
         if a.run_id in curves and b.run_id in curves:
             d = (curves[a.run_id] - curves[b.run_id]).dropna()
             rows.append({"kind": kind, "model": a.model, "recipe": a.precision, "seed_a": int(a.seed), "seed_b": int(b.seed), "run_a": a.run_id, "run_b": b.run_id,
-                         "same_nodes": a.hosts == b.hosts, "last100": d[(d.index > 400) & (d.index <= 500)].mean(), "step500": d.get(500, float("nan")),
+                         "same_nodes": a.hosts == b.hosts, "last100": d[(d.index > 400) & (d.index <= 500)].mean(), "step500": d.get(500, float("nan")), "early": d[(d.index > 50) & (d.index <= 100)].mean(),
                          "synthetic": bool(a.synthetic or b.synthetic)})
 
     for model, g in r.groupby("model"):

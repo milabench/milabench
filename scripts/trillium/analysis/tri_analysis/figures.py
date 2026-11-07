@@ -798,7 +798,7 @@ def precision_loss(t):
             ax.axvline(GLM_LR_WARMUP, color=MUTED, lw=0.6, ls=(0, (1, 2)))
             ax.annotate("lr warm-up ends", (GLM_LR_WARMUP, 0), xycoords=("data", "axes fraction"), xytext=(2, 2),
                         textcoords="offset points", fontsize=6, color=INK2, va="bottom")
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=5.5, frameon=False)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=1 if model == GLM else 2, fontsize=5.5, frameon=False)  # GLM-5's labels are long enough to run into Qwen's
         ax.set_xlim(0, 500)
         ax.set_title(WORKLOAD_LABEL[model] + ("" if (d.kind != "recipe").any() else ": no BF16 repeats yet"))
         ax.set_xlabel("step (legend: mean of steps 401-500)")
