@@ -99,5 +99,8 @@ def parse_collectives(path: Path, synthetic=False) -> list[dict]:
         r.pop("hosts", None)
         r.pop("schema", None)
         r["min_pair_gbs"] = min((p["bw_gbs"] for p in pairs), default=None)
+        top = max((p["bw_gbs"] for p in pairs), default=None)
+        r["n_pairs"] = len(pairs) or None
+        r["slow_pairs"] = sum(p["bw_gbs"] < 0.75 * top for p in pairs) if pairs else None  # D2 on Nov 7: about 189 or 96, nothing between
         rows.append({**r, "cluster": CLUSTER, "synthetic": synthetic})
     return rows

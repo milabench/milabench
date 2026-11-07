@@ -39,6 +39,9 @@ NET_D2_JOBS = {1239766, 1239768}
 NET_D2_ALL_GPUS_JOB = 1239660
 NET_D3_JOB = 1239634
 NET_D3_INSIDE_JOB = 1250124  # the same ladder to 26 nodes, all inside trig0101-0128; the first one crosses groups from 8 nodes up
+# Nov 7, 50 nodes (all but trig0114, trig0138): D2 over all 1,225 pairs, D3 to 26 nodes (the 26-node step slow, its all-to-all hung,
+# D3 at 50 cancelled), D4 in 3 cuts of 25 + 25.
+NET_FULL_JOB = 1258790
 
 # Checkpoint size per parameter, measured on truncated models (Rorqual, Fir): full 12.0, weights 2.0.
 CKPT_FULL_B_PER_PARAM = 12.0

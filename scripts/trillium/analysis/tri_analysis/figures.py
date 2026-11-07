@@ -14,7 +14,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB,
+from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
                       NODE_NET_GBS, NODES, SUBNET_OF)
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
@@ -235,18 +235,25 @@ def pair_matrix(t):
     if p.empty:
         return None
     p = p[(p.status == "ok") & p.a.isin(POS) & p.b.isin(POS)]
-    if not p.synthetic.any():
-        p = p[p.job_id.isin(NET_D2_JOBS)]  # GPUs 0, 2, 4, 6: what the fabric carries; the others are bring-up tests
+    if p.synthetic.any():
+        panels = [(p, "bw_gbs", "bandwidth"), (p, "lat_us", "latency")]
+    else:  # GPUs 0, 2, 4, 6: what the fabric carries; the others are bring-up tests
+        old, full = p[p.job_id.isin(NET_D2_JOBS)], p[p.job_id == NET_FULL_JOB]
+        panels = [(old, "bw_gbs", "bandwidth, Nov 4, 2 jobs of 25 nodes"), (full, "bw_gbs", "bandwidth, Nov 7, 1 job of 50 nodes"),
+                  (full if len(full) else old, "lat_us", f"latency, Nov {7 if len(full) else 4}")]
+        panels = [x for x in panels if len(x[0])]
+    bw = pd.concat([d.bw_gbs for d, col, _ in panels if col == "bw_gbs"])
     n = len(NODES)
-    fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.75))
+    fig, axes = plt.subplots(1, len(panels), figsize=(TEXT_WIDTH, 2.75 if len(panels) < 3 else 2.35))
     groups, edges, centers, starts = _subnets()
-    for ax, col, label in ((axes[0], "bw_gbs", "bandwidth (GB/s, one direction)"),
-                           (axes[1], "lat_us", "latency (µs, 8 B)")):
+    for ax, (d, col, title) in zip(axes, panels):
+        label = "GB/s, one direction" if col == "bw_gbs" else "µs, 8 B"
         m = np.full((n, n), np.nan)
-        agg = p.groupby(["a", "b"])[col].median()
+        agg = d.groupby(["a", "b"])[col].median()
         for (a, b), v in agg.items():
             m[POS[a], POS[b]] = m[POS[b], POS[a]] = v
-        im = ax.imshow(m, cmap=SEQUENTIAL, interpolation="nearest")  # darker = more
+        lim = dict(vmin=bw.min(), vmax=bw.max()) if col == "bw_gbs" else {}  # one scale for both days
+        im = ax.imshow(m, cmap=SEQUENTIAL, interpolation="nearest", **lim)  # darker = more
         for e in edges:
             ax.axhline(e - 0.5, color="white", lw=0.6)
             ax.axvline(e - 0.5, color="white", lw=0.6)
@@ -263,8 +270,7 @@ def pair_matrix(t):
         cb.set_label(label, fontsize=7)
         cb.ax.tick_params(labelsize=6)
         cb.outline.set_visible(False)
-        ax.set_title(f"{'bandwidth' if col == 'bw_gbs' else 'latency'}: median {np.nanmedian(m):.3g}, "
-                     f"range {np.nanmin(m):.3g}–{np.nanmax(m):.3g}", fontsize=7)
+        ax.set_title(f"{title}\nmedian {np.nanmedian(m):.3g}, range {np.nanmin(m):.3g}–{np.nanmax(m):.3g}", fontsize=6.5)
     style.synthetic_mark(fig, p.synthetic.any(), "includes synthetic data")
     fig.tight_layout()
     return fig
