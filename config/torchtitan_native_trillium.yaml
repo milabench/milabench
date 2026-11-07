@@ -634,6 +634,19 @@ tri-ckpt-model-sync:
     --checkpoint-async: disabled
     --checkpoint-repeats: 2
 
+# --- F2: long run, the best layout at the top scale, >= 1 h of measured steps (stability, stragglers, clocks, power) --
+# hsdp8 24k: the best BF16 layout of A-Q at 50 nodes. 760 steps after the 30 warm-up steps, ~65 min at ~5.15 s
+# per step (est.); no checkpoint. run.experiment: TT_EXPERIMENT=F2 (a leading argument of tt_trillium.sh).
+
+tri-f2-hsdp8-24k:
+  inherits: tri-aq-hsdp8-24k
+  max_duration: 5400
+  voir:
+    options:
+      skip: 30
+      stop: 760
+      stop_seconds: 0
+
 # --- R: reference run (4 nodes, FSDP, 12k, every ~3 h through the window) ----
 
 tri-ref:
