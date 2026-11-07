@@ -1143,7 +1143,7 @@ def macros(t) -> str:
         SYN_DEF,
         rf"\newcommand{{\DataGenerated}}{{{datetime.now():%Y-%m-%d %H:%M}}}",
         rf"\newcommand{{\NRunsReal}}{{{len(real)}}}",
-        rf"\newcommand{{\NRunsFailed}}{{{int((real.status != 'completed').sum()) if len(real) else 0}}}",
+        rf"\newcommand{{\NRunsFailed}}{{{int((real.status == 'failed').sum()) if len(real) else 0}}}",
         rf"\newcommand{{\NRunsSynthetic}}{{{n_syn}}}",
         rf"\newcommand{{\HasSynthetic}}{{{'1' if n_syn else '0'}}}",
         rf"\newcommand{{\TriNNodes}}{{{N_NODES}}}",
