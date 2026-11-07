@@ -180,10 +180,30 @@ class Options:
         return cls(**values)
 
 
+def _patch_kimi_pp_stage() -> None:
+    """Kimi K3's pipeline stage (TorchTitan 51b37c2) overrides ``forward_one_chunk``
+    without torch's ``set_manual_backward_finalization(True)`` on an FSDP stage, so
+    the schedule's gradient reduction (``finalize_backward``) fails at the first
+    step with FSDP inside the stages (job 1261124). Set it as torch's stage does."""
+    from torch.distributed.fsdp import FSDPModule
+    from torchtitan.models.kimi_k3.pipeline_parallel.stage import AttnResPipelineStage
+
+    forward_one_chunk = AttnResPipelineStage.forward_one_chunk
+
+    def patched(self, *args, **kwargs):
+        if isinstance(self.submod, FSDPModule) and self.has_backward:
+            self.submod.set_manual_backward_finalization(True)
+        return forward_one_chunk(self, *args, **kwargs)
+
+    AttnResPipelineStage.forward_one_chunk = patched
+
+
 def _model_config(opts: Options):
     build = build_model_config
     if opts.model == "kimi_k3":
         from torchtitan.models.kimi_k3 import build_model_config as build
+
+        _patch_kimi_pp_stage()
     model = build(opts.flavor, seq_len=opts.seq_len, attn_backend=opts.attn_backend)
     # Text-only pre-training: the 27B and Kimi-K3 flavors ship a vision encoder, which would
     # run on dummy inputs every step and is not part of the decoder FLOPs.
