@@ -2,12 +2,13 @@
 # One-off (2026-11-07): D3 collectives slow at 26 and 50 nodes in 1258790 and 1259019 (~36 GB/s against 170-192).
 # Records the environment on every node, then D3 at 26 (the first 26 nodes, a subgroup) and 50 on the job's
 # nodes, 1 GiB, with NCCL_DEBUG=INFO (INIT, ENV, TUNING) to per-process files, under NCCL variants:
-#   base      as before (also 13 nodes, and all-to-all)
+#   base      as before, also 13 nodes; all-reduce, all-gather, reduce-scatter (all-to-all hangs at 26: last step)
 #   ring      NCCL_ALGO=Ring
-#   tree      NCCL_ALGO=Tree, all-reduce only (the only one of the three with a tree algorithm)
+#   tree      NCCL_ALGO=allreduce:tree, all-reduce only (a plain Tree leaves all-gather, which Net() uses, with no algorithm)
 #   nvls0     NCCL_NVLS_ENABLE=0
 #   collnet0  NCCL_COLLNET_ENABLE=0
 #   base-end  base again, to see whether it changes over the job
+#   a2a       all-to-all alone at 26 and 50
 # Each step has an srun --time (a hang costs 3 minutes, then the next step runs); IB counters of the compute
 # ports before and after each step: logs/ib/<step>-{before,after}.txt. Environment: env/<host>.txt.
 #
@@ -21,7 +22,7 @@
 #SBATCH --qos=bump
 #SBATCH --gpus-per-node=b200:8
 #SBATCH --exclusive
-#SBATCH --time=0:25:00
+#SBATCH --time=0:30:00
 
 set -uo pipefail
 
@@ -74,15 +75,17 @@ step() {  # step <tag> <minutes> [VAR=value ...] -- <collectives.py args>
         MASTER_PORT=$port NET_OUT="$NET_OUT/$tag" \
         srun --nodes="$N" --ntasks-per-node="$GPUS" --cpus-per-task="$CPUS" --kill-on-bad-exit=1 --time="$limit" \
         "$NET_PY" "$NET_DIR/collectives.py" "$@" > "$NET_OUT/$tag/log.txt" 2>&1
-    echo "[$(date +%T)] $tag: exit $?"
+    local rc=$?
+    echo "[$(date +%T)] $tag: exit $rc"
     snap "$tag-after.txt"
 }
 
 THREE=all_reduce,all_gather,reduce_scatter
-step base 3 -- --nodes 13,26 --sweep-nodes 0
+step base 3 -- --nodes 13,26 --sweep-nodes 0 --collectives $THREE
 step ring 3 NCCL_ALGO=Ring -- --nodes 26 --sweep-nodes 0 --collectives $THREE
-step tree 3 NCCL_ALGO=Tree -- --nodes 26 --sweep-nodes 0 --collectives all_reduce
+step tree 3 NCCL_ALGO=allreduce:tree -- --nodes 26 --sweep-nodes 0 --collectives all_reduce
 step nvls0 3 NCCL_NVLS_ENABLE=0 -- --nodes 26 --sweep-nodes 0 --collectives $THREE
 step collnet0 3 NCCL_COLLNET_ENABLE=0 -- --nodes 26 --sweep-nodes 0 --collectives $THREE
-step base-end 3 -- --nodes 13,26 --sweep-nodes 0
+step base-end 3 -- --nodes 13,26 --sweep-nodes 0 --collectives $THREE
+step a2a 3 -- --nodes 26 --sweep-nodes 0 --collectives alltoall
 echo "[$(date +%T)] done"
