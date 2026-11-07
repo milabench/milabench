@@ -242,8 +242,9 @@ pydantic = ">=2,<3"
 "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
 "2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
-# Kimi-K3 (kimi_k3) needs vLLM >= 0.27.0; 0.32.0 is what the MI355X Kimi study ran (Requires-Dist: torch==2.13.0)
-"2.13.0,130" = { version = "0.32.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.32.0" }
+# Kimi-K3 (kimi_k3) needs vLLM >= 0.27.0; 0.32.0 is what the MI355X Kimi study ran (Requires-Dist: torch==2.13.0).
+# Its per-version index: the GitHub release page also has 0.32.0+cu129, which ==0.32.0 matches and uv prefers
+"2.13.0,130" = { version = "0.32.0", extra-index-url = "https://wheels.vllm.ai/0.32.0/cu130/" }
 
 [vllm.cpu]
 # backend_version is the "cpu" placeholder from [vars] (always "0").

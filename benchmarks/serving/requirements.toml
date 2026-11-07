@@ -14,7 +14,8 @@ dependencies = [
     "vllm[bench]",
     "vllm[audio]",
     "flashinfer-python",
-    "flashinfer-cubin",
+    # no flashinfer-cubin: vLLM 0.19 pins its own; FlashInfer 0.6.14+ (vLLM 0.26, 0.32) has no matching wheel on
+    # PyPI (flashinfer refuses 0.6.13 cubins at import). `vllm download-kernels` installs the matching kernels
     # "flashinfer-jit-cache",
     "torchcodec",
 ]
