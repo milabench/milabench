@@ -70,6 +70,28 @@ k3-pp2-l4-bf16:
   argv:
     --training-dtype: bfloat16
 
+# --- 4 nodes, PP4 GPipe: all 64 micro-batches in flight on every stage, about as many activation bytes as the
+#     worst stages of PP48 1F1B (stage s holds 48 - s, with a deeper AttnRes stack). 6 layers: stages 1-2 hold 2 MoE
+#     layers and no output. -4k: 4096-token micro-batches, the fallback (PP48 at 256 micro-batches keeps 8.4M
+#     tokens per step; 1F1B keeps 48 - s in flight whatever the count, so 64 here) ---
+k3-pp4-l6-gpipe:
+  inherits: _k3
+  num_machines: 4
+  voir:
+    options:
+      skip: 3
+      stop: 10
+  argv:
+    --n-layers: 6
+    --layout: pp4-fsdp
+    --pp-schedule: GPipe
+    --pp-microbatches: 64
+    --training-dtype: bfloat16
+k3-pp4-l6-gpipe-4k:
+  inherits: k3-pp4-l6-gpipe
+  argv:
+    --seq-len: 4096
+
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most (93 layers +
 #     embedding + output = 95 units over 48 stages), BF16: the FP32 master did not fit 2 MoE layers + the output
 #     on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
