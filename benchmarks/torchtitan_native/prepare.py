@@ -15,9 +15,7 @@ os.environ["HF_DATASETS_OFFLINE"] = "0"
 
 from tt_native.assets import (  # noqa: E402
     DEFAULT_FINEWEB_SAMPLES,
-    TOKENIZER_FILES,
-    TOKENIZER_REPO,
-    TOKENIZER_REVISION,
+    TOKENIZERS,
     fineweb_dir,
     tokenizer_dir,
 )
@@ -31,6 +29,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="fineweb")
     parser.add_argument("--samples", type=int, default=DEFAULT_FINEWEB_SAMPLES)
+    parser.add_argument("--model", default="qwen3_8")
     args, _ = parser.parse_known_args()
 
     if args.dataset == "random":
@@ -39,15 +38,16 @@ def main():
 
     from huggingface_hub import snapshot_download
 
-    dest = tokenizer_dir()
+    repo, revision, files = TOKENIZERS[args.model]
+    dest = tokenizer_dir(args.model)
     snapshot_download(
-        repo_id=TOKENIZER_REPO,
-        revision=TOKENIZER_REVISION,
+        repo_id=repo,
+        revision=revision,
         local_dir=str(dest),
-        allow_patterns=TOKENIZER_FILES,
+        allow_patterns=files,
         token=_token(),
     )
-    print(f"Tokenizer {TOKENIZER_REPO}@{TOKENIZER_REVISION[:8]} at {dest}")
+    print(f"Tokenizer {repo}@{revision[:8]} at {dest}")
 
     from benchmate.fineweb import prepare_fineweb
 

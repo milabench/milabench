@@ -211,7 +211,7 @@ def workload_block() -> dict[str, Any]:
         "activation_checkpointing": d.get("activation_checkpointing"),
         "compile": d.get("compile"),
         "seed": d.get("options", {}).get("seed"),
-        "moe": None,
+        "moe": d.get("moe"),
     }
 
 
@@ -778,7 +778,8 @@ class TrainerInstrument:
         workload = {
             **workload_block(),
             "params_total": params,
-            "params_active": params,
+            # MoE: TorchTitan logs the active count but does not keep it (flops_per_token uses it)
+            "params_active": None if RUN_DESCRIPTION.get("moe") else params,
             "seq_len": training.max_context_length,
             "grad_accum": trainer.gradient_accumulation_steps,
             "tokens_per_gpu_per_step": tokens_per_gpu,
@@ -797,7 +798,7 @@ class TrainerInstrument:
                 "tp": ctx.tp,
                 "pp": ctx.pp,
                 "cp": ctx.cp,
-                "ep": 1,
+                "ep": ctx.ep,
                 "layout": RUN_DESCRIPTION.get("layout"),
                 "pp_schedule": RUN_DESCRIPTION.get("pp_schedule"),
                 "microbatches_per_pipeline": RUN_DESCRIPTION.get("pp_microbatches"),
@@ -822,7 +823,7 @@ class TrainerInstrument:
             "mfu_inputs": {
                 "flops_per_token": trainer.engine.num_flops_per_token,
                 "peak_flops_per_gpu": trainer.metrics_processor.gpu_peak_flops,
-                "formula": (
+                "formula": RUN_DESCRIPTION.get("flops_formula") or (
                     "TorchTitan Qwen35Model.get_nparams_and_flops: "
                     "6*active_params (embeddings excluded, lm_head included) "
                     "+ per full-attention layer 6*n_heads*2*head_dim*seq_len "

@@ -79,6 +79,8 @@ MXFP8_TARGETS = (
 @dataclass(kw_only=True)
 class Options:
     # Model
+    model: Literal["qwen3_8", "kimi_k3"] = "qwen3_8"
+    """TorchTitan model package; ``flavor`` names one of its flavors (``27B``, ``Kimi-K3``)."""
     flavor: str = "27B"
     n_layers: int | None = None
     """Truncate to the first N layers (multiple of 4 keeps the 3:1 GDN/attention mix)."""
@@ -116,6 +118,10 @@ class Options:
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
     adam_moments: Literal["fp32", "bf16"] = "fp32"
     """AdamW moment dtype. bf16 saves 4 B/param (low-memory fallback)."""
+    training_dtype: Literal["float32", "bfloat16"] = "float32"
+    """TorchTitan's ``training.dtype``. ``float32``: FP32 master weights, BF16
+    compute through FSDP mixed precision. ``bfloat16``: parameters, gradients
+    and optimizer state in BF16, no FP32 copy."""
 
     # Parallelism. ``layout`` names a layout and sets the degrees below:
     # ``fsdp`` (all GPUs), ``hsdp<k>`` (shard over k GPUs, replicate across),
@@ -131,6 +137,8 @@ class Options:
     """Pipeline microbatches per step and DP rank (default: ``pp``). Each has
     ``microbatch_sequences`` sequences."""
     pp_layers_per_stage: int | None = None
+    ep: int = 1
+    """Expert-parallel degree (MoE models), taken from each stage's FSDP ranks."""
 
     # Checkpoint save / load timing, after the measurement (tt_native/checkpoint.py).
     checkpoint: CheckpointContent = "off"
@@ -157,6 +165,9 @@ class Options:
     """TorchTitan per-rank JSONL traces (one file per rank: off by default)."""
     dump_folder: str = "./outputs"
     seed: int = 1234
+    profile_freq: int = 0
+    """> 0: TorchTitan's profiler traces step ``profile_freq`` once, every rank,
+    into ``$MILABENCH_DIR_RUN/traces``."""
 
     @classmethod
     def from_env(cls) -> "Options":
@@ -170,10 +181,11 @@ class Options:
 
 
 def _model_config(opts: Options):
-    model = build_model_config(
-        opts.flavor, seq_len=opts.seq_len, attn_backend=opts.attn_backend
-    )
-    # Text-only pre-training: the 27B flavor ships a vision encoder, which would
+    build = build_model_config
+    if opts.model == "kimi_k3":
+        from torchtitan.models.kimi_k3 import build_model_config as build
+    model = build(opts.flavor, seq_len=opts.seq_len, attn_backend=opts.attn_backend)
+    # Text-only pre-training: the 27B and Kimi-K3 flavors ship a vision encoder, which would
     # run on dummy inputs every step and is not part of the decoder FLOPs.
     model.vision_encoder = None
     instrument.RUN_DESCRIPTION["n_layers_full"] = len(model.layers)
@@ -286,7 +298,7 @@ def _data(opts: Options, vocab_size: int):
         post_filters=(_not_none,),
     )
     return (
-        str(assets.tokenizer_dir()),
+        str(assets.tokenizer_dir(opts.model)),
         HuggingFaceTokenizer.Config(),
         PooledGrainDataLoader.Config(
             dataset=ConcatThenSplitPackingConfig(dataset=dataset),
@@ -349,7 +361,22 @@ def _checkpointer(opts: Options):
     )
 
 
+def _profiler(opts: Options):
+    """TorchTitan's profiler: step ``profile_freq`` traced once on every rank."""
+    from torchtitan.observability.profiler import Profiler
+
+    runs = os.environ.get("MILABENCH_DIR_RUN") or os.environ.get("MILABENCH_DIR_RUNS", ".")
+    return Profiler.Config(
+        enable_profiling=True,
+        profile_freq=opts.profile_freq,
+        profiler_warmup=1,
+        profiler_repeat=1,
+        save_traces_folder=os.path.join(os.path.abspath(runs), "traces"),
+    )
+
+
 def qwen38() -> Trainer.Config:
+    """Trainer config of every model of the pack (``Options.model``)."""
     opts = Options.from_env()
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     degrees = parallel_degrees(opts, world_size)
@@ -365,10 +392,16 @@ def qwen38() -> Trainer.Config:
         microbatches = (pp_microbatches if degrees["pp"] > 1 else 1) * opts.grad_accum
         tokens_per_train_step = tokens_per_microbatch * dp_degree * microbatches
     checkpointer = _checkpointer(opts)
+    master = (
+        "fp32 master weights"
+        if opts.training_dtype == "float32"
+        else "no fp32 master weights (training.dtype bfloat16)"
+    )
+    moe = next((layer.moe for layer in model.layers if getattr(layer, "moe", None)), None)
 
     description = {
         **instrument.RUN_DESCRIPTION,
-        "model": "qwen3_8",
+        "model": opts.model,
         "flavor": opts.flavor,
         "n_layers": len(model.layers),
         "text_only": True,
@@ -376,10 +409,19 @@ def qwen38() -> Trainer.Config:
         "stacked_layout": opts.stacked_layout,
         "precision": opts.precision,
         "precision_detail": (
-            "bf16 (fp32 master weights, FSDP mixed precision)"
+            f"bf16 ({master}, FSDP mixed precision)"
             if opts.precision == "bf16"
             else "MXFP8 linears (torchao kernels, 32x32 weight / 1x32 activation scales), "
-            "bf16 elsewhere, fp32 master weights"
+            f"bf16 elsewhere, {master}"
+        ),
+        "training_dtype": opts.training_dtype,
+        "ep": opts.ep,
+        "moe": None if moe is None else {"experts": moe.num_experts, "top_k": moe.router.top_k},
+        "flops_formula": None if opts.model == "qwen3_8" else (
+            "TorchTitan KimiK3Model.get_nparams_and_flops: 6*active_params (routed experts "
+            "counted top_k of num_experts, input embedding excluded) + per MLA layer "
+            "quadratic_attention_flops_per_token + per KDA layer delta_rule_flops_per_token. "
+            "mfu = flops_per_token * tokens_per_s / (peak * gpus)"
         ),
         "grad_reduce_dtype": opts.grad_reduce,
         "layout": degrees["layout"],
@@ -403,7 +445,7 @@ def qwen38() -> Trainer.Config:
             "random tokens (packed, fixed length)"
             if opts.dataset == "random"
             else f"FineWeb {assets.FINEWEB_SUBSET} (first {opts.samples} docs), "
-            f"{assets.TOKENIZER_REPO} tokenizer, packed with document masking"
+            f"{assets.TOKENIZERS[opts.model][0]} tokenizer, packed with document masking"
         ),
         "data_cache": os.environ.get("TT_NATIVE_DATASETS_CACHE") or "HF_HOME",
         "options": asdict(opts),
@@ -442,6 +484,7 @@ def qwen38() -> Trainer.Config:
             max_context_length=opts.seq_len,
             # The voirfile stops the run (voir skip/stop); keep the LR schedule long.
             steps=1_000_000,
+            dtype=opts.training_dtype,
             disable_cuda_graphs=opts.compile != "regions+graphs",
             mixed_precision_param="bfloat16",
             mixed_precision_reduce="bfloat16" if opts.grad_reduce == "bf16" else "float32",
@@ -454,6 +497,7 @@ def qwen38() -> Trainer.Config:
             pipeline_parallel_schedule=opts.pp_schedule,
             num_pp_microbatches=pp_microbatches,
             pipeline_parallel_layers_per_stage=opts.pp_layers_per_stage,
+            expert_parallel_degree=opts.ep,
             fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
         ),
         comm=CommConfig(
@@ -473,4 +517,5 @@ def qwen38() -> Trainer.Config:
         checkpointer=checkpointer,
         activation_checkpoint=_activation_checkpoint(opts.ac, opts.sac_save_scaled_mm),
         dump_folder=opts.dump_folder,
+        **({"profiler": _profiler(opts)} if opts.profile_freq > 0 else {}),
     )

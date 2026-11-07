@@ -21,6 +21,19 @@ TOKENIZER_FILES = [
     "generation_config.json",
 ]
 
+# Kimi K3 ships a tiktoken tokenizer (tiktoken.model + remote code), which
+# TorchTitan's HuggingFaceTokenizer cannot read. Its runs tokenize FineWeb with
+# DeepSeek-V3.1's tokenizer.json instead, as TorchTitan's DeepSeek recipes do:
+# its ids (< 129,280) index K3's 163,840-entry embedding.
+TOKENIZERS = {
+    "qwen3_8": (TOKENIZER_REPO, TOKENIZER_REVISION, TOKENIZER_FILES),
+    "kimi_k3": (
+        "deepseek-ai/DeepSeek-V3.1-Base",
+        "d3d4eafdc470de44bbf6f0a74f852eb522357be8",
+        ["tokenizer.json", "tokenizer_config.json"],
+    ),
+}
+
 # Shared with the HF torchtitan pack (benchmate.fineweb grows the subset to
 # the largest request, and every bench reads its own prefix of it).
 FINEWEB_SUBSET = "sample-10BT"
@@ -35,8 +48,8 @@ def data_dir() -> Path:
     return Path(os.environ["MILABENCH_DIR_DATA"])
 
 
-def tokenizer_dir() -> Path:
-    return data_dir() / "hf" / TOKENIZER_REPO.split("/")[-1]
+def tokenizer_dir(model: str = "qwen3_8") -> Path:
+    return data_dir() / "hf" / TOKENIZERS[model][0].split("/")[-1]
 
 
 def fineweb_dir() -> Path:
