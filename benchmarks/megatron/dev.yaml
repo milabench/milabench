@@ -904,6 +904,13 @@ megatron-glm5-tri-pp10-ep8-n50-gbs1000:
   inherits: _tri_glm5
   num_machines: 50
   argv: {<<: *tri_pp10, --global-batch-size: 1000}
+# F2: long run, the best layout at 50 nodes (51.50 s per step, job 1256251), >= 1 h of measured steps: 80 steps, 78
+# measured, ~67 min, + ~13 min startup (estimates). BF16, no checkpoint. 8,000 slots per step: the 200,000 documents wrap
+# after ~25 steps (data_loading.wrapped). run.experiment F2 (TT_EXPERIMENT, no launcher of its own)
+megatron-glm5-tri-f2-pp10-ep8-n50-gbs1000:
+  inherits: megatron-glm5-tri-pp10-ep8-n50-gbs1000
+  max_duration: 5700
+  argv: {--train-iters: 80}
 megatron-glm5-tri-pp25-ep8-n25-gbs512:
   inherits: _tri_glm5
   num_machines: 25
