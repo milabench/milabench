@@ -812,6 +812,16 @@ def precision_loss(t):
 
 # -- F. Operations -----------------------------------------------------------
 
+def _thin_ticks(nodes, ratio=1.35):
+    """Node-count ticks on a log axis, dropping a tick too close to the next larger one to read (39 next to 50)."""
+    ticks = sorted({int(n) for n in nodes})
+    keep = []
+    for n in reversed(ticks):
+        if not keep or keep[-1] / n >= ratio:
+            keep.append(n)
+    return sorted(keep)
+
+
 def checkpoint(t):
     """Checkpoint save and load: total time and time training is blocked vs nodes, sync vs async,
     per workload and content; filesystem throughput; peak GPU memory of loads and saves (F1)."""
@@ -859,8 +869,8 @@ def checkpoint(t):
         ax.set_yscale("log")
         ax.yaxis.set_major_locator(LogLocator(subs=(1, 2, 5)))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-        ax.set_xticks(sorted(nodes_here))
-        ax.set_xticklabels([str(int(n)) for n in sorted(nodes_here)])
+        ax.set_xticks(_thin_ticks(nodes_here))
+        ax.set_xticklabels([str(int(n)) for n in _thin_ticks(nodes_here)])
         ax.minorticks_off()
         ax.set_xlabel("nodes")
         style.finish(ax, trim=False)
@@ -878,8 +888,8 @@ def checkpoint(t):
             med = g.groupby("nodes").gb_s.median()
             ax.plot(med.index, med.values, color=color, lw=0.9, ls=ls)
     ax.set_xscale("log")
-    ax.set_xticks(sorted(c.nodes.unique()))
-    ax.set_xticklabels([str(int(n)) for n in sorted(c.nodes.unique())])
+    ax.set_xticks(_thin_ticks(c.nodes.unique()))
+    ax.set_xticklabels([str(int(n)) for n in _thin_ticks(c.nodes.unique())])
     ax.minorticks_off()
     ax.set_ylim(0, None)
     ax.set_title("filesystem: write (solid), read (dashed)", fontsize=7)
@@ -897,7 +907,7 @@ def checkpoint(t):
                 for _, row in d[d.op == op].dropna(subset=["peak_allocated_gib"]).iterrows():
                     _pt(ax, row.nodes, row.peak_allocated_gib, color, row.synthetic, marker, ms=3)
         ax.set_xscale("log")
-        ticks = sorted(c.dropna(subset=["peak_allocated_gib"]).nodes.unique())
+        ticks = _thin_ticks(c.dropna(subset=["peak_allocated_gib"]).nodes.unique())
         ax.set_xticks(ticks)
         ax.set_xticklabels([str(int(n)) for n in ticks])
         ax.minorticks_off()
