@@ -791,7 +791,7 @@ def precision_loss(t):
                                 label=f"{label}: |gap| up to {pairs.last100.abs().max():.2f}")
         ax.axhline(0, color=INK2, lw=0.6)
         for row in d[d.kind == "recipe"].itertuples():
-            color = seed_color.setdefault(row.seed_a, SERIES[len(seed_color) % len(SERIES)])
+            color = seed_color.setdefault((row.recipe, row.seed_a), SERIES[len(seed_color) % len(SERIES)])  # GLM-5 has several recipes at one seed
             ax.plot(*zip(*smooth(row).items()), color=color, lw=1.1 if row.same_nodes else 0.9, ls="-" if row.same_nodes else (0, (4, 2)),
                     label=f"{row.recipe}, seed {row.seed_a}: {row.last100:+.2f}" + ("" if row.same_nodes else " (other nodes)"))
         if model == GLM:  # the lr starts at 0: steps 1-2 see the same weights, then an early unstable phase
