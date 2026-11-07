@@ -20,8 +20,8 @@ import pandas as pd
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
-TOP_NOW = 51  # all 52 passed at 16:35 on Nov 6, then trig0114 stopped responding at 17:03; a point above this waits for it
-NODE_OUT = "trig0114"
+TOP_NOW = 50  # all 52 passed at 16:35 on Nov 6; trig0114 stopped responding at 17:03, trig0138 was drained at 19:31 and stays out after its job; a point above this waits for them
+NODE_OUT = "trig0114 and trig0138"
 FIFTY = 50
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
@@ -32,7 +32,7 @@ FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": 
            "Long run": "stability, stragglers"}
 # Replaces the computed "what's left" of a group.
 LEFT_NOTE = {"Network (D2-D4)": f"D2, D3, D4 at the end: at 52 with {NODE_OUT} back, otherwise at the largest scale available",
-             "Long run": f"Qwen and GLM-5, at least 1 h each, at the end: at 52 with {NODE_OUT} back; under 50 only as a compromise"}
+             "Long run": f"Qwen and GLM-5, at least 1 h each, at the end: at 52 with {NODE_OUT} back, otherwise 50; under 50 only as a compromise"}
 # Job names in sacct -> group. First match wins.
 JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),

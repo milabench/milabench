@@ -73,7 +73,7 @@
 \triunset{\TriProbeRowsHi}
 \triunset{\TriProbeTimeLo}
 \triunset{\TriProbeTimeHi}
-\triunset{\TriProbeRefTime}
+\triunset{\TriProbeRefTime}\triunset{\TriLossGlmOtherLast}\triunset{\TriLossGlmOtherEnd}\triunset{\TriGlmLongSeedMid}\triunset{\TriGlmLongSeedEnd}
 \triunset{\TriGlmLongBfMid}
 \triunset{\TriGlmLongBfEnd}
 \triunset{\TriGlmLongMxMid}
@@ -163,7 +163,7 @@
 \maketitle
 
 \begin{abstract}
-  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training, on two workloads: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM). The partition has 52 nodes of 8 B200 GPUs; 43 were usable and 40 clean until November~6, and all 52 after the administrators' fixes that day, until one stopped responding that evening, so runs so far reach \TriQwenTop{} nodes on Qwen and \TriGlmTop{} on GLM-5.
+  We evaluate the B200 partition of Trillium (SciNet) for large-scale LLM pre-training, on two workloads: Qwen3.8-27B (dense, TorchTitan) and GLM-5 (744B mixture of experts, Megatron-LM). The partition has 52 nodes of 8 B200 GPUs; 43 were usable and 40 clean until November~6, and all 52 after the administrators' fixes that day, until one stopped responding and the site's check took another out that evening, so runs so far reach \TriQwenTop{} nodes on Qwen and \TriGlmTop{} on GLM-5.
   GPUs on 7 nodes were held at a 200\,W limit, and CPU clocks fall under high GPU power on all but one node, so Qwen's step times here are throttled, except under pipeline layouts.
   On 13 nodes, Qwen is fastest at 24k tokens per GPU, where \texttt{fsdp} and \texttt{hsdp8} tie at about 5,000 tokens/s per GPU (\TriQwenBestMFU\,\% MFU), and \texttt{fsdp} holds \TriWeakFEffOne\,\% of its 1-node throughput at \TriWeakFTop{} nodes. GLM-5 should keep expert parallelism inside a node: with the same stages at 26 nodes, \texttt{pp13-ep8} is $\times$\TriGlmEpTwoSixRatio{} as fast as \texttt{pp13-ep16}. MXFP8 buys $\times$\TriQwenFpTop{} on Qwen at \TriQwenFpTopNodes{} nodes and $\times$\TriGlmFpMxTop{} on GLM-5, and whether it trains the same as BF16 is not settled. \TriGlmCopiesTop{} copies of GLM-5 reach \TriGlmCopiesEff\,\% of the throughput per GPU of one. A full GLM-5 checkpoint cannot be loaded on one 13-node copy, but it loads at 39 nodes. Side-by-side 13-node Qwen FSDP jobs change throughput by \TriInterferencePct\,\%. Parts of this report are still partial; each section says what is missing.
 \end{abstract}
