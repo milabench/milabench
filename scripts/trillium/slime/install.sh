@@ -31,6 +31,9 @@ for u in json.load(sys.stdin)["urls"]:
     if u["filename"].endswith(("-none-any.whl", "manylinux_2_28_x86_64.whl", ".tar.gz")): print(u["url"])' \
         | while read -r url; do [ -f "$B/wheelhouse/${url##*/}" ] || curl -sSfL -o "$B/wheelhouse/${url##*/}" "$url"; done
 done
+# and TE's own dependencies (the wheels' metadata): offline, uv finds nothing but the wheelhouse
+uv pip install --python "$B/venv/torch/bin/python" pydantic importlib-metadata einops onnxscript onnx nvdlfw-inspect \
+    "nvidia-cudnn-frontend>=1.25.0"
 # torch_memory_saver (colocated GRPO offloads the trainer with it): offline, uv takes a pinned git commit from its
 # cache. The dry run fetches it there (its build needs a GPU node: a failure here is expected)
 tms=$(sed -n 's/^TMS_REQUIREMENT = "\(.*\)"$/\1/p' benchmarks/slime/benchfile.py)
