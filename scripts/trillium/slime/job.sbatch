@@ -26,9 +26,10 @@ L=/dev/shm/$USER/glm-rl
 nodes() { srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
 nodes mkdir -p "$L/tmp"
 trap 'nodes rm -rf "$L"' EXIT
-# (sglang puts the inductor, CUDA and its JIT caches in SGLANG_CACHE_DIR, ~/.cache/sglang by default: job 1261398)
+# (sglang puts the inductor and CUDA caches in SGLANG_CACHE_DIR, job 1261398, and its JIT builds in SGLANG_JIT_CACHE_DIR,
+# job 1261434: both default to ~/.cache/sglang)
 export TMPDIR=$L/tmp TRITON_CACHE_DIR=$L/triton TILELANG_CACHE_DIR=$L/tilelang FLASHINFER_WORKSPACE_BASE=$L \
-    SGLANG_CACHE_DIR=$L/sglang
+    SGLANG_CACHE_DIR=$L/sglang SGLANG_JIT_CACHE_DIR=$L/sglang/jit
 echo "$P job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST milabench $(git -C "$B/src" rev-parse --short HEAD) entries: $*"
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed "s/^/$P /"
 nodes bash "$B/src/scripts/trillium/power_check.sh" || exit 4
