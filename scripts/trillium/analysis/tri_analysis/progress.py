@@ -29,7 +29,7 @@ COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling"
 FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": "qwen_layouts, qwen_levers, step_decomposition", "Qwen weak scaling": "qwen_scaling",
            "Qwen strong scaling": "qwen_scaling", "GLM-5 layouts": "glm_layouts", "GLM-5 scaling": "glm_scaling",
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
-           "Long run": "stability, stragglers"}
+           "Long run": "stability, stability_glm, stragglers"}
 # Replaces the computed "what's left" of a group.
 LEFT_NOTE = {"Network (D2-D4)": f"D2, D3, D4 at the end: at 52 with {NODE_OUT} back, otherwise at the largest scale available",
              "Long run": f"Qwen and GLM-5, at least 1 h each, at the end: at 52 with {NODE_OUT} back, otherwise 50; under 50 only as a compromise"}

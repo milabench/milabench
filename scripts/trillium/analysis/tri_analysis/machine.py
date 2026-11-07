@@ -42,6 +42,9 @@ NET_D3_INSIDE_JOB = 1250124  # the same ladder to 26 nodes, all inside trig0101-
 # Nov 7, 50 nodes (all but trig0114, trig0138): D2 over all 1,225 pairs, D3 to 26 nodes (the 26-node step slow, its all-to-all hung,
 # D3 at 50 cancelled), D4 in 3 cuts of 25 + 25.
 NET_FULL_JOB = 1258790
+# Nov 7, 15:08, 48 nodes (also without trig0125 and trig0132): D2 over all 1,128 pairs, twice. The Nov 4 groups, pair for pair;
+# 1258790 (11:25-11:37) is the exception, inferred a temporary state of the fabric.
+NET_D2_AGAIN_JOB = 1259968
 
 # Checkpoint size per parameter, measured on truncated models (Rorqual, Fir): full 12.0, weights 2.0.
 CKPT_FULL_B_PER_PARAM = 12.0

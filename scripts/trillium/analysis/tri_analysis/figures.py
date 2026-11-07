@@ -10,11 +10,12 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.ticker import FuncFormatter, LogLocator
+from matplotlib.colors import LogNorm
+from matplotlib.ticker import FuncFormatter, LogLocator, ScalarFormatter
 from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
-from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
+from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D2_AGAIN_JOB, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
                       NODE_NET_GBS, NODES, SUBNET_OF)
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
@@ -230,7 +231,7 @@ def machine_status(t):
 
 
 def pair_matrix(t):
-    """Bandwidth and latency of every node pair, nodes ordered by subnet (D2)."""
+    """Bandwidth of every node pair, nodes ordered by subnet (D2): November 4, and the two November 7 sweeps, on one log scale."""
     p = t["pairs"]
     if p.empty:
         return None
@@ -238,22 +239,23 @@ def pair_matrix(t):
     if p.synthetic.any():
         panels = [(p, "bw_gbs", "bandwidth"), (p, "lat_us", "latency")]
     else:  # GPUs 0, 2, 4, 6: what the fabric carries; the others are bring-up tests
-        old, full = p[p.job_id.isin(NET_D2_JOBS)], p[p.job_id == NET_FULL_JOB]
-        panels = [(old, "bw_gbs", "bandwidth, Nov 4, 2 jobs of 25 nodes"), (full, "bw_gbs", "bandwidth, Nov 7, 1 job of 50 nodes"),
-                  (full if len(full) else old, "lat_us", f"latency, Nov {7 if len(full) else 4}")]
+        panels = [(p[p.job_id.isin(NET_D2_JOBS)], "bw_gbs", "Nov 4, 2 jobs of 25 nodes"),
+                  (p[p.job_id == NET_FULL_JOB], "bw_gbs", "Nov 7 11:25, 50 nodes"),
+                  (p[p.job_id == NET_D2_AGAIN_JOB], "bw_gbs", "Nov 7 15:08, 48 nodes, 2 passes")]
         panels = [x for x in panels if len(x[0])]
     bw = pd.concat([d.bw_gbs for d, col, _ in panels if col == "bw_gbs"])
+    shared = all(col == "bw_gbs" for _, col, _ in panels)  # one colorbar for all
+    norm = LogNorm(vmin=bw.min(), vmax=bw.max())  # 45, 64, 96 and 189 GB/s all apart
     n = len(NODES)
-    fig, axes = plt.subplots(1, len(panels), figsize=(TEXT_WIDTH, 2.75 if len(panels) < 3 else 2.35))
+    fig, axes = plt.subplots(1, len(panels), figsize=(TEXT_WIDTH, 2.45), squeeze=False, layout="constrained")
+    axes = axes[0]
     groups, edges, centers, starts = _subnets()
     for ax, (d, col, title) in zip(axes, panels):
-        label = "GB/s, one direction" if col == "bw_gbs" else "µs, 8 B"
         m = np.full((n, n), np.nan)
         agg = d.groupby(["a", "b"])[col].median()
         for (a, b), v in agg.items():
             m[POS[a], POS[b]] = m[POS[b], POS[a]] = v
-        lim = dict(vmin=bw.min(), vmax=bw.max()) if col == "bw_gbs" else {}  # one scale for both days
-        im = ax.imshow(m, cmap=SEQUENTIAL, interpolation="nearest", **lim)  # darker = more
+        im = ax.imshow(m, cmap=SEQUENTIAL, interpolation="nearest", norm=norm if col == "bw_gbs" else None)  # darker = more
         for e in edges:
             ax.axhline(e - 0.5, color="white", lw=0.6)
             ax.axvline(e - 0.5, color="white", lw=0.6)
@@ -264,15 +266,23 @@ def pair_matrix(t):
         ax.set_yticks(centers)
         ax.set_yticklabels([groups.iloc[a] for a in starts], fontsize=6)
         ax.tick_params(length=0)
-        for s in ax.spines.values():
-            s.set_visible(False)
-        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
-        cb.set_label(label, fontsize=7)
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+        if not shared:
+            cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+            cb.set_label("GB/s, one direction" if col == "bw_gbs" else "µs, 8 B", fontsize=7)
+            cb.ax.tick_params(labelsize=6)
+            cb.outline.set_visible(False)
+        ax.set_title(f"{title}\nmedian {np.nanmedian(m):.3g}, range {np.nanmin(m):.3g}–{np.nanmax(m):.3g}", fontsize=6.5)
+    if shared:
+        cb = fig.colorbar(im, ax=list(axes), fraction=0.02, pad=0.01)
+        cb.set_label("GB/s per node, one direction (log scale)", fontsize=7)
+        cb.ax.minorticks_off()
+        cb.set_ticks([v for v in (45, 64, 96, 189) if bw.min() <= v <= bw.max()])
+        cb.ax.yaxis.set_major_formatter(ScalarFormatter())
         cb.ax.tick_params(labelsize=6)
         cb.outline.set_visible(False)
-        ax.set_title(f"{title}\nmedian {np.nanmedian(m):.3g}, range {np.nanmin(m):.3g}–{np.nanmax(m):.3g}", fontsize=6.5)
     style.synthetic_mark(fig, p.synthetic.any(), "includes synthetic data")
-    fig.tight_layout()
     return fig
 
 
@@ -933,8 +943,9 @@ def checkpoint(t):
     return fig
 
 
-def _long_run(t):
+def _long_run(t, model=QWEN):
     r = _runs(t, "F2")
+    r = r[r.model == model] if len(r) else r
     mon = t["gpu_monitor"]
     if r.empty or mon.empty:
         return None, None
@@ -942,25 +953,30 @@ def _long_run(t):
     return run, mon[mon.source == run.run_name]
 
 
-def stability(t):
+def stability(t, model=QWEN):
     """Throughput per step over the long run, with SM clock and power of every GPU (F2)."""
-    run, mon = _long_run(t)
+    run, mon = _long_run(t, model)
     if run is None or mon.empty:
         return None
     s = t["steps"][t["steps"].run_id == run.run_id].sort_values("t_s")
+    # Megatron's step times count from its warm-up step, TorchTitan's from the first measured step: from the start of the
+    # first measured step for both, as the telemetry below (measure_start)
+    s = s.assign(t_s=s.t_s - (s.t_s.iloc[0] - s.step_s.iloc[0])) if len(s) else s
     fig, axes = plt.subplots(3, 1, figsize=(TEXT_WIDTH, 4.0), sharex=True, gridspec_kw={"height_ratios": [1.3, 1, 1]})
     ax = axes[0]
     ax.plot(s.t_s / 60, s.tok_s_gpu, color=LIGHT, lw=0.5)
-    ax.plot(s.t_s / 60, s.tok_s_gpu.rolling(15, center=True).median(), color=SERIES[0], lw=1.1,
+    roll = 15 if len(s) > 200 else 5  # GLM-5: about one step a minute
+    ax.plot(s.t_s / 60, s.tok_s_gpu.rolling(roll, center=True).median(), color=SERIES[0], lw=1.1,
             ls=(0, (4, 2)) if run.synthetic else "-")
     ax.set_ylabel("tokens/s per GPU")
-    ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), 15-step median")
-    ref = _runs(t, "B-Q-weak")  # the same layout in its short run, at the most nodes, for scale
+    ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), {roll}-step median")
+    ref = _runs(t, "B-Q-weak", "A-G", "B-G-weak")  # the same layout in its short run, same nodes if it ran, else the most, for scale
     ref = ref[(ref.model == run.model) & (ref.layout == run.layout) & (ref.tokens_per_gpu == run.tokens_per_gpu)]
     if len(ref) and not run.synthetic:
-        r0 = ref.sort_values(["nodes", "started"]).iloc[-1]
+        same = ref[ref.nodes == run.nodes]
+        r0 = (same if len(same) else ref).sort_values(["nodes", "started"]).iloc[-1]
         ax.axhline(r0.tok_s_gpu, color=INK2, lw=0.7, ls=(0, (3, 2)))
-        ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), 15-step median; dashed, its short run at {int(r0.nodes)} nodes")
+        ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), {roll}-step median; dashed, its short run at {int(r0.nodes)} nodes")
     t0 = run.measure_start if pd.notna(run.get("measure_start")) else mon.time.min()
     t1 = run.measure_end if pd.notna(run.get("measure_end")) else mon.time.max()
     for ax, metric, label in ((axes[1], "sm_clock_mhz", "SM clock (MHz)"), (axes[2], "power_w", "GPU power (W)")):
@@ -1143,6 +1159,7 @@ FIGURES = {
     "precision_loss": precision_loss,
     "checkpoint": checkpoint,
     "stability": stability,
+    "stability_glm": lambda t: stability(t, GLM),
     "stragglers": stragglers,
     "startup": startup,
     "energy": energy,
