@@ -25,7 +25,7 @@ NODE_OUT = "trig0114 and trig0138"
 FIFTY = 50
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
-              "GLM-5 layouts": {36}, "Precision speed": {25, 26, 39}, "Checkpoints": {25, 39}}
+              "GLM-5 layouts": {36}, "Precision speed": {25, 26, 39}, "Checkpoints": {25, 39}, "Long run": {40, 49}}
 FIGURES = {"Network (D2-D4)": "pair_matrix, collectives_scale", "Qwen layouts": "qwen_layouts, qwen_levers, step_decomposition", "Qwen weak scaling": "qwen_scaling",
            "Qwen strong scaling": "qwen_scaling", "GLM-5 layouts": "glm_layouts", "GLM-5 scaling": "glm_scaling",
            "Precision speed": "precision_speed", "Precision loss": "precision_loss", "Checkpoints": "checkpoint",
@@ -37,7 +37,7 @@ LEFT_NOTE = {"Network (D2-D4)": f"D2, D3, D4 at the end: at 52 with {NODE_OUT} b
 JOB_GROUPS = [("tri-net", "Network (D2-D4)"), ("tri-aq-fsdp-24k-rbf16", "Qwen layouts"), ("tri-aq-", "Qwen weak scaling"), ("tri-bqs", "Qwen strong scaling"),
               ("tri-c-", "Precision speed"), ("tri-closs", "Precision loss"), ("tri-ckpt", "Checkpoints"), ("tri-ref", "Reference"),
               ("glm5-f1", "Checkpoints"), ("glm5-ag", "GLM-5 layouts"), ("glm5-bg", "GLM-5 scaling"), ("glm5-c-speed", "Precision speed"),
-              ("glm5-c-loss", "Precision loss")]
+              ("glm5-c-loss", "Precision loss"), ("tri-f2", "Long run"), ("glm5-f2", "Long run")]
 
 
 @dataclass
@@ -137,6 +137,9 @@ def plan() -> list[Point]:
     # User, Nov 6: last of all; at 39 nodes only if nothing else is left and 50+ nodes are still out of reach.
     p.append(Point("Long run", "best Qwen layout, at least 1 h", 52, dict(model=QWEN, experiment="F2"), "F2"))
     p.append(Point("Long run", "GLM-5 pp13-ep8, at least 1 h", 52, dict(model=GLM, experiment="F2"), "F2"))
+    # Nov 7: only 49 healthy nodes (trig0125 out too); below 50 a long run is a compromise (table() splits the runs at FIFTY).
+    p.append(Point("Long run", "Qwen long run, under 50 nodes", 49, dict(model=QWEN, experiment="F2"), "F2"))
+    p.append(Point("Long run", "GLM-5 long run, under 50 nodes", 40, dict(model=GLM, experiment="F2"), "F2"))
     for x in p:
         x.compromise = x.nodes in COMPROMISE.get(x.block, ())
     return p
@@ -172,24 +175,32 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
     if len(coll):
         net |= set(zip(coll.experiment, coll.nodes.astype(int)))
     if len(pairs):
-        net.add(("D2", 25))  # the only sweep so far; a larger one needs its size in the table
+        net.add(("D2", 25))  # Nov 4: two jobs of 25
+        for _, g in pairs.groupby("job_id"):
+            net.add(("D2", len(set(g.a) | set(g.b))))
+    top = {e for e, n in net if n >= FIFTY}  # at the end, the largest scale available counts for the 52-node point (user, Nov 6)
     rows = []
     for x in plan():
         if x.net:
-            state = "done" if x.net in net else None
+            state = "done" if x.net in net or (x.net[1] >= FIFTY and x.net[0] in top) else None
         elif x.op:
             state = "done" if x.op in ops else "with slow nodes" if x.op in ops_slow else "answered" if x.op in failed_ops else None
         else:
             exp = {"experiment": x.experiment} if x.experiment else {}
             want = {**exp, **x.want}
             hits = _matches(done, want)
+            if x.experiment == "F2":  # 50+ for the planned point, under 50 for its compromise
+                split = (lambda d: d[d.nodes < FIFTY]) if x.compromise else (lambda d: d[d.nodes >= FIFTY])
+                hits = split(hits)
+            else:
+                split = lambda d: d
             if len(hits) and (x.compromise or (hits.slow_nodes.fillna("") == "").any()):
                 state = "done"
             elif len(hits):
                 state = "with slow nodes"  # a compromise, not the full-scale point
-            elif len(_matches(active, want)):
+            elif len(split(_matches(active, want))):
                 state = "active"
-            elif len(_matches(failed, want)):
+            elif len(split(_matches(failed, want))):
                 state = "answered"
             else:
                 state = None

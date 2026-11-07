@@ -955,26 +955,36 @@ def stability(t):
             ls=(0, (4, 2)) if run.synthetic else "-")
     ax.set_ylabel("tokens/s per GPU")
     ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), 15-step median")
+    ref = _runs(t, "B-Q-weak")  # the same layout in its short run, at the most nodes, for scale
+    ref = ref[(ref.model == run.model) & (ref.layout == run.layout) & (ref.tokens_per_gpu == run.tokens_per_gpu)]
+    if len(ref) and not run.synthetic:
+        r0 = ref.sort_values(["nodes", "started"]).iloc[-1]
+        ax.axhline(r0.tok_s_gpu, color=INK2, lw=0.7, ls=(0, (3, 2)))
+        ax.set_title(f"{run.layout}, {int(run.nodes)} nodes: per step (gray), 15-step median; dashed, its short run at {int(r0.nodes)} nodes")
     t0 = run.measure_start if pd.notna(run.get("measure_start")) else mon.time.min()
+    t1 = run.measure_end if pd.notna(run.get("measure_end")) else mon.time.max()
     for ax, metric, label in ((axes[1], "sm_clock_mhz", "SM clock (MHz)"), (axes[2], "power_w", "GPU power (W)")):
-        m = mon[mon.metric == metric].assign(minute=lambda d: (d.time - t0) / 60, gid=lambda d: d.host + " GPU"
-                                             + d.gpu.astype(str))
+        m = mon[(mon.metric == metric) & mon.time.between(t0, t1)]
         if m.empty:
             continue
-        band = m.groupby("minute").value.agg(["min", "max", "median"])
-        ax.fill_between(band.index, band["min"], band["max"], color=LIGHT, alpha=0.5, lw=0)
-        ax.plot(band.index, band["median"], color=INK2, lw=0.8)
-        worst = m.groupby("gid").value.min().idxmin()
-        w = m[m.gid == worst]
-        ax.plot(w.minute, w.value, color=CRITICAL, lw=0.9)
-        ax.annotate(worst, (w.minute.iloc[w.value.argmin()], w.value.min()), xytext=(4, 0),
+        # 1 s samples of hundreds of GPUs: each GPU's mean over each minute of the measurement
+        m = m.assign(minute=((m.time - t0) // 60).astype(int), gid=m.host + " GPU " + m.gpu.astype("Int64").astype(str))
+        m = m[m.minute < int((t1 - t0) // 60)]  # whole minutes only
+        per = m.groupby(["gid", "minute"]).value.mean().reset_index()
+        band = per.groupby("minute").value.agg(["min", "max", "median"])
+        ax.fill_between(band.index + 0.5, band["min"], band["max"], color=LIGHT, alpha=0.6, lw=0)
+        ax.plot(band.index + 0.5, band["median"], color=INK2, lw=0.8)
+        worst = per.groupby("gid").value.mean().idxmin()  # lowest mean over the run
+        w = per[per.gid == worst]
+        ax.plot(w.minute + 0.5, w.value, color=CRITICAL, lw=0.9)
+        ax.annotate(worst, (w.minute.iloc[-1] + 0.5, w.value.iloc[-1]), xytext=(4, 0),
                     textcoords="offset points", fontsize=6, color=CRITICAL, va="center")
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
     fig.legend(handles=[plt.Line2D([], [], color=LIGHT, lw=5, alpha=0.6, label=f"range, all {int(run.gpus)} GPUs"),
                             plt.Line2D([], [], color=INK2, lw=0.8, label="median GPU"),
-                            plt.Line2D([], [], color=CRITICAL, lw=0.9, label="lowest GPU (named)")],
-               loc="lower center", ncol=3, fontsize=6, title="SM clock and power:", title_fontsize=6)
+                            plt.Line2D([], [], color=CRITICAL, lw=0.9, label="GPU with the lowest mean (named)")],
+               loc="lower center", ncol=3, fontsize=6, title="SM clock and power, per GPU and minute:", title_fontsize=6)
     style.finish(axes[0], trim=False)
     axes[-1].set_xlabel("minutes since the start of the measurement")
     style.synthetic_mark(fig, bool(run.synthetic) or mon.synthetic.any())
@@ -983,13 +993,14 @@ def stability(t):
 
 
 def stragglers(t):
-    """Are some nodes slower? Per node, over the largest Qwen FSDP run so far, from the node telemetry (F2 has not run): GPU activity, CPU samples below 500 MHz, GPU power.
+    """Are some nodes slower? Per node, over the Qwen long run (F2), or before it has run the largest Qwen FSDP run, from the node telemetry: GPU activity, CPU samples below 500 MHz, GPU power.
     The slow nodes and the node without clock drops are named."""
     n = t.get("node_telemetry", pd.DataFrame())
     r = _runs(t)
     if n.empty or r.empty:
         return None
-    q = r[(r.model == QWEN) & (r.layout == "fsdp") & r.run_id.isin(n.run_id) & (r.tokens_per_gpu == 24576) & (r.ac == "selective") & (r.grad_reduce == "fp32")]
+    long = r[(r.model == QWEN) & (r.experiment == "F2") & r.run_id.isin(n.run_id)]  # the long run once it has run (DESIGN.md)
+    q = long if len(long) else r[(r.model == QWEN) & (r.layout == "fsdp") & r.run_id.isin(n.run_id) & (r.tokens_per_gpu == 24576) & (r.ac == "selective") & (r.grad_reduce == "fp32")]
     if q.empty:
         return None
     run = q.sort_values(["nodes", "started"]).iloc[-1]
@@ -1010,7 +1021,8 @@ def stragglers(t):
         ax.set_ylabel(label)
         style.finish(ax, trim=False)
     _subnet_axis(axes)
-    axes[-1].set_xlabel(f"node, grouped by subnet: {run.layout}, 24k tokens per GPU, {int(run.nodes)} nodes, one run (F2 not run)")
+    what = "the long run (F2)" if len(long) else "one run (F2 not run)"
+    axes[-1].set_xlabel(f"node, grouped by subnet: {run.layout}, 24k tokens per GPU, {int(run.nodes)} nodes, {what}")
     fig.tight_layout()
     return fig
 
