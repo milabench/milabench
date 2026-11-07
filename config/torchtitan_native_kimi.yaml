@@ -1,0 +1,71 @@
+# Kimi K3 pre-training (TorchTitan's upstream kimi_k3 model, text only, random init) on Trillium B200:
+# scripts/trillium/kimi-train/README.md.
+#
+#   scripts/trillium/kimi-train/k3_train.sh --time 00:30:00 k3-1n-l4
+#
+# Full width (hidden 7168, 896 experts, top-16, 2 shared, LatentMoE 3584), truncated to the first --n-layers:
+# 4 = KDA dense, KDA-MoE, KDA-MoE, MLA-MoE (every layer type). Per GPU one 8192-token sequence per micro-batch,
+# full AC, compile regions, experts over the 8 GPUs of a node (EP8; dense FSDP over the same 8). FineWeb with
+# DeepSeek-V3.1's tokenizer (tt_native/assets.py: K3's own is tiktoken, which TorchTitan cannot read).
+# Precision: FP32 master weights and BF16 Adam moments (as GLM-5); -bf16 entries hold parameters, gradients and
+# moments in BF16 (training.dtype bfloat16), no FP32 copy.
+#
+# Measured on 1 node with random tokens (job 1260631, 8 steps): 4 layers BF16 150 GiB peak, 0.74 s per step;
+# 2 layers 89 GiB BF16, 96 GiB FP32 master.
+
+include:
+  - torchtitan_native.yaml
+
+_k3:
+  inherits: _tt_native
+  max_duration: 1800
+  num_machines: 1
+  voir:
+    options:
+      skip: 5
+      stop: 100
+      stop_seconds: 0
+  argv:
+    --model: kimi_k3
+    --flavor: Kimi-K3
+    --stacked-layout: torchtitan
+    --seq-len: 8192
+    --microbatch-sequences: 1
+    --compile: regions
+    --ac: full
+    --dataset: fineweb
+    --samples: 500000
+    --max-documents: 64
+    --layout: fsdp
+    --ep: 8
+    --adam-moments: bf16
+    --training-dtype: float32
+
+# --- 1 node: loss check on FineWeb (105 steps, loss every 10) ---
+k3-1n-l4:
+  inherits: _k3
+  argv:
+    --n-layers: 4
+k3-1n-l4-bf16:
+  inherits: k3-1n-l4
+  argv:
+    --training-dtype: bfloat16
+
+# --- 2 nodes: PP2 x EP8, 2 layers per stage (a stage = a node), 16 micro-batches per step (1F1B),
+#     step 20 traced on every rank (pipeline hop = NCCL send/recv between the two nodes) ---
+k3-pp2-l4:
+  inherits: _k3
+  num_machines: 2
+  voir:
+    options:
+      skip: 5
+      stop: 40
+  argv:
+    --n-layers: 4
+    --layout: pp2-fsdp
+    --pp-microbatches: 16
+    --profile-freq: 20
+k3-pp2-l4-bf16:
+  inherits: k3-pp2-l4
+  argv:
+    --training-dtype: bfloat16
