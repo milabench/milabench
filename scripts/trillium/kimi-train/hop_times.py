@@ -8,6 +8,7 @@ micro-batch on each rank; all-to-all: several per MoE layer and micro-batch). A 
 until the peer has sent or received, so the shortest ones are closest to the transfer itself.
 """
 
+import gzip
 import json
 import statistics
 import sys
@@ -16,8 +17,10 @@ from pathlib import Path
 
 
 def main(trace_dir: str) -> None:
-    for path in sorted(Path(trace_dir).glob("rank*_trace.json"), key=lambda p: int(p.name[4:].split("_")[0])):
-        events = json.loads(path.read_text())["traceEvents"]
+    for path in sorted(Path(trace_dir).glob("rank*_trace.json*"), key=lambda p: int(p.name[4:].split("_")[0])):
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt") as f:
+            events = json.load(f)["traceEvents"]
         step = max((e["dur"] for e in events if e.get("name", "").startswith("ProfilerStep#")), default=0)
         streams = defaultdict(lambda: defaultdict(list))
         for e in events:
