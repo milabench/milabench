@@ -50,11 +50,11 @@
   \label{fig:stragglers}
 \end{figure}
 
-\paragraph{Startup (F3).} Time from process start to the first step, from every run. Qwen3.8-27B takes \TriStartQLo--\TriStartQHi\,min (median \TriStartQMed) at every node count so far, and that time does not visibly grow with scale. GLM-5 takes \TriStartGLo--\TriStartGHi\,min (median \TriStartGMed) at 10--13 nodes. Most of that spread is compile caches: the same GLM-5 entry takes about 15\,min with kernels compiling and about 6\,min with them cached. On Qwen, a cold compile cache slows the whole run too (\cref{sec:layouts}).
+\paragraph{Startup (F3).} Time from the first process start to the first step, from every run; a run's processes start within \TriStartSpreadMax\,s of each other at every node count. Qwen3.8-27B takes \TriStartQLo--\TriStartQHi\,min (median \TriStartQMed) at \TriStartQNodesLo--\TriStartQNodesHi{} nodes, and that time does not visibly grow with scale. GLM-5 takes \TriStartGLo--\TriStartGHi\,min (median \TriStartGMed) at \TriStartGNodesLo--\TriStartGNodesHi{} nodes, with no visible growth either. Most of that spread is compile caches: the same GLM-5 entry takes about 15\,min with kernels compiling and about 6\,min with them cached. The longest, a \texttt{\TriStartGTopLayout} run at \TriStartGTopNodes{} nodes, is not explained. Not included: before any process starts, milabench builds metadata for each node in turn, about 12.5\,s per node (a query to an unreachable server with a 5\,s timeout, and a version check). From Slurm's step start times, the training steps start 149\,s after milabench at 10 nodes and 666\,s after at 50, all nodes in the same second. That is a cost of the harness, not of the workload, and a fix is being written. On Qwen, a cold compile cache slows the whole run too (\cref{sec:layouts}).
 
 \begin{figure}[h]
   \centering\fig[0.72\linewidth]{startup}
-  \caption{Time from process start to the first step vs.\ number of nodes, for both workloads, one point per run. \syntheticnote{startup}}
+  \caption{Time from the first process start to the first step vs.\ number of nodes, for both workloads, one point per run. Milabench's launch before the processes start is not included. \syntheticnote{startup}}
   \label{fig:startup}
 \end{figure}
 

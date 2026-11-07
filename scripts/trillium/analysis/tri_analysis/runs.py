@@ -160,6 +160,10 @@ def parse_extras(path: Path, run_id: str):
         "measure_start": m.get("measurement_start_epoch"),
         "measure_end": m.get("measurement_end_epoch"),
         "first_step_total_s": (st.get("first_step_done") or {}).get("max_s"),
+        # The ranks' process starts, max - min: milabench's launch before them (about 12.5 s per node, Nov 7) is not in first_step_total_s
+        # as long as this stays small.
+        "start_spread_s": ((st.get("process_start_epoch") or {}).get("max") or 0) - ((st.get("process_start_epoch") or {}).get("min") or 0)
+        if (st.get("process_start_epoch") or {}).get("max") is not None else None,
         "rates_t0": rates_t0,
     }
     if not summary and run_start:  # failed run: settings from run_start
