@@ -517,11 +517,19 @@ slime-glm5-fineweb:
     <<: *sft_argv
     --prompt-data: "{milabench_data}/slime/datasets/fineweb_small.parquet"
 
+# GRPO on GLM-5.3, colocated, at the layout of the campaign's GLM-5 runs on Trillium: TP1 / CP1 (the GLM-5 plugin's RoPE
+# imports apex at every TP / CP unless MEGATRON_USE_SGLANG_ROPE is set, and that one requires TP1 and CP1: job 1264182),
+# PP8 x EP32 on 32 nodes (DP32 for the dense part; slime's split 14 / 8 x 6 / 16, every stage from a DSA computing
+# layer). GRPO flags, reward (deepscaler: GLM-5.3 reasons in <think> by default, the answer after </think> is scored)
+# and batch (8 prompts x 8 samples) of slime's scripts/run-glm5.3-744B-A40B.sh, without its rollout routing replay (the
+# -r3 entry has it) and with responses capped at 8,192 tokens instead of 262,144: at CP1 a sample stays on one GPU
+# (an oversized one gets a micro-batch of its own), and responses cut before </think> score 0.
 slime-glm5-grpo:
   inherits: _glm5
   tags: [rl]
   dataset: dapo-math-17k
   env:
+    MEGATRON_USE_SGLANG_ROPE: "1"
     # SGLang prefills sequences of up to 2048 tokens with dense MHA, whose B200 kernel (flashinfer trtllm-gen) downloads
     # its cubins (job 1263975): 0 sends them through the sparse FlashMLA path too (top-k 2048: the same attention)
     SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD: "0"
@@ -538,6 +546,9 @@ slime-glm5-grpo:
     --rollout-batch-size: 8
     --n-samples-per-prompt: 8
     --rollout-max-response-len: 8192
+    --tensor-model-parallel-size: 1
+    --sequence-parallel: null
+    --context-parallel-size: 1
     # GRPO flags of slime's scripts/run-glm5.3-744B-A40B.sh: no KL loss (with it every step adds a reference forward
     # pass over the whole batch: 25 of the 81 s of training on the Qwen3-30B-A3B stand-in)
     --use-kl-loss: null
@@ -545,7 +556,6 @@ slime-glm5-grpo:
     --pg-loss-type: reinforce
     --disable-grpo-std-normalization: true
     --calculate-per-token-loss: true
-    --use-rollout-routing-replay: true
     --use-tis: true
     --tis-clip-low: 0.5
     --tis-clip: 2.0
@@ -572,18 +582,20 @@ slime-glm5-grpo:
     # 32 sent (trainer EP8) + 16 received (engine EP16) = 3.6 GB in the 10-layer test; 512 MiB by default
     --update-weight-buffer-size: 4294967296
 
+# With rollout routing replay, as slime's script (needs slime's sglang-router fork: README, Install).
+slime-glm5-grpo-r3:
+  inherits: slime-glm5-grpo
+  argv:
+    --use-rollout-routing-replay: true
+
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
-# colocated over both nodes: the trainer at TP1 x PP2 x EP8, DP 8 (stage 2 starts at layer 7, a DSA computing
-# layer), one SGLang engine of 16 GPUs over the 2 nodes (EP 16, DP attention 16), 4k-token responses.
-# TP1 and CP1 for the plugin's RoPE: with TP or CP > 1 it needs apex (not installed, job 1264182); SGLang's RoPE kernel
-# instead, as the campaign's Megatron GLM-5 runs (MEGATRON_USE_SGLANG_ROPE, TP1 / CP1 only).
+# colocated over both nodes: the trainer at the GRPO entry's TP1 / CP1, PP2 x EP8, DP 8 (stage 2 starts at layer 7,
+# a DSA computing layer), one SGLang engine of 16 GPUs over the 2 nodes (EP 16, DP attention 16), 4k-token responses.
 slime-glm5-l10-grpo-2n:
   inherits: slime-glm5-grpo
   num_machines: 2
   max_duration: 3000
-  env:
-    MEGATRON_USE_SGLANG_ROPE: "1"
   model:
     convert: true
     convert_nodes: 1
@@ -602,31 +614,11 @@ slime-glm5-l10-grpo-2n:
     --pipeline-model-parallel-size: 2
     --decoder-first-pipeline-num-layers: 6
     --decoder-last-pipeline-num-layers: 4
-    --tensor-model-parallel-size: 1
-    --sequence-parallel: null
-    --context-parallel-size: 1
     --expert-model-parallel-size: 8
     --rollout-max-response-len: 4096
     --rollout-num-gpus-per-engine: 16
     --sglang-ep-size: 16
     --sglang-dp-size: 16
-
-# Which of the trainer's PP2 or the 16-GPU engine over both nodes breaks the colocated weight sync ("Invalid
-# device_uuid" on the second node's engine ranks, job 1264147): the trainer without PP (still failed, job 1264179), and
-# PP2 with one engine of 8 GPUs per node (synced, job 1264182: the 2-node engine's expert update is the problem).
-slime-glm5-l10-grpo-2n-pp1:
-  inherits: slime-glm5-l10-grpo-2n
-  argv:
-    --pipeline-model-parallel-size: 1
-    --decoder-first-pipeline-num-layers: null
-    --decoder-last-pipeline-num-layers: null
-
-slime-glm5-l10-grpo-2n-e8:
-  inherits: slime-glm5-l10-grpo-2n
-  argv:
-    --rollout-num-gpus-per-engine: 8
-    --sglang-ep-size: 8
-    --sglang-dp-size: 8
 
 # --- GLM-5.3-Flash (300B MoE, glm5_next architecture): the step between the 30B proxy and the 744B ---
 # Follows slime's scripts/run-glm5.3-flash-300B.sh: 8 nodes x 8 GPUs, PP4 x CP8 x EP16, the HF checkpoint is
