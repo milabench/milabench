@@ -373,6 +373,25 @@ slime-qwen3-30b-a3b-grpo:
     --sglang-sampling-backend: pytorch
     --sglang-moe-runner-backend: triton
 
+# The same on 2 nodes, Ray across them (RayCluster): the trainer on 16 GPUs (TP4 x EP8, DP 4) and two SGLang engines of
+# 8 GPUs, one per node, behind slime's router on the first node.
+slime-qwen3-30b-a3b-grpo-2n:
+  inherits: slime-qwen3-30b-a3b-grpo
+  num_machines: 2
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+
+# One SGLang engine of 16 GPUs over the 2 nodes, laid out like the GLM-5 entry's 64-GPU engines: experts over the
+# engine's GPUs, data-parallel attention and LM head.
+slime-qwen3-30b-a3b-grpo-2n-engine16:
+  inherits: slime-qwen3-30b-a3b-grpo-2n
+  argv:
+    --rollout-num-gpus-per-engine: 16
+    --sglang-ep-size: 16
+    --sglang-dp-size: 16
+    --sglang-enable-dp-attention: true
+    --sglang-enable-dp-lm-head: true
+
 # --- Real run: GLM-5.3 (744B-A40B MoE) ---
 # Architecture flags follow slime's scripts/models/glm5.2-744B-A40B.sh (rotary base 8M: the original
 # zai-org/GLM-5 has 1M and slime's hf_validate_args rejects the mix). Parallelism follows
