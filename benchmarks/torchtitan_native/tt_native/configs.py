@@ -84,6 +84,9 @@ class Options:
     flavor: str = "27B"
     n_layers: int | None = None
     """Truncate to the first N layers (multiple of 4 keeps the 3:1 GDN/attention mix)."""
+    attn_res_block_size: int | None = None
+    """Kimi K3 only: layers per Attention Residuals block (the flavor's: 12). Smaller in a
+    truncated stand-in, its later stages receive as deep a block stack as the full model's."""
     attn_backend: str = "flex"
     stacked_layout: StackedLayout = "rows"
     """``rows``: store stacked W1/W3 as [F, 2, D] so FSDP shards rows (any GPU
@@ -172,6 +175,9 @@ class Options:
     profile_freq: int = 0
     """> 0: TorchTitan's profiler traces step ``profile_freq`` once, every rank,
     into ``$MILABENCH_DIR_RUN/traces``."""
+    memory_snapshot_freq: int = 0
+    """> 0: TorchTitan's CUDA memory snapshot every N steps and on out-of-memory, every
+    rank, into ``$MILABENCH_DIR_RUN/memory_snapshot`` (view: pytorch.org/memory_viz)."""
 
     @classmethod
     def from_env(cls) -> "Options":
@@ -241,6 +247,12 @@ def _model_config(opts: Options):
         if not 0 < opts.n_layers <= len(model.layers):
             raise ValueError(f"n_layers must be in [1, {len(model.layers)}]")
         model.layers = model.layers[: opts.n_layers]
+    if opts.attn_res_block_size is not None:
+        if opts.model != "kimi_k3":
+            raise ValueError("attn_res_block_size is a Kimi K3 option")
+        # K3's pipeline reads the block layout from layer 0's config: set it on every layer.
+        for layer in model.layers:
+            layer.attn_res_block_size = opts.attn_res_block_size
     if opts.compile == "eager":
         model.local_compile_regions = []
     if opts.stacked_layout == "rows":
@@ -410,17 +422,37 @@ def _checkpointer(opts: Options):
 
 
 def _profiler(opts: Options):
-    """TorchTitan's profiler: step ``profile_freq`` traced once on every rank."""
+    """TorchTitan's profiler: step ``profile_freq`` traced once on every rank; memory
+    snapshots every ``memory_snapshot_freq`` steps."""
     from torchtitan.observability.profiler import Profiler
 
-    runs = os.environ.get("MILABENCH_DIR_RUN") or os.environ.get("MILABENCH_DIR_RUNS", ".")
-    return Profiler.Config(
-        enable_profiling=True,
-        profile_freq=opts.profile_freq,
-        profiler_warmup=1,
-        profiler_repeat=1,
-        save_traces_folder=os.path.join(os.path.abspath(runs), "traces"),
+    runs = os.path.abspath(
+        os.environ.get("MILABENCH_DIR_RUN") or os.environ.get("MILABENCH_DIR_RUNS", ".")
     )
+    trace = (
+        dict(
+            enable_profiling=True,
+            profile_freq=opts.profile_freq,
+            profiler_warmup=1,
+            profiler_repeat=1,
+            save_traces_folder=os.path.join(runs, "traces"),
+        )
+        if opts.profile_freq > 0
+        else {}
+    )
+    memory = (
+        dict(
+            enable_memory_snapshot=True,
+            memory_snapshot_freq=opts.memory_snapshot_freq,
+            save_memory_snapshot_folder=os.path.join(runs, "memory_snapshot"),
+            # The live blocks keep their allocation stacks; the history (TorchTitan: 1M
+            # events) only adds the timeline, and its size is per rank.
+            memory_snapshot_max_entries=100_000,
+        )
+        if opts.memory_snapshot_freq > 0
+        else {}
+    )
+    return Profiler.Config(**trace, **memory)
 
 
 def qwen38() -> Trainer.Config:
@@ -567,5 +599,9 @@ def qwen38() -> Trainer.Config:
         checkpointer=checkpointer,
         activation_checkpoint=_activation_checkpoint(opts.ac, opts.sac_save_scaled_mm),
         dump_folder=opts.dump_folder,
-        **({"profiler": _profiler(opts)} if opts.profile_freq > 0 else {}),
+        **(
+            {"profiler": _profiler(opts)}
+            if opts.profile_freq > 0 or opts.memory_snapshot_freq > 0
+            else {}
+        ),
     )

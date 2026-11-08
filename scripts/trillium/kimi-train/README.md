@@ -128,6 +128,28 @@ that dies would otherwise hold every node until it expires.
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
 `configs._patch_kimi_pp_stage`).
 
+### Last stage at depth (K3-TRN-04, job 1262896, 48 nodes)
+
+Every stage came up and the shape inference passed; stage 47 (trig0152: layer 92 + output, 19.6-19.9 GiB of model at
+init like the other one-layer stages, 26.7 on two-layer ones) then ran out of memory before step 1: rank 376 logged
+10 "memory mapping failed" between 23:55:15 and 23:55:56 with 4-12 MiB free of 178.3 GiB, and at 23:56:01 another
+worker of that node exited with code 1. Its error is not in the log: local ranks 1-7 print nothing
+(`--local-ranks-filter=0`), and torchrun's summary of the failure (rank, exit code, the traceback TorchTitan's `@record`
+writes) was lost because benchrun's worker launcher dropped torch's `start_new_session`, so the agent's shutdown raised
+`ProcessLookupError` on its first `killpg` (reproduced on CPU with the K3 venv; with the fix the summary prints the
+failing rank's exception). Node telemetry records no GPU memory; trig0152's GPUs computed steadily from 23:54:32 to
+23:55:14 (~42 s: about step 1's 128 micro-batches at the stand-in's ~0.29 s per micro-batch, est.) and were nearly idle
+from the first failure on; GPU 6 went idle at ~23:55:58 while the others spun at full utilization (rank 382 the one
+that exited: inferred). So the limit came at about the end of step 1's micro-batches on stage 47 (inferred from the
+timing); what was allocated, by what, is not recorded.
+
+The stand-ins' last stage received a 1-block AttnRes stack (74.7 GiB reserved, 62.0 allocated, job 1262576); layer
+92 receives 8 blocks. `k3-pp4-l8-depth` measures that stage at depth: 8 layers in 1-layer AttnRes blocks
+(`--attn-res-block-size 1`), split so that stage 3 is layer 7 (MLA + MoE, as layer 92) + output, receiving 7 blocks and
+holding 8 after its own, with PP48's 128 micro-batches; a CUDA memory snapshot at step 3 and on out-of-memory on every
+rank (`--memory-snapshot-freq`, TorchTitan's). `-m16` (16 micro-batches) tells whether the last stage grows with the
+count, `-4k` (4096 tokens, 256 micro-batches) whether halving the micro-batch fits.
+
 ## Untested
 
 `k3-pp48-full-rbf16`, `k3-pp40-l78-rbf16` and `k3-pp48-l49` only dry-run; their memory comes from 4-node stand-ins, not

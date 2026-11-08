@@ -191,6 +191,35 @@ k3-pp4-l5:
   argv:
     --pp-schedule: 1F1B
     --pp-microbatches: 16
+# PP48's last stage at depth (K3-TRN-04, job 1262896: stage 47 = layer 92 + output ran out of memory in its first
+# 1F1B micro-batches; 74.7 GiB reserved on the stand-in's last stage, job 1262576). Layer 92 receives 8 AttnRes blocks
+# (12-layer blocks start at layers 0, 12, ..., 84); the stand-ins' last stages received 1. 8 layers in 1-layer blocks,
+# split emb + 0-2 / 3-4 / 5-6 / 7 + out: stage 3 = layer 7 (MLA + MoE, as layer 92) + output receives 7 blocks and
+# holds 8 after its own; 128 micro-batches as PP48 (1F1B: the last stage holds one whatever the count). Memory snapshot
+# at step 3 and on out-of-memory. -m16: the same with 16 micro-batches (does the last stage grow with the count?);
+# -4k: 4096-token micro-batches, 256 per step (the same tokens per step)
+k3-pp4-l8-depth:
+  inherits: k3-pp4-l7-rbf16
+  voir:
+    options:
+      skip: 2
+      stop: 3
+  argv:
+    --n-layers: 8
+    --attn-res-block-size: 1
+    --pp-first-stage-less-layers: 0
+    --pp-last-stage-less-layers: 1
+    --pp-microbatches: 128
+    --memory-snapshot-freq: 3
+k3-pp4-l8-depth-m16:
+  inherits: k3-pp4-l8-depth
+  argv:
+    --pp-microbatches: 16
+k3-pp4-l8-depth-4k:
+  inherits: k3-pp4-l8-depth
+  argv:
+    --seq-len: 4096
+    --pp-microbatches: 256
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), at most 2 layers per stage, an MoE layer on
 #     every stage (PP4 failed with a stage of none: jobs 1261433-1261567; with both less-layers options at 0, stage 0
