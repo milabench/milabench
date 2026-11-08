@@ -532,6 +532,40 @@ kimi-vllm-2n-tp8pp2-dummy:
     argv:
       --load-format: dummy
 
+# K3-XN: the experts over the nodes, with data-parallel attention. One TP8 engine per node joined by vLLM's data
+# parallelism (`multinode: dp`, no Ray); --enable-expert-parallel shards the experts over DP x TP = 16 GPUs (EP16: 56
+# whole experts of the 896 on each GPU). Attention, shared experts and the latent projections stay TP8 inside the node
+# (K3's sequence-parallel MoE path, PP 1). The all-to-all is vLLM 0.32's NCCL one, allgather_reducescatter (its default,
+# no driver setting): each MoE layer all-gathers the 16 ranks' tokens at the latent 3,584 (MXFP8) and reduce-scatters
+# the outputs; the TRTLLM MXFP4 kernel then runs in its modular form (the monolithic one takes no DP). Without
+# --enable-ep-weight-filter every rank reads every expert: 1.56 TB per node, about 24 min at job 1263799's 1.1 GB/s.
+# Estimates: weights about 104 GiB per GPU (PP2: 96: every GPU now holds all 93 layers' TP8 share and the replicated
+# latent projections), so less KV memory, for all 93 layers but only the engine's own requests.
+kimi-vllm-2n-dp2tp8-ep16:
+  inherits: kimi-vllm-2n-tp8pp2
+  server:
+    multinode: dp
+    dp_local: 1
+    argv:
+      --pipeline-parallel-size: 1
+      --enable-expert-parallel: true
+      --all2all-backend: allgather_reducescatter
+      --enable-ep-weight-filter: true
+
+# bring-up in a 1 h job, without FlashInfer's autotune (engine start ~2 min instead of ~24: job 1263425), so that the
+# load fits whatever it takes; compares pass for pass with kimi-vllm-2n-tp8pp2-bringup-notune (job 1263425)
+kimi-vllm-2n-dp2tp8-ep16-bringup-notune:
+  inherits: kimi-vllm-2n-dp2tp8-ep16
+  max_duration: 3420
+  client:
+    passes:
+      - *warmup
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+  server:
+    argv:
+      --no-enable-flashinfer-autotune: true
+
 # -----------------------------------------------------------------------------
 # Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
 # -----------------------------------------------------------------------------
