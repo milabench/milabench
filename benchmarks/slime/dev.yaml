@@ -600,9 +600,9 @@ slime-glm5-grpo-r3:
     --use-rollout-routing-replay: true
 
 # The real engine at its real width without the trainer: one SGLang engine of 64 GPUs (TP64, EP64, DP attention 64) on
-# 8 nodes, loaded from the FP8 HF checkpoint (slime's --debug-rollout-only: no Megatron model, no training, no weight
-# sync), 2 rollouts of GLM-RL-01's share per engine (32 prompts x 8 = 256 samples): measures the rollout GLM-RL-01 could
-# only estimate (20-45 min) before a 32-node repost.
+# 8 nodes, loaded from the FP8 HF checkpoint (slime's --debug-rollout-only: no Megatron model or argument checks, no
+# training, no weight sync), 2 rollouts of GLM-RL-01's share per engine (32 prompts x 8 = 256 samples): measures the
+# rollout GLM-RL-01 could only estimate (20-45 min) before a 32-node repost.
 slime-glm5-rollout-8n:
   inherits: slime-glm5-grpo
   num_machines: 8
@@ -614,8 +614,6 @@ slime-glm5-rollout-8n:
     --num-rollout: 2
     --rollout-batch-size: 32
     --global-batch-size: 256
-    # no trainer, but its arguments are still checked: EP within the 8 GPUs per pipeline stage of 64
-    --expert-model-parallel-size: 8
 
 # Disaggregated, on the same 32 nodes: the trainer on the first 16 (TP1 / CP1, PP8 x EP16, DP16) and 2 SGLang engines
 # of 64 GPUs on the other 16. No offload either side; after every step each pipeline stage's DP0 rank broadcasts its

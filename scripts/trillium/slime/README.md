@@ -308,6 +308,25 @@ the script:
 The first step-4 run's `rollout/truncated` and reward say whether Low and 8k are enough; the reward is there to show
 the loop learns, not measured.
 
+### GLM-RL-01 (job 1265179): blocked at engine load
+
+At TP64 every SGLang scheduler raised `ValueError: Weight output_partition_size = 32 is not divisible by weight
+quantization block_n = 128`: the shared experts' FP8 `gate_up_proj` split over the engine's TP (moe_intermediate_size
+2048 / 64 = 32; `--sglang-moe-dense-tp-size 1` covers only the dense layers 0-2). The 2-node test's 16-GPU engine split
+it to 128 and passed. slime's GLM-5.3 script gets TP1 shared experts from DeepEP (`--sglang-moe-a2a-backend deepep`,
+sglang `deepseek_v2.py:753-775`), which is not installed here; the same code keeps them unsplit with
+`SGLANG_SHARED_EXPERT_TP1=1` (`environ.py:737`), and SGLang then adds their output once, after the all-reduce
+(`moe/utils.py:786`). Reproduced at TP32 on 4 nodes (`slime-glm5-l10-grpo-4n`, job 1265300: 2048 / 32 = 64, the same
+error); with the variable (job 1265370, PASS, 3 steps in 24 min) the 32-GPU engine loaded, the weight sync took 9.3 s
+then 6.4-6.5 s, training 170 s then 40 s, rollouts 165-180 s; SGLang's log-probs and the trainer's agree as at TP16
+without it (job 1264931: rollout log-prob -10.26 both, TIS mean 1.0000, |TIS - 1| 0.059, clipfrac 1.1e-4 both), so the
+shared output is counted once. NVRM 0 on trig0115-0118.
+
+`slime-glm5-rollout-8n` (8 nodes, a request row): the full GLM-5.3 on one 64-GPU engine at the real width, slime's
+`--debug-rollout-only` (engines from the FP8 checkpoint, no Megatron model, no training, no weight sync), 2 rollouts of
+GLM-RL-01's share per engine (1,024 samples over 4 engines: 32 prompts x 8): checks the engine at TP64 and measures the rollout time GLM-RL-01 only
+estimated (20-45 min).
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
