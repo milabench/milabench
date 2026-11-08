@@ -460,9 +460,19 @@ kimi-vllm-2n-tp8pp2:
     - "arch in ('cuda', 'rocm')"
     - "gpu.get('count', 0) >= 8"
     - "len(nodes) >= ${..num_machines}"
+  # ready after ~37 min (load 11.5, FlashInfer autotune ~24: job 1262824), the performance passes ~1 h and the eval
+  # 35-60 min (estimates): 2.2-2.7 h
+  max_duration: 12600
   env:
-    # the API server waits this long for the engine (default 600 s): loading 1.56 TB takes longer
-    VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+    # the API server waits this long for the engine (default 600 s): 2192 s from start to ready in job 1262824
+    VLLM_ENGINE_READY_TIMEOUT_S: "5400"
+  client:
+    passes:
+      # throwaway, before the measured passes: kernels that JIT-compile on their first batches of a shape (Triton's
+      # layer_norm_gated_fwd_kernel: a 9.8 s stall at the start of conc64 in jobs 1261890 and 1262824)
+      prepend:
+        - &warmup {name: warmup, argv: {--max-concurrency: 64, --num-prompts: 64, --random-input-len: 1024, --random-output-len: 64}}
+      append: [*eval]
   server:
     argv:
       --tensor-parallel-size: "{gpu_count}"
@@ -475,6 +485,7 @@ kimi-vllm-2n-tp8pp2-bringup:
   max_duration: 3420
   client:
     passes:
+      - *warmup
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 

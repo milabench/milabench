@@ -12,9 +12,13 @@ client passes of the MI355X study (`config/kimi_study.yaml`, `_kimi`), so the tw
 
 Entries (`config/kimi_study.yaml`, B200 section):
 
-- `kimi-vllm-2n-tp8pp2`: TP8 inside each node, PP2 across the two (Ray). The study's server flags (`_kimi_vllm`) and
-  all its passes.
-- `kimi-vllm-2n-tp8pp2-bringup`: the same server, passes `conc1` and `conc64` only (the step 2 milestone).
+- `kimi-vllm-2n-tp8pp2`: TP8 inside each node, PP2 across the two (Ray). The study's server flags (`_kimi_vllm`), a
+  throwaway `warmup` pass, the study's 20 performance passes unchanged, then its `eval` pass (`prepend` / `append` in
+  `client.passes`, `milabench/merge.py`). `max_duration` 3.5 h (2.2-2.7 h estimated).
+- `kimi-vllm-2n-tp8pp2-bringup`: the same server, passes `warmup`, `conc1` and `conc64` (the step 2 milestone).
+- `kimi-vllm-2n-tp8pp2-bringup-notune`: the same without FlashInfer's autotune (`--no-enable-flashinfer-autotune`, as
+  vLLM's Kimi-K3 recipes).
+- `kimi-vllm-2n-tp8pp2-dummy`: random weights (memory, graphs).
 
 ## Install (login node, once)
 
@@ -43,6 +47,18 @@ download cubins. vLLM finds no nvcc (`CUDA_HOME` unset), so FlashInfer JIT is of
 ## Run
 
 Always with an explicit entry (`--select`): the config's other enabled entries are ROCm ones (ATOM).
+
+Before the study entry (its `eval` pass: lm-eval GSM8K, ARC-Challenge, GPQA diamond, MMLU-Pro), stage the eval
+datasets into the HF cache that the offline nodes read (`data/`), on a data-transfer node (`ssh tri-dm1`; transfers
+over 10 GB go there, these are small). `prepare` also checks the checkpoint against the Hub and fetches nothing that is
+there:
+
+```bash
+ssh tri-dm1
+B=$SCRATCH/trillium/new/k3-inf; unset PYTHONPATH PIP_CONFIG_FILE
+export PATH=$B/src/.venv/bin:$PATH MILABENCH_BASE=$B MILABENCH_GPU_ARCH=cuda
+milabench prepare --config $B/src/config/kimi_study.yaml --select kimi-vllm-2n-tp8pp2
+```
 
 ```bash
 cd $SCRATCH/trillium/new/k3-inf && git -C src pull --ff-only
@@ -89,8 +105,11 @@ B200: activations in MXFP8). 1k in, 256 out, random tokens:
 | conc1 | 111.3 (7.0) | 556 | 85 / 88 | 8.69 / 8.70 | 8.68 / 8.89 | 7014 | 63.0 |
 | conc64 | 1304.7 (81.5) | 6523 | 1881 / 11689 | 26.7 / 64.1 | 20.6 / 30.1 | 9165 | 7.0 |
 
-Power: main node's GPUs only (voir), times 2 (`scripts/analysis/kimi_study.py`). conc64's p99 TTFT is the first burst:
-64 prompts of 1024 tokens at once, 16,384 batched tokens per step (also in job 1261890).
+Power: main node's GPUs only (voir), times 2 (`scripts/analysis/kimi_study.py`). conc64's p99 TTFT is one engine stall,
+not queueing: vLLM's JIT monitor logs Triton compiling `layer_norm_gated_fwd_kernel` in the pass's first second, ITL max
+9.8 s, 22 of 128 requests at 11.4-11.7 s TTFT, the others at 2.32 s or less (also in job 1261890; conc1 had a CuTeDSL
+compile of `FlashAttentionForwardSm100` in its first request). Since then: a throwaway `warmup` pass (64 x 1024 in, 64
+out) before the measured passes, and Triton's cache in `cache/triton`, kept across jobs (`job.sh`).
 
 Not tested yet: the study's other passes and the accuracy pass; `-notune` (no FlashInfer autotune, against this run);
 prefix caching, DCP and speculative decoding stay off as in the MI355X study.

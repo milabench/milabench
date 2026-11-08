@@ -9,10 +9,11 @@ SRC=$MILABENCH_BASE/src
 export PATH=$SRC/.venv/bin:$PATH MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1
 # compute nodes: no internet, $HOME read-only
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_HOME=$MILABENCH_BASE/cache
-# node-local files in RAM (/tmp holds 2 GB): TMPDIR and the kernel compile caches, removed at the end
+# node-local files in RAM (/tmp holds 2 GB): TMPDIR and FlashInfer's workspace, removed at the end. Triton's kernels in a
+# cache that persists across jobs: a kernel compiled during a measured pass stalls it (9.8 s, job 1262824)
 LOCAL=/dev/shm/$USER/k3inf
 srun --overlap --ntasks-per-node=1 mkdir -p "$LOCAL/tmp"
-export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
+export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$MILABENCH_BASE/cache/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
 trap 'srun --overlap --ntasks-per-node=1 rm -rf "$LOCAL"' EXIT
 
 run=$ENTRY.$SLURM_JOB_ID
