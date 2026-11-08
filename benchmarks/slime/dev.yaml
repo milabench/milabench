@@ -542,7 +542,8 @@ slime-glm5-grpo:
     SGLANG_ENABLE_JIT_DEEPGEMM: "0"
     # Shared experts unsplit (sglang deepseek_v2.py:753-775): at the engine's TP64 their FP8 gate_up_proj splits
     # 2048 / 64 = 32, not a multiple of the 128 block (job 1265179). slime's script gets TP1 shared experts from DeepEP
-    # (--sglang-moe-a2a-backend deepep, not installed); SGLang adds their output once (moe/utils.py:786)
+    # (--sglang-moe-a2a-backend deepep, not installed); SGLang adds their output on TP rank 0 only, before the
+    # reduce-scatter (moe/utils.py:786-797). Cost: README, GLM-RL-01
     SGLANG_SHARED_EXPERT_TP1: "1"
   argv:
     <<: *grpo_argv
@@ -572,6 +573,17 @@ slime-glm5-grpo:
     --sglang-dp-size: 64
     --sglang-enable-dp-attention: true
     --sglang-enable-dp-lm-head: true
+    # Static memory (weights + KV pool) set. Unset, SGLang reserves 512 + 1.5 x 16384 + 1024 x TP / 8 + 2 x bs + 4.5 x
+    # bs x DP MiB (decode graphs of bs 512; arg_groups/memory_hook.py:300-306, 366-371) of 183,359 MiB: 0.645 at TP16,
+    # 0.433 at TP32, 0.009 at TP64 (jobs 1264931, 1265370, 1265179), and at TP64 the KV gets 143.5 - 176.5 x 0.991 < 0
+    # GiB (kv_cache_configurator.py:2194-2208). Weights per GPU at TP64: about 33 GiB (21.7 replicated: embeddings,
+    # attention, dense MLPs, shared experts; 11.3 routed; from the 10-layer engine's 8.70 GiB at TP32). 0.75 of the
+    # 176.5 GiB free before load = 132.4 GiB static: colocated sync 132.4 + 16.9 (trainer BF16 weights) + 4 (staging) =
+    # 153.3 <= 178 GiB; rollout KV about 99 GiB per rank against 4 x 9k tokens x 55 KB = 2 GB; 44.1 GiB left outside,
+    # above the 38.6 GiB SGLang would reserve itself at bs 32
+    --sglang-mem-fraction-static: 0.75
+    # decode graphs up to 32 sequences per DP-attention rank (4 here, 8 disaggregated, 8-16 in the 10-layer tests)
+    --sglang-cuda-graph-max-bs: 32
     # dense layers (0-2) unsplit, as slime's script: at TP64 their FP8 MLPs split 12288 / 64 = 192, not a multiple of
     # the 128 block, and the engine fails at load
     --sglang-moe-dense-tp-size: 1
@@ -602,7 +614,10 @@ slime-glm5-grpo-r3:
 # The real engine at its real width without the trainer: one SGLang engine of 64 GPUs (TP64, EP64, DP attention 64) on
 # 8 nodes, loaded from the FP8 HF checkpoint (slime's --debug-rollout-only: no Megatron model or argument checks, no
 # training, no weight sync), 2 rollouts of GLM-RL-01's share per engine (32 prompts x 8 = 256 samples): measures the
-# rollout GLM-RL-01 could only estimate (20-45 min) before a 32-node repost.
+# rollout GLM-RL-01 could only estimate (20-45 min) before a 32-node repost. No trainer, so milabench gets no metrics
+# (the hook runs in the Megatron actors): read slime's lines, "Engine startup timings (s): load_weight=" and
+# "rollout_metrics.py:286 - perf N: {... 'perf/rollout_time': ...}". --time 2:15:00: startup 10-20 min (each node reads
+# the 756 GB checkpoint, about 7 min at 1.8 GB/s), 2 x 20-45 min, 15 min margin and the install.
 slime-glm5-rollout-8n:
   inherits: slime-glm5-grpo
   num_machines: 8
@@ -614,10 +629,14 @@ slime-glm5-rollout-8n:
     --num-rollout: 2
     --rollout-batch-size: 32
     --global-batch-size: 256
+    # rollout-only turns rollout offload off (slime arguments.py:2115-2127), and with it slime's prefill-graph
+    # "disabled" for the memory saver (sglang_engine.py:710-716): set as in the colocated run, so the time transfers
+    --sglang-cuda-graph-backend-prefill: disabled
 
 # Disaggregated, on the same 32 nodes: the trainer on the first 16 (TP1 / CP1, PP8 x EP16, DP16) and 2 SGLang engines
-# of 64 GPUs on the other 16. No offload either side; after every step each pipeline stage's DP0 rank broadcasts its
-# stage's weights to the engines over NCCL (slime's update_weight_from_distributed: no CUDA IPC, no expert routing).
+# of 64 GPUs on the other 16. No GPU offload either side (the optimizer stays on the CPU: --optimizer-cpu-offload);
+# after every step each pipeline stage's DP0 rank broadcasts its stage's weights to the engines over NCCL (slime's
+# update_weight_from_distributed: no CUDA IPC, no expert routing).
 # 64 samples per trainer rank (32-64 micro-batches, bubble 10-18 %), 8 sequences per DP-attention rank.
 slime-glm5-grpo-disagg:
   inherits: slime-glm5-grpo

@@ -275,7 +275,7 @@ split 14 / 8 x 6 / 16), 128 prompts x 8 = 1,024 samples per step. Estimates, fro
 | per GPU (of 178.3 GiB) | |
 |---|---|
 | training | 85-115 GiB: BF16 weights 16.9 + FP32 main gradients 33.8 = 50.7 GiB static (9.09 B parameters on the largest stage; Adam and the master weights on the CPU), the rest activations, recompute and the allocator (the 10-layer trainer: 56.7 GiB used for 6.4 B, 8.9 GiB per billion, plus PP8's 6 more micro-batches in flight). 1F1B keeps at most 8 in flight, whatever the batch |
-| rollout | about 147 GiB: SGLang's static 0.751 (133.9 GiB; 146.8 GiB peak in the 10-layer test); the KV of 4 sequences x 8.3k tokens is about 2 GB |
+| rollout | about 145 GiB: SGLang's static 0.75 (`--sglang-mem-fraction-static`; 132.4 GiB of the 176.5 free) + graphs and activations (unset, SGLang computes 0.645 at the 10-layer test's TP16: 146.8 GiB peak); the KV of 4 sequences x 8.3k tokens is about 2 GB |
 | sync | about 155-160 GiB: the engine + the trainer's BF16 weights (16.9) + the 4 GiB staging |
 
 Host per node (psutil's `used`: process memory; page cache and `/dev/shm`, Ray's object store included, are not in it):
@@ -315,17 +315,41 @@ quantization block_n = 128`: the shared experts' FP8 `gate_up_proj` split over t
 2048 / 64 = 32; `--sglang-moe-dense-tp-size 1` covers only the dense layers 0-2). The 2-node test's 16-GPU engine split
 it to 128 and passed. slime's GLM-5.3 script gets TP1 shared experts from DeepEP (`--sglang-moe-a2a-backend deepep`,
 sglang `deepseek_v2.py:753-775`), which is not installed here; the same code keeps them unsplit with
-`SGLANG_SHARED_EXPERT_TP1=1` (`environ.py:737`), and SGLang then adds their output once, after the all-reduce
-(`moe/utils.py:786`). Reproduced at TP32 on 4 nodes (`slime-glm5-l10-grpo-4n`, job 1265300: 2048 / 32 = 64, the same
-error); with the variable (job 1265370, PASS, 3 steps in 24 min) the 32-GPU engine loaded, the weight sync took 9.3 s
-then 6.4-6.5 s, training 170 s then 40 s, rollouts 165-180 s; SGLang's log-probs and the trainer's agree as at TP16
-without it (job 1264931: rollout log-prob -10.26 both, TIS mean 1.0000, |TIS - 1| 0.059, clipfrac 1.1e-4 both), so the
-shared output is counted once. NVRM 0 on trig0115-0118.
+`SGLANG_SHARED_EXPERT_TP1=1` (`environ.py:737`), and SGLang then adds their output on TP rank 0 only, before the
+reduce-scatter (`moe/utils.py:786-797`). Reproduced at TP32 on 4 nodes (`slime-glm5-l10-grpo-4n`, job 1265300: 2048 / 32
+= 64, the same error); with the variable (job 1265370, PASS, 3 steps in 24 min) the 32-GPU engine loaded, the weight
+sync took 9.3 s then 6.4-6.5 s, training 170 s then 40 s, rollouts 165-180 s; SGLang's log-probs and the trainer's agree
+as at TP16 without it (job 1264931: rollout log-prob -10.26 both, TIS mean 1.0000, |TIS - 1| 0.059, clipfrac 1.1e-4
+both), so the shared output is counted once. NVRM 0 on trig0115-0118.
+
+Its cost against slime's DeepEP path: there the shared experts are unsplit too, but each GPU runs them on its own
+tokens; here all 64 GPUs of an engine run them on the gathered batch. Against split shared experts (which do not load
+at TP64): +2.8 GB per GPU (75 layers x 37.7 M FP8 parameters) and about +10 % weight reads per decode step (2.8 of
+about 33 GB), and the fused finalize / all-reduce paths are off (`deepseek_v2.py:1055-1075`).
+
+The same job's engines would not have had memory for a KV pool at TP64: with no `--sglang-mem-fraction-static`
+SGLang reserves 512 + 1.5 x 16384 + 1024 x TP / 8 + 2 x bs + 4.5 x bs x DP MiB of 183,359 (decode graphs of bs 512,
+`arg_groups/memory_hook.py:300-306, 366-371`): 0.645 at TP16, 0.433 at TP32, 0.009 at TP64 (jobs 1264931, 1265370,
+1265179). The KV pool is what is free after the weights less (1 - fraction) x the 176.5 GiB free before
+(`kv_cache_configurator.py:2194-2208`): 143.5 - 174.9 < 0 at TP64, "Not enough memory". `slime-glm5-grpo` now sets
+0.75 and `--sglang-cuda-graph-max-bs 32` (4 sequences per DP-attention rank; 8 disaggregated), from:
+
+| per GPU at TP64 | GiB |
+|---|---|
+| weights | about 33: 21.7 replicated (embeddings, attention, dense MLPs, shared experts) + 11.3 routed (the 10-layer engine: 8.70 at TP32) |
+| static, 0.75 x 176.5 | 132.4: weights + about 99 of KV, against 4 x 9k tokens x 55 KB (709 B per layer, 78 layers) = 2 GB per rank |
+| outside the static | 44.1, above the 38.6 SGLang would reserve itself at bs 32 |
+| colocated sync | 132.4 + 16.9 (trainer BF16 weights) + 4 (staging) = 153.3 of 178 |
 
 `slime-glm5-rollout-8n` (8 nodes, a request row): the full GLM-5.3 on one 64-GPU engine at the real width, slime's
 `--debug-rollout-only` (engines from the FP8 checkpoint, no Megatron model, no training, no weight sync), 2 rollouts of
-GLM-RL-01's share per engine (1,024 samples over 4 engines: 32 prompts x 8): checks the engine at TP64 and measures the rollout time GLM-RL-01 only
-estimated (20-45 min).
+GLM-RL-01's share per engine (1,024 samples over 4 engines: 32 prompts x 8), prefill graph off as in the colocated run
+(`--sglang-cuda-graph-backend-prefill disabled`: rollout-only turns rollout offload off, slime `arguments.py:2115-2127`,
+and with it the memory saver's setting, `sglang_engine.py:710-716`): checks the engine at TP64 and measures the rollout
+time GLM-RL-01 only estimated (20-45 min). milabench gets no metrics from it (its hook runs in the Megatron actors): the
+times are slime's `Engine startup timings (s): load_weight=` and `rollout_metrics.py:286 - perf N: {...
+'perf/rollout_time': ...}` lines. `--time 2:15:00`: startup 10-20 min (each node reads the 756 GB checkpoint, about 7
+min at 1.8 GB/s), 2 x 20-45 min, 15 min margin and the install.
 
 ### Step 4, prepared entries (not posted)
 
