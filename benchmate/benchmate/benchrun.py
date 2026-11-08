@@ -13,6 +13,12 @@ import torch.distributed.elastic.multiprocessing.subprocess_handler as sub
 class NewSubprocessHandler(sub.SubprocessHandler):
     def _popen(self, args, env) -> subprocess.Popen:
         kwargs = {}
+        # As torch's own _popen: its close() signals the worker's process group
+        # (os.killpg). A worker without a session of its own leads no group, so the
+        # agent's shutdown raised ProcessLookupError on the first worker it stopped,
+        # and torchrun's failure summary (rank, exit code, traceback) was never printed.
+        if os.name != "nt":
+            kwargs["start_new_session"] = True
 
         if fd := os.getenv("DATA_FD"):
             kwargs["pass_fds"] = [int(fd)]
