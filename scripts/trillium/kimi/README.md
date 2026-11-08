@@ -184,3 +184,40 @@ Accuracy (lm-eval through the server, `eval` pass, temperature 0, up to 8192 gen
 MoE backend `FLASHINFER_TRTLLM_MXFP4_MXFP8`: activations in MXFP8 (vLLM 0.32's default on B200), the checkpoint is W4A16.
 
 Not tested yet: prefix caching, DCP and speculative decoding stay off as in the MI355X study.
+
+## SemiAnalysis InferenceX (formerly InferenceMAX): cited, not ours
+
+Read 2026-11-08. Configs: `github.com/SemiAnalysisAI/InferenceX`, `inferencex-e2e/configs/nvidia-master.yaml` at
+`79a44b90` and `amd-master.yaml` at `9b45b789` (the last commits before 2026-10-28, when Kimi-K3.1-Pro replaced Kimi-K3).
+Results: `https://inferencex.semianalysis.com/run/kimi-k3-on-b200` and `.../run/kimi-k3-on-mi355x` (the pages say their
+data may be modified or out of date). The dashboard's metric is published tokens/s per GPU at a per-user speed.
+
+| | B200 | MI355X |
+|---|---|---|
+| entry | `kimik3-fp4-b200-dynamo-vllm-agentic-dspark` | `kimik3-fp4-mi355x-vllm-agentic-mtp`, `kimik3-fp4-mi355x-atom-agentic-mtp` |
+| engine | Dynamo + vLLM, `vllm/vllm-openai:v0.32.0` | vLLM ROCm nightly (`df6603f0`); ATOM `nightly_202610131505` |
+| GPUs, layout | 16 (2 nodes): TP8 x PP2, DCP8 | 8 (1 node): TP8, DCP8; DRAM KV offload from conc 4-14 up |
+| features | FP4 (MXFP4) experts, MTP / DSpark speculative decoding, prefix caching | the same, plus KV offload |
+| workload | AgentX only: multi-turn agentic-coding trace replay, contexts to 1M tokens, no fixed ISL/OSL | AgentX only |
+| concurrency | 1, 4, 8, 14, 24, 32, 48, 56, 72, 80, 96 | vLLM 1-60, ATOM 1-72 |
+| runs | up to 2026-10-26 | 2026-10-14 to 2026-10-27 |
+| tok/s/GPU at 30 / 50 / 75 / 100 / 150 tok/s/user | 9,605 / 6,223 / 3,809 / 2,677 / 1,653 | 14,754 / 10,918 / 7,085 / 5,035 / 2,580 (best: vLLM) |
+
+Mapping to our passes: none matches. InferenceX runs Kimi-K3 only on AgentX, with prefix caching (cached prompt
+tokens count) and speculative decoding; our passes are random tokens of fixed length with both off (as the MI355X study).
+Only the layout and engine line up on B200 (2 x 8 B200, TP8 x PP2, vLLM 0.32.0). Matching AgentX would be a separate
+server entry (prefix caching, DSpark draft, DCP8) and the `agentx-harness` replay as the client, not a pass.
+Fixed ISL/OSL on both B200 and MI355X exists only for DeepSeek-R1, at 8192 in / 1024 out, concurrency 4 to 256
+(TRT-LLM, SGLang, Dynamo on B200; SGLang, ATOM on MI355X): the study has no 8k/1k pass (its 8k passes generate 128).
+To set the scenario beside theirs: 8k/1k passes at concurrency 4, 16, 64 and 256 (a different model on their side).
+
+## 4 nodes (step 4)
+
+Two of the 2-node servers behind one endpoint: `kimi-vllm-4n-dp2-tp8pp2` (`--data-parallel-size 2`, Ray backend, each
+replica TP8 x PP2 over two nodes with `VLLM_RAY_DP_PACK_STRATEGY=span`). The 2-node server saturates at the 512
+sequences it runs (`--max-num-seqs`, the study's flag), not at memory: conc512 3466 tok/s, conc1024 3452 with a 40 s TTFT
+p50 of queueing, 3.6M tokens of KV free. The same server over 4 nodes (TP8 x PP4) would keep those 512 in flight: decode
+reads every expert's weights, so a stage of half the layers is about twice as fast but carries half the sequences per
+micro-batch, and each token crosses 3 links instead of 1. A second replica runs 512 more: expected about twice the
+saturated throughput (estimate), conc1 unchanged. It is also how the MI355X study scaled (replicas behind one
+endpoint). Untested: `kimi-vllm-4n-dp2-tp8pp2-bringup` (warmup, conc1, conc64, conc1024; 4 nodes, under 1 h) first.

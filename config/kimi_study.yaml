@@ -489,6 +489,32 @@ kimi-vllm-2n-tp8pp2-bringup:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
+# 4 nodes: two of the 2-node servers (TP8 x PP2 each) behind one endpoint, vLLM data parallelism over Ray with each DP
+# rank spanning two nodes (VLLM_RAY_DP_PACK_STRATEGY=span). The 2-node server saturates at its 512 sequences
+# (--max-num-seqs): conc512 3466 output tok/s, conc1024 3452 and queued (TTFT p50 40 s), job 1263799; a second replica
+# runs 512 more. The same server over 4 nodes (PP4) would keep 512 in flight
+kimi-vllm-4n-dp2-tp8pp2:
+  inherits: kimi-vllm-2n-tp8pp2
+  num_machines: 4
+  env:
+    VLLM_RAY_DP_PACK_STRATEGY: span
+  server:
+    argv:
+      --pipeline-parallel-size: 2
+      --data-parallel-size: 2
+      --data-parallel-backend: ray
+
+# its bring-up: the server loads, a pass at each end of the curve and the saturation point
+kimi-vllm-4n-dp2-tp8pp2-bringup:
+  inherits: kimi-vllm-4n-dp2-tp8pp2
+  max_duration: 3420
+  client:
+    passes:
+      - *warmup
+      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+
 # the bring-up without FlashInfer's autotune, as vLLM's Kimi-K3 recipes run: what the 20-25 min of autotune at every
 # start buys, against kimi-vllm-2n-tp8pp2-bringup
 kimi-vllm-2n-tp8pp2-bringup-notune:
