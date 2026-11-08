@@ -525,6 +525,10 @@ slime-glm5-grpo:
     # SGLang prefills sequences of up to 2048 tokens with dense MHA, whose B200 kernel (flashinfer trtllm-gen) downloads
     # its cubins (job 1263975): 0 sends them through the sparse FlashMLA path too (top-k 2048: the same attention)
     SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD: "0"
+    # On B200 slime's weight sync packs the FP8 scales as UE8M0 for DeepGEMM, also the indexer's wk, which SGLang loads
+    # by dequantizing FP32 block scales: [1, 12] packed against [1, 48] (job 1264056). Without DeepGEMM's GEMMs (read by
+    # both the trainer's quantizer and the engine) the scales stay FP32; the indexer's DeepGEMM kernels are not affected
+    SGLANG_ENABLE_JIT_DEEPGEMM: "0"
   argv:
     <<: *grpo_argv
     --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
