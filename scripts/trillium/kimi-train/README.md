@@ -50,11 +50,24 @@ waiting takes 4.24-4.96 ms (24-28 GB/s per GPU, ~200 GB/s per node), so ~9.6 ms 
 stage compute. Expert all-to-all (inside the node): 217-229 ms of the 6.9 s step on stage 0 (1 MoE layer), 586-647 ms
 on stage 1 (2 MoE layers).
 
+### Stages and memory at depth (4 nodes, PP4 x EP8, BF16, review of ed08aaa6)
+
+| job | entry | result |
+|---|---|---|
+| 1261381, 1261433, 1261501, 1261567 | `k3-pp4-l6(-gpipe)`: stage 0 = embedding + dense layer 0, no MoE layer | step 1 gradient norm differs by stage (1.27 on stage 0, 0.00 elsewhere; GPipe: not finite), then no step 2 and `CUDA error: Invalid access of peer GPU memory over nvlink` on rank 24 or 16 (trig0152, trig0148, trig0145: three nodes), with both AttnRes transports |
+| 1261618 | `k3-pp4-l7` (an MoE layer on every stage), 1F1B, 16 micro-batches | 5.90 s per step, 5,550 tokens/s per GPU; allocated / reserved GiB: stage 0 77.0 / 108.6, stages 1-2 (2 MoE layers, 3 / 2 in flight) 106.3 / 158.0 and 107.6 / 158.6, stage 3 (1 MoE + output) 73.0 / 107.1; reserved grows ~31 GiB after step 1 (Adam state) |
+| 1261657 | `k3-pp4-l7-gpipe`, 64 micro-batches of 8192 in flight | step 1 reserved 159-161 GiB on stages 1-3, then allocator failures (`memory mapping failed`) and no step 2 in 4 min: out of memory |
+| 1261745 | `k3-pp4-l7-gpipe-4k`, 64 of 4096 in flight | step 1 reserved 141 GiB on stages 1-2, then the same failures on ranks 8 and 16, no step 2 in 4 min: out of memory |
+
+So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-less-layers 0`; which collective
+diverges is not established), and a stage of 2 MoE layers does not hold the in-flight activations of PP48's worst
+stages (13-24, ~35 micro-batches with 3-4 AttnRes blocks), neither at 8192 nor at 4096 tokens per micro-batch.
+
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
 `configs._patch_kimi_pp_stage`).
 
 ## Untested
 
-More than 2 stages: micro-batches in flight on early stages (up to 47 at PP48), AttnRes stacks of up to 8 blocks per hop,
-the P2P rate at 40-48 nodes (D2 measured a drop from 13-node jobs on), startup at 48 nodes. `k3-pp48-full` and
-`k3-pp40-l78` have only been dry-run.
+PP48 / PP40 as entered do not fit (above). Not measured: the step-time cost of 4096-token micro-batches; why
+reserved exceeds allocated by ~50 GiB on MoE stages (fragmentation; allocated stays ~107 GiB at 2-3 in flight); the
+P2P rate at 40-48 nodes; startup at 48 nodes.
