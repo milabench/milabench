@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, fields
 from typing import Literal
 
@@ -175,13 +176,21 @@ class Options:
     profile_freq: int = 0
     """> 0: TorchTitan's profiler traces step ``profile_freq`` once, every rank,
     into ``$MILABENCH_DIR_RUN/traces``."""
+    pp_detach_losses: bool = False
+    """Pipeline parallelism: once a micro-batch's backward has its loss, keep only a detached
+    copy in the schedule. torch's schedule keeps every micro-batch's loss tensor until the
+    step ends, and with it that micro-batch's autograd graph, whose AccumulateGrad nodes hold
+    the last stage's inputs (received leaves): 0.875 GiB per micro-batch on the K3 stand-in
+    (hidden + 7 AttnRes blocks), 1 GiB at PP48 (job 1263416, k3-pp4-l8-depth)."""
     pp_memory_log: bool = False
     """Kimi K3: the last pipeline stage's local rank 0 prints one ``[k3-mem]`` line per
     micro-batch: allocated before / after its forward, after the loss, after its backward,
     the step's running peak at each point, reserved (GiB)."""
     memory_snapshot_freq: int = 0
-    """> 0: TorchTitan's CUDA memory snapshot every N steps and on out-of-memory, every
-    rank, into ``$MILABENCH_DIR_RUN/memory_snapshot`` (view: pytorch.org/memory_viz)."""
+    """> 0: TorchTitan's CUDA memory snapshot every N steps, every rank, into
+    ``$MILABENCH_DIR_RUN/memory_snapshot`` (view: pytorch.org/memory_viz), and one at the
+    first out-of-memory (``oom/``: TorchTitan's own exit dump never fires at 51b37c2, its
+    train() closes the profiler with ``__exit__(None, None, None)``)."""
 
     @classmethod
     def from_env(cls) -> "Options":
@@ -259,6 +268,49 @@ def _patch_last_stage_memory_log() -> None:
 
     AttnResPipelineStage.forward_one_chunk = forward
     AttnResPipelineStage.backward_one_chunk = backward
+
+
+def _patch_pp_detach_losses() -> None:
+    """``Options.pp_detach_losses``: the schedules read a micro-batch's loss with
+    ``_maybe_get_loss`` right before its backward and afterwards only its value (the step's
+    reported losses). Hand the attached tensor to that backward, keep a detached one."""
+    from torch.distributed.pipelining.schedules import _PipelineSchedule
+
+    get = _PipelineSchedule._maybe_get_loss
+
+    def patched(self, stage, mb_index):
+        loss = get(self, stage, mb_index)
+        if isinstance(loss, torch.Tensor) and loss.grad_fn is not None:
+            self._internal_losses[mb_index] = loss.detach()
+        return loss
+
+    _PipelineSchedule._maybe_get_loss = patched
+
+
+def _patch_oom_snapshot(folder: str) -> None:
+    """``Options.memory_snapshot_freq``: dump the CUDA memory snapshot at this rank's first
+    out-of-memory (torch's allocator observer; TorchTitan already records the history)."""
+    from torchtitan.trainer import Trainer
+
+    train = Trainer.train
+
+    def dump(device, alloc, device_alloc, device_free):
+        if getattr(dump, "done", False):
+            return
+        dump.done = True
+        import pickle
+
+        os.makedirs(os.path.join(folder, "oom"), exist_ok=True)
+        path = os.path.join(folder, "oom", f"rank{os.environ.get('RANK', '0')}.pickle")
+        with open(path, "wb") as out:
+            pickle.dump(torch.cuda.memory._snapshot(), out, protocol=4)
+        print(f"[oom-snapshot] {path}", file=sys.stderr, flush=True)
+
+    def patched(self, *args, **kwargs):
+        torch._C._cuda_attach_out_of_memory_observer(dump)
+        return train(self, *args, **kwargs)
+
+    Trainer.train = patched
 
 
 def _patch_init_timeouts(seconds: int) -> None:
@@ -495,6 +547,8 @@ def _profiler(opts: Options):
         if opts.profile_freq > 0
         else {}
     )
+    if opts.memory_snapshot_freq > 0:
+        _patch_oom_snapshot(os.path.join(runs, "memory_snapshot"))
     memory = (
         dict(
             enable_memory_snapshot=True,
@@ -513,6 +567,8 @@ def _profiler(opts: Options):
 def qwen38() -> Trainer.Config:
     """Trainer config of every model of the pack (``Options.model``)."""
     opts = Options.from_env()
+    if opts.pp_detach_losses:
+        _patch_pp_detach_losses()
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     degrees = parallel_degrees(opts, world_size)
     model = _model_config(opts)

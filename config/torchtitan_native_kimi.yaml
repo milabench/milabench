@@ -195,9 +195,9 @@ k3-pp4-l5:
 # 1F1B micro-batches; 74.7 GiB reserved on the stand-in's last stage, job 1262576). Layer 92 receives 8 AttnRes blocks
 # (12-layer blocks start at layers 0, 12, ..., 84); the stand-ins' last stages received 1. 8 layers in 1-layer blocks,
 # split emb + 0-2 / 3-4 / 5-6 / 7 + out: stage 3 = layer 7 (MLA + MoE, as layer 92) + output receives 7 blocks and
-# holds 8 after its own; 128 micro-batches as PP48 (1F1B: the last stage holds one whatever the count). Memory snapshot
-# at step 3 and on out-of-memory. -m16: the same with 16 micro-batches (does the last stage grow with the count?);
-# -4k: 4096-token micro-batches, 256 per step (the same tokens per step)
+# holds 8 after its own; 128 micro-batches as PP48. Memory snapshot at step 3 and at the first out-of-memory (the pack's
+# allocator observer; TorchTitan's own exit dump never fires at this pin); one [k3-mem] line per micro-batch on the last
+# stage. -m16: 16 micro-batches; -4k: 4096-token micro-batches, 256 per step (the same tokens per step)
 k3-pp4-l8-depth:
   inherits: k3-pp4-l7-rbf16
   voir:
@@ -222,15 +222,21 @@ k3-pp4-l8-depth-4k:
   argv:
     --seq-len: 4096
     --pp-microbatches: 256
-# k3-pp4-l8-depth (job 1263416): the last stage's allocated memory grows by 0.875 GiB per micro-batch ([T, 8, D] in
-# BF16, the received hidden + 7 blocks or the 8-block stack) and drops at the next step: out of memory in step 2.
-# Half the micro-batches per schedule step, two schedule steps per optimizer step (the same 8.4M tokens per step at
-# PP48): does it drop between the two?
+# k3-pp4-l8-depth (job 1263416): the last stage's allocated memory grows by 0.875 GiB per micro-batch and drops at the
+# next step: out of memory in step 2 (169.2 GiB reserved at step 1). 0.875 GiB = the stage's received inputs (hidden + 7
+# AttnRes blocks, [8192, 7168] BF16 each): torch's schedule keeps every micro-batch's loss tensor until the step ends,
+# its graph's AccumulateGrad nodes keep those leaves (reproduced on CPU, 2-rank gloo 1F1B). -m64ga2: half the
+# micro-batches per schedule step, two per optimizer step (job 1263463: drops between the two, 139.8 GiB reserved at
+# step 2). -detach: 128 micro-batches with --pp-detach-losses (the schedule keeps a detached loss after its backward)
 k3-pp4-l8-depth-m64ga2:
   inherits: k3-pp4-l8-depth
   argv:
     --pp-microbatches: 64
     --grad-accum: 2
+k3-pp4-l8-depth-detach:
+  inherits: k3-pp4-l8-depth
+  argv:
+    --pp-detach-losses: "1"
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), at most 2 layers per stage, an MoE layer on
 #     every stage (PP4 failed with a stage of none: jobs 1261433-1261567; with both less-layers options at 0, stage 0
@@ -244,7 +250,9 @@ k3-pp4-l8-depth-m64ga2:
 #     the pipeline's P2P child groups keep it after step 1 (README, "Running the scale rows").
 #     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min.
 #     A log line per step (TorchTitan's default here, 10, printed steps 1, 10 and 20 only: job 1263259), for the
-#     cancel rule on steps and each step's peak reserved memory. ---
+#     cancel rule on steps and each step's peak reserved memory. --pp-detach-losses: without it the last stage keeps
+#     every micro-batch's received inputs until the step ends, ~1 GiB each at layer 92 (hidden + 8 AttnRes blocks):
+#     126 GiB over 128 micro-batches, what ran K3-TRN-04 out of memory (stand-in: job 1263416). ---
 _k3_scale:
   inherits: _k3
   num_machines: 48
@@ -261,6 +269,7 @@ _k3_scale:
     --pp-last-stage-less-layers: 0
     --init-timeout-seconds: 3600
     --log-freq: 1
+    --pp-detach-losses: "1"
 # Full size needs the BF16 gradient reduction (the campaign's default is FP32): with FP32 a stage of 2 MoE layers runs
 # out of memory with the in-flight load of PP48's worst stages (k3-pp4-l7-gpipe with AdamW, the allocator's garbage
 # collection, Muon, Muon + gc, the native allocator: jobs 1261657-1262141); with BF16, 143.3 GiB reserved on the

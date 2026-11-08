@@ -147,9 +147,29 @@ timing); what was allocated, by what, is not recorded.
 The stand-ins' last stage received a 1-block AttnRes stack (74.7 GiB reserved, 62.0 allocated, job 1262576); layer
 92 receives 8 blocks. `k3-pp4-l8-depth` measures that stage at depth: 8 layers in 1-layer AttnRes blocks
 (`--attn-res-block-size 1`), split so that stage 3 is layer 7 (MLA + MoE, as layer 92) + output, receiving 7 blocks and
-holding 8 after its own, with PP48's 128 micro-batches; a CUDA memory snapshot at step 3 and on out-of-memory on every
-rank (`--memory-snapshot-freq`, TorchTitan's). `-m16` (16 micro-batches) tells whether the last stage grows with the
-count, `-4k` (4096 tokens, 256 micro-batches) whether halving the micro-batch fits.
+holding 8 after its own, with PP48's 128 micro-batches. `--pp-memory-log` prints the last stage's memory around each
+micro-batch; `--memory-snapshot-freq` dumps TorchTitan's CUDA memory snapshot every N steps and, through the pack's
+allocator observer, at the first out-of-memory (TorchTitan's own exit dump never fires at this pin: its `train()`
+closes the profiler with `__exit__(None, None, None)`, so job 1263416 left no snapshot).
+
+Result (job 1263416, last stage = rank 24, GiB): allocated at the start of each micro-batch's forward grows by 0.875
+per micro-batch (8.2 at micro-batch 0, 142.1 after the backward of micro-batch 127), each micro-batch adds a
+transient of ~20 on top (running peak 162.0), step 1 reserved 169.2 (stages 0-2: 98.6-102.4); it all drops before
+the next step (22.7 at step 2's first forward, +14.5 of optimizer state and kept gradients), and step 2 ran out of
+memory at micro-batch 120 ("Tried to allocate 896.00 MiB", all 8 ranks of the stage, printed by torchrun's summary).
+0.875 GiB is the stage's received inputs, hidden + 7 blocks of [8192, 7168] BF16 (PP48's stage 47: hidden + 8, 1.0
+GiB, 126 GiB over 128 micro-batches; K3-TRN-06's: hidden + 4, 0.55, ~70). The holder: torch's schedule keeps every
+micro-batch's loss tensor until the step ends (`_internal_losses`, then TorchTitan's `losses` list, cleared after the
+schedule step), and a live loss keeps its autograd graph, whose AccumulateGrad nodes keep the received leaves after
+the backward. Reproduced on CPU (2-rank gloo, torch's `Schedule1F1B`, the bench venv's torch): received inputs alive
+after each backward 1, 2, ..., 8 and 8 after the step; with `--pp-detach-losses` (the schedule keeps a detached loss
+once the backward has its own reference) 1 each time and 0 after the step, the losses' values unchanged. Middle stages
+drop their outputs after the backward, hence no growth there. The loss and logits (TorchTitan's chunked loss, 8
+chunks: ~0.1 GiB per micro-batch at the loss) are not what fills the stage.
+
+`k3-pp4-l8-depth-m64ga2` (job 1263463: 64 micro-batches per schedule step, 2 per optimizer step) drops the retention
+between the two: last stage 126.8 GiB reserved at step 1, 139.8 at step 2 (127.6 allocated). `k3-pp4-l8-depth-detach`
+measures the fix at 128 micro-batches.
 
 ## Untested
 
