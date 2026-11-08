@@ -218,8 +218,8 @@ def plots(passes: pd.DataFrame, itl: pd.DataFrame, accuracy: pd.DataFrame, out: 
                        "power_nodes_measured:Q", "nodes:Q"]
                 row = [
                     line(eff, alt.X("concurrency:Q", scale=log), alt.Y("output_tok_per_j:Q", title="output tokens / J"),
-                         "Efficiency: output tokens per joule (= tok/s per W)", tip),
-                    line(eff, alt.X("concurrency:Q", scale=log), alt.Y("power_w:Q", title="GPU power (W, all GPUs)"),
+                         "Efficiency: output tokens per joule (= tok/s per W; estimate)", tip),
+                    line(eff, alt.X("concurrency:Q", scale=log), alt.Y("power_w:Q", title="GPU power (W, all GPUs; estimate: main node x nodes)"),
                          "GPU power while the requests run", tip),
                 ]
                 charts.append(alt.hconcat(*row))

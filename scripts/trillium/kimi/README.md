@@ -218,25 +218,27 @@ The same server over four nodes: `kimi-vllm-4n-tp8pp4`, TP8 inside each node, PP
 unchanged. The one server change beyond the layout: `--max-num-seqs` 1024 instead of 512.
 
 Why: the 2-node server's limit is its 512-sequence cap. conc512 gives 3466 output tok/s, conc1024 3452 with a TTFT p50
-of 40 s (queueing). Memory is not the limit at that cap only: its KV pool holds 3,606,273 tokens (log line 562), 26.7% in
-use with 256 sequences running and 53.4% with 512, so it would be full at about 960.
+of 40 s (queueing). Memory is not the limit at that cap only: its KV pool (vLLM's "3,606,273 tokens", log line 562, is
+27.09 x the 133,120 max-model-len, not tokens of 1,280-token requests) was 26.7% in use with 256 sequences running and
+53.4% with 512: full at about 960 such requests, about 1.2M tokens.
 
 `--max-num-seqs` for PP4, from the KV capacity (estimates):
-- weights per GPU: 95.7-96.1 GiB at PP2 (47 and 46 layers), about 48 GiB at PP4 (24/23/23/23 layers);
+- weights per GPU: 95.7-96.1 GiB at PP2 (47 and 46 layers), about 48 GiB at PP4 ([23,23,24,23] layers, vLLM's split);
 - KV memory per GPU: 51.4-53.5 GiB at PP2, so about 100 GiB at PP4 (the same budget, about 1.9x);
 - the KV and KDA state a GPU keeps per sequence is for its own layers only: half as many at PP4;
-- capacity: about 960 x 1.9 x 2 = 3,650 sequences, or 960 x 1.9 = 1,820 if the per-sequence state did not shrink;
-- 1024 (the study's highest concurrency, conc1024) then fills about 28% of the pool, 56% on the memory-only bound.
+- capacity: about 960 x 1.9 x 2 = 3,650 sequences, or 960 x 1.9 = 1,820 if the per-sequence state did not shrink
+  (review: the last stage binds, at 7 MLA layers, about 1.86x: about 3,400);
+- 1024 (the study's highest concurrency, conc1024) then fills about 30% of the pool, 56% on the memory-only bound.
 
 Estimates, to check in the bring-up: conc1 TPOT about the same, 8.7 ms plus two more inter-node hops per token (the
 same weights read per token, over 4 stages instead of 2); saturated output about 2x the 2-node 3466 tok/s, with up to
 1024 sequences in flight over twice the GPUs. Power on 4 nodes is extrapolated: `scripts/analysis/kimi_study.py`
 multiplies the main node by the node count (x4), three nodes unsampled.
 
-Bring-up, `kimi-vllm-4n-tp8pp4-bringup` (warm-up, conc1, conc64), in a 1 h job: each node loads its ~24 shards, about
+Bring-up, `kimi-vllm-4n-tp8pp4-bringup` (warm-up, conc1, conc64, conc1024: the changed flag at work), in a 1 h job: each node loads its ~24 shards, about
 390 GB instead of 780 (~6 min cold at the ~1.1 GB/s per node of job 1263799). The autotune does not hit the cache: the
 key is the vLLM config hash, new for PP4, and the MoE entries miss at every start anyway (job 1262548). Its per-GPU
-shapes are the TP8 ones of 2 nodes, so expect the same ~24 min. Ready after ~33 min, done after ~37 (estimates);
+shapes are the TP8 ones of 2 nodes, so expect the same ~24 min. Ready after ~33 min, done after ~46 (estimates);
 `job.sh` stops the run cleanly 5 min before `--time`. Not run yet (PAUSE).
 
 Dropped: two 2-node replicas behind one endpoint (vLLM DP2). vLLM's fused MoE takes its size from the DP group, so the
