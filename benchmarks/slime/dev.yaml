@@ -521,6 +521,10 @@ slime-glm5-grpo:
   inherits: _glm5
   tags: [rl]
   dataset: dapo-math-17k
+  env:
+    # SGLang prefills sequences of up to 2048 tokens with dense MHA, whose B200 kernel (flashinfer trtllm-gen) downloads
+    # its cubins (job 1263975): 0 sends them through the sparse FlashMLA path too (top-k 2048: the same attention)
+    SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD: "0"
   argv:
     <<: *grpo_argv
     --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
