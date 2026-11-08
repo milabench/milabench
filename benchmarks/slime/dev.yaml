@@ -422,6 +422,17 @@ _glm5:
   model:
     hf: zai-org/GLM-5.3
     convert: false
+    # The conversion reads the FP8 checkpoint as it is (slime's SafetensorReader multiplies each 128 x 128 block by its
+    # weight_scale_inv): no BF16 copy. 2 nodes (SLIME_CONVERT=1 job, README): TP8 x PP2 x EP8, the layout of slime's
+    # GLM-5 conversion with EP8 instead of EP16 on 4 nodes, about 99 GB of bf16 weights per GPU; its stage 2 starts at
+    # layer 39, a DSA computing layer (the converter's own even split never does: get_glm5_spec refuses it)
+    convert_nodes: 2
+    convert_nproc: 8
+    convert_argv:
+      --tensor-model-parallel-size: 8
+      --pipeline-model-parallel-size: 2
+      --decoder-last-pipeline-num-layers: 40
+      --expert-model-parallel-size: 8
     argv:
       # APEX (fused_weight_gradient_mlp_cuda) is not installed
       --no-gradient-accumulation-fusion: true
@@ -517,9 +528,13 @@ slime-glm5-grpo:
     --rollout-batch-size: 8
     --n-samples-per-prompt: 8
     --rollout-max-response-len: 8192
+    # GRPO flags of slime's scripts/run-glm5.3-744B-A40B.sh: no KL loss (with it every step adds a reference forward
+    # pass over the whole batch: 25 of the 81 s of training on the Qwen3-30B-A3B stand-in)
+    --use-kl-loss: null
     --use-score-centering: true
     --pg-loss-type: reinforce
     --disable-grpo-std-normalization: true
+    --calculate-per-token-loss: true
     --use-rollout-routing-replay: true
     --use-tis: true
     --tis-clip-low: 0.5
@@ -529,6 +544,42 @@ slime-glm5-grpo:
     --sglang-dp-size: 64
     --sglang-enable-dp-attention: true
     --sglang-enable-dp-lm-head: true
+    # what ran offline on B200 with the Qwen3-30B-A3B stand-in: flashinfer_trtllm MoE downloads its cubins (job 1261477)
+    --sglang-moe-runner-backend: triton
+    --sglang-sampling-backend: pytorch
+
+# Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
+# scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
+# colocated over both nodes: the trainer at TP4 x PP2 x CP2 x EP8 (stage 2 starts at layer 7, a DSA computing
+# layer), one SGLang engine of 16 GPUs over the 2 nodes (EP 16, DP attention 16), 4k-token responses.
+slime-glm5-l10-grpo-2n:
+  inherits: slime-glm5-grpo
+  num_machines: 2
+  max_duration: 3000
+  model:
+    convert: true
+    convert_nodes: 1
+    convert_argv:
+      --tensor-model-parallel-size: null
+      --pipeline-model-parallel-size: 2
+      --decoder-first-pipeline-num-layers: 6
+      --decoder-last-pipeline-num-layers: null
+      --expert-model-parallel-size: 4
+    argv:
+      --num-layers: 10
+      --moe-layer-freq: "[0]*3+[1]*7"
+  argv:
+    --hf-checkpoint: "{milabench_data}/slime/models/glm5-l10/hf"
+    --ref-load: "{milabench_data}/slime/models/glm5-l10/torch_dist"
+    --pipeline-model-parallel-size: 2
+    --decoder-first-pipeline-num-layers: 6
+    --decoder-last-pipeline-num-layers: 4
+    --context-parallel-size: 2
+    --expert-model-parallel-size: 8
+    --rollout-max-response-len: 4096
+    --rollout-num-gpus-per-engine: 16
+    --sglang-ep-size: 16
+    --sglang-dp-size: 16
 
 # --- GLM-5.3-Flash (300B MoE, glm5_next architecture): the step between the 30B proxy and the 744B ---
 # Follows slime's scripts/run-glm5.3-flash-300B.sh: 8 nodes x 8 GPUs, PP4 x CP8 x EP16, the HF checkpoint is
