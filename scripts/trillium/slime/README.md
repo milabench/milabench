@@ -210,6 +210,19 @@ src/scripts/trillium/slime/submit.sh glm5-l10 00:50:00 2 slime-glm5-l10-grpo-2n 
 src/scripts/trillium/slime/submit.sh glm5-conv 01:00:00 2 SLIME_CONVERT=1 slime-glm5-grpo -- --nodelist=...
 ```
 
+First jobs (2026-11-08, 2 nodes each; nothing trained yet):
+
+| job | what | result |
+|---|---|---|
+| 1263400 | 10-layer test, its conversion | the GLM-5 plugin does not import without `tilelang` (spec `None`): added, `tilelang==0.1.12` |
+| 1263439 | 10-layer test | conversion done (FP8 read, PP2 6 + 4 x EP4, 18.7-21.3 GB allocated per GPU, 2 min); SGLang fell back to its Transformers backend (`GlmMoeDsaForCausalLM` is registered by `glm4_moe.py`, which imports `deep_gemm`): added `sgl-deep-gemm==0.2.0`; the run then waited on the dead engine, stopped with `scancel -b -s USR1` |
+| 1263451 | full conversion | launched on both nodes; `--expert-tensor-parallel-size` defaults to TP (8 x 8 x 2 = 128 > 16 GPUs): set to 1 |
+
+`tilelang` and `sgl-deep-gemm` are at sglang 0.5.21's pins (with `apache-tvm-ffi` 0.1.11); they went into the venv
+by hand (`uv pip install`, its `.slime_installed` marker stops the pack's install). With them, `GlmMoeDsaForCausalLM`
+is registered and SGLang's DSA backend imports (login node). DeepGEMM's JIT cache goes to `/dev/shm`
+(`DG_JIT_CACHE_DIR`, `~/.dj` by default).
+
 `slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference
 forward pass; per-token loss) and takes the SGLang MoE and sampling backends that ran offline with the Qwen stand-in.
 
