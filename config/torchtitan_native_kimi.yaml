@@ -211,6 +211,7 @@ k3-pp4-l8-depth:
     --pp-last-stage-less-layers: 1
     --pp-microbatches: 128
     --memory-snapshot-freq: 3
+    --log-freq: 1
 k3-pp4-l8-depth-m16:
   inherits: k3-pp4-l8-depth
   argv:
@@ -231,7 +232,9 @@ k3-pp4-l8-depth-4k:
 #     longest wait, stage 0's for the backward metadata, is ~48 x 21-28 + 47 x 5 s = 21-26 min (est.): init timeout
 #     60 min, which configs._patch_init_timeouts applies to every group (the pipeline's: 600 s before, job 1262377);
 #     the pipeline's P2P child groups keep it after step 1 (README, "Running the scale rows").
-#     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min. ---
+#     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min.
+#     A log line per step (TorchTitan's default here, 10, printed steps 1, 10 and 20 only: job 1263259), for the
+#     cancel rule on steps and each step's peak reserved memory. ---
 _k3_scale:
   inherits: _k3
   num_machines: 48
@@ -247,6 +250,7 @@ _k3_scale:
     --pp-first-stage-less-layers: 0
     --pp-last-stage-less-layers: 0
     --init-timeout-seconds: 3600
+    --log-freq: 1
 # Full size needs the BF16 gradient reduction (the campaign's default is FP32): with FP32 a stage of 2 MoE layers runs
 # out of memory with the in-flight load of PP48's worst stages (k3-pp4-l7-gpipe with AdamW, the allocator's garbage
 # collection, Muon, Muon + gc, the native allocator: jobs 1261657-1262141); with BF16, 143.3 GiB reserved on the

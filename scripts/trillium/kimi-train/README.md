@@ -123,7 +123,8 @@ segments and a 60-min init timeout. Static stage shapes would skip the inference
 
 Step 1 is expected about 25-30 min after the job starts (the shape-inference chain, est.); cancel if there is none by
 45 min. After step 1, cancel if there is no new step for 5 min: the P2P groups keep the 60-min init timeout, so a stage
-that dies would otherwise hold every node until it expires.
+that dies would otherwise hold every node until it expires. The rows log every step (`--log-freq 1`); K3-TRN-04..06
+(job 1263259) logged steps 1, 10 and 20 only, so there a step line comes ~10 min after step 1 (est.).
 
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
 `configs._patch_kimi_pp_stage`).
