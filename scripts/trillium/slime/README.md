@@ -639,9 +639,9 @@ the steps 1-2 mean about 1,352 s against 1,839 s with it. Cause of the failures 
 (tis_abs above), and none happened in GLM-RL-02, -03, -04 (6,656 requests) nor in the disaggregated 4-node test; logging
 the failing array would tell NaN from -inf.
 
-Training: 8.2-8.6k tokens/s on 128 GPUs against 7.0-7.9k on 256, 2.2 times per GPU (estimated: about 13 micro-batches per
-DP16 rank, bubble about 35 %; and no offload). Sync over NCCL 22-23 s against IPC's 33-35 s. Startup to the first sync 12.9
-min (estimate 20).
+Training: 8.2-8.6k tokens/s on 128 GPUs against 7.0-7.9k on 256, 2.2 times per GPU (estimated: about 13 micro-batches
+per DP16 rank, bubble about 35 %; and no offload). Sync over NCCL 22-23 s against IPC's 33-35 s. Startup to the first
+sync 12.9 min (estimate 20).
 
 Memory (slime's `Memory-Usage` snapshots, GiB): trainer host, flat from step 0's optimizer step: stage 0 1,246-1,253,
 the middle stages 871-879, the last stage 1,676.5-1,677.3 (1.80 TB; estimate 1.63-1.75 TB) of 2,015.6. Trainer GPU at
