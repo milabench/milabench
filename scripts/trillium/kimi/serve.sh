@@ -19,5 +19,5 @@ export MILABENCH_BASE=$B ENTRY
 /opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable \
     --job-name="nw-k3inf-$ENTRY" --account=rrg-bengioy-ad --partition=compute_b200_full_node \
     --reservation=b200-friendly-users --qos=bump --gpus-per-node=b200:8 --ntasks-per-node=1 --exclusive --mem=0 \
-    --nodes="$NODES" --time="$TIME" ${NODELIST:+--nodelist="$NODELIST"} \
+    --nodes="$NODES" --time="$TIME" --signal=B:USR1@300 ${NODELIST:+--nodelist="$NODELIST"} \
     --output="$B/slurm/%x.%j.out" --export=ALL "$B/src/scripts/trillium/kimi/job.sh"
