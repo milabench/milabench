@@ -30,8 +30,10 @@ VIRTUAL_ENV=$B/src/.venv uv pip install -e ./src "huggingface_hub[hf_xet]" nvidi
 export PATH=$B/src/.venv/bin:$PATH MILABENCH_BASE=$B MILABENCH_GPU_ARCH=cuda
 milabench install --config src/config/kimi_study.yaml --select kimi-vllm-2n-tp8pp2-bringup --set torch=2.13.0 cuda=130
 src/scripts/trillium/kimi/kernels.sh   # FlashInfer's cubins and jit-cache for the offline nodes (19 min, see the script)
-# the checkpoint, resumable, one large download at a time on the login node (about 80 MB/s, 5.5 h). It fetches files in
-# name order: tokenizer and modeling files come last; fetch them by name first for a truncated test
+# the checkpoint, one large download at a time on the login node (about 80 MB/s, 5.5 h). It fetches files in name order:
+# tokenizer and modeling files come last; fetch them by name first for a truncated test. The login node kills a process
+# after 1 h of CPU time (ulimit -t 3600): hf uses ~35% of a core, so it dies after ~3 h; run it again, it skips the
+# complete files (not the partial ones: delete the stale *.incomplete)
 nice -n 19 ionice -c3 hf download moonshotai/Kimi-K3 --cache-dir $B/data/hub --max-workers 8
 ```
 
