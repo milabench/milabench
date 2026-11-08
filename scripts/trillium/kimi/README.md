@@ -270,7 +270,8 @@ independent servers (review, 2026-11-08).
 milabench exit 0, clean Ray stop, no drains. Weights 704-749 s, engine init 1300 s, ready at 07:27:27 (37.8 min).
 0 failed requests in 21 passes. Raw data: `runs/kimi-vllm-4n-tp8pp4.1265338/`; tables from `scripts/analysis/kimi_study.py`.
 
-Per GPU = /32, per node = /4. Power and J / token are extrapolated: the main node's 8 GPUs, times 4; the other three
+Per GPU = /32, per node = /4. Power and J / token are extrapolated, and uncertain: the main node drew 553 W per GPU at
+conc1024 on 4 nodes against 722 W on 2 nodes, so its x4 may not stand for the other stages. The main node's 8 GPUs, times 4; the other three
 nodes were never sampled.
 
 | pass | in / out | output tok/s (/GPU, /node) | total tok/s (/GPU, /node) | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | W, 4 nodes (extrap.) | J / out tok (extrap.) |
@@ -299,17 +300,27 @@ nodes were never sampled.
 
 Output tok/s, 2 nodes (K3-INF-01) against 4: conc1 111.1 / 108.8, conc64 2003 / 1112, conc128 2243 / 2018, conc256
 2865 / 2483, conc512 3466 / 4038, conc1024 3452 / 4292; ctx-c16 from 1k to 128k 766 / 768, 221 / 217, 78 / 117, 44 / 60,
-20 / 31; ctx128k-c1 21.5 / 32.0 (TTFT 4555 / 2748 ms). Accuracy, 2 / 4 nodes: GSM8K 97.5 / 98.0, ARC-C 98.5 / 98.5,
-GPQA-D 84.8 / 83.8 (stderr 2.6), MMLU-Pro 87.7 / 86.8 (0.7-0.8).
+20 / 31; ctx128k-c1 21.5 / 32.0 (TTFT 4555 / 2748 ms).
+
+Against the ~2x estimated for 4 nodes, the measured gain is +16% at conc512 and +24% at conc1024 (ratio 1.244). The
+bring-up measured 3865 tok/s at conc1024 on 4 nodes (job 1264956), this run 4292, 11% apart: that spread limits how firm
+the +24% is.
+
+Accuracy, 2 / 4 nodes, ± stderr: GSM8K (1319) 97.5 ± 0.4 / 98.0 ± 0.4, ARC-C (1172) 98.5 ± 0.4 / 98.5 ± 0.3, GPQA-D
+(198) 84.8 ± 2.6 / 83.8 ± 2.6, MMLU-Pro (2002) 87.7 ± 0.7 / 86.8 ± 0.8. MMLU-Pro's -0.95 is within the stderr of the
+difference (about 1.05), but paired on the same questions 47 were right only on 2 nodes and 28 only on 4 (z about 2.2),
+and 4 nodes has 61 unparsed answers against 45 (`samples_milabench_mmlu_pro_*.jsonl`). Observed; no cause claimed.
 
 **Engine stalls.** vLLM logs its throughput every 10 s. Intervals with requests running and no token at all:
-- 4 nodes: conc64, 07:33:21-31 (64 running); conc128, 07:34:11-21 (128 running). The bring-up's conc64 (job 1264956)
-  had the same kind of stall, about 20 s.
+- 4 nodes: conc64, 07:33:21-31 (64 running); conc128, 07:34:11-21 (128 running). These two are the only zero windows.
 - 2 nodes: none.
+- The bring-up's conc64 (job 1264956, 06:41:16-26) was a near-stall, not a zero window: 1.8-2.6k prompt and 3.8-28
+  generation tok/s with 64 running.
 
 Near zero (under 10% of the pass's output rate in both prompt and generation): none in either run. conc256 on 4 nodes
 starts slowly, generation at 17-29 tok/s over its first 30 s while prefill runs at 2.6-14.6k tok/s (2 nodes: 10-15k).
-With the stalled interval taken out (output tokens / (duration - 10 s), derived, not measured): conc64 1682 tok/s,
+With the stalled interval taken out (output tokens / (duration - 10 s), derived, not measured; a lower bound, since a
+zero window means at least 10 s without a token): conc64 1682 tok/s,
 still 16% under 2 nodes' 2003; conc128 2915 tok/s, 30% over 2 nodes' 2243. Nothing else in the log at those times: no
 Ray, NCCL, preemption or scheduler message, only a CuTeDSL "Argument aux_data ... cannot be converted to a JitArgument"
 warning that the 2-node runs print in the same pass without stalling. The cause is not known.
