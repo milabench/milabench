@@ -145,6 +145,16 @@ k3-pp4-l7-noexp:
   inherits: k3-pp4-l7
   env:
     PYTORCH_ALLOC_CONF: "expandable_segments:False"
+# The native allocator failed at a 6.89 GiB request in FSDP's gradient cast for the FP32 reduction, with 81 GiB
+# allocated and 86 GiB reserved but unallocated (job 1262141): BF16 reduction (no cast; the experts' group is one rank)
+k3-pp4-l7-gpipe-rbf16:
+  inherits: k3-pp4-l7-gpipe
+  argv:
+    --grad-reduce: bf16
+k3-pp4-l7-rbf16:
+  inherits: k3-pp4-l7
+  argv:
+    --grad-reduce: bf16
 # Fewer layers (review option b): a stage of one MoE layer with 64 micro-batches in flight. 5 layers with no extra
 # weight for the embedding / output: emb + 0-1 / 2 / 3 / 4 + out, so stages 1-2 hold one MoE layer and no output
 k3-pp4-l5-gpipe:
