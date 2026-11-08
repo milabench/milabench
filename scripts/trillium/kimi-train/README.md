@@ -87,6 +87,33 @@ So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-
 diverges is not established), and with the FP32 reduction a stage of 2 MoE layers does not hold the in-flight activations of
 PP48's worst stages, neither at 8192 nor at 4096 tokens per micro-batch; with the BF16 reduction it does (above).
 
+### Before step 1 at depth (K3-TRN-01, job 1262377, 48 nodes)
+
+All 48 stages came up; before step 1 torch's pipeline stage infers the stage shapes one stage after another (a real
+forward on each, then a backward in reverse, `recv_object_list` between them). Stages 29-47 timed out in that
+receive after 600 s: TorchTitan gives `--init-timeout-seconds` to the default group only, the mesh groups (the
+pipeline's included) keep torch's 10-min NCCL default until its `set_pg_timeouts` lowers every group to the train
+timeout after step 1. `configs._patch_init_timeouts` (K3 only) calls that same function with the init timeout when
+training starts. Check (job 1262556, `k3-pp4-l7-rbf16-t30`, 30 s): all ranks log "adjusting timeout for all
+ProcessGroups to 0:00:30", and stage 2 fails 39 s after training starts on its 2-rank pipeline communicator
+("[TC][rank=1] ... Operation timed out after 30661 ms") while stages 0-1 infer their shapes.
+
+Per-stage shape inference (4 nodes, node telemetry: the active stage runs ~1 core per rank with its GPUs idle, the
+waiting ones sit in NCCL receives):
+
+| job | setting | forward inference per stage, s (0 / 1 / 2 / 3) |
+|---|---|---|
+| 1262230, 1262576 | compiled, expandable segments (the rows) | 10 / 20 / 25 / 15, 11 / 25 / 25 / 22; backward ~5 each |
+| 1262562 | `--compile eager` | 10 / 20 / 26 / 14 (not torch.compile: the caches are warm, 7 hits) |
+| 1262143, 1262643 | native allocator | 9 / 10 / 15 / 12, 10 / 16 / 9 / 16 |
+
+The 2-MoE-layer stages spend ~10 s more with expandable segments (largely a phase with the GPUs at ~0.88 while the
+first large blocks are mapped, inferred); ~9-12 s of single-core work per stage remains with either allocator, not
+identified. The native allocator would shorten the 48-stage chain but reserves more: 155.8 GiB on the stand-in's worst
+2-MoE-layer stage (job 1262643, BF16 reduction) against 143.3 with expandable segments, so the rows keep expandable
+segments and a 60-min init timeout. Static stage shapes would skip the inference, but TorchTitan builds K3's
+`AttnResPipelineStage` without them, and the first micro-batch would still meet each cold stage in turn.
+
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
 `configs._patch_kimi_pp_stage`).
 
@@ -95,6 +122,7 @@ Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual 
 `k3-pp48-full-rbf16`, `k3-pp40-l78-rbf16` and `k3-pp48-l49` only dry-run; their memory comes from 4-node stand-ins, not
 measured at depth. The review estimates the worst PP48 stages at the block boundaries (stages 6, 12, 18, 24, 30, where
 the second layer also keeps the concatenated AttnRes stack): 144-157 GiB reserved, within 165 GiB but closer than the
-stand-in's 143.3; PP40 about 1 GiB above the stand-in (est.). The first step at 40-48 stages (init timeout 30 min).
+stand-in's 143.3; PP40 about 1 GiB above the stand-in (est.). The shape-inference chain at 48 stages after the timeout
+fix: ~21-26 min (est., from 21 s per stage at 48 and the 4-node backward).
 Not measured: why reserved exceeds allocated by ~35-50 GiB
 on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.

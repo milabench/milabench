@@ -196,12 +196,15 @@ k3-pp4-l5:
 #     holds the embedding + layers 0-1 and the last stages one layer each). BF16 parameters: the FP32 master did not
 #     fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble
 #     (PP-1)/(m+PP-1) = 27% at PP48, as GLM-5's pp13 runs; 1,024 sequences = 8.4M tokens per step. 20 steps, none
-#     traced. The first forward passes the stages one after another (~15-22 s each, jobs 1262121, 1262207, 1262230):
-#     at 40-48 stages the last ones wait 13-20 min for their first receive, hence a 30-min init timeout. ---
+#     traced. Before step 1 torch infers the stage shapes one stage after another, a real forward then a backward
+#     each: ~10-25 s and ~5 s per stage on 4 nodes (jobs 1262230, 1262576), 10-28 s forward at 48 (job 1262377). The
+#     longest wait, stage 0's for the backward metadata, is ~48 x 21-28 + 47 x 5 s = 21-26 min (est.): init timeout
+#     60 min, which configs._patch_init_timeouts applies to every group (the pipeline's: 600 s before, job 1262377).
+#     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min. ---
 _k3_scale:
   inherits: _k3
   num_machines: 48
-  max_duration: 3600
+  max_duration: 5400
   voir:
     options:
       skip: 3
@@ -212,7 +215,7 @@ _k3_scale:
     --training-dtype: bfloat16
     --pp-first-stage-less-layers: 0
     --pp-last-stage-less-layers: 0
-    --init-timeout-seconds: 1800
+    --init-timeout-seconds: 3600
 # Full size needs the BF16 gradient reduction (the campaign's default is FP32): with FP32 a stage of 2 MoE layers runs
 # out of memory with the in-flight load of PP48's worst stages (k3-pp4-l7-gpipe with AdamW, the allocator's garbage
 # collection, Muon, Muon + gc, the native allocator: jobs 1261657-1262141); with BF16, 143.3 GiB reserved on the
