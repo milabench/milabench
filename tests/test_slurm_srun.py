@@ -193,13 +193,13 @@ class TestNativeSrun:
         assert exc.value.code == 0
         assert captured["file"] == str(srun_path)
         assert captured["args"][0] == str(srun_path)
-        assert captured["args"][1] == "--overlap"
-        assert captured["args"][2:5] == [
+        assert captured["args"][1:3] == ["--overlap", "--propagate=CORE"]
+        assert captured["args"][3:6] == [
             "--nodes=2",
             "--ntasks=2",
             "--ntasks-per-node=1",
         ]
-        assert captured["args"][5:] == [
+        assert captured["args"][6:] == [
             "-x",
             "tri0001",
             "--",
@@ -220,8 +220,8 @@ class TestNativeSrun:
         with pytest.raises(SystemExit):
             SlurmRun.execute(args)
 
-        assert captured["args"][1] == "--overlap"
-        assert captured["args"][2:5] == [
+        assert captured["args"][1:3] == ["--overlap", "--propagate=CORE"]
+        assert captured["args"][3:6] == [
             "--nodes=2",
             "--ntasks=2",
             "--ntasks-per-node=1",
@@ -524,8 +524,8 @@ class TestBenchrunThroughSrun:
 
         assert captured["file"] == str(srun_path)
         srun_args = captured["args"][1:]
-        assert srun_args[0] == "--overlap"
-        assert srun_args[1:4] == ["--nodes=2", "--ntasks=2", "--ntasks-per-node=1"]
+        assert srun_args[0:2] == ["--overlap", "--propagate=CORE"]
+        assert srun_args[2:5] == ["--nodes=2", "--ntasks=2", "--ntasks-per-node=1"]
         assert "-x" in srun_args and "tri0001" in srun_args
 
         monkeypatch.setenv("SLURM_NODEID", "0")
