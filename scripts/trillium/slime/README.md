@@ -155,6 +155,44 @@ All passed, 6 steps each, 29.9-32.8 min per job. Steps 1-5, mean, seconds (1 nod
   node of the three runs with 2 engines of 8 (trig0146, 0147, 0149, 0150), 324 on each with the 16-GPU engine, 332 on
   trig0146 alone at 1 node. The same count on every node of a configuration: they follow the workload, not a node.
 
+## Step 3: GLM-5.3 (prepared, not run)
+
+`zai-org/GLM-5.3` is FP8 (e4m3, 128 x 128 blocks with `weight_scale_inv`, `model_type: glm_moe_dsa`): 755.6 GB in
+141 shards (755,617,140,416 bytes), 743,377,019,904 parameters without the MTP layer (which our Megatron arguments do
+not build; 9.95 B more). slime's converter reads it as it is: its `SafetensorReader` multiplies each 128 x 128 block
+by its scale on load (bf16; slime's `fp8_cast_bf16.py` does it in fp32, a last-bit difference). So no BF16 copy:
+on disk 755.6 GB FP8 + 1.487 TB torch_dist (bf16, one `.distcp` file per converting rank).
+
+The converter's own layout (pipeline = world size, even split) can never start every stage on a DSA computing layer
+(layer number 1, 2, 3 or 7, 11, ..., 75; `get_glm5_spec` refuses the split), so the entries give one in
+`model.convert_argv`, and `model.convert_nodes` runs one torchrun per node (`prepare.py`):
+
+| checkpoint | conversion | per GPU |
+|---|---|---|
+| GLM-5.3, `slime-glm5-*` | 2 nodes, TP8 x PP2 (last stage 40 layers, from layer 39) x EP8 | about 99 GB of bf16 weights |
+| 10 layers, `slime-glm5-l10-grpo-2n` | the run's first node, PP2 (6 + 4, stage 2 from layer 7) x EP4 | about 20 GB |
+
+Order (each download after the Kimi K3 one has ended, `ps -u $USER -o pid,args | grep "hf download"`):
+
+```bash
+cd $SCRATCH/trillium/new/glm-rl; H=data/slime/models/glm5/hf
+# 1. the configuration and index, then the 20 shards that hold layers 0-9, the embeddings, the final norm and the
+#    LM head: 106.6 GB
+nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include "*.json" "*.jinja"
+nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include $(python3 -c '
+import json, re; wm = json.load(open("'$H'/model.safetensors.index.json"))["weight_map"]
+print(" ".join(sorted({f for k, f in wm.items() if not (m := re.match(r"model\.layers\.(\d+)\.", k)) or int(m[1]) < 10})))')
+# 2. the truncated checkpoint: 74.1 GB FP8, 72.19 B parameters (torch_dist 144.4 GB, converted by the run's prepare)
+nice venv/torch/bin/python src/scripts/trillium/slime/truncate_hf.py $H data/slime/models/glm5-l10/hf 10
+src/scripts/trillium/slime/submit.sh glm5-l10 00:50:00 2 slime-glm5-l10-grpo-2n -- --nodelist=...
+# 3. the rest of the checkpoint (resumes: 649 GB more), then its conversion, a 2-node job that stops after prepare
+nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include "*.json" "*.jinja" "*.safetensors"
+src/scripts/trillium/slime/submit.sh glm5-conv 01:00:00 2 SLIME_CONVERT=1 slime-glm5-grpo -- --nodelist=...
+```
+
+`slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference
+forward pass; per-token loss) and takes the SGLang MoE and sampling backends that ran offline with the Qwen stand-in.
+
 ## Untested
 
 - More than 2 nodes, the GLM-5.3 entries, disaggregated rollout across nodes.
