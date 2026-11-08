@@ -38,15 +38,31 @@ nvrm start
 # At the end, and on the time limit (submit.sh: SIGUSR1 5 min before it): stop Ray on every node, then wait until no
 # process holds a GPU (killed after 2 min), before Slurm cleans up: trig0146-0147 drained with
 # health.chk.nvidia-smi.unresponsive 1 s after job 1262234 ended, 3 s after its `ray stop`
+# Then wait until the job's processes have exited and nvidia-smi answers within 5 s: a killed process can leave the GPU
+# list while its exit still releases pinned host memory, and nvidia-smi stops answering meanwhile (job 1267151: "GPUs
+# free after 0 s" on all 32 nodes, then 9 trainer nodes drained unresponsive 15-41 s after `ray stop`, the later the
+# more host memory). At most 150 + 90 s, inside the 300 s between SIGUSR1 and the time limit.
 release_gpus() {
     nodes bash -c '"$1" stop --force > /dev/null 2>&1
-        for i in $(seq 90); do
-            pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | tr -d " ")
-            [ -z "$pids" ] && { echo "$2 $(hostname -s): GPUs free after $((2 * i - 2)) s"; exit 0; }
-            [ "$i" = 60 ] && kill -KILL $pids
+        t0=$(date +%s) killed=
+        while :; do
+            el=$(( $(date +%s) - t0 ))
+            if out=$(timeout 10 nvidia-smi --query-compute-apps=pid --format=csv,noheader); then
+                pids=$(echo $out)
+                [ -z "$pids" ] && break
+                [ $el -ge 100 ] && [ -z "$killed" ] && { kill -KILL $pids; killed=1; }
+            fi
+            [ $el -ge 150 ] && { echo "$2 $(hostname -s): GPUs still held after $el s by" $pids; exit 0; }
             sleep 2
         done
-        echo "$2 $(hostname -s): GPUs still held by" $pids' _ "$B/venv/torch/bin/ray" "$P"
+        free=$(( $(date +%s) - t0 ))
+        while [ $(( $(date +%s) - t0 )) -lt $(( free + 90 )) ]; do
+            left=$(pgrep -u "$(id -u)" -c "^(python|raylet|gcs_server|ray::|sglang)")
+            [ "$left" = 0 ] && timeout 5 nvidia-smi -L > /dev/null 2>&1 && break
+            sleep 1
+        done
+        echo "$2 $(hostname -s): GPUs free after $free s, processes gone and nvidia-smi answering after" \
+            "$(( $(date +%s) - t0 - free )) s (job processes left: $left)"' _ "$B/venv/torch/bin/ray" "$P"
 }
 trap 'release_gpus; nvrm end; nodes rm -rf "$L"' EXIT
 trap 'echo "$P time limit in 5 min: stopping"; kill -TERM "${child:-}" 2>/dev/null; exit 124' USR1
