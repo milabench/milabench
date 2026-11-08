@@ -1,0 +1,94 @@
+# FLUX.1 MLPerf training image: NVIDIA's b200_nemo Dockerfile (MLPerf Training v5.1, University-of-Florida's
+# submission, mlcommons/training_results_v5.1 at 441d65f) as an Apptainer definition, built without Docker by build.sh
+# on a data-transfer node. Same base image, same steps in the same order, same pins.
+# Differences from the Dockerfile:
+# - FROM is the base pulled once to a SIF (apptainer pull), COPY is %files, ENV is %environment, ARG defaults inline.
+# - Build parallelism only: TE's MAX_JOBS=8 (the Dockerfile leaves ninja's default), to fit the shared node's memory.
+# - Versions as of Florida's runs (first 2025-10-03 22:02Z), not of today: the Dockerfile's pip installs are unpinned
+#   (NeMo's extras, their dependencies), so pip resolves with --uploaded-prior-to 2025-10-03T00:00:00Z, which needs
+#   pip 26 (the base has 25.x); NeMo-Run (git HEAD in the Dockerfile) at its last commit before then, 6bc43190.
+Bootstrap: localimage
+From: {{ BASE }}
+
+%files
+    {{ CODE }} /workspace/flux
+
+%environment
+    export PIP_CONSTRAINT=""
+    export CUDNN_VERSION=9.13.1.26
+    export PYTHONPATH="${PYTHONPATH:-}:/opt/Megatron-LM"
+    export CUSTOM_TE_REVISION=release_v2.8
+    export NCCL_VERSION=v2.28.3-1
+
+%post
+    set -ex
+    export PIP_CONSTRAINT="" DEBIAN_FRONTEND=noninteractive
+    cd /workspace/flux
+
+    git config --global user.name "a" && git config --global user.email "a"
+
+    pip install pip==26.3
+    export PIP_UPLOADED_PRIOR_TO=2025-10-03T00:00:00Z
+
+    NVARCH=$(uname -m | grep x86_64 2>/dev/null || echo sbsa)
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH}/3bf863cc.pub > /etc/apt/trusted.gpg.d/cuda.asc
+    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${NVARCH} /" > /etc/apt/sources.list.d/cuda.list
+    apt-get update && apt-get install -y libcudnn9-cuda-13=9.13.1.26-1 && rm -rf /var/lib/apt/lists/*
+    pip install nvidia-mathdx==25.1.1
+
+    apt-get update && apt-get install -y build-essential cmake git ninja-build g++ swig && rm -rf /var/lib/apt/lists/*
+
+    NEMO_REVISION=25.09-alpha.rc1
+    git clone https://github.com/NVIDIA/NeMo.git /workspace/NeMo
+    cd /workspace/NeMo
+    git checkout ${NEMO_REVISION}
+    echo NEMO_COMMIT_HASH=$(git rev-parse HEAD)
+    git rev-parse HEAD > /NEMO_COMMIT_HASH.env
+    pip install -e ".[multimodal]"
+    pip install git+https://github.com/NVIDIA-NeMo/Run.git@6bc43190cfd84fe8ccfd05d0543f6194782aa21d
+
+    MCORE_REVISION=25.09-alpha.rc1
+    pip uninstall -y megatron-core
+    git clone https://github.com/NVIDIA/Megatron-LM.git /workspace/Megatron-LM
+    cd /workspace/Megatron-LM
+    git checkout ${MCORE_REVISION}
+    echo MCORE_COMMIT_HASH=$(git rev-parse HEAD)
+    git rev-parse HEAD > /MCORE_COMMIT_HASH.env
+    pip install .
+    cd megatron/core/datasets && make
+
+    TE_REVISION=release_v2.8
+    git clone https://github.com/NVIDIA/TransformerEngine.git /workspace/transformerengine
+    cd /workspace/transformerengine
+    git checkout ${TE_REVISION}
+    echo TE_COMMIT_HASH=$(git rev-parse HEAD)
+    git rev-parse HEAD > /TE_COMMIT_HASH.env
+    git submodule init && git submodule update
+    git -C 3rdparty/cudnn-frontend checkout 80a8e4af4d89d33a2c59d51fcf9fda1c9d368cd4
+    git -C 3rdparty/googletest checkout f8d7d77c06936315286eb55f8de22cd23c188571
+    git -C 3rdparty/cutlass checkout 57e3cfb47a2d9e0d46eb6335c3dc411498efa198
+    MAX_JOBS=8 NVTE_CUDA_ARCHS="100" NVTE_BUILD_ACTIVATION_WITH_FAST_MATH=1 NVTE_UB_WITH_MPI=1 NVTE_FRAMEWORK=pytorch \
+        NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install --no-build-isolation .
+
+    NCCL_REVISION=v2.28.3-1
+    cd /workspace/flux
+    apt-get update
+    apt-get remove -y libnccl2
+    git clone https://github.com/NVIDIA/nccl.git
+    cd nccl
+    echo "NCCL_REVISION=${NCCL_REVISION}"
+    git checkout "${NCCL_REVISION}"
+    make -j24 install
+    cd /workspace/flux
+
+    pip uninstall -y megatron-energon
+
+    pip install build wheel setuptools setuptools_scm cmake-build-extension
+    git clone --branch v0.9.0 --recursive https://github.com/biojppm/rapidyaml.git /workspace/rapidyaml
+    cd /workspace/rapidyaml
+    pip install .
+    cd /workspace/flux
+
+    pip install -r requirements.txt
+
+    pip uninstall -y bitsandbytes
