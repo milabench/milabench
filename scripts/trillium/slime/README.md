@@ -538,22 +538,26 @@ On GLM-RL-03's 32 nodes, 12:04:03-13:39:34 (1:35:31), exit 0, milabench PASS, no
 | grad norm | 0.064 / 0.061 | 0.127 / 0.067 |
 
 The routes: slime has no timer for them. They come back with each response inside the rollout, and the trainer fills the
-replay inside `actor_train`; `data_preprocess` stays 0.1 s, the other wait is 2.3 s longer, training 1-3 s. Decode is
-not slower (the median per request is the same), and the 6.0 tokens/s engine mode shows here too. With one run each the
-time cost cannot be separated: each rollout follows its longest request (1,088-1,198 s here, 1,040-1,107 s without), and
-the steps differ by +157 s and -17 s; the step means (1,441 / 1,361 s) differ by 80 s, the rollouts by 70 s, while
-within one run the rollouts vary by 64 s (without) and 110 s (with) from step to step.
+replay inside `actor_train`. The one measured cost outside the rollout: `perf/data_preprocess_time` 1.87 and 1.63 s
+against 0.09 and 0.06 s (the step lines; the `data_preprocess` timer reads 0.1 s in both), most of the 2.3 s longer
+other wait; training 1-3 s longer. The median decode per request is 1-2 % lower with replay in both steps (9.38 and 9.48
+against 9.56 and 9.53 tokens/s), and the 6.0 tokens/s engine mode shows here too. With one run each the time cost cannot
+be separated: each rollout follows its longest request (1,088-1,198 s here, 1,040-1,107 s without), and the rollouts
+differ by +157 and -17 s, the steps by +166.6 and -7.7 s; the step means (1,441 / 1,361 s) differ by 80 s, the rollouts
+by 70 s, while within one run the rollouts vary by 64 s (without) and 110 s (with) from step to step.
 
-The effect on the policy ratio: `tis_abs` halves (0.032-0.035 against 0.073-0.081) and the clip fraction falls 25
-times (0.0006-0.0007 against 0.015-0.017): the trainer's log-probs follow the rollout's with its routing replayed, as
-in the 4-node test (0.028 against 0.059). Step 2's grad norm, 0.127 against 0.064 for steps 0-1, is a single value;
-no cause is claimed.
+The effect on the policy ratio: `tis_abs` falls 2.3 times (0.032-0.035 against 0.073-0.081) and the clip fraction 24
+times (0.0006-0.0007 against 0.015-0.017): the trainer's log-probs follow the rollout's with its routing replayed, as in
+the 4-node test (0.028 against 0.059). Step 2's grad norm, 0.127 against 0.064 for steps 0-1, is a single value; no
+cause is claimed.
 
 Host, against the estimated +36.9 GiB per node (SGLang's routed-experts cache) and 3.3-3.9 GiB of routes: the head node
-in milabench (continuous) 837.2 against 793.1 GiB, +44.1; slime's snapshots on the nodes where both runs logged a
-comparable phase, +6 to +52 GiB (the last stage's peak 1,038.6 against 997.7 GiB on trig0133, +40.9; the head +31.7).
-Four nodes' snapshots fall on different phases in the two runs (differences of +293 to +396 and -172 to -207 GiB) and
-say nothing. GPU 149-151.6 GiB in rollout, as without.
+in milabench (continuous) 837.2 against 793.1 GiB, +44.1. slime's `Memory-Usage` lines are Ray-deduplicated snapshots at
+offload and sync, not true peaks: on the 7 nodes logged in the same phase in both runs the difference is +35 to +40 GiB
+(the highest, trig0133: 1,038.6 against 997.7 GiB). The other nodes' maxima fall on different phases in the two runs
+(e.g. 172.30.36.2: 1,001.3 after `wake_up` against 995.1 before it) and are not comparable. GPU 149-151.6 GiB in
+rollout, as without. The only new errors: 31 Ray `Timed out while waiting for GCS to become available` at 13:39:28, in
+the teardown after the last sync, with PASS.
 
 ### Disaggregated bring-up (job 1266823)
 
