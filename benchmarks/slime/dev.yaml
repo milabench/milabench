@@ -343,8 +343,8 @@ slime-qwen3-30b-a3b-sft-routing:
 # the prompt's "Answer:" line); the recipe's `deepscaler` gives 0 to any response without </think>, i.e. every
 # response of this non-thinking model (job 1261612: all 512 samples at 0).
 # MoE in SGLang's Triton kernels: on B200 SGLang picks flashinfer_trtllm, which downloads its cubins at the first
-# forward (no internet on Trillium's compute nodes, job 1261477). No rollout routing replay: it needs the sglang-router
-# fork that slime's Dockerfile installs (PyPI's 0.3.2 returns no routed experts, job 1261523), not in this install.
+# forward (no internet on Trillium's compute nodes, job 1261477). No rollout routing replay (simpler; the -2n-r3 entry
+# has it).
 slime-qwen3-30b-a3b-grpo:
   inherits: _qwen3_30b_a3b
   tags: [rl]
@@ -380,6 +380,13 @@ slime-qwen3-30b-a3b-grpo-2n:
   num_machines: 2
   requires_capabilities:
     - "len(nodes) >= ${..num_machines}"
+
+# With rollout routing replay: SGLang returns the experts every token was routed to, the trainer replays them. Needs
+# slime's sglang-router fork, which install.sh puts in this workload's venv (PyPI's 0.3.2 drops them, job 1261523).
+slime-qwen3-30b-a3b-grpo-2n-r3:
+  inherits: slime-qwen3-30b-a3b-grpo-2n
+  argv:
+    --use-rollout-routing-replay: true
 
 # One SGLang engine of 16 GPUs over the 2 nodes, laid out like the GLM-5 entry's 64-GPU engines: experts over the
 # engine's GPUs, data-parallel attention and LM head.
