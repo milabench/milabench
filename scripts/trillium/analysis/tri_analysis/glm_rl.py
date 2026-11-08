@@ -1,7 +1,10 @@
-"""GLM-5.3 GRPO with slime (Megatron-LM trainer, SGLang rollouts, Ray), colocated on 32 nodes: one row per job, per step, per
+"""GLM-5.3 GRPO with slime (Megatron-LM trainer, SGLang rollouts, Ray) on 32 nodes: one row per job, per step, per
 node (host memory), per host-memory snapshot and per visible engine decode line, from the run directory under
-``data/raw/trillium/glm-rl/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, GLM-RL-03 without and
-GLM-RL-04 with rollout routing replay, on the same 32 nodes; their command lines differ in ``--use-rollout-routing-replay`` only).
+``data/raw/trillium/glm-rl/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, all three on the same 32
+nodes: GLM-RL-03 colocated without and GLM-RL-04 with rollout routing replay, whose command lines differ in
+``--use-rollout-routing-replay`` only; GLM-RL-05 disaggregated, the trainer on 16 nodes and the engines on the other 16, whose
+command line differs from GLM-RL-03's in no ``--colocate``, ``--actor-num-nodes 16``, EP16, ``--rollout-num-gpus 128`` and
+``--sglang-cuda-graph-backend-prefill disabled``).
 
 Everything comes from the run's ``.0.data`` file: the command line (``start`` event), the node list (``config``), slime's
 log lines (``line`` events: per-step ``perf N`` dicts of the rollout manager and of the trainer, ``rollout N`` and ``step N``
@@ -17,13 +20,21 @@ exp(trainer log-prob - rollout log-prob), clamped to [``--tis-clip-low``, ``--ti
 ``train/tis_abs`` = mean |ratio - 1|, ``train/tis_clipfrac`` = share of tokens whose ratio the clamp changed. Training tokens/s = slime's ``actor_train_tok_per_s``, already global (prompt plus response tokens of
 all samples over ``actor_train_time``). Log lines carry Trillium's local time (America/Toronto), as sacct.
 
+Disaggregated, slime's ``tokens_per_gpu_per_sec`` is over the engines' GPUs (``--rollout-num-gpus``), training over the trainer's,
+and the trainer does not move its state to host memory between phases (no ``perf/sleep_time``, ``perf/wake_up_time``); its
+host snapshots are taken around ``TrainRayActor.clear_memory`` instead. Top-k log-prob errors: slime's request retries after
+"Sampler top-k logprobs must be finite nonpositive values" (``http_utils.py``), counted per rollout; the rollout progress bar
+(``Rollout generation: n/N [elapsed``) gives when each group of samples finished.
+
 Ray prints a line once and counts its repeats across the cluster ("[repeated Nx]"), so the ``Decode batch`` and
 ``Memory-Usage`` lines are a sample: one rank's line per repeat window, not every rank's. Ray names no address for actors on
 its head node, the job's first node: those lines are that node's.
 
-Stages: Megatron orders ranks TP, CP, EP/DP, then PP, so with 256 GPUs and PP8 ranks 32 s to 32 s + 31 are stage s. Engines: slime
-takes the nodes for its engines in IP order, 8 per 64-GPU engine (``ray/placement_group.py``, ``engine_group.py``; README
-``trillium-new`` 8f931f02), so a decode line's engine follows from its node's address.
+Stages: Megatron orders ranks TP, CP, EP/DP, then PP, so with 256 GPUs and PP8 ranks 32 s to 32 s + 31 are stage s (128 GPUs:
+16 s to 16 s + 15). Engines, colocated: slime takes the nodes for its engines in IP order, 8 per 64-GPU engine
+(``ray/placement_group.py``, ``engine_group.py``; README ``trillium-new`` 8f931f02), so a decode line's engine follows from its
+node's address. Disaggregated, the trainer's 16 nodes are not the first 16 in IP order (its ranks' addresses), so no engine is
+assigned to a decode line.
 """
 
 from __future__ import annotations
@@ -39,8 +50,8 @@ import pandas as pd
 
 # The 32-node row (REQUESTS.md GLM-RL-03). The 1-, 2-, 4- and 8-node entries are bring-up and tests: not read. GLM-RL-01
 # (1265179) failed at engine load and was withdrawn; its directory is not collected.
-SCALE_ENTRIES = ("slime-glm5-grpo", "slime-glm5-grpo-r3")
-REQUESTS = {"1266065": "GLM-RL-03", "1267147": "GLM-RL-04"}
+SCALE_ENTRIES = ("slime-glm5-grpo", "slime-glm5-grpo-r3", "slime-glm5-grpo-disagg")
+REQUESTS = {"1266065": "GLM-RL-03", "1267147": "GLM-RL-04", "1267151": "GLM-RL-05"}
 LOG_TZ = ZoneInfo("America/Toronto")
 SLOW_DECODE = 7.5  # tokens/s per sequence: the engines' decode lines fall at 7.6-10.1 or 5.8-6.1 (GLM-RL-03), nothing between
 
@@ -51,7 +62,9 @@ _ROLLOUT = re.compile(_TS + r" train_metric_utils\.py:\d+ - rollout (\d+): (\{.*
 _STEP = re.compile(_TS + r" model\.py:\d+ - step (\d+): (\{.*\})")
 _SYNC = re.compile(_TS + r" timer\.py:\d+ - Timer update_weights end \(elapsed: ([\d.]+)s\)")
 _ENGINE_UP = re.compile(_TS + r" Engine startup timings \(s\): load_weight=([\d.]+)")
-_MEMORY = re.compile(r"\(\w+ pid=\d+(?:, ip=([\d.]+))?\).*?" + _TS + r" memory_utils\.py:\d+ - \[Rank (\d+)\] Memory-Usage ([\w ]+): (\{.*?\})")
+_MEMORY = re.compile(r"\(\w+ pid=\d+(?:, ip=([\d.]+))?\).*?" + _TS + r" memory_utils\.py:\d+ - \[Rank (\d+)\] Memory-Usage ([\w .]+): (\{.*?\})")
+_TOPK = re.compile(_TS + r" http_utils\.py:\d+ - Error: ValueError\('Sampler top-k logprobs must be finite")
+_PROGRESS = re.compile(r"Rollout generation:[^|]*\|[^|]*\| *(\d+)/(\d+) \[(?:(\d+):)?(\d+):(\d+)[<\]]")
 _MICRO = re.compile(r"actor train:.*?\| *\d+/(\d+) \[")
 _COMPILE = re.compile(r"TileLang completes to compile kernel(?:.*?repeated (\d+)x)?")
 _DECODE = re.compile(r"\(SGLangEngine pid=\d+(?:, ip=([\d.]+))?\).*?\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) DP(\d+) TP\d+ EP\d+\] Decode batch, "
@@ -86,7 +99,7 @@ def _argv(command: list) -> dict:
 def read_run(path: Path) -> dict:
     """Facts of one run's .0.data file: argv, nodes, per-step dicts, syncs, memory snapshots, micro-batches, decode lines, GPU monitor."""
     d = {"argv": {}, "nodes": [], "rollout": {}, "train": {}, "rollout_stats": {}, "step": {}, "syncs": [], "engines_up": [],
-         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": [], "host": []}
+         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": [], "host": [], "topk": [], "progress": {}}
     step = None  # the step whose rollout ended last: the trainer's progress bar that follows belongs to it
     with open(path) as f:
         for line in f:
@@ -107,6 +120,12 @@ def read_run(path: Path) -> dict:
                 elif "cpudata" in x:
                     d["host"].append(x["cpudata"]["memory"][0] / 2**30)  # psutil used bytes of the first node
             elif ev == "line" and isinstance(x, str):
+                rollout = 0 if step is None else step + 1  # the rollout in progress (these lines come only during rollouts)
+                if "top-k logprobs" in x:
+                    d["topk"] += [(rollout, _local(m[1])) for m in _TOPK.finditer(x)]
+                if "Rollout generation" in x:
+                    for m in _PROGRESS.finditer(x):  # samples done, of all, at the bar's elapsed time
+                        d["progress"].setdefault(rollout, []).append((int(m[1]), int(m[2]), 3600 * int(m[3] or 0) + 60 * int(m[4]) + int(m[5])))
                 if "Decode batch" in x:
                     if (m := _DECODE.search(x)):
                         d["decode"].append({"time": _local(m[2]), "ip": m[1], "dp_rank": int(m[3]), "running": int(m[4]), "kv_tokens": int(m[5]),
@@ -149,13 +168,15 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
                                                "--expert-model-parallel-size"))
     layers, first, last = (_int(a, k) for k in ("--num-layers", "--decoder-first-pipeline-num-layers", "--decoder-last-pipeline-num-layers"))
     engine_gpus = _int(a, "--rollout-num-gpus-per-engine")
+    rollout_gpus = _int(a, "--rollout-num-gpus", gpus)  # disaggregated: the engines' own GPUs; colocated: the trainer's
     batch = _int(a, "--global-batch-size")
-    run = {"entry": entry, "job": job, "request": REQUESTS.get(job, ""), "nodes": _int(a, "--actor-num-nodes"), "gpus": gpus,
+    run = {"entry": entry, "job": job, "request": REQUESTS.get(job, ""), "nodes": len(d["nodes"]) or _int(a, "--actor-num-nodes"),
+           "trainer_nodes": _int(a, "--actor-num-nodes"), "gpus": gpus, "rollout_gpus": rollout_gpus,
            "hosts": ";".join(h for h, _ in d["nodes"]), "colocate": bool(a.get("--colocate")),
            "tp": tp, "pp": pp, "cp": cp, "ep": ep, "dp": gpus // (tp * pp * cp) if gpus else None, "layers": layers,
            "first_stage_layers": first, "last_stage_layers": last,
            "middle_stage_layers": (layers - first - last) / (pp - 2) if layers and first and last and pp > 2 else None,
-           "engines": gpus // engine_gpus if gpus and engine_gpus else None, "engine_gpus": engine_gpus,
+           "engines": rollout_gpus // engine_gpus if rollout_gpus and engine_gpus else None, "engine_gpus": engine_gpus,
            "engine_ep": _int(a, "--sglang-ep-size"), "engine_dp": _int(a, "--sglang-dp-size"),
            "prompts": _int(a, "--rollout-batch-size"), "samples_per_prompt": _int(a, "--n-samples-per-prompt"), "samples": batch,
            "max_response": _int(a, "--rollout-max-response-len"), "max_tokens_per_gpu": _int(a, "--max-tokens-per-gpu"),
@@ -198,6 +219,15 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
             row["train_tokens"] = row["sample_len_mean"] * batch
         if row["microbatches"] and pp:
             row["bubble_pct"] = 100 * (pp - 1) / (row["microbatches"] + pp - 1)  # 1F1B's idle share, (p - 1) / (m + p - 1): computed
+        errors = [t for s, t in d["topk"] if s == k]
+        row["topk_errors"] = len(errors)
+        if errors and row["rollout_end"] and rollout:
+            row["topk_last_min"] = (max(errors) - (row["rollout_end"] - rollout)) / 60  # minutes into the rollout
+        bar = d["progress"].get(k, [])
+        group = _int(a, "--n-samples-per-prompt")
+        last = [t for n, total, t in bar if group and n >= total - group]
+        if last:
+            row["last_group_min"] = min(last) / 60  # from then on, only the last group of samples was left (the bar's elapsed time)
         steps.append(row)
     # GPU memory of the first node (milabench monitors it only), the fullest GPU, over each rollout window
     gpu = pd.DataFrame(d["gpu"], columns=["time", "used_gib"])
@@ -216,12 +246,13 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
     # snapshot), once Adam's state sits in host memory; the snapshots before it are much lower.
     ends = sorted(row["rollout_end"] for row in steps if row["rollout_end"])
     train0 = next((row["train_end"] - row["train_s"] for row in steps if row["step"] == 0 and row["train_end"] and row["train_s"]), None)
-    memory = [{"job": job, "host": ip_host.get(x["ip"], x["ip"]), "ip": x["ip"], "rank": x["rank"], "phase": x["phase"], "time": x["time"],
+    per_stage = gpus // pp if gpus and pp else None
+    memory = [{"job": job, "host": ip_host.get(x["ip"], x["ip"]), "ip": x["ip"], "rank": x["rank"],
+               "stage": x["rank"] // per_stage if per_stage else None, "phase": x["phase"], "time": x["time"],
                "step": sum(e <= x["time"] for e in ends) - 1, "after_train0": train0 is not None and x["time"] >= train0,
-               "host_used_gib": x.get("host_used_GB")} for x in d["memory"]]
+               "host_used_gib": x.get("host_used_GB"), "gpu_used_gib": x.get("used_GB")} for x in d["memory"]]
     hosts = []
     if len(mem):
-        per_stage = gpus // pp if gpus and pp else None
         mem["stage"] = mem["rank"] // per_stage if per_stage else None
         for ip, g in mem.groupby("ip"):
             hosts.append({"job": job, "host": ip_host.get(ip, ip), "ip": ip, "stage": int(g.stage.mode().iloc[0]) if per_stage else None,
@@ -229,7 +260,7 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
                           "gpu_used_gib": g.used_GB.max(), "gpu_total_gib": g.total_GB.max()})
     per_engine = engine_gpus // _int(a, "--actor-num-gpus-per-node", 8) if engine_gpus else None
     by_ip = sorted((ip for _, ip in d["nodes"]), key=lambda ip: tuple(int(p) for p in ip.split(".")))
-    engine_of = {ip: i // per_engine for i, ip in enumerate(by_ip)} if per_engine else {}
+    engine_of = {ip: i // per_engine for i, ip in enumerate(by_ip)} if per_engine and run["colocate"] else {}
     decode = []
     for row in steps:
         if not (row["rollout_end"] and row["rollout_s"]):
