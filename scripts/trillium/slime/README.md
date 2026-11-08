@@ -343,7 +343,7 @@ SGLang reserves 512 + 1.5 x 16384 + 1024 x TP / 8 + 2 x bs + 4.5 x bs x DP MiB o
 | colocated sync | 132.4 + 16.9 (trainer BF16 weights) + 4 (staging) = 153.3 of 178 |
 
 Checked on 4 nodes (`slime-glm5-l10-grpo-4n`, job 1265529): SGLang logs `mem_fraction_static: 0.75` and decode graphs
-to 32, a KV pool of 18,688,064 tokens (123.36 GB: 132.4 less the 10-layer engine's 8.7 GiB), 28.2-28.5 GB free after
+to 32, a KV pool of 18,688,064 tokens (123.36 GiB: 132.4 less the 10-layer engine's 8.7 GiB), 28.2-28.5 GiB free after
 it; weight sync 9.0 s then 6.7 s, training 156 s.
 
 `slime-glm5-rollout-8n` (8 nodes, a request row): the full GLM-5.3 on one 64-GPU engine at the real width, slime's
@@ -365,7 +365,7 @@ as expected without a trainer; slime returned cleanly. Against the estimates:
 |---|---|---|
 | engine up | 7 min 47 s after the job's start; `load_weight` 132.6 s (ranks 128.5-135.6 s), decode graphs 94.2 s, scheduler 258.8 s | startup 10-20 min; load about 7 min at 1.8 GB/s per node |
 | checkpoint read | every node reads all 756 GB once (SGLang's iterator `get_tensor`s every tensor, `weight_utils.py:1160-1162`; its 8 ranks share the page cache): 6.0 TB in 128-136 s, 5.7 GB/s per node, 46 GB/s in all (if cold) | |
-| memory | `mem_fraction_static` 0.75, decode graphs to 32; weights 32.26 GB per GPU; KV 100.04 GB, 1,991,296 tokens per rank; 36.1-36.5 GB free after it; GPU peak 150.0 GiB; host 120 GB | weights about 33, KV about 99; rollout about 145 GiB |
+| memory | `mem_fraction_static` 0.75, decode graphs to 32; weights 32.26 GiB per GPU; KV 100.04 GiB, 1,991,296 tokens per rank; 36.1-36.5 GiB free after it (SGLang's "GB" are GiB); GPU peak 150.0 GiB; host 120 GB (111.7 GiB, milabench, the head node) | weights about 33, KV about 99; rollout about 145 GiB |
 | rollout 0 | 898.2 s: 424 tokens/s per engine, 6.63 per GPU | 20-45 min |
 | rollout 1 | 949.9 s: 535 tokens/s per engine, 8.37 per GPU | |
 | decode step | 100-113 ms (one sequence: 8.8-9.9 tokens/s; 4 per rank: 35 tokens/s) | 150-300 ms |
@@ -427,32 +427,39 @@ steps. Step 0 is the warm-up (its training: 634 s, the 103 TileLang compiles); s
 Step 0: rollout 1,209.7 s, training 634.1 s (2,640 tokens/s), sync 33.7 s, truncated 5.4 %, reward 0.736. Where the
 step goes (steps 1-2): rollout 79 %, training 15 %, sync 2.5 %, the trainer's offload and onload 2 %, the rest 1 %.
 
-Training took the estimated time for other reasons: 1.4-1.7 M tokens instead of 3-6 M (responses of 1.2-1.5k tokens
-on average), so about 50k tokens and 7 micro-batches of 8,192 per DP rank, and a PP8 bubble of 7 / 14 = 50 % instead of
-18-30 %; that brings the estimate to about 18k tokens/s, still 2.4 times the measured. The logs do not split the rest
-(candidates: EP32's all-to-all over 4 nodes, where the 10-layer test's EP8 stayed in a node; the CPU Adam step, fixed
-per step). Sync 33 s, not 1.5-2 min (ten times the 10-layer test's was too much).
+Training took the estimated time for other reasons: 1.4-1.7 M tokens instead of 3-6 M (responses of 1.2-1.5k tokens on
+average), so 7 micro-batches of 8,192 tokens per DP rank in step 1 and 6 in step 2 (the progress bars, .out:30553 "0/7"
+and :40237 "0/6"), and a PP8 bubble of 7 / 14 = 50 % and 7 / 13 = 54 % instead of 18-30 %; that brings the estimate to
+about 18k tokens/s, still 2.4 times the measured. The 14 / 8 x 6 / 16 split makes the last stage (16 MoE layers and the
+LM head) about 1.7 times the mean stage (9.75 layers), and the pipeline runs at its pace: a likely part of the rest
+(medium confidence; 18k / 1.7 = 10.6k). The logs do not split what remains (candidates: EP32's all-to-all over 4 nodes,
+where the 10-layer test's EP8 stayed in a node; the CPU Adam step, fixed per step). Sync 33 s, not 1.5-2 min (ten times
+the 10-layer test's was too much).
 
 The tail (rough: busy ranks from the `Decode batch` lines and their Ray repeat counts, at one line per 40 decode steps,
 4.2-6.7 s): the last 10 % of the responses (about 100 of 1,024) ran from minute 6-9 to the end, 9-12 of the 17.5-18.5
 minutes (55-70 % of the rollout, 40-50 % of the step); the last 25 or so from minute 14.
 
-The 6.0 instead of 9.5-9.9 tokens/s at one sequence per rank: per engine. Grouping the nodes by IP 8 at a time (assumed
-to be the engines; no line names them, but every group then switches at one time), every node of an engine switches
-within the same minute, once per rollout, 6.5-13 min in (rollout 0: engines 0, 1, 2 at 6.5, 10.5, 13 min; rollout 1:
-engines 2 and 0 at 9 and 11.5), and some engines never. Not the idle ranks' dummy batches: ranks go idle from minute 2
-at full speed, and GLM-RL-02's engine kept 8.8-9.9 to its end with as many idle. Not the KV length (the fast engines
-reach 8.3k tokens at 10), the CUDA graph (on in every line), a queue or a retraction (none), nor SGLang's DP padding
-mode (`dp_attention.py:182-189`, by token counts, the same for all engines). On engine 0's first node (the only one
-milabench monitors) the GPUs go from 331 to 297 W at the switch while their load rises from 0.92 to 0.95: they wait
-longer per step, so the slower part is elsewhere in the engine. Not determined; it costs about 2.5 min per rollout (some
-2.5k tokens x 62 ms more), the difference with GLM-RL-02. Per-node GPU clocks and power and CPU frequency on every node
-during a rollout would tell.
+The 6.0 instead of 9.5-9.9 tokens/s at one sequence per rank: per engine. The engines take the nodes 8 at a time in IP
+order (slime `ray/placement_group.py:24-42, 88`, `engine_group.py:195-199`; all 558 `Decode batch` lines fit that
+mapping), and every node of an engine switches within the same minute, once per rollout, 6.5-13 min in (rollout 0:
+engines 0, 1, 2 at 6.5, 10.5, 13 min; rollout 1: engines 2 and 0 at 9 and 11.5; rollout 2: engines 0 and 3 at 8-9 and
+11.3-11.5), and some engines never. An engine's 64 ranks step in lockstep, so a switch of the whole engine at once
+cannot tell an engine-wide mode from one slow node or GPU in it. Not the idle ranks' dummy batches: ranks go idle from
+minute 2 at full speed, and GLM-RL-02's engine kept 8.8-9.9 to its end with as many idle. Not the KV length (the fast
+engines reach 8.3k tokens at 10), the CUDA graph (on in every line), a queue or a retraction (none). SGLang's DP padding
+mode (`dp_attention.py:182-189`) follows each engine's own token counts, so its timing could differ per engine; but it
+changes when fewer than half the ranks hold a sequence, which GLM-RL-02's engine passed without slowing. On engine 0's
+first node (the only one milabench monitors) the GPUs go from 331 to 297 W at the switch while their load rises from
+0.92 to 0.95: they wait longer per step, so the slower part is elsewhere in the engine. Not determined; it costs about
+2.5 min per rollout (some 2.5k tokens x 62 ms more), the difference with GLM-RL-02. Per-node GPU clocks and power and
+CPU frequency on every node during a rollout would tell.
 
 Memory. GPU, the first node (stage 0, nvml): rollout 149.8-150.9 GiB (estimate about 145), training 81.3-84.2 GiB
 (85-115), sync 58.9 GiB (155-160: the KV is onloaded after the sync, `train.py:19, 31`, not before). Host, slime's
-`Memory-Usage` snapshots (at offload and sync, not continuous): the last stage's 4 nodes (trig0133-0136) 992-998 GB
-(estimate 1.3-1.35 TB), the first node 784 GB (milabench: 816-845 GB), the others 295-557 GB.
+`Memory-Usage` snapshots (at offload and sync, not continuous; its "GB" are GiB, `memory_utils.py:69-70`): the last
+stage's 4 nodes (trig0133-0136) 991.6-997.7 GiB (1.06-1.07 TB; estimate 1.3-1.35 TB), the first node 784 GiB (842 GB;
+milabench's psutil 816-845 GB is the same quantity in decimal units), the others 295-557 GiB; of 2,015.6 GiB.
 
 Startup, 16.8 min to the first sync (estimate 30 with margin): install to 09:18:41; the 4 engines up at
 09:24:15-09:24:33 (`load_weight` 125.8-128.6 s, decode graphs 94-95 s); the trainer's actors at 09:25:26, its model at
@@ -467,8 +474,8 @@ Three things in the log that are not in the tables:
   interval near 0 for a few short requests (rollout 2 has a 17-token response and a 3.75 s request, against 54-58 tokens
   and 8.6-25 s in rollouts 0-1). The mean is not usable; the median is: 9.53 tokens/s (rollouts 0-1: 9.11 and 9.56,
   means 10.24 and 10.28), as the `Decode batch` lines' 9.5-9.9 at one sequence per rank.
-- About 233 `CUDA error: context is destroyed` lines (230 with Ray's repeat counts, and 4 `invalid device context`) at
-  10:51:20-21, from the trainer's actors only, after slime's loop had ended (the last sync at 10:51:18, the rollout
+- 234 teardown lines (230 `CUDA error: context is destroyed` and 4 `invalid device context`, with Ray's repeat counts)
+  at 10:51:20-21, from the trainer's actors only, after slime's loop had ended (the last sync at 10:51:18, the rollout
   health monitor stopped at 10:51:19): pinned host tensors freed in `~TensorImpl` through PyTorch's
   `CachingHostAllocator` after the actor's CUDA context was gone, at process exit. Teardown order, harmless here: no
   checkpoint is saved, the metrics were logged, exit 0, milabench PASS, every node's GPUs free after 0 s, no drain.
@@ -485,18 +492,30 @@ nodes, the user's with / without comparison against GLM-RL-03. `--time 2:10:00` 
 (rollout 22 + training 20, the warm-up's cancel bound + 1.5) + 2 x (20 + 4.5 + 1.5) + 10 margin = 125.5 min.
 
 Memory against GLM-RL-03. Host: SGLang pins a routed-experts cache per engine rank sized by its KV pool
-(`state_capturer/base.py:69-72`: 1,982,976 tokens x 78 layers x top-8 x int32 = 4.95 GB), 39.6 GB per node, on every
-node; and each step's routes, 1.4-1.7 M tokens x 78 x 8 x 4 B = 3.5-4.2 GB, through the rollout manager to the
-trainer. The last stage's nodes: 998 + 40 = about 1.04 TB; the first node 0.83-0.89 TB; of 2.0 TB. (Qwen's +72 GB on
+(`state_capturer/base.py:69-72`: 1,982,976 tokens x 78 layers x top-8 x int32 = 4.61 GiB), 36.9 GiB per node, on every
+node; and each step's routes, 1.4-1.7 M tokens x 78 x 8 x 4 B = 3.3-3.9 GiB, through the rollout manager to the
+trainer. The last stage's nodes: 997.7 + 36.9 = about 1,035 GiB (1.11 TB); the first node about 825 GiB; of 2,015.6
+GiB. (Qwen's +72 GB on
 its first node is the same cache: a much larger KV pool per rank.) GPU: +0.33 GB per GPU (the capture buffer,
 max(256, 2048) x 64 DP x 78 x 8 x int32), outside the static memory (44 GiB there; peak 150.9 GiB).
 
 Expected lines and cancel rules as GLM-RL-03, with its numbers: engines up about 7 min after the start, the first sync
 by 17-20 min, rollouts 17.5-20.2 min, training 3.4-3.6 min after step 0 (10.6 min), sync 33-35 s. Cancel: the
 GLM-RL-03 errors; no `perf N` rollout line 22 min after a sync; step 0's training over 20 min, later ones over 10;
-`SGLang routed_experts element count does not match` (slime `types.py:447`). Routing replay has not run on GLM-5.3
-yet; a 4-node bring-up first (`slime-glm5-l10-grpo-4n` with it) would check the engine's capture and the trainer's
-replay.
+`SGLang routed_experts element count does not match` (slime `types.py:447`); a `Memory-Usage` line with
+`host_used_GB` over 1,850 (GiB).
+
+Checked on 4 nodes first (`slime-glm5-l10-grpo-4n-r3`, job 1266990, PASS, 3 steps in 23:36, NVRM 0), against the same
+entry without replay (job 1265529), steps 1-2:
+- recorded: every engine rank logs `HostCache[routed_experts] allocated: shape=(18688128, 10, 8), size=5.57 GB` and
+  `DeviceCache[routed_experts] ... (131072, 10, 8), size=40.00 MB` (`state_capturer/base.py:57, 94`; the formula above,
+  at 10 layers);
+- replayed: the trainer's steps ran (`fill_routing_replay` asserts the routes, `actor.py:299-324`), and its log-probs
+  follow the rollout's: `train/tis_abs` 0.028 against 0.059, the TIS clip fraction 0 against 1.1e-4;
+- host, slime's snapshots: +44.1-50.0 GiB per node (567.6-641.7 against 520.6-597.4 GiB), as 8 x 5.57 GiB predicts;
+  the head node in milabench 612.7 against 567.1 GiB;
+- step 243.6 s against 242.5: rollout 169.0 against 170.2 s, training 42.4 against 41.3 s, sync 10.7 against 6.6 s
+  (one run each).
 
 ### Disaggregated bring-up (job 1266823)
 
@@ -517,8 +536,11 @@ The NCCL sync works: from each pipeline stage's DP0 rank to the engine, 3.4-4.4 
 the time, and not because of the offload, which is timed apart (`sleep`, `wake_up`); not determined (candidates: the
 idle engine's processes beside the CPU Adam step, slime's reloadable process groups, `offload_train` only). The engine's
 node holds 158.5-158.8 GiB in rollouts and syncs alike (132.4 static + 26 outside it, more than the colocated engines'
-150; no visible sync peak). The trainer's nodes are not monitored by milabench. slime's `train.py` is synchronous: each
-side waits while the other works, so on 4 nodes a step costs 1.57 times the node-seconds of the colocated 2.
+150; no visible sync peak). milabench monitors only the head node (here the engine's); slime's `Memory-Usage` lines show
+the trainer's: host 751.0 and 900.4 GiB on its 2 nodes, for 32 B and 40 B parameters (the CPU optimizer's FP32 master,
+gradients, m and v, 16 B per parameter, slime's pinned BF16 backup, `actor.py:128-131`, 2 B, plus about 200 GB). slime's
+`train.py` is synchronous: each side waits while the other works, so on 4 nodes a step costs 1.57 times the node-seconds
+of the colocated 2.
 
 ### GLM-RL-05 (draft): disaggregated on 32 nodes
 
@@ -534,14 +556,16 @@ sequences per DP-attention rank), no offload, NCCL sync. Estimates from GLM-RL-0
 
 Memory: trainer GPU 77.8 GiB static (13.9 B parameters on the largest stage) + 31-33 GiB as GLM-RL-03's stage 0 above
 its static = 110-115 GiB; engine GPU 150-159 GiB (GLM-RL-03's engines; the bring-up's engine without memory saver:
-158.8); host on the trainer's last stage's nodes: Adam for 79 B parameters 948 GB + about 120 GB (GLM-RL-03's rest
-without its offload copies) = 1.05-1.2 TB of 2.0; the engine nodes about 120 GB (GLM-RL-02). /scratch at the start: 16
+158.8); host on the trainer's last stage's nodes: 79.4 B parameters per node x 18 B + about 200 GB = 1.63 TB, 1.75 TB at
+the bring-up's measured 20 B per parameter + 163 GB (1.48-1.59 TiB of 2,015.6 GiB: 0.4-0.5 TiB to spare); the engine
+nodes about 112 GiB (GLM-RL-02). /scratch at the start: 16
 nodes x 756 GB = 12.1 TB of HF checkpoint, then 1.49 TB of torch_dist.
 
 `--time 2:10:00` = 20 (startup) + step 0 (rollout 22 + training 20 + 1.5) + 2 x 28 + 10 margin = 129.5 min. Expected
 lines: as GLM-RL-03 for 2 engines, without `Timer sleep` / `wake_up`; `Timer update_weights end` 0.5-1.5 min. Cancel:
 the GLM-RL-03 errors; fewer than 2 `Engine startup timings` at 25 min; no first sync at 40 min; a rollout over 25
-min; step 0's training over 20 min, later ones over 12; a sync over 5 min.
+min; step 0's training over 20 min, later ones over 12; a sync over 5 min; a `Memory-Usage` line with `host_used_GB`
+over 1,850 (GiB, of 2,015.6).
 
 ### Step 4, prepared entries (not posted)
 
@@ -551,7 +575,7 @@ GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
 |---|---|---|
 | `slime-glm5-grpo-r3` | GLM-RL-01 with rollout routing replay (the user's comparison; slime's sglang-router fork is in the venv) | as GLM-RL-03; host +about 40 GB on every node (SGLang's pinned routed-experts cache) and 3.5-4.2 GB of routes per step: GLM-RL-04 above. On Qwen3-30B-A3B the times did not differ beyond the spread |
 | `slime-glm5-l10-grpo-disagg-4n` | bring-up, 4 nodes: the 10-layer checkpoint, trainer on 2 nodes (TP1 / CP1, PP2 x EP8), one 16-GPU engine on the other 2 | PASS (job 1266823, above): the NCCL sync (`update_weight_from_distributed`) works, 3.4-4.4 s per step |
-| `slime-glm5-grpo-disagg` | 32 nodes: trainer on 16 (TP1 / CP1, PP8 x EP16, DP16), 2 SGLang engines of 64 GPUs on 16 | trainer GPU: 13.9 B parameters on the largest stage, 77.8 GiB static, about 125-135 GiB with activations, no engine beside it; host on its last stage's nodes about 1.2-1.4 TB (Adam for 79 B parameters, no offload copies). Per step: rollout 20-50 min (8 sequences per DP-attention rank), training 5-9 min (half the GPUs, bubble 10-18 %), sync 1-3 min (8 stage sources at once), no offload. slime's `train.py` is synchronous: each side waits while the other works |
+| `slime-glm5-grpo-disagg` | 32 nodes: trainer on 16 (TP1 / CP1, PP8 x EP16, DP16), 2 SGLang engines of 64 GPUs on 16 | GLM-RL-05 above: step 20-28 min, trainer GPU 110-115 GiB, host 1.63-1.75 TB on the last stage's nodes. slime's `train.py` is synchronous: each side waits while the other works |
 
 ## Untested
 

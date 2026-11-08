@@ -637,7 +637,8 @@ slime-glm5-rollout-8n:
 # of 64 GPUs on the other 16. No GPU offload either side (the optimizer stays on the CPU: --optimizer-cpu-offload);
 # after every step each pipeline stage's DP0 rank broadcasts its stage's weights to the engines over NCCL (slime's
 # update_weight_from_distributed: no CUDA IPC, no expert routing).
-# 64 samples per trainer rank (32-64 micro-batches, bubble 10-18 %), 8 sequences per DP-attention rank.
+# 1.4-1.7 M tokens per step (GLM-RL-03): about 13 micro-batches per DP16 rank, a bubble of about 35 %; 8 sequences per
+# DP-attention rank. Estimates and memory: scripts/trillium/slime/README.md, GLM-RL-05.
 slime-glm5-grpo-disagg:
   inherits: slime-glm5-grpo
   argv:
