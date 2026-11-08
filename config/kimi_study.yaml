@@ -478,6 +478,14 @@ kimi-vllm-2n-tp8pp2-bringup:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
+# the bring-up without FlashInfer's autotune, as vLLM's Kimi-K3 recipes run: what the 20-25 min of autotune at every
+# start buys, against kimi-vllm-2n-tp8pp2-bringup
+kimi-vllm-2n-tp8pp2-bringup-notune:
+  inherits: kimi-vllm-2n-tp8pp2-bringup
+  server:
+    argv:
+      --no-enable-flashinfer-autotune: true
+
 # the full model with random weights: memory, CUDA graphs and FlashInfer's autotune at 93 layers, before the checkpoint
 # is there
 kimi-vllm-2n-tp8pp2-dummy:
