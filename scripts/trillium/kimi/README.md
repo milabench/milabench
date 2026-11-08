@@ -111,5 +111,22 @@ not queueing: vLLM's JIT monitor logs Triton compiling `layer_norm_gated_fwd_ker
 compile of `FlashAttentionForwardSm100` in its first request). Since then: a throwaway `warmup` pass (64 x 1024 in, 64
 out) before the measured passes, and Triton's cache in `cache/triton`, kept across jobs (`job.sh`).
 
-Not tested yet: the study's other passes and the accuracy pass; `-notune` (no FlashInfer autotune, against this run);
-prefix caching, DCP and speculative decoding stay off as in the MI355X study.
+**Autotune on and off**, both with the warm-up, at `79b0af94`, 2026-11-08, run side by side: `-bringup` job 1263424 on
+`trig[0101-0102]` (weights 101-110 s: the checkpoint still in those nodes' page cache from job 1262824), `-notune` job
+1263425 on `trig[0103-0104]` (cold, 674-693 s). Engine init 1441 s against 96 s. Every JIT the monitor logs falls in
+the warm-up, none in conc1 or conc64. Both PASS, nodes "GPUs free", none drained; `ulimit -c` 0 in the batch tasks of all
+four nodes and in their raylet and Ray workers (`/proc/<pid>/limits`).
+
+| pass | autotune | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes | J / output tok |
+|---|---|---|---|---|---|---|---|
+| conc1 | on | 111.25 | 85 / 89 | 8.69 / 8.70 | 8.68 / 8.84 | 7016 | 63.1 |
+| conc1 | off | 105.22 | 102 / 106 | 9.14 / 9.14 | 9.14 / 9.19 | 6871 | 65.3 |
+| conc64 | on | 2026.35 | 1458 / 2809 | 26.5 / 30.1 | 20.6 / 24.5 | 11884 | 5.9 |
+| conc64 | off | 1479.77 | 2410 / 5987 | 28.9 / 47.1 | 24.6 / 27.1 | 10036 | 6.8 |
+
+Repeat of the same config on the same nodes (1262824 and 1263424, conc1): 111.28 and 111.25 tok/s, TPOT 8.69 both.
+Autotune buys 5.7% at conc1 and 37% at conc64 (TTFT p50 1.65x), far beyond that: the study runs with autotune and pays
+its ~24 min at every start. The two runs used different node pairs; the campaign's E1 measured under 1% between them.
+
+Not tested yet: the study's other passes and the accuracy pass; prefix caching, DCP and speculative decoding stay off as
+in the MI355X study.
