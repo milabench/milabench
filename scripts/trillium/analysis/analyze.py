@@ -67,10 +67,12 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 ("trillium/new/k3-trn/runs/", "k3-trn/runs"),
                 *[(f"trillium/new/k3-trn/nodemon/{run}/nodes/*.gpu.tsv", f"k3-trn/nodemon/{run}")
                   for run in ("k3-pp48-full-rbf16.1263956", "k3-pp48-l49.1263476")],
-                # GLM-5.3 GRPO with slime, 32 nodes (GLM-RL-03): its run directory (21 MB) and job log (19 MB) only; the other
-                # GLM-RL jobs are bring-up and tests, not read.
-                *[(f"trillium/new/glm-rl/runs/{run}/", f"glm-rl/runs/{run}") for run in ("nw-glm-rl-glm5.1266065.slime-glm5-grpo",)],
-                *[(f"trillium/new/glm-rl/slurm/{log}", "glm-rl/slurm") for log in ("nw-glm-rl-glm5-1266065.out",)],
+                # GLM-5.3 GRPO with slime, 32 nodes, without and with rollout routing replay (GLM-RL-03, GLM-RL-04): their run
+                # directories (21 MB each) and job logs (19 MB each) only; the other GLM-RL jobs are bring-up and tests, not read.
+                *[(f"trillium/new/glm-rl/runs/{run}/", f"glm-rl/runs/{run}") for run in ("nw-glm-rl-glm5.1266065.slime-glm5-grpo",
+                                                                                          "nw-glm-rl-glm5-r3.1267147.slime-glm5-grpo-r3")],
+                *[(f"trillium/new/glm-rl/slurm/{log}", "glm-rl/slurm") for log in ("nw-glm-rl-glm5-1266065.out",
+                                                                                   "nw-glm-rl-glm5-r3-1267147.out")],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),

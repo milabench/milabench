@@ -1,16 +1,20 @@
 """GLM-5.3 GRPO with slime (Megatron-LM trainer, SGLang rollouts, Ray), colocated on 32 nodes: one row per job, per step, per
-node (host memory) and per visible engine decode line, from the run directory under ``data/raw/trillium/glm-rl/runs/``
-(``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, GLM-RL-03 only).
+node (host memory), per host-memory snapshot and per visible engine decode line, from the run directory under
+``data/raw/trillium/glm-rl/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, GLM-RL-03 without and
+GLM-RL-04 with rollout routing replay, on the same 32 nodes; their command lines differ in ``--use-rollout-routing-replay`` only).
 
 Everything comes from the run's ``.0.data`` file: the command line (``start`` event), the node list (``config``), slime's
 log lines (``line`` events: per-step ``perf N`` dicts of the rollout manager and of the trainer, ``rollout N`` and ``step N``
-dicts, ``Timer update_weights end``, ``Memory-Usage`` snapshots, the trainer's micro-batch progress bar, SGLang's ``Decode
-batch`` lines), the reward (``data`` events) and milabench's GPU monitor of the first node (``gpudata``).
+batch`` lines), the reward (``data`` events) and milabench's GPU and host-memory monitor of the first node (``gpudata``,
+``cpudata``: psutil's used bytes, continuous, unlike slime's snapshots).
 
 Per step (slime's own timers, ``perf N``): ``rollout_s`` = ``perf/rollout_time``; ``train_s`` = ``perf/train_time``; ``sync_s`` =
 ``perf/update_weights_time``, the weight sync before the step's rollout; ``step_s`` = ``perf/step_time`` = ``train_wait_time`` +
 ``train_time``; ``rest_s`` = step - rollout - training - sync (the trainer's offload and onload, the engines' onload, data).
-Step 0 is the warm-up. Training tokens/s = slime's ``actor_train_tok_per_s``, already global (prompt plus response tokens of
+Step 0 is the warm-up. ``data_preprocess_s`` = ``perf/data_preprocess_time`` (with replay it includes filling the routes).
+TIS (slime a4202e0 ``backends/megatron_utils/loss.py:904-925``, ``utils/ppo_utils.py:29-30``): per response token the ratio
+exp(trainer log-prob - rollout log-prob), clamped to [``--tis-clip-low``, ``--tis-clip``] (0.5, 2.0) as the loss weight;
+``train/tis_abs`` = mean |ratio - 1|, ``train/tis_clipfrac`` = share of tokens whose ratio the clamp changed. Training tokens/s = slime's ``actor_train_tok_per_s``, already global (prompt plus response tokens of
 all samples over ``actor_train_time``). Log lines carry Trillium's local time (America/Toronto), as sacct.
 
 Ray prints a line once and counts its repeats across the cluster ("[repeated Nx]"), so the ``Decode batch`` and
@@ -35,8 +39,8 @@ import pandas as pd
 
 # The 32-node row (REQUESTS.md GLM-RL-03). The 1-, 2-, 4- and 8-node entries are bring-up and tests: not read. GLM-RL-01
 # (1265179) failed at engine load and was withdrawn; its directory is not collected.
-SCALE_ENTRIES = ("slime-glm5-grpo",)
-REQUESTS = {"1266065": "GLM-RL-03"}
+SCALE_ENTRIES = ("slime-glm5-grpo", "slime-glm5-grpo-r3")
+REQUESTS = {"1266065": "GLM-RL-03", "1267147": "GLM-RL-04"}
 LOG_TZ = ZoneInfo("America/Toronto")
 SLOW_DECODE = 7.5  # tokens/s per sequence: the engines' decode lines fall at 7.6-10.1 or 5.8-6.1 (GLM-RL-03), nothing between
 
@@ -82,7 +86,7 @@ def _argv(command: list) -> dict:
 def read_run(path: Path) -> dict:
     """Facts of one run's .0.data file: argv, nodes, per-step dicts, syncs, memory snapshots, micro-batches, decode lines, GPU monitor."""
     d = {"argv": {}, "nodes": [], "rollout": {}, "train": {}, "rollout_stats": {}, "step": {}, "syncs": [], "engines_up": [],
-         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": []}
+         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": [], "host": []}
     step = None  # the step whose rollout ended last: the trainer's progress bar that follows belongs to it
     with open(path) as f:
         for line in f:
@@ -100,6 +104,8 @@ def read_run(path: Path) -> dict:
                     d["reward"].append(x["rollout_raw_reward"])
                 elif "gpudata" in x:
                     d["gpu"].append((x["time"], max(g["memory"][0] for g in x["gpudata"].values()) / 1024))
+                elif "cpudata" in x:
+                    d["host"].append(x["cpudata"]["memory"][0] / 2**30)  # psutil used bytes of the first node
             elif ev == "line" and isinstance(x, str):
                 if "Decode batch" in x:
                     if (m := _DECODE.search(x)):
@@ -132,8 +138,8 @@ def _int(argv: dict, key: str, default=None):
     return int(v) if v is not None and v is not True else default
 
 
-def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dict], list[dict], list[dict]]:
-    """(run, steps, hosts, decode) of one run directory <job name>.<job>.<entry>."""
+def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dict], list[dict], list[dict], list[dict]]:
+    """(run, steps, hosts, decode, memory) of one run directory <job name>.<job>.<entry>."""
     entry = run_dir.name.split(".")[-1]
     job = run_dir.name.split(".")[-2]
     d = read_run(run_dir / f"{entry}.0.data")
@@ -156,7 +162,8 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
            "num_rollout": _int(a, "--num-rollout"), "reward_type": a.get("--rm-type"), "routing_replay": bool(a.get("--use-rollout-routing-replay")),
            "kl_loss": bool(a.get("--use-kl-loss")), "moe_backend": a.get("--sglang-moe-runner-backend"),
            "fp8_gemm_backend": a.get("--sglang-fp8-gemm-runner-backend"), "mem_fraction": a.get("--sglang-mem-fraction-static"),
-           "chat_kwargs": a.get("--apply-chat-template-kwargs"), "steps_logged": len(d["train"]), "syncs": len(d["syncs"])}
+           "chat_kwargs": a.get("--apply-chat-template-kwargs"), "tis_clip_low": a.get("--tis-clip-low"), "tis_clip": a.get("--tis-clip"),
+           "steps_logged": len(d["train"]), "syncs": len(d["syncs"]), "head_host_gib": max(d["host"]) if d["host"] else None}
     t0 = job_start.replace(tzinfo=LOG_TZ).timestamp() if job_start else None
     if t0 and d["syncs"]:
         run["startup_min"] = (d["syncs"][0][0] - t0) / 60  # to the end of the first weight sync
@@ -181,7 +188,9 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
                "latency_median_s": ro.get("perf/request/e2e_latency/median"), "latency_max_s": ro.get("perf/request/e2e_latency/max"),
                "decode_tok_s_median": ro.get("perf/decode/throughput/median"), "decode_tok_s_max": ro.get("perf/decode/throughput/max"),
                "grad_norm": st.get("train/grad_norm"), "microbatches": d["micro"].get(k), "compiles": d["compiles"].get(k, 0),
-               "rollout_end": ro.get("end")}
+               "data_preprocess_s": tr.get("perf/data_preprocess_time"), "tis_mean": st.get("train/tis"), "tis_abs": st.get("train/tis_abs"),
+               "tis_clipfrac": st.get("train/tis_clipfrac"), "logprob_abs_diff": st.get("train/train_rollout_logprob_abs_diff"),
+               "train_end": tr.get("end"), "rollout_end": ro.get("end")}
         if None not in (rollout, train, sync, step):
             row["rest_s"] = step - rollout - train - sync
             row["rollout_pct"] = 100 * rollout / step
@@ -202,6 +211,14 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
     for x in d["memory"] + d["decode"]:
         x["ip"] = x["ip"] or head
     mem = pd.DataFrame(d["memory"])
+    # Each snapshot's step: the rollout before it (slime's order per step: rollout, wake_up, train, offload, sync); -1 before the
+    # first rollout ends (startup). after_train0: taken from step 0's training on (the trainer's perf line comes after its first
+    # snapshot), once Adam's state sits in host memory; the snapshots before it are much lower.
+    ends = sorted(row["rollout_end"] for row in steps if row["rollout_end"])
+    train0 = next((row["train_end"] - row["train_s"] for row in steps if row["step"] == 0 and row["train_end"] and row["train_s"]), None)
+    memory = [{"job": job, "host": ip_host.get(x["ip"], x["ip"]), "ip": x["ip"], "rank": x["rank"], "phase": x["phase"], "time": x["time"],
+               "step": sum(e <= x["time"] for e in ends) - 1, "after_train0": train0 is not None and x["time"] >= train0,
+               "host_used_gib": x.get("host_used_GB")} for x in d["memory"]]
     hosts = []
     if len(mem):
         per_stage = gpus // pp if gpus and pp else None
@@ -223,16 +240,16 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
                 decode.append({"job": job, "step": row["step"], "minute": (x["time"] - start) / 60, "host": ip_host.get(x["ip"], x["ip"]),
                                "engine": engine_of.get(x["ip"]), **x,
                                "tok_s_seq": x["gen_tok_s"] / x["running"] if x["running"] else None})
-    return run, steps, hosts, decode
+    return run, steps, hosts, decode, memory
 
 
 def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
-    """glm_rl_runs, glm_rl_steps, glm_rl_hosts, glm_rl_decode. Only jobs that have ended (the collector's sacct snapshot)."""
+    """glm_rl_runs, glm_rl_steps, glm_rl_hosts, glm_rl_decode, glm_rl_memory. Only jobs that have ended (the collector's sacct snapshot)."""
     states = {}
     if sacct.exists():
         s = pd.read_csv(sacct, sep="|", dtype=str)
         states = dict(zip(s.JobID, zip(s.State, s.Start, s.End, s.NNodes)))
-    runs, steps, hosts, decode = [], [], [], []
+    runs, steps, hosts, decode, memory = [], [], [], [], []
     for d in sorted(runs_dir.glob("*.*.*")) if runs_dir.is_dir() else []:
         entry, job = d.name.split(".")[-1], d.name.split(".")[-2]
         if entry not in SCALE_ENTRIES or not job.isdigit() or not (d / f"{entry}.0.data").exists():
@@ -240,12 +257,13 @@ def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFr
         state, start, end, nodes = states.get(job, ("RUNNING", None, None, None))
         if state.startswith(unfinished):
             continue  # a job still running is not a failed run: left out until it ends
-        r, st, h, dc = build_run(d, datetime.fromisoformat(start) if start else None)
+        r, st, h, dc, mem = build_run(d, datetime.fromisoformat(start) if start else None)
         r.update(job_state=state.split()[0], start=start, end=end)
         runs.append(r)
         steps += st
         hosts += h
         decode += dc
+        memory += mem
     runs = pd.DataFrame(runs)
     if len(runs):
         runs = runs.sort_values("start").reset_index(drop=True)
@@ -254,5 +272,6 @@ def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFr
         # a rank's first line after the engine sat idle averages its throughput over the idle time (under 1 token/s): not a speed
         decode["idle"] = decode.gen_tok_s < 1
         decode["slow"] = ~decode.idle & (decode.tok_s_seq < SLOW_DECODE)
-    return {"glm_rl_runs": runs, "glm_rl_steps": pd.DataFrame(steps), "glm_rl_hosts": pd.DataFrame(hosts), "glm_rl_decode": decode}
+    return {"glm_rl_runs": runs, "glm_rl_steps": pd.DataFrame(steps), "glm_rl_hosts": pd.DataFrame(hosts), "glm_rl_decode": decode,
+            "glm_rl_memory": pd.DataFrame(memory)}
 

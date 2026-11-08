@@ -103,7 +103,16 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGrTruncOne", "TriGrTruncTwo", "TriGrRewardWarm", "TriGrRewardOne", "TriGrRewardTwo", "TriGrLatMedOne", "TriGrLatMedTwo",
           "TriGrLatMaxOne", "TriGrLatMaxTwo", "TriGrDecodeReqOne", "TriGrDecodeReqTwo", "TriGrDecodeFast", "TriGrDecodeSlow", "TriGrSlowFirstOne",
           "TriGrSlowFirstTwo", "TriGrGpuRollout", "TriGrGpuCap", "TriGrHostLastLo", "TriGrHostLastHi", "TriGrHostLastTb", "TriGrHostOtherHi",
-          "TriGrHostTotal", "TriGrHostFirst", "TriGrSlowEnginesOne", "TriGrSlowEnginesTwo"]
+          "TriGrHostTotal", "TriGrHostFirst", "TriGrSlowEnginesOne", "TriGrSlowEnginesTwo",
+          # GLM-RL-03 (without routing replay) for the comparison, then GLM-RL-04 with it (TriGrRp*), steps 1 and 2
+          "TriGrTisClipLow", "TriGrTisClipHigh", "TriGrTisAbsOne", "TriGrTisAbsTwo", "TriGrTisClipOne", "TriGrTisClipTwo", "TriGrPrepOne",
+          "TriGrPrepTwo", "TriGrStepMean", "TriGrRolloutSpread", "TriGrHeadHost", "TriGrGradOthersLo", "TriGrGradOthersHi",
+          "TriGrRpRolloutOne", "TriGrRpRolloutTwo", "TriGrRpTrainOne", "TriGrRpTrainTwo", "TriGrRpSyncOne", "TriGrRpSyncTwo", "TriGrRpStepOne",
+          "TriGrRpStepTwo", "TriGrRpStepDiffOne", "TriGrRpStepDiffTwo", "TriGrRpStepMean", "TriGrRpRolloutSpread", "TriGrRpPrepOne", "TriGrRpPrepTwo",
+          "TriGrRpTisAbsOne", "TriGrRpTisAbsTwo", "TriGrRpTisClipOne", "TriGrRpTisClipTwo", "TriGrRpTisRatioOne", "TriGrRpTisRatioTwo",
+          "TriGrRpClipRatioOne", "TriGrRpClipRatioTwo", "TriGrRpRewardOne", "TriGrRpRewardTwo", "TriGrRpTruncOne", "TriGrRpTruncTwo", "TriGrRpGradTwo",
+          "TriGrRpDecodeReqOne", "TriGrRpDecodeReqTwo", "TriGrRpDecodeDropOne", "TriGrRpDecodeDropTwo", "TriGrRpHostLo", "TriGrRpHostHi",
+          "TriGrRpHostNodes", "TriGrRpHostLastHi", "TriGrRpHeadHost", "TriGrRpGpuRollout"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1207,14 +1216,16 @@ def kimi_train_runs_table(t) -> str:
 
 
 def _glm_rl_numbers(t) -> dict[str, tuple]:
-    """GLM-5.3 GRPO with slime, TriGr*: the completed run (one so far). Per-step numbers are slime's own timers and metrics (glm_rl.py);
-    steps 1 and 2 are the measured steps (One, Two), step 0 the warm-up. The bubble is computed, (p - 1) / (m + p - 1), not measured."""
+    """GLM-5.3 GRPO with slime, TriGr*: the completed run without routing replay (GLM-RL-03); TriGrRp*: the one with it (GLM-RL-04),
+    against it. Per-step numbers are slime's own timers and metrics (glm_rl.py); steps 1 and 2 are the measured steps (One, Two), step 0
+    the warm-up. The bubble is computed, (p - 1) / (m + p - 1), not measured."""
     r, st, h, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode"))
     out = {}
     done = r[r.job_state == "COMPLETED"] if len(r) else r
-    if done.empty or st.empty:
+    base = done[~done.routing_replay.astype(bool)] if len(done) else done
+    if base.empty or st.empty:
         return out
-    x = done.iloc[-1]
+    x = base.iloc[-1]
     job = str(x.job)
     s = st[st.job.astype(str) == job].set_index("step")
     out.update({"TriGrNodes": (int(x.nodes), "d", False), "TriGrGpus": (int(x.gpus), "d", False), "TriGrLayers": (int(x.layers), "d", False),
@@ -1270,6 +1281,60 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
                     "TriGrHostLastTb": (last.host_used_gib.max() * 2**30 / 1e12, ".2f", False),
                     "TriGrHostOtherHi": (other.host_used_gib.max(), ".0f", False), "TriGrHostTotal": (hh.host_total_gib.max(), ",.0f", False),
                     "TriGrGpuCap": (hh.gpu_total_gib.max(), ".1f", False)})
+    replay = done[done.routing_replay.astype(bool)]
+    out.update(_glm_rl_replay_numbers(x, replay.iloc[-1] if len(replay) else None, st, h, t.get("glm_rl_memory", pd.DataFrame())))
+    return out
+
+
+def _glm_rl_replay_numbers(x, y, st, h, mem) -> dict[str, tuple]:
+    """GLM-RL-03's TIS metrics, data preprocessing and spreads (x), and GLM-RL-04's (y, with routing replay) against them, steps 1 and 2.
+    Host memory: slime's snapshots are Ray-deduplicated, not peaks, so a node is compared only where both runs logged it in the same
+    phase of the same step, from step 0's training on (glm_rl_memory), outside the first node (Ray's head and slime's driver)."""
+    out = {"TriGrTisClipLow": (float(x.tis_clip_low), "g", False), "TriGrTisClipHigh": (float(x.tis_clip), "g", False),
+           "TriGrHeadHost": (x.head_host_gib, ".1f", False)}
+    s = st[st.job.astype(str) == str(x.job)].set_index("step")
+    two = s.loc[[k for k in (1, 2) if k in s.index]]
+    for k, n in ((1, "One"), (2, "Two")):
+        if k in s.index:
+            out.update({f"TriGrTisAbs{n}": (s.loc[k, "tis_abs"], ".4f", False), f"TriGrTisClip{n}": (s.loc[k, "tis_clipfrac"], ".4f", False),
+                        f"TriGrPrep{n}": (s.loc[k, "data_preprocess_s"], ".2f", False)})
+    if len(two) == 2:
+        out.update({"TriGrStepMean": (two.step_s.mean(), ",.1f", False), "TriGrRolloutSpread": (two.rollout_s.max() - two.rollout_s.min(), ".1f", False)})
+    if y is None:
+        return out
+    q = st[st.job.astype(str) == str(y.job)].set_index("step")
+    for k, n in ((1, "One"), (2, "Two")):
+        if k not in q.index or k not in s.index:
+            continue
+        a, b = q.loc[k], s.loc[k]
+        diff = f"{a.step_s - b.step_s:+,.1f}".replace("-", "$-$")
+        out.update({f"TriGrRpRollout{n}": (a.rollout_s, ",.1f", False), f"TriGrRpTrain{n}": (a.train_s, ".1f", False),
+                    f"TriGrRpSync{n}": (a.sync_s, ".1f", False), f"TriGrRpStep{n}": (a.step_s, ",.1f", False), f"TriGrRpStepDiff{n}": (diff, "", False),
+                    f"TriGrRpPrep{n}": (a.data_preprocess_s, ".2f", False), f"TriGrRpTisAbs{n}": (a.tis_abs, ".4f", False),
+                    f"TriGrRpTisClip{n}": (a.tis_clipfrac, ".5f", False), f"TriGrRpTisRatio{n}": (b.tis_abs / a.tis_abs, ".1f", False),
+                    f"TriGrRpClipRatio{n}": (b.tis_clipfrac / a.tis_clipfrac, ".0f", False), f"TriGrRpReward{n}": (a.raw_reward, ".3f", False),
+                    f"TriGrRpTrunc{n}": (a.truncated_pct, ".1f", False), f"TriGrRpDecodeReq{n}": (a.decode_tok_s_median, ".2f", False),
+                    f"TriGrRpDecodeDrop{n}": (100 * (1 - a.decode_tok_s_median / b.decode_tok_s_median), ".1f", False)})
+    qq = q.loc[[k for k in (1, 2) if k in q.index]]
+    if len(qq) == 2:
+        out.update({"TriGrRpStepMean": (qq.step_s.mean(), ",.1f", False), "TriGrRpRolloutSpread": (qq.rollout_s.max() - qq.rollout_s.min(), ".1f", False)})
+    if 2 in q.index:
+        both = pd.concat([s, q.drop(index=2)])
+        out.update({"TriGrRpGradTwo": (q.loc[2, "grad_norm"], ".3f", False), "TriGrGradOthersLo": (both.grad_norm.min(), ".3f", False),
+                    "TriGrGradOthersHi": (both.grad_norm.max(), ".3f", False)})
+    out.update({"TriGrRpHeadHost": (y.head_host_gib, ".1f", False), "TriGrRpGpuRollout": (q.gpu_rollout_gib.max(), ".1f", False)})
+    if len(mem):
+        head = str(x.hosts).split(";")[0]
+        m = mem[mem.after_train0.astype(bool) & (mem.host != head)]
+        m = m.assign(job=m.job.astype(str))
+        same = m.groupby(["host", "phase", "step", "job"]).host_used_gib.max().unstack("job").dropna()
+        if str(x.job) in same and str(y.job) in same and len(same):
+            d = same[str(y.job)] - same[str(x.job)]
+            out.update({"TriGrRpHostLo": (d.min(), ".0f", False), "TriGrRpHostHi": (d.max(), ".0f", False),
+                        "TriGrRpHostNodes": (int(d.index.get_level_values("host").nunique()), "d", False)})
+    last = h[(h.job.astype(str) == str(y.job)) & (h.stage == y.pp - 1)] if len(h) else h
+    if len(last):
+        out["TriGrRpHostLastHi"] = (last.host_used_gib.max(), ",.1f", False)
     return out
 
 
@@ -1278,13 +1343,14 @@ def glm_rl_runs_table(t) -> str:
     r = t.get("glm_rl_runs", pd.DataFrame())
     if r.empty:
         return ""
-    lines = [r"\begin{tabular}{lllllrrlll}", r"\toprule",
-             r"Request & Job & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
-             r" & & & & & per step & & & & \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llllllrrlll}", r"\toprule",
+             r"Request & Job & Routing & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
+             r" & & replay & & & & per step & & & & \\", r"\midrule"]
     for x in r.sort_values("start").itertuples():
         trainer = f"TP{int(x.tp)} PP{int(x.pp)} CP{int(x.cp)} EP{int(x.ep)} (DP{int(x.dp)})"
         engines = f"{int(x.engines)} $\\times$ {int(x.engine_gpus)} GPUs (EP{int(x.engine_ep)})"
-        lines.append(f"{x.request} & {x.job} & {int(x.nodes)} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
+        replay = "with" if bool(x.routing_replay) else "without"
+        lines.append(f"{x.request} & {x.job} & {replay} & {int(x.nodes)} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
                      f"{str(x.start).replace('T', ' ')[:16]} & {str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
@@ -1292,17 +1358,48 @@ def glm_rl_runs_table(t) -> str:
 
 def glm_rl_steps_table(t) -> str:
     """GLM-5.3 GRPO per step (slime's timers and metrics): where the time goes, training and rollout speed, responses, reward."""
-    st = t.get("glm_rl_steps", pd.DataFrame())
+    st, order = _glm_rl_by_run(t)
     if st.empty:
         return ""
-    lines = [r"\begin{tabular}{lrrrrrrrrrrrrr}", r"\toprule",
-             r"Step & Rollout & Training & Sync & Rest & Step & Rollout & Train & Micro- & Bubble & Rollout & Response & Trunc. & Reward \\",
-             r" & s & s & s & s & s & \% of step & tok/s & batches & \% (comp.) & tok/s/GPU & mean / median & \% & \\", r"\midrule"]
-    for x in st.sort_values("step").itertuples():
-        step = f"{x.step} (warm-up)" if x.warmup else str(x.step)
-        lines.append(f"{step} & {x.rollout_s:,.1f} & {x.train_s:,.1f} & {x.sync_s:.1f} & {x.rest_s:.1f} & {x.step_s:,.1f} & {x.rollout_pct:.1f} & "
-                     f"{x.train_tok_s:,.0f} & {int(x.microbatches)} & {x.bubble_pct:.0f} & {x.rollout_tok_s_gpu:.2f} & "
-                     f"{x.resp_mean:,.0f} / {x.resp_median:,.0f} & {x.truncated_pct:.1f} & {x.raw_reward:.3f} " + r"\\")
+    lines = [r"\begin{tabular}{llrrrrrrrrrrrrr}", r"\toprule",
+             r"Routing & Step & Rollout & Training & Sync & Rest & Step & Rollout & Train & Micro- & Bubble & Rollout & Response & Trunc. & Reward \\",
+             r"replay & & s & s & s & s & s & \% of step & tok/s & batches & \% (comp.) & tok/s/GPU & mean / median & \% & \\", r"\midrule"]
+    for i, (job, replay) in enumerate(order):
+        if i:
+            lines.append(r"\midrule")
+        for x in st[st.job.astype(str) == job].sort_values("step").itertuples():
+            step = f"{x.step} (warm-up)" if x.warmup else str(x.step)
+            lines.append(f"{replay} & {step} & {x.rollout_s:,.1f} & {x.train_s:,.1f} & {x.sync_s:.1f} & {x.rest_s:.1f} & {x.step_s:,.1f} & "
+                         f"{x.rollout_pct:.1f} & {x.train_tok_s:,.0f} & {int(x.microbatches)} & {x.bubble_pct:.0f} & {x.rollout_tok_s_gpu:.2f} & "
+                         f"{x.resp_mean:,.0f} / {x.resp_median:,.0f} & {x.truncated_pct:.1f} & {x.raw_reward:.3f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
+def _glm_rl_by_run(t) -> tuple[pd.DataFrame, list[tuple[str, str]]]:
+    """The GLM-RL steps and the runs in start order, as (job, "with" / "without" routing replay)."""
+    r, st = t.get("glm_rl_runs", pd.DataFrame()), t.get("glm_rl_steps", pd.DataFrame())
+    if r.empty or st.empty:
+        return pd.DataFrame(), []
+    return st, [(str(x.job), "with" if bool(x.routing_replay) else "without") for x in r.sort_values("start").itertuples()]
+
+
+def glm_rl_replay_table(t) -> str:
+    """GLM-5.3 GRPO with and without routing replay, per step: data preprocessing, the TIS metrics, the gradient norm, the longest
+    request and the median decode speed per request (slime's metrics)."""
+    st, order = _glm_rl_by_run(t)
+    if st.empty:
+        return ""
+    lines = [r"\begin{tabular}{llrrrrrr}", r"\toprule",
+             r"Routing & Step & Data & TIS mean & TIS clip & Grad & Longest & Median decode \\",
+             r"replay & & preprocess s & $|w-1|$ & fraction & norm & request s & tok/s per request \\", r"\midrule"]
+    for i, (job, replay) in enumerate(order):
+        if i:
+            lines.append(r"\midrule")
+        for x in st[st.job.astype(str) == job].sort_values("step").itertuples():
+            step = f"{x.step} (warm-up)" if x.warmup else str(x.step)
+            lines.append(f"{replay} & {step} & {x.data_preprocess_s:.2f} & {x.tis_abs:.4f} & {x.tis_clipfrac:.5f} & "
+                         f"{x.grad_norm:.4f} & {x.latency_max_s:,.1f} & {x.decode_tok_s_median:.2f} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
@@ -1707,6 +1804,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
+    (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):
         if "in_report" in runs:
             (out / "ledger.tex").write_text(ledger(runs))

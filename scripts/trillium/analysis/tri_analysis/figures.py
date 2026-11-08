@@ -1266,33 +1266,43 @@ def kimi_training(t):
 
 
 def glm_rl(t):
-    """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), and the
-    per-sequence decode speed in the engines' log lines over the measured rollouts (a sample: Ray prints one rank's line per
-    repeat window). Completed runs only."""
-    st, dc = t.get("glm_rl_steps", pd.DataFrame()), t.get("glm_rl_decode", pd.DataFrame())
-    if st.empty or "rest_s" not in st:
+    """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), without and with
+    rollout routing replay side by side (GLM-RL-03, GLM-RL-04, same nodes), and the per-sequence decode speed in the engines' log
+    lines over the measured rollouts without replay (a sample: Ray prints one rank's line per repeat window). Completed runs only."""
+    r, st, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_decode"))
+    if r.empty or st.empty or "rest_s" not in st:
         return None
-    st = st.sort_values("step")
-    fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.4), gridspec_kw={"width_ratios": [1, 1.7]})
+    r = r.sort_values("start")
+    runs = [(str(x.job), bool(x.routing_replay)) for x in r.itertuples()]
+    base = next((job for job, rp in runs if not rp), runs[0][0])
+    fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6), gridspec_kw={"width_ratios": [1.2, 1.5]})
     parts = [("rollout_s", "rollout", SERIES[0]), ("train_s", "training", SERIES[1]), ("sync_s", "weight sync", SERIES[2]),
              ("rest_s", "rest (offload, onload, data)", LIGHT)]
-    x = np.arange(len(st))
-    bottom = np.zeros(len(st))
-    for col, label, color in parts:
-        v = st[col].to_numpy(dtype=float) / 60
-        a.bar(x, v, bottom=bottom, width=0.6, color=color, edgecolor="white", linewidth=0.8, label=label)
-        bottom += v
-    for xi, total, pct in zip(x, st.step_s / 60, st.rollout_pct):
-        a.annotate(f"{total:.1f} min\nrollout {pct:.0f} %", (xi, total), xytext=(0, 2), textcoords="offset points", ha="center",
-                   va="bottom", fontsize=5.5, color=INK2)
-    a.set_xticks(x)
-    a.set_xticklabels([f"{int(s)}\n(warm-up)" if w else str(int(s)) for s, w in zip(st.step, st.warmup.astype(bool))], fontsize=6)
-    a.set_xlabel("step")
+    steps = sorted(st.step.unique())
+    width = 0.8 / len(runs)
+    top = 0.0
+    for i, (job, replay) in enumerate(runs):
+        g = st[st.job.astype(str) == job].set_index("step").reindex(steps)
+        x = np.arange(len(steps)) + (i - (len(runs) - 1) / 2) * width
+        bottom = np.zeros(len(steps))
+        for col, label, color in parts:
+            v = g[col].to_numpy(dtype=float) / 60
+            a.bar(x, v, bottom=bottom, width=width * 0.92, color=color, edgecolor="white" if not replay else INK2, linewidth=0.5,
+                  hatch="////" if replay else None, label=label if i == 0 else None)
+            bottom += np.nan_to_num(v)
+        for xi, total in zip(x, g.step_s / 60):
+            if pd.notna(total):
+                a.annotate(f"{total:.1f}", (xi, total), xytext=(0, 1.5), textcoords="offset points", ha="center", va="bottom", fontsize=5.5, color=INK2)
+        top = max(top, bottom.max())
+    warm = dict(zip(st.step, st.warmup.astype(bool)))
+    a.set_xticks(np.arange(len(steps)))
+    a.set_xticklabels([f"{int(s)}\n(warm-up)" if warm.get(s) else str(int(s)) for s in steps], fontsize=6)
+    a.set_xlabel("step (left bar: without routing replay; right, hatched: with)")
     a.set_ylabel("time per step (min)")
-    a.set_ylim(0, bottom.max() * 1.3)
-    a.legend(loc="upper right", fontsize=5.5, frameon=False)
-    meas = st[~st.warmup.astype(bool)]
-    d = dc[dc.step.isin(meas.step) & ~dc.idle.astype(bool)] if len(dc) and "idle" in dc else dc.iloc[:0]
+    a.set_ylim(0, top * 1.35)
+    a.legend(loc="upper right", fontsize=5.5, frameon=False, ncol=2)
+    meas = st[(st.job.astype(str) == base) & ~st.warmup.astype(bool)]
+    d = dc[(dc.job.astype(str) == base) & dc.step.isin(meas.step) & ~dc.idle.astype(bool)] if len(dc) and "idle" in dc else dc.iloc[:0]
     if d.empty:
         b.set_visible(False)
     else:
@@ -1305,7 +1315,7 @@ def glm_rl(t):
                        fontsize=5.5, color=MUTED, ha="right", va="bottom", rotation=90)
             handles.append(_handle(SERIES[0], f"rollout {int(step)}", False, marker=marker))
         b.set_ylim(0, 11)
-        b.set_xlabel("minutes into the rollout")
+        b.set_xlabel("minutes into the rollout (without routing replay)")
         b.set_ylabel("decode tokens/s per sequence")
         b.legend(handles=handles, loc="lower left", fontsize=6, frameon=False)
     for ax in (a, b):
