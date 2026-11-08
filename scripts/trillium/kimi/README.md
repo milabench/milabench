@@ -263,3 +263,64 @@ Not explained; the 2.5 h study run on 4 nodes would show whether it comes back.
 Dropped: two 2-node replicas behind one endpoint (vLLM DP2). vLLM's fused MoE takes its size from the DP group, so the
 experts would be sharded over DP x TP = 16 GPUs across both replicas, with the engines in lockstep: not two
 independent servers (review, 2026-11-08).
+
+### The study on 4 nodes: K3-INF-02
+
+`kimi-vllm-4n-tp8pp4`, job 1265338, `trig[0139-0142]`, 2026-11-08 06:49:40-08:36:36 (1:46:56), checkout `fb31a435`,
+milabench exit 0, clean Ray stop, no drains. Weights 704-749 s, engine init 1300 s, ready at 07:27:27 (37.8 min).
+0 failed requests in 21 passes. Raw data: `runs/kimi-vllm-4n-tp8pp4.1265338/`; tables from `scripts/analysis/kimi_study.py`.
+
+Per GPU = /32, per node = /4. Power and J / token are extrapolated: the main node's 8 GPUs, times 4; the other three
+nodes were never sampled.
+
+| pass | in / out | output tok/s (/GPU, /node) | total tok/s (/GPU, /node) | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | W, 4 nodes (extrap.) | J / out tok (extrap.) |
+|---|---|---|---|---|---|---|---|---|
+| warmup (throwaway) | 1024 / 64 | 910.6 (28.5, 228) | 15480 (484, 3870) | 2138 / 3372 | 37.05 / 62.12 | 17.43 / 687.1 | 14677 | 16.1 |
+| conc1 | 1024 / 256 | 108.8 (3.4, 27) | 544 (17, 136) | 86 / 90 | 8.89 / 8.90 | 8.89 / 8.96 | 11046 | 101.5 |
+| conc4 | 1024 / 256 | 353.0 (11.0, 88) | 1765 (55, 441) | 237 / 285 | 10.47 / 11.09 | 10.36 / 10.55 | 14442 | 40.9 |
+| conc16 | 1024 / 256 | 873.0 (27.3, 218) | 4365 (136, 1091) | 683 / 694 | 15.74 / 18.03 | 15.67 / 16.16 | 14277 | 16.4 |
+| conc64 | 1024 / 256 | 1111.5 (34.7, 278) | 5557 (174, 1389) | 1900 / 2853 | 27.23 / 83.49 | 19.54 / 20.66 | 13658 | 12.3 |
+| conc128 | 1024 / 256 | 2017.6 (63.0, 504) | 10088 (315, 2522) | 3232 / 15947 | 31.67 / 81.82 | 22.88 / 28.21 | 16333 | 8.1 |
+| conc256 | 1024 / 256 | 2482.9 (77.6, 621) | 12415 (388, 3104) | 4951 / 26752 | 62.68 / 131.1 | 28.37 / 894.6 | 16385 | 6.6 |
+| conc512 | 1024 / 256 | 4037.6 (126.2, 1009) | 20188 (631, 5047) | 11286 / 22191 | 81.91 / 124.0 | 39.67 / 2712 | 18890 | 4.7 |
+| conc1024 | 1024 / 256 | 4292.5 (134.1, 1073) | 21462 (671, 5366) | 7789 / 44224 | 210.7 / 235.2 | 49.32 / 2831 | 17707 | 4.1 |
+| ctx1k-c1 | 1024 / 128 | 105.4 (3.3, 26) | 948 (30, 237) | 86 / 89 | 8.89 / 8.89 | 8.89 / 8.96 | 11201 | 106.3 |
+| ctx8k-c1 | 8192 / 128 | 82.7 (2.6, 21) | 5374 (168, 1343) | 404 / 407 | 9.01 / 9.01 | 9.01 / 9.12 | 11730 | 141.9 |
+| ctx32k-c1 | 32768 / 128 | 58.7 (1.8, 15) | 15086 (471, 3771) | 999 / 1006 | 9.31 / 9.31 | 9.30 / 9.49 | 13630 | 232.2 |
+| ctx64k-c1 | 65536 / 128 | 46.6 (1.5, 12) | 23900 (747, 5975) | 1536 / 1547 | 9.54 / 9.55 | 9.53 / 9.76 | 15917 | 341.7 |
+| ctx128k-c1 | 131072 / 128 | 32.0 (1.0, 8) | 32774 (1024, 8194) | 2748 / 2758 | 9.88 / 9.89 | 9.87 / 10.19 | 18840 | 589.2 |
+| ctx1k-c16 | 1024 / 128 | 767.8 (24.0, 192) | 6910 (216, 1728) | 684 / 697 | 15.57 / 20.24 | 15.56 / 16.19 | 14377 | 18.7 |
+| ctx8k-c16 | 8192 / 128 | 216.9 (6.8, 54) | 14096 (440, 3524) | 3288 / 15759 | 29.04 / 131.9 | 12.02 / 114.4 | 13700 | 63.2 |
+| ctx32k-c16 | 32768 / 128 | 116.6 (3.6, 29) | 29977 (937, 7494) | 8780 / 15706 | 69.16 / 129.8 | 14.75 / 1906 | 16955 | 145.4 |
+| ctx64k-c16 | 65536 / 128 | 59.6 (1.9, 15) | 30600 (956, 7650) | 17483 / 30651 | 133.6 / 257.3 | 20.54 / 2016 | 17226 | 288.8 |
+| ctx128k-c16 | 131072 / 128 | 31.3 (1.0, 8) | 32131 (1004, 8033) | 32210 / 75027 | 271.3 / 631.2 | 25.30 / 2250 | 18266 | 582.7 |
+| decodelong-c1 | 1024 / 4096 | 111.5 (3.5, 28) | 139 (4, 35) | 88 / 88 | 8.95 / 8.95 | 8.95 / 9.04 | 10913 | 97.9 |
+| decodelong-c16 | 1024 / 4096 | 985.1 (30.8, 246) | 1231 (38, 308) | 733 / 742 | 16.09 / 16.24 | 16.16 / 16.64 | 15025 | 15.3 |
+
+Output tok/s, 2 nodes (K3-INF-01) against 4: conc1 111.1 / 108.8, conc64 2003 / 1112, conc128 2243 / 2018, conc256
+2865 / 2483, conc512 3466 / 4038, conc1024 3452 / 4292; ctx-c16 from 1k to 128k 766 / 768, 221 / 217, 78 / 117, 44 / 60,
+20 / 31; ctx128k-c1 21.5 / 32.0 (TTFT 4555 / 2748 ms). Accuracy, 2 / 4 nodes: GSM8K 97.5 / 98.0, ARC-C 98.5 / 98.5,
+GPQA-D 84.8 / 83.8 (stderr 2.6), MMLU-Pro 87.7 / 86.8 (0.7-0.8).
+
+**Engine stalls.** vLLM logs its throughput every 10 s. Intervals with requests running and no token at all:
+- 4 nodes: conc64, 07:33:21-31 (64 running); conc128, 07:34:11-21 (128 running). The bring-up's conc64 (job 1264956)
+  had the same kind of stall, about 20 s.
+- 2 nodes: none.
+
+Near zero (under 10% of the pass's output rate in both prompt and generation): none in either run. conc256 on 4 nodes
+starts slowly, generation at 17-29 tok/s over its first 30 s while prefill runs at 2.6-14.6k tok/s (2 nodes: 10-15k).
+With the stalled interval taken out (output tokens / (duration - 10 s), derived, not measured): conc64 1682 tok/s,
+still 16% under 2 nodes' 2003; conc128 2915 tok/s, 30% over 2 nodes' 2243. Nothing else in the log at those times: no
+Ray, NCCL, preemption or scheduler message, only a CuTeDSL "Argument aux_data ... cannot be converted to a JitArgument"
+warning that the 2-node runs print in the same pass without stalling. The cause is not known.
+
+**JIT in a measured pass, both runs:** CuTeDSL compiles `FlashPrepareScheduler` and `FlashAttentionForwardCombine` at the
+start of ctx8k-c16 (2 nodes 03:56:23-29, 4 nodes 07:55:52-56:03), which the warm-up (1k prompts) does not cover: part of
+ctx8k-c16's p99 TTFT (11.8 s and 15.8 s). Not fixed.
+
+**Node metrics:** these jobs run no `benchmate.nodemon`, so a stall of the engine cannot be told from a node or fabric
+event, and the power is extrapolated from one node. Adding it to `job.sh`, as the GLM-5, slime and K3-TRN jobs run it:
+`BENCHMATE_NODEMON_DIR=$MILABENCH_BASE/nodemon/<run>`, then before `milabench run` one background
+`srun --overlap --propagate=CORE --ntasks-per-node=1 $MILABENCH_BASE/venv/torch/bin/python -m benchmate.nodemon --bench $ENTRY`
+(one sampler per host, its lock), and in the clean end a SIGTERM to that step and a wait, before the GPU check. About 8
+lines; `pynvml` is in the venv. Not added yet.
