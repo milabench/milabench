@@ -564,6 +564,8 @@ slime-glm5-grpo:
     --sglang-dsa-decode-backend: flashmla_kv
     --sglang-page-size: 64
     --sglang-kv-cache-dtype: fp8_e4m3
+    # without DeepGEMM (env below) SGLang's FP8 GEMMs pick flashinfer_trtllm, which downloads its cubins (job 1264112)
+    --sglang-fp8-gemm-runner-backend: triton
 
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
