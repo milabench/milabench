@@ -167,6 +167,13 @@ k3-pp4-l7-rbf16-eager:
   inherits: k3-pp4-l7-rbf16
   argv:
     --compile: eager
+# Eager: the same ~10 / 20 / 26 / 14 s per stage (job 1262562); the native allocator: ~9 / 10 / 15 / 12 s (job 1262143,
+# FP32 reduction) against ~10 / 23 / 25 / 14 with expandable segments (1261618). Native allocator + BF16 reduction on
+# the stand-in: does it fit (the FP32 reduction did not, 1262141), and what does it leave of the per-stage warm-up
+k3-pp4-l7-gpipe-rbf16-noexp:
+  inherits: k3-pp4-l7-gpipe-rbf16
+  env:
+    PYTORCH_ALLOC_CONF: "expandable_segments:False"
 # Fewer layers (review option b): a stage of one MoE layer with 64 micro-batches in flight. 5 layers with no extra
 # weight for the embedding / output: emb + 0-1 / 2 / 3 / 4 + out, so stages 1-2 hold one MoE layer and no output
 k3-pp4-l5-gpipe:
