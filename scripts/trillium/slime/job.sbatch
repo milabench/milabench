@@ -9,6 +9,9 @@
 #   4. one `milabench run` per entry, in the order given; run data in $B/runs/<job name>.<job id>.<entry>
 # Everything lives in B = $SCRATCH/trillium/new/glm-rl (install.sh); $HOME is read-only from the compute nodes.
 set -uo pipefail
+# no core files: the compute nodes allow them and Slurm does not pass on the login node's limit (a K3 crash left
+# 681 GB of them, 2026-11-07); inherited by every srun step and process of the job
+ulimit -c 0
 while [[ ${1:-} == [A-Za-z_]*=* ]]; do export "$1"; shift; done
 B=${SCRATCH:?}/trillium/new/glm-rl
 C=$B/src/benchmarks/slime/dev.yaml
