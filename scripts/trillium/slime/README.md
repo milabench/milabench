@@ -73,12 +73,15 @@ Step 1, `slime-qwen3-30b-a3b-grpo` on 1 node (`trig0146`, job 1261710, 33 min, r
   in step 1), 42-54 % of the responses at the 4,096-token cap: the rollout lasts as long as the longest sample.
   Mean response 2,708-3,111 tokens. Training: 14,288 tokens/s (`perf/actor_train_tok_per_s`, already global; prompt +
   response tokens over the actor time: 785k / 58.8 s in step 1).
-- Reward (`rollout/raw_reward`, +1 / -1): -0.14, -0.27, -0.38, -0.28, -0.26, -0.35 (32 new prompts per step, lr
-  1e-6): it is computed and non-zero, 6 steps show no trend, and are not meant to.
+- Reward (`rollout/raw_reward`, +1 / -1): -0.27, -0.38, -0.28, -0.26, -0.35 in steps 1-5 (-0.14 in step 0; 32 new
+  prompts per step, lr 1e-6): computed and non-zero, no trend in 6 steps, none expected. About half the responses stop
+  at the 4,096-token cap without an `Answer:` line and score -1, so the reward mostly tracks truncation.
 - Startup (`time_to_first_step`, launch to the first training step): 470.7 s: 3.4 min to the engines up and the first
   weight sync, then the first rollout (141 s) and training step (98 s).
-- Memory: GPU at most 140.6 of 183 GB used (nvml, during rollouts: SGLang's static 0.7); the trainer 42.7 GB used,
-  25.1 GB allocated at the step's end (slime's snapshots: not the in-step peak); host 568 GB used (CPU Adam).
+- Memory: GPU at most 147 of 192 GB used (nvml's 140,613 of 183,359 MiB, during rollouts: SGLang's static 0.7); the
+  trainer 42.7 GB used, 25.1 GB allocated at the step's end (slime's snapshots: not the in-step peak). Host (CPU
+  Adam): 850-875 GB used in steps 1-5 (slime's snapshots; 568 GB before the first training step), at most 968 GB
+  (benchmate's `cpudata`), of 2,164 GB.
 - Conversion HF -> torch_dist on 8 GPUs: 3.5 min (job 1261398). Disk: 57 GB HF + 57 GB torch_dist, venv 8.8 GB, uv
   cache 9.4 GB.
 
