@@ -11,6 +11,6 @@ for arg in "$@"; do
     [[ "$arg" == TT38=* ]] && export "$arg"
 done
 REPO=${TT38:?TT38=<base> argument missing}/milabench
-srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 bash "$REPO/scripts/trillium/power_check.sh"
+srun --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 bash "$REPO/scripts/trillium/power_check.sh"
 echo "[k3-train] power_check passed on $SLURM_JOB_NUM_NODES nodes"
 exec bash "$REPO/scripts/slurm/tt_native.sh" "$@"

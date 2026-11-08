@@ -88,7 +88,7 @@ STAGE_N=$(scontrol show hostnames "$STAGE_NODES" | wc -l)
 
 # Trillium B200 only: stop at once if a node's GPUs are power-capped.
 if [ "${TT_CONFIG:-}" = trillium ]; then
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash "$TT38/milabench/scripts/trillium/power_check.sh"
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash "$TT38/milabench/scripts/trillium/power_check.sh"
     echo "[tt-native] power_check passed on $STAGE_N nodes"
 fi
 
@@ -99,7 +99,7 @@ fi
 # store absolute paths (see below).
 LOCAL_ROOT=${TT_LOCAL_ROOT:-/tmp/$USER}
 if [ -n "${TT_LOCAL_ROOT:-}" ]; then
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" mkdir -p "$LOCAL_ROOT/tmp"
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" mkdir -p "$LOCAL_ROOT/tmp"
     export TMPDIR=$LOCAL_ROOT/tmp
 fi
 echo "[tt-native] local_root=$LOCAL_ROOT $(df -h "$(dirname "$LOCAL_ROOT")" | tail -1)"
@@ -122,7 +122,7 @@ GPU_KEY=$(nvidia-smi -i 0 --query-gpu=name --format=csv,noheader | tr -cd '[:aln
 CACHE_ARCHIVE=${TT_COMPILE_CACHE-$TT38/compile-cache/$CACHE_KEY-$GPU_KEY.tar}
 mkdir -p "$(dirname "$CACHE_ARCHIVE")" 2>/dev/null || true
 if [ -n "$CACHE_ARCHIVE" ] && [ -f "$CACHE_ARCHIVE" ]; then
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "mkdir -p $LOCAL_CACHE && tar -xf $CACHE_ARCHIVE -C $LOCAL_CACHE"
     echo "[tt-native] compile_cache_restored_epoch=$(date +%s.%N) archive=$CACHE_ARCHIVE"
 fi
 CACHE_FILES_BEFORE=$( (find "$LOCAL_CACHE" -type f 2>/dev/null || true) | wc -l)
@@ -151,7 +151,7 @@ if [ "${TT_LOCAL_VENV:-0}" = 1 ]; then
     t1=$(date +%s.%N)
     LOCAL_VENV=$LOCAL_SW$SRC_VENV
     LOCAL_PY=$LOCAL_SW$PY_ROOT
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
         set -e
         rm -rf $LOCAL_SW && mkdir -p $LOCAL_SW && tar -xf $VENV_ARCHIVE -C $LOCAL_SW
         for p in $LOCAL_VENV/bin/python $LOCAL_VENV/bin/python3 $LOCAL_VENV/bin/python3.12; do
@@ -176,7 +176,7 @@ SRC_DATASETS=${MILABENCH_DIRS_DATA:-$MILABENCH_BASE/data}/datasets
 if [ "${TT_LOCAL_DATA:-1}" = 1 ] && [ -d "$SRC_DATASETS" ]; then
     LOCAL_DATASETS=$LOCAL_ROOT/tt_native_data/datasets
     t0=$(date +%s.%N)
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" bash -c "
         set -e
         rm -rf $LOCAL_DATASETS && mkdir -p $(dirname $LOCAL_DATASETS) && cp -r $SRC_DATASETS $LOCAL_DATASETS
     "
@@ -215,7 +215,7 @@ if [ -n "$CACHE_ARCHIVE" ] && [ -d "$LOCAL_CACHE" ] \
 fi
 if [ "${TT_LOCAL_CLEANUP:-0}" = 1 ]; then
     echo "[tt-native] local_root_before_cleanup $(du -sh "$LOCAL_ROOT" 2>/dev/null | cut -f1)"
-    srun --overlap --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" rm -rf "$LOCAL_ROOT" || true
+    srun --overlap --propagate=CORE --nodes="$STAGE_N" --ntasks="$STAGE_N" --ntasks-per-node=1 -w "$STAGE_NODES" rm -rf "$LOCAL_ROOT" || true
 fi
 echo "[tt-native] job_end_epoch=$(date +%s.%N)"
 exit $rc
