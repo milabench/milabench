@@ -549,6 +549,13 @@ slime-glm5-grpo:
     # what ran offline on B200 with the Qwen3-30B-A3B stand-in: flashinfer_trtllm MoE downloads its cubins (job 1261477)
     --sglang-moe-runner-backend: triton
     --sglang-sampling-backend: pytorch
+    # DSA attention as slime's GLM-5.3 script (FlashMLA from sglang-kernel): on B200 SGLang picks trtllm for both, whose
+    # flashinfer cubins it downloads at the first decode graph (job 1263962)
+    --sglang-attention-backend: dsa
+    --sglang-dsa-prefill-backend: flashmla_sparse
+    --sglang-dsa-decode-backend: flashmla_kv
+    --sglang-page-size: 64
+    --sglang-kv-cache-dtype: fp8_e4m3
 
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
