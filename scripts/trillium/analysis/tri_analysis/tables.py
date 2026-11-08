@@ -69,7 +69,16 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriKimiPeakConc", "TriKimiPeakTok", "TriKimiPeakGpu", "TriKimiPeakNode", "TriKimiPeakTpot", "TriKimiTopConc", "TriKimiTopTok", "TriKimiTopTtft", "TriKimiTopPct",
           "TriKimiCtxTopK", "TriKimiCtxOneTtft", "TriKimiCtxTtft", "TriKimiCtxTok", "TriKimiCtxOneTpot", "TriKimiCtxTpot", "TriKimiCtxTpotPct", "TriKimiCtxSixteenTtft",
           "TriKimiPowerOne", "TriKimiJOne", "TriKimiPowerSixtyFour", "TriKimiJSixtyFour", "TriKimiPowerPeak", "TriKimiJPeak", "TriKimiMainGpuW", "TriKimiMainHost",
-          "TriKimiGsm", "TriKimiGsmErr", "TriKimiArc", "TriKimiArcErr", "TriKimiGpqa", "TriKimiGpqaErr", "TriKimiMmlu", "TriKimiMmluErr", "TriKimiMmluN"]
+          "TriKimiGsm", "TriKimiGsmErr", "TriKimiArc", "TriKimiArcErr", "TriKimiGpqa", "TriKimiGpqaErr", "TriKimiMmlu", "TriKimiMmluErr", "TriKimiMmluN",
+          # New workloads: Kimi K3 pretraining (_kimi_train_numbers): the full-size run, then the 49-layer one (Small)
+          "TriKtRuns", "TriKtFailed", "TriKtLayers", "TriKtNodes", "TriKtGpus", "TriKtPp", "TriKtEp", "TriKtMicro", "TriKtSeq", "TriKtTokens",
+          "TriKtParams", "TriKtActive", "TriKtStepOne", "TriKtStepTwo", "TriKtSweepFirst", "TriKtSweepSplit", "TriKtSweepHi", "TriKtSweepLo",
+          "TriKtSweepTotal", "TriKtMeasured", "TriKtMeasuredFrom", "TriKtStep", "TriKtStepPninety", "TriKtStepMax", "TriKtStepFirst", "TriKtStepLast",
+          "TriKtTok", "TriKtTokLo", "TriKtTokHi", "TriKtMfu", "TriKtMfuSixN", "TriKtFlops", "TriKtFetch", "TriKtLowLo", "TriKtLowHi", "TriKtBubblePct",
+          "TriKtMemWorst", "TriKtMemWorstAlloc", "TriKtMemWorstStage", "TriKtMemWorstHost", "TriKtMemLast", "TriKtMemLastAlloc", "TriKtMemZero",
+          "TriKtMemZeroAlloc", "TriKtMemEdgeLo", "TriKtMemEdgeHi", "TriKtMemMidLo", "TriKtMemMidHi", "TriKtMemLimit", "TriKtHeadroom",
+          "TriKtLossFirst", "TriKtLossLast", "TriKtSmallLayers", "TriKtSmallStep", "TriKtSmallStepLo", "TriKtSmallStepHi", "TriKtSmallTok",
+          "TriKtSmallMfu", "TriKtSmallMemLast", "TriKtSmallMemZero", "TriKtSmallStepTwo", "TriKtSmallSweep", "TriKtSmallLossLast"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -989,6 +998,104 @@ def kimi_runs_table(t) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _kimi_train_numbers(t) -> dict[str, tuple]:
+    """Kimi K3 pretraining at 48 nodes, TriKt*: the completed run with the most layers (full size), and TriKtSmall* for a completed run
+    with fewer. Step times on milabench's timer (measured steps); memory max over each stage's ranks; MFU with TorchTitan's FLOPs per token."""
+    r, st, sg = (t.get(k, pd.DataFrame()) for k in ("kimi_train_runs", "kimi_train_steps", "kimi_train_stages"))
+    out = {}
+    if r.empty:
+        return out
+    r = r.assign(job=r.job.astype(str))
+    out.update({"TriKtRuns": (len(r), "d", False), "TriKtFailed": (int((r.job_state != "COMPLETED").sum()), "d", False)})
+    done = r[(r.job_state == "COMPLETED") & r.step_median.notna()].sort_values("layers") if "step_median" in r else r.iloc[:0]
+    if done.empty:
+        return out
+    x = done.iloc[-1]
+    steps = st[st.job.astype(str) == x.job].sort_values("step") if len(st) else st
+    meas = steps[steps.measured.astype(bool)] if len(steps) else steps
+    out.update({"TriKtLayers": (int(x.layers), "d", False), "TriKtNodes": (int(x.nodes), "d", False), "TriKtGpus": (int(x.gpus), "d", False),
+                "TriKtPp": (int(x.pp), "d", False), "TriKtEp": (int(x.ep), "d", False), "TriKtMicro": (int(x.microbatches), "d", False),
+                "TriKtSeq": (int(x.seq_len), ",d", False), "TriKtTokens": (int(x.global_tokens), ",d", False),
+                "TriKtParams": (x.params_total / 1e12, ".2f", False), "TriKtActive": (x.params_active / 1e9, ".0f", False),
+                "TriKtStepOne": (x.step1_min, ".1f", False), "TriKtStepTwo": (x.step2_s, ",.0f", False),
+                "TriKtMeasured": (int(x.steps_measured), "d", False), "TriKtMeasuredFrom": (int(x.measured_from), "d", False),
+                "TriKtStep": (x.step_median, ".2f", False), "TriKtStepPninety": (x.step_p90, ".2f", False), "TriKtStepMax": (x.step_max, ".2f", False),
+                "TriKtTok": (x.tok_s_gpu, ".1f", False), "TriKtTokLo": (x.tok_s_gpu_lo, ".0f", False), "TriKtTokHi": (x.tok_s_gpu_hi, ".0f", False),
+                "TriKtMfu": (x.mfu_pct, ".2f", False), "TriKtMfuSixN": (x.mfu_6n_pct, ".2f", False),
+                "TriKtFlops": (rf"${x.flops_per_token / 1e11:.2f}\times10^{{11}}$", "", False), "TriKtFetch": (x.data_wait_s, ".1f", False),
+                # 1F1B's idle share with p stages and m micro-batches, (p - 1) / (m + p - 1): a formula, not a measurement
+                "TriKtBubblePct": (100 * (x.pp - 1) / (x.microbatches + x.pp - 1), ".0f", False),
+                "TriKtMemLimit": (x.capacity_gib, ".1f", False), "TriKtLossFirst": (x.loss_first, ".2f", False), "TriKtLossLast": (x.loss_last, ".2f", False)})
+    if len(meas):
+        out["TriKtStepFirst"], out["TriKtStepLast"] = (meas.step_s.iloc[0], ".1f", False), (meas.step_s.iloc[-1], ".1f", False)
+    g = sg[sg.job.astype(str) == x.job].set_index("stage") if len(sg) else sg
+    if len(g):
+        worst = g.reserved_gib.idxmax()
+        last, zero = g.index.max(), g.index.min()
+        out.update({"TriKtMemWorst": (g.reserved_gib[worst], ".1f", False), "TriKtMemWorstAlloc": (g.allocated_gib[worst], ".1f", False),
+                    "TriKtMemWorstStage": (int(worst), "d", False), "TriKtMemWorstHost": (g.host[worst], "", False),
+                    "TriKtMemLast": (g.reserved_gib[last], ".1f", False), "TriKtMemLastAlloc": (g.allocated_gib[last], ".1f", False),
+                    "TriKtMemZero": (g.reserved_gib[zero], ".1f", False), "TriKtMemZeroAlloc": (g.allocated_gib[zero], ".1f", False),
+                    "TriKtHeadroom": (x.capacity_gib - g.reserved_gib[worst], ".1f", False)})
+        # Stages that start an Attention Residuals block (12 layers, 2 per stage: every 6th stage, while stages hold 2 layers) against
+        # the other 2-layer stages after stage 0. Which layers a stage holds is inferred from the split (93 = 45 x 2 + 3 x 1).
+        two = g[(g.index > zero) & (g.index < x.layers - x.pp)]
+        edge = two[two.index % 6 == 0]
+        mid = two[two.index % 6 != 0]
+        if len(edge) and len(mid):
+            out.update({"TriKtMemEdgeLo": (edge.reserved_gib.min(), ".1f", False), "TriKtMemEdgeHi": (edge.reserved_gib.max(), ".1f", False),
+                        "TriKtMemMidLo": (mid.reserved_gib.min(), ".1f", False), "TriKtMemMidHi": (mid.reserved_gib.max(), ".1f", False)})
+        if "low_power_pct" in g and g.low_power_pct.notna().any():
+            out["TriKtLowLo"], out["TriKtLowHi"] = (g.low_power_pct.min(), ".0f", False), (g.low_power_pct.max(), ".0f", False)
+        sw = g.sweep_s.dropna() if "sweep_s" in g else pd.Series(dtype=float)
+        split = 13  # kimi_train.SWEEP_SPLIT: slower above it
+        if len(sw) and zero in sw and split in sw:
+            first = sw.idxmin()  # the first stage step 2's backward reaches
+            out.update({"TriKtSweepFirst": (int(first), "d", False), "TriKtSweepSplit": (split, "d", False),
+                        "TriKtSweepHi": ((sw[split] - sw[first]) / (first - split), ".1f", False), "TriKtSweepLo": ((sw[zero] - sw[split]) / split, ".1f", False),
+                        "TriKtSweepTotal": (sw[zero] - sw[first], ",.0f", False)})
+    small = done[done.layers < x.layers]
+    if len(small):
+        y = small.iloc[-1]
+        ys = st[(st.job.astype(str) == y.job) & st.measured.astype(bool)] if len(st) else st
+        out.update({"TriKtSmallLayers": (int(y.layers), "d", False), "TriKtSmallStep": (y.step_median, ".2f", False),
+                    "TriKtSmallTok": (y.tok_s_gpu, ".0f", False), "TriKtSmallMfu": (y.mfu_pct, ".1f", False),
+                    "TriKtSmallStepTwo": (y.step2_s, ",.0f", False), "TriKtSmallLossLast": (y.loss_last, ".2f", False)})
+        if len(ys):
+            out["TriKtSmallStepLo"], out["TriKtSmallStepHi"] = (ys.step_s.min(), ".0f", False), (ys.step_s.max(), ".0f", False)
+        h = sg[sg.job.astype(str) == y.job].set_index("stage") if len(sg) else sg
+        if len(h):
+            out["TriKtSmallMemLast"], out["TriKtSmallMemZero"] = (h.reserved_gib[h.index.max()], ".1f", False), (h.reserved_gib[h.index.min()], ".1f", False)
+            sw = h.sweep_s.dropna() if "sweep_s" in h else pd.Series(dtype=float)
+            if len(sw) and h.index.min() in sw:
+                # 1-layer stages pause about 3 s each, too short for 1 s telemetry stage by stage: only the two ends are used
+                first = sw.idxmin()
+                out["TriKtSmallSweep"] = ((sw[h.index.min()] - sw[first]) / (first - h.index.min()), ".1f", False)
+    return out
+
+
+def kimi_train_runs_table(t) -> str:
+    """Kimi K3 pretraining at 48 nodes: every job, its state, and why it stopped (RUNS.md) or what sets it apart."""
+    r = t.get("kimi_train_runs", pd.DataFrame())
+    if r.empty:
+        return ""
+
+    def num(v, fmt):
+        return format(v, fmt) if pd.notna(v) else "--"
+
+    lines = [r"\begin{tabular}{llrlllrrrrl}", r"\toprule",
+             r"Request & Job & Layers & Grad.\ red. & Detach & State & Step 1 & Step median / p90 & Tok/s & MFU & Note \\",
+             r" & & & & losses & & min & s & per GPU & \% & \\", r"\midrule"]
+    for x in r.sort_values("start").itertuples():
+        step = f"{x.step_median:.2f} / {x.step_p90:.2f}" if pd.notna(getattr(x, "step_median", None)) else "--"
+        lines.append(f"{x.request} & {x.job} & {int(x.layers)} & {str(x.grad_reduce).upper()} & "
+                     f"{'yes' if x.detach_losses else 'no'} & {x.job_state} & {num(getattr(x, 'step1_min', None), '.1f')} & {step} & "
+                     f"{num(getattr(x, 'tok_s_gpu', None), '.1f')} & {num(getattr(x, 'mfu_pct', None), '.2f')} & "
+                     + r"\parbox[t]{5cm}{\raggedright " + _esc(x.note) + r"} \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def _operations_numbers(t) -> dict[str, tuple]:
     out = {}
     runs = t["runs"]
@@ -1166,6 +1273,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_glm_numbers(runs, t["ep_groups"]))
     out.update(_operations_numbers(t))
     out.update(_kimi_numbers(t))
+    out.update(_kimi_train_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -1383,6 +1491,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "checkpoints.tex").write_text(checkpoint_table(tables))
     (out / "kimi_passes.tex").write_text(kimi_passes_table(tables))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
+    (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     if len(runs):
         if "in_report" in runs:
             (out / "ledger.tex").write_text(ledger(runs))

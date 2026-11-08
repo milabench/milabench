@@ -1209,6 +1209,53 @@ def kimi_inference(t):
     return fig
 
 
+def kimi_training(t):
+    """Kimi K3 pretraining at 48 nodes: step time per measured step (milabench's timer), peak memory per pipeline stage (max over its
+    8 ranks) against the GPU's capacity, and the loss per step. Completed runs only: the full-size one, and fewer layers beside it."""
+    r, st, sg = (t.get(k, pd.DataFrame()) for k in ("kimi_train_runs", "kimi_train_steps", "kimi_train_stages"))
+    if r.empty or st.empty or "step_median" not in r:
+        return None
+    done = r[(r.job_state == "COMPLETED") & r.step_median.notna()].sort_values("layers", ascending=False)
+    if done.empty:
+        return None
+    fig, (a, b, c) = plt.subplots(1, 3, figsize=(TEXT_WIDTH, 2.35), gridspec_kw={"width_ratios": [1, 1.5, 1]})
+    handles = []
+    for (_, x), col, marker in zip(done.iterrows(), (SERIES[0], SERIES[1]), ("o", "s")):
+        s = st[st.job == x.job].sort_values("step")
+        m = s[s.measured.astype(bool)]
+        a.plot(m.step, m.step_s, color=col, lw=1.0)
+        _pt(a, m.step, m.step_s, col, False, marker=marker, ms=3.5)
+        c.plot(s.step, s.loss, color=col, lw=1.0)
+        _pt(c, s.step, s.loss, col, False, marker=marker, ms=3.5)
+        g = sg[sg.job == x.job].sort_values("stage")
+        full = col == SERIES[0]
+        b.plot(g.stage, g.reserved_gib, color=col, lw=1.0 if full else 0.8)
+        _pt(b, g.stage, g.reserved_gib, col, False, marker=marker, ms=3 if full else 2.5)
+        if full:  # allocated for the full-size run only: two lines per run do not read
+            b.plot(g.stage, g.allocated_gib, color=col, lw=0.8, ls=(0, (2, 1.5)), alpha=0.8)
+        handles.append(_handle(col, f"{int(x.layers)} layers, {str(x.grad_reduce).upper()} reduction", False, marker=marker, ls="-"))
+    cap = done.capacity_gib.max()
+    if pd.notna(cap):
+        b.axhline(cap, color=CRITICAL, lw=0.7, ls=(0, (1, 2)))
+        b.annotate(f"GPU capacity, {cap:.1f} GiB", (0.5, cap), xycoords=("axes fraction", "data"), xytext=(0, -2), textcoords="offset points",
+                   fontsize=6, color=CRITICAL, ha="center", va="top")
+    b.legend(handles=[_handle(SERIES[0], "reserved", False, ls="-"), _handle(SERIES[0], "allocated", False, marker="", ls=(0, (2, 1.5)))],
+             loc="lower left", fontsize=6)
+    a.set_xlabel("step (measured)")
+    a.set_ylabel("step time (s)")
+    a.set_ylim(0, None)
+    b.set_xlabel("pipeline stage (one node each)")
+    b.set_ylabel("peak memory per GPU (GiB)")
+    b.set_ylim(0, None)
+    c.set_xlabel("step")
+    c.set_ylabel("training loss")
+    for ax in (a, b, c):
+        style.finish(ax, trim=False)
+    fig.legend(handles=handles, loc="upper center", ncol=len(handles), fontsize=6, frameon=False, bbox_to_anchor=(0.5, 1.0))
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    return fig
+
+
 FIGURES = {
     "machine_status": machine_status,
     "health_gpus": health_gpus,
@@ -1232,6 +1279,7 @@ FIGURES = {
     "startup": startup,
     "energy": energy,
     "kimi_inference": kimi_inference,
+    "kimi_training": kimi_training,
 }
 
 
