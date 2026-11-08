@@ -123,6 +123,14 @@ k3-pp4-l7-4k:
   argv:
     --seq-len: 4096
     --pp-microbatches: 32
+# Allocator (review option c): reserved ran ~50 GiB above allocated on MoE stages (job 1261618), and the GPipe tests
+# failed with "expandable_segments: memory mapping failed" (expandable segments already on: benchfile sets
+# PYTORCH_ALLOC_CONF=expandable_segments:True). garbage_collection_threshold frees unused cached blocks of every pool
+# (stream) once the cap's threshold is passed; it only acts with a memory fraction set (0.99: 176.6 of 178.3 GiB)
+k3-pp4-l7-gpipe-gc:
+  inherits: k3-pp4-l7-gpipe
+  env:
+    PYTORCH_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.99,garbage_collection_threshold:0.8"
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most, BF16: the FP32
 #     master did not fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
