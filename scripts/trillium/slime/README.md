@@ -616,61 +616,69 @@ over 1,850 (GiB, of 2,015.6).
 13:39:36-15:26:05 (1:46:29), exit 0, milabench PASS; the trainer on trig0102, 0106 (stage 0), 0109, 0111, 0113, 0116,
 0117-0121, 0126, 0129, 0130 and 0131, 0134 (stage 7), 2 engines on the other 16 (the head node trig0101 among them).
 Step 0 (the warm-up): rollout 1,169 s (10.28 tokens/s per GPU), training 677 s, sync 44.3 s (the first, also over
-NCCL), tis_abs 0.0799 (GLM-RL-03: 0.0792: the NCCL-synced engines hold the trainer's weights).
+NCCL), tis_abs 0.0799 (GLM-RL-03: 0.0792; step 0 cannot tell a correct sync from a no-op one: both sides start from the
+same HF weights).
 
-| per step | step 1 | step 1 without the restart (derived) | step 2 | estimate | GLM-RL-03 (steps 1-2) |
+| per step | step 1 | step 1 without the 2 restarts (derived) | step 2 | estimate | GLM-RL-03 (steps 1-2) |
 |---|---|---|---|---|---|
-| rollout | 2,272.8 s (5.45 tokens/s per GPU) | about 1,300 s | 954.8 s (11.18) | 17-21 min | 1,047-1,111 s (4.5-5.7) |
+| rollout | 2,272.8 s (5.45 tokens/s per GPU) | 919-1,294 s | 954.8 s (11.18) | 17-21 min | 1,047-1,111 s (4.5-5.7) |
 | training | 204.2 s (8,564 tokens/s) | | 185.6 s (8,221) | 2.6-5.2 min | 203-215 s (7.0-7.9k) |
 | sync | 23.3 s | | 22.1 s | 0.5-1.5 min | 33-35 s |
 | offload, onload | none | | none | none | 28-32 s |
-| step | 2,508.2 s | about 1,535 s | 1,169.4 s | 20-28 min | 1,338-1,384 s |
-| node-seconds | 80,262 | about 49,100 | 37,421 | | 42,826-44,292 |
+| step | 2,508.2 s | 1,154-1,529 s | 1,169.4 s | 20-28 min | 1,338-1,384 s |
+| node-seconds | 80,262 | 36,941-48,941 | 37,421 | | 42,826-44,292 |
 | response mean, truncated, reward | 1,549, 7.3 %, 0.738 | | 1,335, 6.1 %, 0.771 | | |
 | tis_abs, grad norm | 0.0813, 0.065 | | 0.0739, 0.068 | | 0.073-0.081, 0.061-0.067 |
 
-Rollout 1's restart: 9 requests (5, 4, 0 per rollout) failed slime's top-k log-prob check
-(`score_centering.py:133-134`: NaN, inf or a positive value among the 128 kept; SGLang's float32 log(softmax) cannot
-be positive, so NaN or -inf) and were re-sent whole (`http_utils.py:190-222`), their new sample used as is. One of
-rollout 1's, failed at 14:39:04 after 15.3 min, ran again on trig0108 DP43 alone from 14:39:05 to the 8,192 cap at
-15:01:35 (1,351 s, 6.1 tokens/s); every other request had ended by about 14:45:25 (the last other rank's `Decode
-batch` line, 14:45:19). Without that restart (derived, not measured): rollout 1 about 1,300 s, step 1 about 1,535 s,
-the steps 1-2 mean about 1,352 s against 1,839 s with it. Cause of the failures not determined: the weights match
-(tis_abs above), and none happened in GLM-RL-02, -03, -04 (6,656 requests) nor in the disaggregated 4-node test; logging
-the failing array would tell NaN from -inf.
+Rollout 1's restarts: 9 requests (5, 4, 0 per rollout) failed slime's top-k log-prob check
+(`score_centering.py:133-134`: NaN, inf or a positive value among the 128 kept; SGLang's float32 log(softmax) cannot be
+positive, so NaN or -inf) and were re-sent whole (`http_utils.py:190-222`), their new sample used as is. Two of rollout
+1's failed at 14:39:04, after 15.3 min, and ran again on trig0108: DP43 to the 8,192 cap at 15:01:35 (1,351 s, 6.1
+tokens/s), DP44 to 14:45:19. Without them (derived, not measured), rollout 1 ends with the last other request, between
+14:39:04 and 14:45:19: 919-1,294 s, step 1 1,154-1,529 s, the steps 1-2 mean 1,162-1,349 s against 1,839 s with them.
+Cause of the failures not determined. The engines hold the trainer's weights: steps 1-2's tis_abs 0.0813 and 0.0739
+against GLM-RL-03's 0.0812 and 0.0727. None happened in GLM-RL-02, -03, -04 (6,656 requests) nor in the disaggregated
+4-node test; logging the failing array would tell NaN from -inf.
 
 Training: 8.2-8.6k tokens/s on 128 GPUs against 7.0-7.9k on 256, 2.2 times per GPU (estimated: about 13 micro-batches
 per DP16 rank, bubble about 35 %; and no offload). Sync over NCCL 22-23 s against IPC's 33-35 s. Startup to the first
 sync 12.9 min (estimate 20).
 
 Memory (slime's `Memory-Usage` snapshots, GiB): trainer host, flat from step 0's optimizer step: stage 0 1,246-1,253,
-the middle stages 871-879, the last stage 1,676.5-1,677.3 (1.80 TB; estimate 1.63-1.75 TB) of 2,015.6. Trainer GPU at
-the snapshots: last stage up to 122.6, stage 0 up to 92.0, middle 43-58 (estimate 110-115 for the largest stage; not
-peaks). Engine GPU (the head node, nvml): 152.0 (estimate 150-159).
+the middle stages 871-879 (trig0109 and trig0111 inferred: no snapshot after the optimizer step), the last stage
+1,676.5-1,677.3 (1.80 TB; estimate 1.63-1.75 TB) of 2,015.6. Trainer GPU at the snapshots: last stage up to 122.6, stage
+0 up to 92.0, middle 43-58 (estimate 110-115 for the largest stage; not peaks). Engine GPU (the head node, nvml): 152.0
+(estimate 150-159).
 
-The drains. At the end, 9 of the 16 trainer nodes drained with `health.chk.nvidia-smi.unresponsive`, none of the 16
-engine nodes. slime returned at 15:25:07, `ray stop --force` was done on every node by about 15:25:18, and job.sbatch
-logged "GPUs free after 0 s" on all 32 (its `nvidia-smi --query-compute-apps` answered at once); the drains came at
-15:25:33-35 (trig0117-0120, 0130: middle stages, about 875 GiB), 15:25:42-43 (trig0102, 0106: stage 0, about 1,250)
-and 15:25:56-59 (trig0131, 0134: the last stage, about 1,677), while job.sbatch's teardown (`nvrm end`, removing
-/dev/shm) still ran; the job ended at 15:26:05. Not drained: trig0109, 0111, 0113, 0116, 0121, 0126, 0129, all middle
-stages at 871-879 GiB, as the drained middle nodes. So host memory per node separates them only at the extremes:
-every node at 1,246 GiB or more drained, half of those at about 875, and the drain time grows with it. That fits a
-driver busy after the processes left the GPUs, releasing their pinned host memory (the CPU optimizer's and slime's
-BF16 backup, `actor.py:128-131`), with the health check answering when that ends; the middle stages sit at its
-threshold. It does not fit by size alone: GLM-RL-03 and -04's last stages at 992-1,039 GiB did not drain. What
-differs at their exit: the colocated trainers end offloaded (after their last training step), the disaggregated ones
-die with their GPU memory and the NCCL groups to the engines alive; not verified. The node's own kernel log and the
-health check's would tell.
+The drains. 9 of the 16 trainer nodes drained with `health.chk.nvidia-smi.unresponsive`, none of the 16 engine nodes.
+Slurm's reason timestamps (`sinfo -R` at 15:28:36, set by root; sacctmgr's 15:26:06 is when the events were recorded,
+after the job ended):
 
-The fix (job.sbatch `release_gpus`, not run): after the GPUs are free, wait until none of the job's processes
-(`python`, `raylet`, `gcs_server`, `ray::*`, `sglang*`) is left on the node and `timeout 5 nvidia-smi -L` answers,
-at most 90 s, logged per node; the GPU wait itself is now bounded by `timeout 10` per query, killed at 100 s, given up
-at 150 s; 240 s in all, inside the 300 s between SIGUSR1 and the time limit. It can be tested small: the 4-node
-disaggregated entry's trainer nodes hold 751 and 900 GiB (job 1266823, no drain), and the new line measures, per node,
-how long the processes take to leave and nvidia-smi to answer, whether or not a drain would have followed.
+| reason time | nodes (pipeline stage; host, GiB) |
+|---|---|
+| 15:25:33 | trig0117 (3; about 875), trig0130 (6; about 875) |
+| 15:25:34 | trig0118 (3) |
+| 15:25:35 | trig0119, trig0120 (4) |
+| 15:25:42 | trig0102 (0; about 1,250) |
+| 15:25:43 | trig0106 (0) |
+| 15:25:56 | trig0134 (7; about 1,677) |
+| 15:25:59 | trig0131 (7) |
 
-### Step 4, prepared entries (not posted)
+The sequence (sacct): slime returned at 15:25:07; milabench's own `ray stop` (no `--force`, step .4) ran
+15:25:12-15:26:00, 48 s against 7 s in GLM-RL-03, and 14 of the 32 nodes logged `Stopped only N out of M Ray processes
+within the grace period` between 15:25:23 and 15:25:54; job.sbatch's `release_gpus` (step .5) ran only after,
+15:26:01-04, and found the GPUs free. Every drain came inside the `ray stop` step, while the job's processes were still
+exiting. Slurm runs its health check every 300 s in any node state (`HealthCheckInterval=300`,
+`HealthCheckNodeState=ANY`), so a check landing in that window drains the node whatever runs after it. Not drained:
+trig0109, 0111, 0113, 0116, 0121, 0126, 0129, middle stages at 871-879 GiB like the drained middle nodes (0109's and
+0111's inferred). Host memory per node separates them only at the extremes (every node at 1,246 GiB or more drained, 5
+of the 12 at about 875), and the reason time grows with it. A likely contributor (inferred, not verified): the
+disaggregated trainers exit holding about 94 GiB of GPU memory and up to 1.68 TiB of pinned host memory, and Ray's stop
+took 48 s against 7; the colocated trainers end offloaded (GLM-RL-03's last lines: "offload model", 72.6 to 10.2 GiB)
+with 992-1,039 GiB of host, and did not drain. No teardown change: a fix, if one is ever needed, belongs in the exit
+itself (offload or free before stopping), not after it (one in `release_gpus` was written and reverted at the review of
+a8fcf82e).
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
