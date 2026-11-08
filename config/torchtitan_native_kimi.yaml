@@ -99,6 +99,13 @@ k3-pp4-l6:
   argv:
     --pp-schedule: 1F1B
     --pp-microbatches: 16
+# k3-pp4-l6 failed after step 1 on 3 node sets (jobs 1261433, 1261501, 1261567: per-stage gradient norms, then
+# "Invalid access of peer GPU memory over nvlink"); its stage 0 (embedding + dense layer 0) has no MoE layer, which
+# skips the quantile-balancing hook's all-reduce. 7 layers: every stage has an MoE layer (emb + 0-1 / 2-3 / 4-5 / 6 + out)
+k3-pp4-l7:
+  inherits: k3-pp4-l6
+  argv:
+    --n-layers: 7
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most (93 layers +
 #     embedding + output = 95 units over 48 stages), BF16: the FP32 master did not fit 2 MoE layers + the output
