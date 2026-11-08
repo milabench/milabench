@@ -211,6 +211,7 @@ k3-pp4-l8-depth:
     --pp-last-stage-less-layers: 1
     --pp-microbatches: 128
     --memory-snapshot-freq: 3
+    --pp-memory-log: true
     --log-freq: 1
 k3-pp4-l8-depth-m16:
   inherits: k3-pp4-l8-depth

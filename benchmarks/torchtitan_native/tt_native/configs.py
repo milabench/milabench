@@ -175,6 +175,10 @@ class Options:
     profile_freq: int = 0
     """> 0: TorchTitan's profiler traces step ``profile_freq`` once, every rank,
     into ``$MILABENCH_DIR_RUN/traces``."""
+    pp_memory_log: bool = False
+    """Kimi K3: the last pipeline stage's local rank 0 prints one ``[k3-mem]`` line per
+    micro-batch: allocated before / after its forward, after the loss, after its backward,
+    the step's running peak at each point, reserved (GiB)."""
     memory_snapshot_freq: int = 0
     """> 0: TorchTitan's CUDA memory snapshot every N steps and on out-of-memory, every
     rank, into ``$MILABENCH_DIR_RUN/memory_snapshot`` (view: pytorch.org/memory_viz)."""
@@ -208,6 +212,55 @@ def _patch_kimi_pp_stage() -> None:
     AttnResPipelineStage.forward_one_chunk = patched
 
 
+def _patch_last_stage_memory_log() -> None:
+    """``Options.pp_memory_log``: memory of the last stage around each micro-batch.
+
+    The loss (TorchTitan's chunked loss: the output layer and cross-entropy, with their own
+    backward) runs between the stage's forward and its backward, so "loss" is allocated at
+    the start of the backward. The peaks are the step's running maximum (TorchTitan resets
+    the peak stats at each logged step)."""
+    import torch
+    from torchtitan.models.kimi_k3.pipeline_parallel.stage import AttnResPipelineStage
+
+    if os.environ.get("LOCAL_RANK", "0") != "0":
+        return
+    gib = 1024**3
+    state: dict = {"step": 0, "mbs": {}}
+
+    def point():
+        return torch.cuda.memory_allocated() / gib, torch.cuda.max_memory_allocated() / gib
+
+    forward_one_chunk = AttnResPipelineStage.forward_one_chunk
+    backward_one_chunk = AttnResPipelineStage.backward_one_chunk
+
+    def forward(self, fwd_chunk_id, *args, **kwargs):
+        if not self.is_last:
+            return forward_one_chunk(self, fwd_chunk_id, *args, **kwargs)
+        if fwd_chunk_id == 0:
+            state["step"] += 1
+        before = point()
+        out = forward_one_chunk(self, fwd_chunk_id, *args, **kwargs)
+        state["mbs"][fwd_chunk_id] = (before, point())
+        return out
+
+    def backward(self, bwd_chunk_id, *args, **kwargs):
+        if not self.is_last or bwd_chunk_id not in state["mbs"]:
+            return backward_one_chunk(self, bwd_chunk_id, *args, **kwargs)
+        loss = point()
+        out = backward_one_chunk(self, bwd_chunk_id, *args, **kwargs)
+        (fs, fe), bwd = state["mbs"].pop(bwd_chunk_id), point()
+        print(
+            f"[k3-mem] step {state['step']} mb {bwd_chunk_id} alloc fwd {fs[0]:.2f}->{fe[0]:.2f} "
+            f"loss {loss[0]:.2f} bwd {bwd[0]:.2f} | peak {fe[1]:.2f} {loss[1]:.2f} {bwd[1]:.2f} | "
+            f"reserved {torch.cuda.memory_reserved() / gib:.2f}",
+            flush=True,
+        )
+        return out
+
+    AttnResPipelineStage.forward_one_chunk = forward
+    AttnResPipelineStage.backward_one_chunk = backward
+
+
 def _patch_init_timeouts(seconds: int) -> None:
     """TorchTitan gives ``init_timeout_seconds`` to the default group only: the mesh
     groups, the pipeline's included, keep torch's 10-min NCCL default until its
@@ -238,6 +291,8 @@ def _model_config(opts: Options):
 
         _patch_kimi_pp_stage()
         _patch_init_timeouts(opts.init_timeout_seconds)
+        if opts.pp_memory_log:
+            _patch_last_stage_memory_log()
     model = build(opts.flavor, seq_len=opts.seq_len, attn_backend=opts.attn_backend)
     # Text-only pre-training: the 27B and Kimi-K3 flavors ship a vision encoder, which would
     # run on dummy inputs every step and is not part of the decoder FLOPs.
