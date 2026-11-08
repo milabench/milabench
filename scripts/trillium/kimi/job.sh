@@ -3,6 +3,7 @@
 # job's nodes, then a clean end on every node (vLLM and Ray stopped, no process left on a GPU). Needs MILABENCH_BASE and
 # ENTRY (--export=ALL).
 set -uo pipefail
+ulimit -c 0  # the compute nodes allow core dumps (a K3 crash left 681 GB of them, 2026-11-07)
 : "${MILABENCH_BASE:?}" "${ENTRY:?}"
 SRC=$MILABENCH_BASE/src
 export PATH=$SRC/.venv/bin:$PATH MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1
