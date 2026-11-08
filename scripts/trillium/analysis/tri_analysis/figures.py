@@ -8,6 +8,7 @@ SYNTHETIC watermark in every figure drawn wholly or partly from synthetic data.
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 from matplotlib.colors import LogNorm
@@ -1266,29 +1267,34 @@ def kimi_training(t):
 
 
 def glm_rl(t):
-    """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), without and with
-    rollout routing replay side by side (GLM-RL-03, GLM-RL-04, same nodes), and the per-sequence decode speed in the engines' log
-    lines over the measured rollouts without replay (a sample: Ray prints one rank's line per repeat window). Completed runs only."""
+    """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), colocated without
+    and with rollout routing replay and disaggregated side by side (GLM-RL-03, GLM-RL-04, GLM-RL-05, same nodes), and the per-sequence
+    decode speed in the engines' log lines over the measured rollouts colocated without replay (a sample: Ray prints one rank's line
+    per repeat window). Completed runs only."""
     r, st, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_decode"))
     if r.empty or st.empty or "rest_s" not in st:
         return None
     r = r.sort_values("start")
-    runs = [(str(x.job), bool(x.routing_replay)) for x in r.itertuples()]
-    base = next((job for job, rp in runs if not rp), runs[0][0])
+    colocated = r.colocate.astype(bool) if "colocate" in r else pd.Series(True, index=r.index)
+    hatches = {(True, False): None, (True, True): "////", (False, False): "...."}  # (colocated, routing replay)
+    names = {(True, False): "colocated", (True, True): "colocated, routing replay", (False, False): "disaggregated"}
+    runs = [(str(x.job), (bool(c), bool(x.routing_replay))) for x, c in zip(r.itertuples(), colocated)]
+    base = next((job for job, kind in runs if kind == (True, False)), runs[0][0])
     fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6), gridspec_kw={"width_ratios": [1.2, 1.5]})
     parts = [("rollout_s", "rollout", SERIES[0]), ("train_s", "training", SERIES[1]), ("sync_s", "weight sync", SERIES[2]),
              ("rest_s", "rest (offload, onload, data)", LIGHT)]
     steps = sorted(st.step.unique())
     width = 0.8 / len(runs)
     top = 0.0
-    for i, (job, replay) in enumerate(runs):
+    for i, (job, kind) in enumerate(runs):
         g = st[st.job.astype(str) == job].set_index("step").reindex(steps)
         x = np.arange(len(steps)) + (i - (len(runs) - 1) / 2) * width
         bottom = np.zeros(len(steps))
+        hatch = hatches.get(kind)
         for col, label, color in parts:
             v = g[col].to_numpy(dtype=float) / 60
-            a.bar(x, v, bottom=bottom, width=width * 0.92, color=color, edgecolor="white" if not replay else INK2, linewidth=0.5,
-                  hatch="////" if replay else None, label=label if i == 0 else None)
+            a.bar(x, v, bottom=bottom, width=width * 0.92, color=color, edgecolor="white" if hatch is None else INK2, linewidth=0.5,
+                  hatch=hatch, label=label if i == 0 else None)
             bottom += np.nan_to_num(v)
         for xi, total in zip(x, g.step_s / 60):
             if pd.notna(total):
@@ -1297,10 +1303,11 @@ def glm_rl(t):
     warm = dict(zip(st.step, st.warmup.astype(bool)))
     a.set_xticks(np.arange(len(steps)))
     a.set_xticklabels([f"{int(s)}\n(warm-up)" if warm.get(s) else str(int(s)) for s in steps], fontsize=6)
-    a.set_xlabel("step (left bar: without routing replay; right, hatched: with)")
+    a.set_xlabel("step (bars left to right in the legend's order)")
     a.set_ylabel("time per step (min)")
-    a.set_ylim(0, top * 1.35)
-    a.legend(loc="upper right", fontsize=5.5, frameon=False, ncol=2)
+    a.set_ylim(0, top * 1.1)
+    kinds = [mpatches.Patch(facecolor="white", edgecolor=INK2, linewidth=0.5, hatch=hatches[kind], label=names[kind]) for _, kind in runs]
+    a.legend(handles=a.get_legend_handles_labels()[0] + kinds, loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=5.5, frameon=False, ncol=2)
     meas = st[(st.job.astype(str) == base) & ~st.warmup.astype(bool)]
     d = dc[(dc.job.astype(str) == base) & dc.step.isin(meas.step) & ~dc.idle.astype(bool)] if len(dc) and "idle" in dc else dc.iloc[:0]
     if d.empty:
@@ -1315,7 +1322,7 @@ def glm_rl(t):
                        fontsize=5.5, color=MUTED, ha="right", va="bottom", rotation=90)
             handles.append(_handle(SERIES[0], f"rollout {int(step)}", False, marker=marker))
         b.set_ylim(0, 11)
-        b.set_xlabel("minutes into the rollout (without routing replay)")
+        b.set_xlabel("minutes into the rollout (colocated, without routing replay)")
         b.set_ylabel("decode tokens/s per sequence")
         b.legend(handles=handles, loc="lower left", fontsize=6, frameon=False)
     for ax in (a, b):

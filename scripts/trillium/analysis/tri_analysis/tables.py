@@ -112,7 +112,19 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGrRpTisAbsOne", "TriGrRpTisAbsTwo", "TriGrRpTisClipOne", "TriGrRpTisClipTwo", "TriGrRpTisRatioOne", "TriGrRpTisRatioTwo",
           "TriGrRpClipRatioOne", "TriGrRpClipRatioTwo", "TriGrRpRewardOne", "TriGrRpRewardTwo", "TriGrRpTruncOne", "TriGrRpTruncTwo", "TriGrRpGradTwo",
           "TriGrRpDecodeReqOne", "TriGrRpDecodeReqTwo", "TriGrRpDecodeDropOne", "TriGrRpDecodeDropTwo", "TriGrRpHostLo", "TriGrRpHostHi",
-          "TriGrRpHostNodes", "TriGrRpHostLastHi", "TriGrRpHeadHost", "TriGrRpGpuRollout"]
+          "TriGrRpHostNodes", "TriGrRpHostLastHi", "TriGrRpHeadHost", "TriGrRpGpuRollout",
+          # GLM-RL-05, disaggregated (TriGrDg*): the layout, step 0, steps 1 and 2, the top-k log-prob retries, memory
+          "TriGrDgTrainerNodes", "TriGrDgEngineNodes", "TriGrDgTrainerGpus", "TriGrDgEngineGpus", "TriGrDgEngines", "TriGrDgEp", "TriGrDgDp",
+          "TriGrDgStartup", "TriGrDgWarmRollout", "TriGrDgWarmTrain", "TriGrDgWarmStep", "TriGrDgSyncFirst",
+          "TriGrDgRolloutOne", "TriGrDgRolloutTwo", "TriGrDgRolloutMinOne", "TriGrDgTrainOne", "TriGrDgTrainTwo", "TriGrDgSyncOne",
+          "TriGrDgSyncTwo", "TriGrDgRestOne", "TriGrDgRestTwo", "TriGrDgStepOne", "TriGrDgStepTwo", "TriGrDgStepMinOne", "TriGrDgStepMinTwo",
+          "TriGrDgTrainTokOne", "TriGrDgTrainTokTwo", "TriGrDgTrainPerGpu", "TriGrDgMicroOne", "TriGrDgMicroTwo", "TriGrDgBubbleOne",
+          "TriGrDgBubbleTwo", "TriGrDgRollTokOne", "TriGrDgRollTokTwo", "TriGrDgDecodeReqOne", "TriGrDgDecodeReqTwo", "TriGrDgTisAbsOne",
+          "TriGrDgTisAbsTwo", "TriGrDgTisClipOne", "TriGrDgTisClipTwo", "TriGrDgRewardOne", "TriGrDgRewardTwo", "TriGrDgTruncOne",
+          "TriGrDgTruncTwo", "TriGrDgTopkWarm", "TriGrDgTopkOne", "TriGrDgTopkTwo", "TriGrDgTopkAll", "TriGrDgRetryMinOne",
+          "TriGrDgLastGroupMinOne", "TriGrDgLatMaxOne", "TriGrDgHostLastLo", "TriGrDgHostLastHi", "TriGrDgHostLastTb", "TriGrDgHostFirstLo",
+          "TriGrDgHostFirstHi", "TriGrDgHostMidLo", "TriGrDgHostMidHi", "TriGrDgHostMidNodes", "TriGrDgHostMidAll", "TriGrDgHostEngine",
+          "TriGrDgGpuRollout", "TriGrDgGpuTrainer"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1222,7 +1234,8 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
     r, st, h, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode"))
     out = {}
     done = r[r.job_state == "COMPLETED"] if len(r) else r
-    base = done[~done.routing_replay.astype(bool)] if len(done) else done
+    coloc = done[done.colocate.astype(bool)] if len(done) else done
+    base = coloc[~coloc.routing_replay.astype(bool)] if len(coloc) else coloc
     if base.empty or st.empty:
         return out
     x = base.iloc[-1]
@@ -1281,8 +1294,68 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
                     "TriGrHostLastTb": (last.host_used_gib.max() * 2**30 / 1e12, ".2f", False),
                     "TriGrHostOtherHi": (other.host_used_gib.max(), ".0f", False), "TriGrHostTotal": (hh.host_total_gib.max(), ",.0f", False),
                     "TriGrGpuCap": (hh.gpu_total_gib.max(), ".1f", False)})
-    replay = done[done.routing_replay.astype(bool)]
+    replay = coloc[coloc.routing_replay.astype(bool)]
     out.update(_glm_rl_replay_numbers(x, replay.iloc[-1] if len(replay) else None, st, h, t.get("glm_rl_memory", pd.DataFrame())))
+    dis = done[~done.colocate.astype(bool)]
+    if len(dis):
+        out.update(_glm_rl_disagg_numbers(x, dis.iloc[-1], st, t.get("glm_rl_memory", pd.DataFrame())))
+    return out
+
+
+def _glm_rl_disagg_numbers(x, z, st, mem) -> dict[str, tuple]:
+    """GLM-RL-05 (z), disaggregated: the trainer on its own nodes, the engines on the others, against GLM-RL-03 (x, colocated, without
+    routing replay). Training per GPU: the means of steps 1 and 2 of slime's tokens/s over each run's trainer GPUs. Host memory: slime's
+    snapshots (not peaks) from step 0's training on, each node's highest; the first node is an engine node here, and its host
+    figure is milabench's continuous sample."""
+    s = st[st.job.astype(str) == str(z.job)].set_index("step")
+    b = st[st.job.astype(str) == str(x.job)].set_index("step")
+    out = {"TriGrDgTrainerNodes": (int(z.trainer_nodes), "d", False), "TriGrDgEngineNodes": (int(z.nodes - z.trainer_nodes), "d", False),
+           "TriGrDgTrainerGpus": (int(z.gpus), "d", False), "TriGrDgEngineGpus": (int(z.rollout_gpus), "d", False),
+           "TriGrDgEngines": (int(z.engines), "d", False), "TriGrDgEp": (int(z.ep), "d", False), "TriGrDgDp": (int(z.dp), "d", False),
+           "TriGrDgStartup": (z.startup_min, ".1f", False), "TriGrDgHostEngine": (z.head_host_gib, ".0f", False),
+           "TriGrDgGpuRollout": (s.gpu_rollout_gib.max(), ".1f", False),
+           "TriGrDgTopkAll": (int(s.topk_errors.sum()), "d", False)}
+    if 0 in s.index:
+        w = s.loc[0]
+        out.update({"TriGrDgWarmRollout": (w.rollout_s, ",.1f", False), "TriGrDgWarmTrain": (w.train_s, ",.1f", False),
+                    "TriGrDgWarmStep": (w.step_s, ",.1f", False), "TriGrDgSyncFirst": (w.sync_s, ".1f", False),
+                    "TriGrDgTopkWarm": (int(w.topk_errors), "d", False)})
+    for k, n in ((1, "One"), (2, "Two")):
+        if k not in s.index:
+            continue
+        y = s.loc[k]
+        out.update({f"TriGrDgRollout{n}": (y.rollout_s, ",.1f", False), f"TriGrDgTrain{n}": (y.train_s, ".1f", False),
+                    f"TriGrDgSync{n}": (y.sync_s, ".1f", False), f"TriGrDgRest{n}": (y.rest_s, ".1f", False),
+                    f"TriGrDgStep{n}": (y.step_s, ",.1f", False), f"TriGrDgStepMin{n}": (y.step_s / 60, ".1f", False),
+                    f"TriGrDgTrainTok{n}": (y.train_tok_s, ",.0f", False), f"TriGrDgMicro{n}": (int(y.microbatches), "d", False),
+                    f"TriGrDgBubble{n}": (y.bubble_pct, ".0f", False), f"TriGrDgRollTok{n}": (y.rollout_tok_s_gpu, ".2f", False),
+                    f"TriGrDgDecodeReq{n}": (y.decode_tok_s_median, ".2f", False), f"TriGrDgTisAbs{n}": (y.tis_abs, ".4f", False),
+                    f"TriGrDgTisClip{n}": (y.tis_clipfrac, ".4f", False), f"TriGrDgReward{n}": (y.raw_reward, ".3f", False),
+                    f"TriGrDgTrunc{n}": (y.truncated_pct, ".1f", False), f"TriGrDgTopk{n}": (int(y.topk_errors), "d", False)})
+    if 1 in s.index:
+        y = s.loc[1]
+        out.update({"TriGrDgRolloutMinOne": (y.rollout_s / 60, ".1f", False), "TriGrDgLatMaxOne": (y.latency_max_s, ",.0f", False)})
+        if pd.notna(y.get("topk_last_min")):
+            out["TriGrDgRetryMinOne"] = (y.topk_last_min, ".1f", False)
+        if pd.notna(y.get("last_group_min")):
+            out["TriGrDgLastGroupMinOne"] = (y.last_group_min, ".1f", False)
+    both = [k for k in (1, 2) if k in s.index and k in b.index]
+    if both:
+        out["TriGrDgTrainPerGpu"] = ((s.loc[both, "train_tok_s"].mean() / z.gpus) / (b.loc[both, "train_tok_s"].mean() / x.gpus), ".2f", False)
+    m = mem[(mem.job.astype(str) == str(z.job)) & mem.after_train0.astype(bool)] if len(mem) else mem
+    if len(m):
+        node = m.groupby(["host", "stage"]).host_used_gib.max().reset_index()  # each node's highest snapshot
+        last, first = node[node.stage == z.pp - 1], node[node.stage == 0]
+        mid = node[(node.stage > 0) & (node.stage < z.pp - 1)]
+        out.update({"TriGrDgHostLastLo": (last.host_used_gib.min(), ",.1f", False), "TriGrDgHostLastHi": (last.host_used_gib.max(), ",.1f", False),
+                    "TriGrDgHostLastTb": (last.host_used_gib.max() * 2**30 / 1e12, ".2f", False),
+                    "TriGrDgHostFirstLo": (first.host_used_gib.min(), ",.0f", False), "TriGrDgHostFirstHi": (first.host_used_gib.max(), ",.0f", False),
+                    "TriGrDgHostMidLo": (mid.host_used_gib.min(), ".0f", False), "TriGrDgHostMidHi": (mid.host_used_gib.max(), ".0f", False),
+                    "TriGrDgHostMidNodes": (len(mid), "d", False),
+                    "TriGrDgHostMidAll": (int(z.trainer_nodes * (z.pp - 2) / z.pp), "d", False)})
+        trainer = mem[mem.job.astype(str) == str(z.job)]
+        if "gpu_used_gib" in trainer:
+            out["TriGrDgGpuTrainer"] = (trainer.gpu_used_gib.max(), ".1f", False)
     return out
 
 
@@ -1325,7 +1398,7 @@ def _glm_rl_replay_numbers(x, y, st, h, mem) -> dict[str, tuple]:
     out.update({"TriGrRpHeadHost": (y.head_host_gib, ".1f", False), "TriGrRpGpuRollout": (q.gpu_rollout_gib.max(), ".1f", False)})
     if len(mem):
         head = str(x.hosts).split(";")[0]
-        m = mem[mem.after_train0.astype(bool) & (mem.host != head)]
+        m = mem[mem.after_train0.astype(bool) & (mem.host != head) & mem.job.astype(str).isin([str(x.job), str(y.job)])]
         m = m.assign(job=m.job.astype(str))
         same = m.groupby(["host", "phase", "step", "job"]).host_used_gib.max().unstack("job").dropna()
         if str(x.job) in same and str(y.job) in same and len(same):
@@ -1343,14 +1416,17 @@ def glm_rl_runs_table(t) -> str:
     r = t.get("glm_rl_runs", pd.DataFrame())
     if r.empty:
         return ""
-    lines = [r"\begin{tabular}{llllllrrlll}", r"\toprule",
-             r"Request & Job & Routing & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
-             r" & & replay & & & & per step & & & & \\", r"\midrule"]
+    lines = [r"\begin{tabular}{lllllllrrlll}", r"\toprule",
+             r"Request & Job & Layout & Routing & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
+             r" & & & replay & & & & per step & & & & \\", r"\midrule"]
     for x in r.sort_values("start").itertuples():
         trainer = f"TP{int(x.tp)} PP{int(x.pp)} CP{int(x.cp)} EP{int(x.ep)} (DP{int(x.dp)})"
         engines = f"{int(x.engines)} $\\times$ {int(x.engine_gpus)} GPUs (EP{int(x.engine_ep)})"
         replay = "with" if bool(x.routing_replay) else "without"
-        lines.append(f"{x.request} & {x.job} & {replay} & {int(x.nodes)} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
+        colocate = bool(getattr(x, "colocate", True))
+        layout = "colocated" if colocate else "disaggregated"
+        nodes = f"{int(x.nodes)}" if colocate else f"{int(x.nodes)}: {int(x.trainer_nodes)} + {int(x.nodes - x.trainer_nodes)}"
+        lines.append(f"{x.request} & {x.job} & {layout} & {replay} & {nodes} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
                      f"{str(x.start).replace('T', ' ')[:16]} & {str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
@@ -1362,8 +1438,8 @@ def glm_rl_steps_table(t) -> str:
     if st.empty:
         return ""
     lines = [r"\begin{tabular}{llrrrrrrrrrrrrr}", r"\toprule",
-             r"Routing & Step & Rollout & Training & Sync & Rest & Step & Rollout & Train & Micro- & Bubble & Rollout & Response & Trunc. & Reward \\",
-             r"replay & & s & s & s & s & s & \% of step & tok/s & batches & \% (comp.) & tok/s/GPU & mean / median & \% & \\", r"\midrule"]
+             r"Run & Step & Rollout & Training & Sync & Rest & Step & Rollout & Train & Micro- & Bubble & Rollout & Response & Trunc. & Reward \\",
+             r" & & s & s & s & s & s & \% of step & tok/s & batches & \% (comp.) & tok/s/GPU & mean / median & \% & \\", r"\midrule"]
     for i, (job, replay) in enumerate(order):
         if i:
             lines.append(r"\midrule")
@@ -1377,29 +1453,33 @@ def glm_rl_steps_table(t) -> str:
 
 
 def _glm_rl_by_run(t) -> tuple[pd.DataFrame, list[tuple[str, str]]]:
-    """The GLM-RL steps and the runs in start order, as (job, "with" / "without" routing replay)."""
+    """The GLM-RL steps and the runs in start order, as (job, label): colocated, colocated with routing replay, or disaggregated."""
     r, st = t.get("glm_rl_runs", pd.DataFrame()), t.get("glm_rl_steps", pd.DataFrame())
     if r.empty or st.empty:
         return pd.DataFrame(), []
-    return st, [(str(x.job), "with" if bool(x.routing_replay) else "without") for x in r.sort_values("start").itertuples()]
+    def label(x):
+        layout = "colocated" if bool(getattr(x, "colocate", True)) else "disaggregated"
+        return layout + (" + replay" if bool(x.routing_replay) else "")
+    return st, [(str(x.job), label(x)) for x in r.sort_values("start").itertuples()]
 
 
 def glm_rl_replay_table(t) -> str:
-    """GLM-5.3 GRPO with and without routing replay, per step: data preprocessing, the TIS metrics, the gradient norm, the longest
-    request and the median decode speed per request (slime's metrics)."""
+    """GLM-5.3 GRPO per run and step (colocated without and with routing replay, disaggregated): data preprocessing, the TIS metrics,
+    the gradient norm, the longest request, the median decode speed per request (slime's metrics) and the requests slime re-sent
+    after a top-k log-prob error."""
     st, order = _glm_rl_by_run(t)
     if st.empty:
         return ""
-    lines = [r"\begin{tabular}{llrrrrrr}", r"\toprule",
-             r"Routing & Step & Data & TIS mean & TIS clip & Grad & Longest & Median decode \\",
-             r"replay & & preprocess s & $|w-1|$ & fraction & norm & request s & tok/s per request \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llrrrrrrr}", r"\toprule",
+             r"Run & Step & Data & TIS mean & TIS clip & Grad & Longest & Median decode & Top-k \\",
+             r" & & preprocess s & $|w-1|$ & fraction & norm & request s & tok/s per request & retries \\", r"\midrule"]
     for i, (job, replay) in enumerate(order):
         if i:
             lines.append(r"\midrule")
         for x in st[st.job.astype(str) == job].sort_values("step").itertuples():
             step = f"{x.step} (warm-up)" if x.warmup else str(x.step)
             lines.append(f"{replay} & {step} & {x.data_preprocess_s:.2f} & {x.tis_abs:.4f} & {x.tis_clipfrac:.5f} & "
-                         f"{x.grad_norm:.4f} & {x.latency_max_s:,.1f} & {x.decode_tok_s_median:.2f} " + r"\\")
+                         f"{x.grad_norm:.4f} & {x.latency_max_s:,.1f} & {x.decode_tok_s_median:.2f} & {int(getattr(x, 'topk_errors', 0) or 0)} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
