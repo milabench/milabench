@@ -340,6 +340,8 @@ slime-qwen3-30b-a3b-sft-routing:
 # GRPO, colocated: the trainer (TP4 x EP8, DP=2) and one SGLang engine of 8 GPUs take turns on the node. slime's
 # scripts/run-qwen3-30B-A3B.sh (DAPO-Math-17k, deepscaler rule-based reward, the GLM-5 entry's GRPO flags) with
 # 4k-token responses instead of 128k, no eval, and the attention / sampling backends of the validated GRPO entries.
+# MoE in SGLang's Triton kernels: on B200 SGLang picks flashinfer_trtllm, which downloads its cubins at the first
+# forward (no internet on Trillium's compute nodes, job 1261477).
 slime-qwen3-30b-a3b-grpo:
   inherits: _qwen3_30b_a3b
   tags: [rl]
@@ -365,6 +367,7 @@ slime-qwen3-30b-a3b-grpo:
     --sglang-mem-fraction-static: 0.7
     --sglang-attention-backend: triton
     --sglang-sampling-backend: pytorch
+    --sglang-moe-runner-backend: triton
 
 # --- Real run: GLM-5.3 (744B-A40B MoE) ---
 # Architecture flags follow slime's scripts/models/glm5.2-744B-A40B.sh (rotary base 8M: the original
