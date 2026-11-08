@@ -227,7 +227,8 @@ k3-pp4-l8-depth-4k:
 # AttnRes blocks, [8192, 7168] BF16 each): torch's schedule keeps every micro-batch's loss tensor until the step ends,
 # its graph's AccumulateGrad nodes keep those leaves (reproduced on CPU, 2-rank gloo 1F1B). -m64ga2: half the
 # micro-batches per schedule step, two per optimizer step (job 1263463: drops between the two, 139.8 GiB reserved at
-# step 2). -detach: 128 micro-batches with --pp-detach-losses (the schedule keeps a detached loss after its backward)
+# step 2). -detach: 128 micro-batches with --pp-detach-losses (the schedule keeps a detached loss after its backward):
+# job 1263515, last stage flat per micro-batch, 78.4 GiB reserved at steps 2-5, the same losses, 53.8 s per step
 k3-pp4-l8-depth-m64ga2:
   inherits: k3-pp4-l8-depth
   argv:

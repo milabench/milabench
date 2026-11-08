@@ -168,8 +168,16 @@ drop their outputs after the backward, hence no growth there. The loss and logit
 chunks: ~0.1 GiB per micro-batch at the loss) are not what fills the stage.
 
 `k3-pp4-l8-depth-m64ga2` (job 1263463: 64 micro-batches per schedule step, 2 per optimizer step) drops the retention
-between the two: last stage 126.8 GiB reserved at step 1, 139.8 at step 2 (127.6 allocated). `k3-pp4-l8-depth-detach`
-measures the fix at 128 micro-batches.
+between the two: last stage 126.8 GiB reserved at step 1, 139.8 at step 2 (127.6 allocated).
+
+The fix, `k3-pp4-l8-depth-detach` (job 1263515, 128 micro-batches, `--pp-detach-losses`): the last stage's allocated
+at each forward start is flat (30.2 GiB through step 1, 44.7 from step 2: + optimizer state and kept gradients), its
+peak 53.8 allocated / 66.2 reserved at step 1 and 65.6 / 78.4 at steps 2-5 (169.2 reserved at step 1 and out of memory
+in step 2 without it). Stages 0-2 (2 MoE layers; stage 0 + dense layer + embedding) are now the largest: 105.2 / 128.6,
+96.9 / 117.3, 100.1 / 121.1 GiB peak allocated / reserved. Losses as without it: 12.49473 at step 1 (job 1263416), then
+11.81354, 12.08058 (11.81356, 12.08077 with 64 x 2, job 1263463), the same gradient norms (2.2188, 10.5000, 18.1250);
+53.8 s per step (median, steps 3-5; 64 x 2: 55 s); step 1 4.0 min after the job start (4.85 without it). No
+"memory mapping failed".
 
 ## Untested
 
