@@ -1,7 +1,7 @@
 # Kimi K3 pre-training (TorchTitan's upstream kimi_k3 model, text only, random init) on Trillium B200:
 # scripts/trillium/kimi-train/README.md.
 #
-#   scripts/trillium/kimi-train/k3_train.sh --time 00:30:00 k3-1n-l4
+#   scripts/trillium/kimi-train/k3_train.sh --nodelist trig0145 k3-1n-l4
 #
 # Full width (hidden 7168, 896 experts, top-16, 2 shared, LatentMoE 3584), truncated to the first --n-layers:
 # 4 = KDA dense, KDA-MoE, KDA-MoE, MLA-MoE (every layer type). Per GPU one 8192-token sequence per micro-batch,
@@ -172,10 +172,14 @@ k3-pp4-l5:
     --pp-schedule: 1F1B
     --pp-microbatches: 16
 
-# --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most, BF16: the FP32
-#     master did not fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
-#     PP48, as GLM-5's pp13 runs; 1,024 sequences = 8.4M tokens per step. 20 steps, none traced. ---
-k3-pp48-full:
+# --- One copy over the machine: PP x EP8 (expert groups inside a node), at most 2 layers per stage, an MoE layer on
+#     every stage (PP4 failed with a stage of none: jobs 1261433-1261567; with both less-layers options at 0, stage 0
+#     holds the embedding + layers 0-1 and the last stages one layer each). BF16 parameters: the FP32 master did not
+#     fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble
+#     (PP-1)/(m+PP-1) = 27% at PP48, as GLM-5's pp13 runs; 1,024 sequences = 8.4M tokens per step. 20 steps, none
+#     traced. The first forward passes the stages one after another (~15-22 s each, jobs 1262121, 1262207, 1262230):
+#     at 40-48 stages the last ones wait 13-20 min for their first receive, hence a 30-min init timeout. ---
+_k3_scale:
   inherits: _k3
   num_machines: 48
   max_duration: 3600
@@ -187,36 +191,29 @@ k3-pp48-full:
     --layout: pp48-fsdp
     --pp-microbatches: 128
     --training-dtype: bfloat16
-    # every stage needs an MoE layer (PP4 failed with a stage of none: jobs 1261433-1261567); with 0, stage 0 holds
-    # the embedding + layers 0-1 and the last stages one layer each (92 + output), 2 layers per stage at most
     --pp-first-stage-less-layers: 0
     --pp-last-stage-less-layers: 0
-# 40 nodes: 78 layers (19 MLA, 59 KDA): 2 layers per stage at most (stages 38-39 hold one); same micro-batches per
-# data-parallel rank (bubble 23%)
-k3-pp40-l78:
-  inherits: k3-pp48-full
+    --init-timeout-seconds: 1800
+# Full size needs the BF16 gradient reduction (the campaign's default is FP32): with FP32 a stage of 2 MoE layers runs
+# out of memory with the in-flight load of PP48's worst stages (k3-pp4-l7-gpipe with AdamW, the allocator's garbage
+# collection, Muon, Muon + gc, the native allocator: jobs 1261657-1262141); with BF16, 143.3 GiB reserved on the
+# stand-in's 2-MoE-layer stages after step 2 (job 1262207)
+k3-pp48-full-rbf16:
+  inherits: _k3_scale
+  argv:
+    --grad-reduce: bf16
+# 40 nodes, 78 layers (19 MLA, 59 KDA), the same 2 MoE layers per stage: stage 0 = embedding + layers 0-1, stages 1-37
+# two layers each, 38 = layer 76, 39 = layer 77 + output (TorchTitan's split, checked); bubble 23%
+k3-pp40-l78-rbf16:
+  inherits: k3-pp48-full-rbf16
   num_machines: 40
   argv:
     --layout: pp40-fsdp
     --n-layers: 78
-# Neither entry above fits with the FP32 reduction: a stage of 2 MoE layers runs out of memory with the in-flight load of PP48's worst stages
-# (k3-pp4-l7-gpipe: AdamW, the allocator's garbage collection, Muon, Muon + gc; jobs 1261657-1261943). One MoE layer
-# per stage fits: ~120 GiB reserved after step 2 with 64 micro-batches in flight (1F1B steady state of k3-pp4-l5, job
-# 1262121, + the in-flight cost of k3-pp4-l5-gpipe at step 1, job 1262015). So one layer per stage, the first holding
-# layers 0-1 (an MoE layer on every stage): 49 layers (12 MLA, 37 KDA) on 48 nodes, the fallback of k3-pp48-full-rbf16
+# Fallback of k3-pp48-full-rbf16 with the FP32 reduction: one MoE layer per stage fits, ~120 GiB reserved after step 2
+# with 64 micro-batches in flight (1F1B steady state of k3-pp4-l5, job 1262121, + the in-flight cost of
+# k3-pp4-l5-gpipe at step 1, job 1262015): 49 layers (12 MLA, 37 KDA), stage 0 = embedding + layers 0-1, then one each
 k3-pp48-l49:
-  inherits: k3-pp48-full
+  inherits: _k3_scale
   argv:
     --n-layers: 49
-# Full size with a BF16 gradient reduction (the campaign's default is FP32): 2 MoE layers per stage then hold the
-# worst in-flight load, 143.3 GiB reserved on the stand-in's 2-MoE-layer stages after step 2 (job 1262207)
-k3-pp48-full-rbf16:
-  inherits: k3-pp48-full
-  argv:
-    --grad-reduce: bf16
-# 40 nodes, 78 layers, the same 2 MoE layers per stage: stage 0 = embedding + layers 0-1, stages 1-37 two layers
-# each, 38 = layer 76, 39 = layer 77 + output (TorchTitan's split, checked)
-k3-pp40-l78-rbf16:
-  inherits: k3-pp40-l78
-  argv:
-    --grad-reduce: bf16
