@@ -103,7 +103,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGrTruncOne", "TriGrTruncTwo", "TriGrRewardWarm", "TriGrRewardOne", "TriGrRewardTwo", "TriGrLatMedOne", "TriGrLatMedTwo",
           "TriGrLatMaxOne", "TriGrLatMaxTwo", "TriGrDecodeReqOne", "TriGrDecodeReqTwo", "TriGrDecodeFast", "TriGrDecodeSlow", "TriGrSlowFirstOne",
           "TriGrSlowFirstTwo", "TriGrGpuRollout", "TriGrGpuCap", "TriGrHostLastLo", "TriGrHostLastHi", "TriGrHostLastTb", "TriGrHostOtherHi",
-          "TriGrHostTotal"]
+          "TriGrHostTotal", "TriGrHostFirst", "TriGrSlowEnginesOne", "TriGrSlowEnginesTwo"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1254,13 +1254,18 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
         out.update({"TriGrDecodeFast": (one[~one.slow.astype(bool)].tok_s_seq.median(), ".1f", False),
                     "TriGrDecodeSlow": (one[one.slow.astype(bool)].tok_s_seq.median(), ".1f", False)})
         first = d[d.slow.astype(bool)].groupby("step").minute.min()
+        engines = d[d.slow.astype(bool)].groupby("step").engine.nunique()  # engines with any slower line (slime's placement, glm_rl.py)
         for k, n in ((1, "One"), (2, "Two")):
             if k in first:
                 out[f"TriGrSlowFirst{n}"] = (first[k], ".1f", False)
+                out[f"TriGrSlowEngines{n}"] = (int(engines[k]), "d", False)
     hh = h[h.job.astype(str) == job] if len(h) else h
     if len(hh):
+        head = str(x.hosts).split(";")[0]  # the job's first node: Ray's head, slime's driver and rollout manager
         last = hh[hh.stage == x.pp - 1]
-        other = hh[hh.stage != x.pp - 1]
+        other = hh[(hh.stage != x.pp - 1) & (hh.host != head)]
+        if (hh.host == head).any():
+            out["TriGrHostFirst"] = (hh[hh.host == head].host_used_gib.max(), ".0f", False)
         out.update({"TriGrHostLastLo": (last.host_used_gib.min(), ",.1f", False), "TriGrHostLastHi": (last.host_used_gib.max(), ",.1f", False),
                     "TriGrHostLastTb": (last.host_used_gib.max() * 2**30 / 1e12, ".2f", False),
                     "TriGrHostOtherHi": (other.host_used_gib.max(), ".0f", False), "TriGrHostTotal": (hh.host_total_gib.max(), ",.0f", False),

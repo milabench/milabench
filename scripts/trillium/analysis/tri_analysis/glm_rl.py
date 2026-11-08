@@ -14,9 +14,12 @@ Step 0 is the warm-up. Training tokens/s = slime's ``actor_train_tok_per_s``, al
 all samples over ``actor_train_time``). Log lines carry Trillium's local time (America/Toronto), as sacct.
 
 Ray prints a line once and counts its repeats across the cluster ("[repeated Nx]"), so the ``Decode batch`` and
-``Memory-Usage`` lines are a sample: one rank's line per repeat window, not every rank's.
+``Memory-Usage`` lines are a sample: one rank's line per repeat window, not every rank's. Ray names no address for actors on
+its head node, the job's first node: those lines are that node's.
 
-Stages: Megatron orders ranks TP, CP, EP/DP, then PP, so with 256 GPUs and PP8 ranks 32 s to 32 s + 31 are stage s.
+Stages: Megatron orders ranks TP, CP, EP/DP, then PP, so with 256 GPUs and PP8 ranks 32 s to 32 s + 31 are stage s. Engines: slime
+takes the nodes for its engines in IP order, 8 per 64-GPU engine (``ray/placement_group.py``, ``engine_group.py``; README
+``trillium-new`` 8f931f02), so a decode line's engine follows from its node's address.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ _ROLLOUT = re.compile(_TS + r" train_metric_utils\.py:\d+ - rollout (\d+): (\{.*
 _STEP = re.compile(_TS + r" model\.py:\d+ - step (\d+): (\{.*\})")
 _SYNC = re.compile(_TS + r" timer\.py:\d+ - Timer update_weights end \(elapsed: ([\d.]+)s\)")
 _ENGINE_UP = re.compile(_TS + r" Engine startup timings \(s\): load_weight=([\d.]+)")
-_MEMORY = re.compile(r"ip=([\d.]+)\).*" + _TS + r" memory_utils\.py:\d+ - \[Rank (\d+)\] Memory-Usage ([\w ]+): (\{.*?\})")
+_MEMORY = re.compile(r"\(\w+ pid=\d+(?:, ip=([\d.]+))?\).*?" + _TS + r" memory_utils\.py:\d+ - \[Rank (\d+)\] Memory-Usage ([\w ]+): (\{.*?\})")
 _MICRO = re.compile(r"actor train:.*?\| *\d+/(\d+) \[")
 _COMPILE = re.compile(r"TileLang completes to compile kernel(?:.*?repeated (\d+)x)?")
 _DECODE = re.compile(r"\(SGLangEngine pid=\d+(?:, ip=([\d.]+))?\).*?\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) DP(\d+) TP\d+ EP\d+\] Decode batch, "
@@ -195,6 +198,9 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
             row["gpu_rollout_gib"] = w.used_gib.max() if len(w) else None
     # Host memory per node, slime's snapshots (psutil "used", GiB despite the "GB" label: total_GB is the GPU's 178.34 GiB)
     ip_host = {ip: h for h, ip in d["nodes"]}
+    head = d["nodes"][0][1] if d["nodes"] else None  # Ray's head: the job's first node, whose actors' lines carry no address
+    for x in d["memory"] + d["decode"]:
+        x["ip"] = x["ip"] or head
     mem = pd.DataFrame(d["memory"])
     hosts = []
     if len(mem):
@@ -204,6 +210,9 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
             hosts.append({"job": job, "host": ip_host.get(ip, ip), "ip": ip, "stage": int(g.stage.mode().iloc[0]) if per_stage else None,
                           "snapshots": len(g), "host_used_gib": g.host_used_GB.max(), "host_total_gib": g.host_total_GB.max(),
                           "gpu_used_gib": g.used_GB.max(), "gpu_total_gib": g.total_GB.max()})
+    per_engine = engine_gpus // _int(a, "--actor-num-gpus-per-node", 8) if engine_gpus else None
+    by_ip = sorted((ip for _, ip in d["nodes"]), key=lambda ip: tuple(int(p) for p in ip.split(".")))
+    engine_of = {ip: i // per_engine for i, ip in enumerate(by_ip)} if per_engine else {}
     decode = []
     for row in steps:
         if not (row["rollout_end"] and row["rollout_s"]):
@@ -211,7 +220,8 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
         start = row["rollout_end"] - row["rollout_s"]
         for x in d["decode"]:
             if start <= x["time"] <= row["rollout_end"]:
-                decode.append({"job": job, "step": row["step"], "minute": (x["time"] - start) / 60, "host": ip_host.get(x["ip"], x["ip"]), **x,
+                decode.append({"job": job, "step": row["step"], "minute": (x["time"] - start) / 60, "host": ip_host.get(x["ip"], x["ip"]),
+                               "engine": engine_of.get(x["ip"]), **x,
                                "tok_s_seq": x["gen_tok_s"] / x["running"] if x["running"] else None})
     return run, steps, hosts, decode
 
