@@ -341,6 +341,10 @@ SGLang reserves 512 + 1.5 x 16384 + 1024 x TP / 8 + 2 x bs + 4.5 x bs x DP MiB o
 | outside the static | 44.1, above the 38.6 SGLang would reserve itself at bs 32 |
 | colocated sync | 132.4 + 16.9 (trainer BF16 weights) + 4 (staging) = 153.3 of 178 |
 
+Checked on 4 nodes (`slime-glm5-l10-grpo-4n`, job 1265529): SGLang logs `mem_fraction_static: 0.75` and decode graphs
+to 32, a KV pool of 18,688,064 tokens (123.36 GB: 132.4 less the 10-layer engine's 8.7 GiB), 28.2-28.5 GB free after
+it; weight sync 9.0 s then 6.7 s, training 156 s.
+
 `slime-glm5-rollout-8n` (8 nodes, a request row): the full GLM-5.3 on one 64-GPU engine at the real width, slime's
 `--debug-rollout-only` (engines from the FP8 checkpoint, no Megatron model, no training, no weight sync), 2 rollouts of
 GLM-RL-01's share per engine (1,024 samples over 4 engines: 32 prompts x 8), prefill graph off as in the colocated run
