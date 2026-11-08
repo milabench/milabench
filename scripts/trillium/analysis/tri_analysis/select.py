@@ -23,9 +23,10 @@ SET_ASIDE = {
     "1241330": "cancelled",
     "1251904": "trig0114 stopped responding at 17:03 on Nov 6, after step 30 of 500, NODE_FAIL: says nothing about the recipe",
     "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
-    "1265619": "1 node, repetition 3: the site drained trig0102 during the job (08:25:48, nvidia-smi unresponsive), cancelled; "
-               "2 of 4 entries, held until the rerun",
 }
+# 1265619 (1 node, repetition 3) was cancelled after the site drained trig0102 (08:25:48), 43 s after full sync's last
+# operation: its two completed entries, model sync and full sync, are in; full async wrote no event (no run data), and
+# 1265822 ran it and full pinned.
 # Stopped before they wrote any event, so their run data is empty; they still answer something, or belong in the ledger. Job -> what the launcher ran.
 NO_DATA_RUNS = {
     "1247022": {"campaign": "phase1", "experiment": "B-Q-strong", "layout": "hsdp8", "model": QWEN, "bench": "tri-bqs-hsdp8-n26", "tokens_per_gpu": 49152,
