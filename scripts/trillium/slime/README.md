@@ -237,6 +237,35 @@ by hand (`uv pip install`, its `.slime_installed` marker stops the pack's instal
 is registered and SGLang's DSA backend imports (login node). DeepGEMM's JIT cache goes to `/dev/shm`
 (`DG_JIT_CACHE_DIR`, `~/.dj` by default).
 
+`Invalid device_uuid` (jobs 1264147, 1264179), from the code: in the colocated update every trainer rank serializes
+CUDA IPC handles of its own tensors and `gather_object`s them to the engine's first trainer rank, which passes the list
+to the engine; engine rank i opens entry i. A rank with fewer buckets than the others in a batch is padded by the gather
+source with an empty tensor on the source's own GPU (`_send_to_colocated_engine`), which an engine rank on another node
+cannot open. Expert batches are capped per rank by `--update-weight-buffer-size` (512 MiB): a Qwen3-30B-A3B expert is
+9.4 MB, so each layer is one batch reaching every rank; a GLM-5.3 expert is 75.5 MB, so a layer splits into several
+batches (61 for 7 layers) and some ranks get none. With engines of 8 GPUs, source and targets share the node (job
+1264182 synced). Fix to test: a 4 GiB buffer, one batch per layer (up to 3.6 GB per rank and layer in the 10-layer
+test, about 0.9 GB at trainer EP32 with 64-GPU engines); the padding itself stays slime's (a local empty tensor per
+rank would remove it: a patch to slime).
+
+DeepGEMM: no slime or SGLang setting at these pins sends FP32 scales to SGLang with DeepGEMM on (slime's quantizer
+packs UE8M0 whenever SGLang's DeepGEMM requant check is true; its `transform_ue8m0` is not an argument; SGLang always
+fuses the indexer `wk` by dequantizing FP32 scales on CUDA). slime's GLM-5.3 script is for H100 (no packing). Keeping
+DeepGEMM would take a one-line slime change: no UE8M0 packing for `self_attention.wk.weight`.
+
+Cubins: every replaced trtllm path downloads them (Qwen MoE: batched_gemm; DSA prefill / decode and the dense-MHA
+prefill: fmha/trtllm-gen; FP8 GEMMs: gemm). sglang 0.5.21 requires `flashinfer_python[cu13]==0.6.18` exactly. The
+site's `flashinfer_cubin-0.7.0.post1+computecanada` holds 0.6.18's `fmha/trtllm-gen` artifact (same path, 70,654 files),
+not its `batched_gemm` or `gemm` ones.
+
+Step 4 at TP1 / CP1 (the campaign's GLM-5 layouts), colocated on 32 nodes, PP8 x EP32 (DP32 for the dense part; slime's
+split 14 / 8 x 6 / 16), estimates: the largest stage (16 MoE layers + LM head) holds 8.8 B parameters per GPU; at the
+Qwen stand-in's 10.7 GB per billion (42.7 GB for 4.0 B) about 94 GB, plus PP8's in-flight activations: 110-120 GB in
+training. Rollout: SGLang's static 0.7 (125 GiB) + the offloaded trainer's ~7 GB, as Qwen's 147 GB peak. Sync: engine +
+the trainer's bf16 weights (17.6 GB) + the 4 GiB staging: about 155 GB. Host per node: 365 GB + 16.3 GB per billion
+parameters per node (fit to Qwen's 862 GB at 1 node, 613 GB at 2) = about 740 GB for 23.2 B per node (+70 GB with
+routing replay), of 2,015 GB.
+
 `slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference
 forward pass; per-token loss) and takes the SGLang MoE and sampling backends that ran offline with the Qwen stand-in.
 
