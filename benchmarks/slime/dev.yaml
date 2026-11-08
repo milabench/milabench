@@ -694,6 +694,13 @@ slime-glm5-l10-grpo-4n:
     --sglang-ep-size: 32
     --sglang-dp-size: 32
 
+# slime-glm5-l10-grpo-4n with rollout routing replay (the switch of slime-glm5-grpo-r3), before GLM-RL-04: the 32-GPU
+# engine records the routes, the trainer replays them.
+slime-glm5-l10-grpo-4n-r3:
+  inherits: slime-glm5-l10-grpo-4n
+  argv:
+    --use-rollout-routing-replay: true
+
 # The disaggregated layout on 4 nodes with the 10-layer checkpoint, before slime-glm5-grpo-disagg: the trainer on 2
 # (TP1 / CP1, PP2 x EP8, DP8), one SGLang engine of 16 GPUs on the other 2; tests the NCCL weight sync.
 slime-glm5-l10-grpo-disagg-4n:
