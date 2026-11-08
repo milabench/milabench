@@ -12,14 +12,14 @@ hf=(nice "$B/venv/torch/bin/hf" download zai-org/GLM-5.3 --local-dir "$H")
 t0=$(date +%s)
 stamp() { echo "[download-glm5] $(date '+%F %T') +$(( $(date +%s) - t0 )) s: $*"; }
 stamp "start"
-"${hf[@]}" --include "*.json" "*.jinja"
+"${hf[@]}" --include "*.json" --include "*.jinja"
 shards=$("$B/venv/torch/bin/python" -c '
 import json, re, sys
 wm = json.load(open(sys.argv[1]))["weight_map"]
 print(" ".join(sorted({f for k, f in wm.items() if not (m := re.match(r"model\.layers\.(\d+)\.", k)) or int(m[1]) < 10})))
 ' "$H/model.safetensors.index.json")
 stamp "$(wc -w <<< "$shards") shards for the truncated test"
-"${hf[@]}" --include $shards
+"${hf[@]}" $shards
 stamp "truncated-test shards done, $(du -sb "$H" | cut -f1) bytes in $H"
-"${hf[@]}" --include "*.json" "*.jinja" "*.safetensors"
+"${hf[@]}" --include "*.json" --include "*.jinja" --include "*.safetensors"
 stamp "done, $(ls "$H"/*.safetensors | wc -l) shards, $(du -sb "$H" | cut -f1) bytes"

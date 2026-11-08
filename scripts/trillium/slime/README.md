@@ -191,21 +191,18 @@ The converter's own layout (pipeline = world size, even split) can never start e
 | GLM-5.3, `slime-glm5-*` | 2 nodes, TP8 x PP2 (last stage 40 layers, from layer 39) x EP8 | about 99 GB of bf16 weights |
 | 10 layers, `slime-glm5-l10-grpo-2n` | the run's first node, PP2 (6 + 4, stage 2 from layer 7) x EP4 | about 20 GB |
 
-Order (each download after the Kimi K3 one has ended, `ps -u $USER -o pid,args | grep "hf download"`):
+Order (transfers above 10 GB on the data-transfer nodes `tri-dm1`-`4`, one at a time):
 
 ```bash
 cd $SCRATCH/trillium/new/glm-rl; H=data/slime/models/glm5/hf
-# 1. the configuration and index, then the 20 shards that hold layers 0-9, the embeddings, the final norm and the
-#    LM head: 106.6 GB
-nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include "*.json" "*.jinja"
-nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include $(python3 -c '
-import json, re; wm = json.load(open("'$H'/model.safetensors.index.json"))["weight_map"]
-print(" ".join(sorted({f for k, f in wm.items() if not (m := re.match(r"model\.layers\.(\d+)\.", k)) or int(m[1]) < 10})))')
-# 2. the truncated checkpoint: 74.1 GB FP8, 72.19 B parameters (torch_dist 144.4 GB, converted by the run's prepare)
+# 1. download_glm5.sh on a data-transfer node: the 20 shards that hold layers 0-9, the embeddings, the final norm and
+#    the LM head (106.6 GB) first, then the rest (649 GB more); one `hf download` (one pattern per --include)
+ssh tri-dm1 'nohup $SCRATCH/trillium/new/glm-rl/src/scripts/trillium/slime/download_glm5.sh > $SCRATCH/trillium/new/glm-rl/download-glm5.log 2>&1 &'
+# 2. once the 20 shards are there: the truncated checkpoint (74.1 GB FP8, 72.19 B parameters, torch_dist 144.4 GB
+#    converted by the run's prepare), then its test
 nice venv/torch/bin/python src/scripts/trillium/slime/truncate_hf.py $H data/slime/models/glm5-l10/hf 10
 src/scripts/trillium/slime/submit.sh glm5-l10 00:50:00 2 slime-glm5-l10-grpo-2n -- --nodelist=...
-# 3. the rest of the checkpoint (resumes: 649 GB more), then its conversion, a 2-node job that stops after prepare
-nice venv/torch/bin/hf download zai-org/GLM-5.3 --local-dir $H --include "*.json" "*.jinja" "*.safetensors"
+# 3. once the download is done: the conversion, a 2-node job that stops after prepare
 src/scripts/trillium/slime/submit.sh glm5-conv 01:00:00 2 SLIME_CONVERT=1 slime-glm5-grpo -- --nodelist=...
 ```
 
