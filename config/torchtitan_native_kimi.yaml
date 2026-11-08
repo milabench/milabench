@@ -106,10 +106,15 @@ k3-pp4-l7:
   inherits: k3-pp4-l6
   argv:
     --n-layers: 7
+# The GPipe test of the review with an MoE layer on every stage (k3-pp4-l6-gpipe had none on stage 0, job 1261381).
+# Its last stage also keeps 64 micro-batches with the output and loss, which PP48's never does (1 in flight).
+k3-pp4-l7-gpipe:
+  inherits: k3-pp4-l6-gpipe
+  argv:
+    --n-layers: 7
 
-# --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most (93 layers +
-#     embedding + output = 95 units over 48 stages), BF16: the FP32 master did not fit 2 MoE layers + the output
-#     on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
+# --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most, BF16: the FP32
+#     master did not fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
 #     PP48, as GLM-5's pp13 runs; 1,024 sequences = 8.4M tokens per step. 20 steps, none traced. ---
 k3-pp48-full:
   inherits: _k3
@@ -123,8 +128,12 @@ k3-pp48-full:
     --layout: pp48-fsdp
     --pp-microbatches: 128
     --training-dtype: bfloat16
-# 40 nodes: 78 layers (19 MLA, 59 KDA), so that 78 + 2 units split into 2 per stage (80 layers would put 3 on two
-# stages); same micro-batches per data-parallel rank (bubble 23%)
+    # every stage needs an MoE layer (PP4 failed with a stage of none: jobs 1261433-1261567); with 0, stage 0 holds
+    # the embedding + layers 0-1 and the last stages one layer each (92 + output), 2 layers per stage at most
+    --pp-first-stage-less-layers: 0
+    --pp-last-stage-less-layers: 0
+# 40 nodes: 78 layers (19 MLA, 59 KDA): 2 layers per stage at most (stages 38-39 hold one); same micro-batches per
+# data-parallel rank (bubble 23%)
 k3-pp40-l78:
   inherits: k3-pp48-full
   num_machines: 40

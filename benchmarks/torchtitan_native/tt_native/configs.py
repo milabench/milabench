@@ -137,6 +137,10 @@ class Options:
     """Pipeline microbatches per step and DP rank (default: ``pp``). Each has
     ``microbatch_sequences`` sequences."""
     pp_layers_per_stage: int | None = None
+    pp_first_stage_less_layers: int = 1
+    pp_last_stage_less_layers: int = 1
+    """TorchTitan's split counts the embedding / the output as this many layers
+    (0: the first / last stage holds as many decoder layers as the others)."""
     ep: int = 1
     """Expert-parallel degree (MoE models), taken from each stage's FSDP ranks."""
 
@@ -517,6 +521,8 @@ def qwen38() -> Trainer.Config:
             pipeline_parallel_schedule=opts.pp_schedule,
             num_pp_microbatches=pp_microbatches,
             pipeline_parallel_layers_per_stage=opts.pp_layers_per_stage,
+            pipeline_parallel_first_stage_less_layers=opts.pp_first_stage_less_layers,
+            pipeline_parallel_last_stage_less_layers=opts.pp_last_stage_less_layers,
             expert_parallel_degree=opts.ep,
             fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
         ),
