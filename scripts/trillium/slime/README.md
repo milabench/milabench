@@ -191,6 +191,10 @@ The converter's own layout (pipeline = world size, even split) can never start e
 | GLM-5.3, `slime-glm5-*` | 2 nodes, TP8 x PP2 (last stage 40 layers, from layer 39) x EP8 | about 99 GB of bf16 weights |
 | 10 layers, `slime-glm5-l10-grpo-2n` | the run's first node, PP2 (6 + 4, stage 2 from layer 7) x EP4 | about 20 GB |
 
+Downloaded on `tri-dm1`, 2026-11-07 23:33-23:36: the 20 shards in 33 s, all 141 in 168 s (755,663,733,656 bytes with
+the configuration; about 4.5 GB/s), each shard's size and header checked against the Hub. Truncated checkpoint
+(`truncate_hf.py`, on `tri-dm1`): 74,146,421,681 bytes, 3 min 52 s; indexer weights on layers 1, 2, 3, 7.
+
 Order (transfers above 10 GB on the data-transfer nodes `tri-dm1`-`4`, one at a time):
 
 ```bash
