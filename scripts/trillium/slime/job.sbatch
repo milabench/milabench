@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Job script of submit.sh: slime entries (benchmarks/slime/dev.yaml) on Trillium's B200 nodes, `job.sbatch ENTRY...`.
+# Job script of submit.sh: slime entries (benchmarks/slime/dev.yaml) on Trillium's B200 nodes,
+# `job.sbatch [NAME=value...] ENTRY...` (the NAME=value are exported first; SLIME_CONVERT=1: README, step 3).
 #   1. power check on every node
 #   2. `milabench install`, offline: the first job builds TransformerEngine (wheelhouse) and torch_memory_saver (git
 #      source in the uv cache) against the venv's torch, later jobs return at once (venv/torch/.slime_installed)
-#   3. `milabench prepare` on the first node: the HF -> torch_dist conversion (--ref-load), once
+#   3. `milabench prepare` on the first node: the HF -> torch_dist conversion (--ref-load), once (an entry's
+#      model.convert_nodes > 1: over that many nodes); a SLIME_CONVERT=1 job stops there
 #   4. one `milabench run` per entry, in the order given; run data in $B/runs/<job name>.<job id>.<entry>
 # Everything lives in B = $SCRATCH/trillium/new/glm-rl (install.sh); $HOME is read-only from the compute nodes.
 set -uo pipefail
+while [[ ${1:-} == [A-Za-z_]*=* ]]; do export "$1"; shift; done
 B=${SCRATCH:?}/trillium/new/glm-rl
 C=$B/src/benchmarks/slime/dev.yaml
 P=[$SLURM_JOB_NAME]
@@ -43,8 +46,9 @@ milabench install --config "$C" --select "$select" || { echo "$P install failed"
 echo "$P install: $(cat "$B/venv/torch/.slime_installed")"
 system=$B/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
-srun --nodes=1 --ntasks=1 --nodelist="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)" \
-    milabench prepare --config "$C" --select "$select" || { echo "$P prepare failed" >&2; exit 6; }
+# in the batch step (the first node), not a step of its own: a multi-node conversion starts its own srun from there
+milabench prepare --config "$C" --select "$select" || { echo "$P prepare failed" >&2; exit 6; }
+[ -n "${SLIME_CONVERT:-}" ] && { echo "$P SLIME_CONVERT: conversion done, no run"; exit 0; }
 
 status_all=0
 for entry in "$@"; do
