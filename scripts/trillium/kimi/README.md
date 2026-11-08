@@ -65,5 +65,11 @@ autotune (MXFP4 MoE 22 + 8 profiles at 25-40 s each, then MLA decode and BF16 GE
 (`cache/vllm/flashinfer_autotune_cache/<vllm config hash>`, one file per rank), so the full model tunes again on its
 first start. conc1 60/60, conc64 128/128 requests; numbers of a 4-layer model, not of Kimi-K3.
 
-Not tested yet: the full model (load time of 1.45 TiB per node, memory, CUDA graphs at 93 layers); prefix caching,
-DCP and speculative decoding stay off as in the MI355X study.
+Full model with random weights, `kimi-vllm-2n-tp8pp2-dummy`, job 1261890, `trig[0101-0102]`: PASS in 1888 s. Weights
+95.7-96.1 GiB per GPU (PP0 47 layers, PP1 46), CUDA graphs 3.8 GiB in 32 s, 51.4-53.5 GiB left for the KV cache:
+3.6M tokens, 27 requests at the full 133,120. Engine init 1499 s, the autotune again (new config hash); it left
+the cache that the real weights' run reuses (load format is not in the hash). conc1 TPOT 8.70 ms, conc64 1467 output
+tok/s, TPOT p50 21.4 ms: random weights route at random, not Kimi-K3 numbers.
+
+Not tested yet: the real weights (load time of 1.45 TiB per node); prefix caching, DCP and speculative decoding stay off
+as in the MI355X study.
