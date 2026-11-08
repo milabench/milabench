@@ -433,6 +433,8 @@ _glm5:
       --pipeline-model-parallel-size: 2
       --decoder-last-pipeline-num-layers: 40
       --expert-model-parallel-size: 8
+      # (it defaults to TP: 8 x 8 x 2 = 128 > 16 GPUs, job 1263451)
+      --expert-tensor-parallel-size: 1
     argv:
       # APEX (fused_weight_gradient_mlp_cuda) is not installed
       --no-gradient-accumulation-fusion: true

@@ -53,9 +53,9 @@ trap 'echo "$P time limit in 5 min: stopping"; kill -TERM "${child:-}" 2>/dev/nu
 # prepare and run in the background, so that the USR1 trap runs while they do
 bg_wait() { "$@" & child=$!; wait $child; }
 # (sglang puts the inductor and CUDA caches in SGLANG_CACHE_DIR, job 1261398, and its JIT builds in SGLANG_JIT_CACHE_DIR,
-# job 1261434: both default to ~/.cache/sglang)
+# job 1261434: both default to ~/.cache/sglang; DeepGEMM's JIT cache defaults to ~/.dj)
 export TMPDIR=$L/tmp TRITON_CACHE_DIR=$L/triton TILELANG_CACHE_DIR=$L/tilelang FLASHINFER_WORKSPACE_BASE=$L \
-    SGLANG_CACHE_DIR=$L/sglang SGLANG_JIT_CACHE_DIR=$L/sglang/jit
+    SGLANG_CACHE_DIR=$L/sglang SGLANG_JIT_CACHE_DIR=$L/sglang/jit DG_JIT_CACHE_DIR=$L/deep_gemm
 echo "$P job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST milabench $(git -C "$B/src" rev-parse --short HEAD) entries: $*"
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | sort | uniq -c | sed "s/^/$P /"
 nodes bash "$B/src/scripts/trillium/power_check.sh" || exit 4
