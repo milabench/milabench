@@ -140,6 +140,11 @@ k3-pp4-l7-gpipe-noexp:
   inherits: k3-pp4-l7-gpipe
   env:
     PYTORCH_ALLOC_CONF: "expandable_segments:False"
+# its 1F1B companion (the GPipe output stage may hold the run at step 1, as in 1262015): steady state after step 2
+k3-pp4-l7-noexp:
+  inherits: k3-pp4-l7
+  env:
+    PYTORCH_ALLOC_CONF: "expandable_segments:False"
 # Fewer layers (review option b): a stage of one MoE layer with 64 micro-batches in flight. 5 layers with no extra
 # weight for the embedding / output: emb + 0-1 / 2 / 3 / 4 + out, so stages 1-2 hold one MoE layer and no output
 k3-pp4-l5-gpipe:
