@@ -468,10 +468,11 @@ kimi-vllm-2n-tp8pp2:
       --tensor-parallel-size: "{gpu_count}"
       --pipeline-parallel-size: "{num_machines}"
 
-# bring-up: the server loads and two passes of the study run against it
+# bring-up: the server loads and two passes of the study run against it. In a 1 h job: the first start on a server
+# config autotunes FlashInfer's kernels (20 min on the 4-layer test, job 1261631; cached per config hash after)
 kimi-vllm-2n-tp8pp2-bringup:
   inherits: kimi-vllm-2n-tp8pp2
-  max_duration: 3000
+  max_duration: 3420
   client:
     passes:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
