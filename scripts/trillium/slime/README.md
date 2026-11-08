@@ -225,12 +225,23 @@ First jobs (2026-11-08, 2 nodes each; nothing trained yet):
 | 1264112 | 10-layer test | without DeepGEMM the FP8 GEMMs pick flashinfer_trtllm (cubins): `--sglang-fp8-gemm-runner-backend triton` |
 | 1264147 | 10-layer test | weight sync: `Invalid device_uuid` on the second node's engine ranks, in the expert update (slime's rank-local expert routing into the 16-GPU engine) |
 | 1264179 | the same, trainer PP1 | the same error: not PP2. The Qwen 16-GPU engine (same nodes, same expert routing) synced |
-| 1264182 | PP2, one 8-GPU engine per node | weight sync 9.8 s, the first rollout (64 x 4,096 tokens, 72 s, 227 tokens/s per GPU), then the trainer's RoPE needs apex at TP / CP > 1: TP1 / CP1 with SGLang's RoPE (`MEGATRON_USE_SGLANG_ROPE`, as the campaign) |
+| 1264182 | PP2, one 8-GPU engine per node | weight sync 9.8 s, the first rollout (64 x 4,096 tokens, 72 s, 227 tokens/s per GPU), then the trainer's RoPE needs apex: the GLM-5 plugin imports it at every TP / CP unless `MEGATRON_USE_SGLANG_ROPE` is set, which requires TP1 and CP1: TP1 / CP1 with SGLang's RoPE, as the campaign |
 
 The flashinfer cubins (`flashinfer-cubin` 0.6.18, FlashInfer's GitHub release, 1.57 GB) and apex (slime's Dockerfile
 builds it from NVIDIA's git) would remove 3 of these workarounds; installing them was refused by the permission
 check (external code) and needs the user's decision. Without them the engine runs Triton FP8 GEMMs and Triton MoE,
-and the trainer TP1 / CP1 only.
+and the trainer TP1 / CP1 only. What the GLM-5.3 entries run instead of B200's defaults:
+
+| path | B200 default (SGLang 0.5.21) | here | why |
+|---|---|---|---|
+| DSA attention, prefill and decode | `trtllm` (flashinfer cubins) | FlashMLA (`flashmla_sparse` / `flashmla_kv`, slime's GLM-5.3 setting) | cubins not on the nodes |
+| prefills up to 2,048 tokens | dense MHA on trtllm-gen FMHA | the sparse FlashMLA path (`SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD=0`) | cubins |
+| FP8 GEMMs | DeepGEMM (UE8M0 scales) | Triton (`SGLANG_ENABLE_JIT_DEEPGEMM=0`, `--sglang-fp8-gemm-runner-backend triton`) | slime's UE8M0 scales for the indexer `wk`; flashinfer_trtllm needs cubins |
+| MoE | `flashinfer_trtllm` | Triton | cubins |
+
+The Qwen3-30B-A3B entries share the venv: since 2026-11-08 they run with transformers 5.12.1 (5.9.0 before), tilelang
+0.1.12, sgl-deep-gemm 0.2.0 and apache-tvm-ffi 0.1.11; a Qwen run after that date is not the same install as the
+step 1 / step 2 runs.
 
 `tilelang` and `sgl-deep-gemm` are at sglang 0.5.21's pins (with `apache-tvm-ffi` 0.1.11); they went into the venv
 by hand (`uv pip install`, its `.slime_installed` marker stops the pack's install). With them, `GlmMoeDsaForCausalLM`
@@ -259,15 +270,21 @@ site's `flashinfer_cubin-0.7.0.post1+computecanada` holds 0.6.18's `fmha/trtllm-
 not its `batched_gemm` or `gemm` ones.
 
 Step 4 at TP1 / CP1 (the campaign's GLM-5 layouts), colocated on 32 nodes, PP8 x EP32 (DP32 for the dense part; slime's
-split 14 / 8 x 6 / 16), estimates: the largest stage (16 MoE layers + LM head) holds 8.8 B parameters per GPU; at the
-Qwen stand-in's 10.7 GB per billion (42.7 GB for 4.0 B) about 94 GB, plus PP8's in-flight activations: 110-120 GB in
+split 14 / 8 x 6 / 16), estimates: the largest stage (16 MoE layers + LM head) holds 9.09 B parameters per GPU; at the
+Qwen stand-in's 10.7 GB per billion (42.7 GB for 4.0 B) about 97 GB, plus PP8's in-flight activations: 112-122 GB in
 training. Rollout: SGLang's static 0.7 (125 GiB) + the offloaded trainer's ~7 GB, as Qwen's 147 GB peak. Sync: engine +
-the trainer's bf16 weights (17.6 GB) + the 4 GiB staging: about 155 GB. Host per node: 365 GB + 16.3 GB per billion
+the trainer's bf16 weights (18.2 GB) + the 4 GiB staging: about 156 GB. Host per node: 365 GB + 16.3 GB per billion
 parameters per node (fit to Qwen's 862 GB at 1 node, 613 GB at 2) = about 740 GB for 23.2 B per node (+70 GB with
 routing replay), of 2,015 GB.
 
-`slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference
-forward pass; per-token loss) and takes the SGLang MoE and sampling backends that ran offline with the Qwen stand-in.
+`slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference forward pass;
+per-token loss), its reward and batch, without rollout routing replay (`slime-glm5-grpo-r3` has it: the user's order is
+without first), at TP1 / CP1, PP8 x EP32. Reward at step 4: slime's `deepscaler`, which scores the answer after
+`</think>`; GLM-5.3 reasons in `<think>` by default (its chat template), so it fits this model, unlike Instruct-2507.
+Responses are capped at 8,192 tokens, not the script's 262,144: at CP1 a sample stays on one GPU (slime gives an
+oversized one a micro-batch of its own), and the memory estimate above assumes 8,192-token micro-batches. Reasoning cut
+before `</think>` scores 0, so the reward may stay near 0 if most responses reach the cap (`rollout/truncated` in the
+first step-4 run says); the reward is there to show the loop learns, not measured.
 
 ## Untested
 
