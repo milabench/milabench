@@ -209,8 +209,8 @@ in step 2 without it). Stages 0-2 (2 MoE layers; stage 0 + dense layer + embeddi
   124.60, last stage 84.51 / 67.51, stage 0 95.35 / 79.19. Stages 6, 12, 18, 24, 30, 36 and 42 sit high (134.2-145.4,
   their neighbours 124-134): they hold layers 12, 24, ..., 84, the first layer of each AttnRes block (flavors.py:557,
   model.py:231), as estimated below. No "memory mapping failed", no timeout.
-- Health: the job epilog has 12 "NVRM: knvlinkSendInbandData_IMPL: Failed to send inband data" lines (L:36542-36555,
-  at 04:50, 05:14 and 05:51; the node is not named).
+- Health: the epilog's 12 "NVRM: knvlinkSendInbandData_IMPL: Failed to send inband data" lines (L:36542-36555, batch
+  host trig0101) are the workload's, not a node's: the campaign's check (2026-11-07) found them in 293 of 296 jobs.
 
 ## Untested
 
