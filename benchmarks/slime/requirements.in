@@ -1,6 +1,7 @@
 voir>=0.2.19,<0.3
 torch
-transformers
+# sglang 0.5.21's pin: 5.9 reads GLM-5.3's head_dim (192) as qk_rope_head_dim (64)
+transformers==5.12.1
 datasets
 huggingface_hub
 ray[default]

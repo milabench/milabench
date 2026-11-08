@@ -2,7 +2,9 @@
 dependencies = [
     "voir>=0.2.19,<0.3",
     "torch",
-    "transformers",
+    # sglang 0.5.21's pin (sglang goes in --no-deps): 5.9 maps GLM-5.3's head_dim (192) onto qk_rope_head_dim (64),
+    # and SGLang then sizes q_b_proj for 384-wide heads (job 1263931)
+    "transformers==5.12.1",
     "datasets",
     "huggingface_hub",
     "ray[default]",

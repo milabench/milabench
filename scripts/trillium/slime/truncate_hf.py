@@ -35,6 +35,10 @@ for i, (file, names) in enumerate(sorted(shards.items()), 1):
 (dst / "model.safetensors.index.json").write_text(json.dumps({"metadata": {}, "weight_map": weight_map}, indent=2))
 
 config = json.loads((src / "config.json").read_text())
+# per-layer lists (mlp_layer_types, indexer_types): transformers 5.12 checks they have num_hidden_layers entries
+for key, value in config.items():
+    if isinstance(value, list) and len(value) == config["num_hidden_layers"]:
+        config[key] = value[:n]
 config["num_hidden_layers"] = n
 config["num_nextn_predict_layers"] = 0
 (dst / "config.json").write_text(json.dumps(config, indent=2))
