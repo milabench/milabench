@@ -64,10 +64,10 @@ def merge(l1: list, l2: list):
 
 @ovld  # noqa: F811
 def merge(l1: list, d: dict):
-    if "append" in d:
-        return l1 + d["append"]
+    if "append" in d or "prepend" in d:
+        return d.get("prepend", []) + l1 + d.get("append", [])
     else:
-        raise TypeError("Cannot merge list and dict unless dict has 'append' key")
+        raise TypeError("Cannot merge list and dict unless dict has 'append' or 'prepend' key")
 
 
 @ovld  # noqa: F811
