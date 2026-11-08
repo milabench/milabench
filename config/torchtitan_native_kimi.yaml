@@ -131,7 +131,8 @@ k3-pp4-l7-gpipe-gc:
   inherits: k3-pp4-l7-gpipe
   env:
     PYTORCH_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.99,garbage_collection_threshold:0.8"
-# no effect: the same step-1 peaks to 0.01 GiB and no step 2 (job 1261880)
+# no effect: the same step-1 peaks to 0.01 GiB and no step 2 (job 1261880); Muon alone: worker exit after step 1
+# (1261917), Muon + gc: no step 2 (1261943), step-1 peaks 164-167 GiB on stages 1-3 in both
 # Muon (review option a), Kimi's optimizer: TorchTitan's DistMuon on the matrices, AdamW on embeddings, output, norms
 # and the KDA scalars, as upstream's Kimi K3 recipe; one momentum buffer instead of two. Step 6 traced (optimizer time)
 k3-pp4-l7-gpipe-muon:
@@ -143,6 +144,14 @@ k3-pp4-l7-gpipe-muon-gc:
   inherits: k3-pp4-l7-gpipe-muon
   env:
     PYTORCH_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.99,garbage_collection_threshold:0.8"
+# Fewer layers (review option b): a stage of one MoE layer with 64 micro-batches in flight. 5 layers with no extra
+# weight for the embedding / output: emb + 0-1 / 2 / 3 / 4 + out, so stages 1-2 hold one MoE layer and no output
+k3-pp4-l5-gpipe:
+  inherits: k3-pp4-l6-gpipe
+  argv:
+    --n-layers: 5
+    --pp-first-stage-less-layers: 0
+    --pp-last-stage-less-layers: 0
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most, BF16: the FP32
 #     master did not fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
