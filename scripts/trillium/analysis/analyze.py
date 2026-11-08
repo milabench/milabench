@@ -59,6 +59,9 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 ("trillium/hw/srygaard-hc/by_node.tsv", "srygaard-hc"),
                 ("trillium/hw/srygaard-hc/metric_offsets.tsv", "srygaard-hc"),
                 ("trillium/hw/fp8-glm/summary.txt", "fp8-glm"),
+                # New workloads: Kimi K3 inference (vLLM), one directory per job; 91 MB on Nov 8. Outside runs/,
+                # so the training build does not read it (tt_analysis.runs.data_files globs runs/*/*.data).
+                ("trillium/new/k3-inf/runs/", "k3-inf/runs"),
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),
