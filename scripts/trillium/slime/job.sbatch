@@ -24,8 +24,12 @@ export XDG_CACHE_HOME=$B/cache
 # node-local files in RAM (/tmp holds 2 GB): TMPDIR (Ray's session directory among them) and the kernel caches
 L=/dev/shm/$USER/glm-rl
 nodes() { srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
+# `NVRM: knvlinkSendInbandData_IMPL` lines in each node's kernel log at the start and the end, for the hardware checks
+# (the epilog's kernel messages are the first node's only)
+nvrm() { nodes bash -c "echo \"$P nvrm-inband $1 \$(hostname -s) \$(dmesg | grep -c knvlinkSendInbandData)\""; }
 nodes mkdir -p "$L/tmp"
-trap 'nodes rm -rf "$L"' EXIT
+nvrm start
+trap 'nvrm end; nodes rm -rf "$L"' EXIT
 # (sglang puts the inductor and CUDA caches in SGLANG_CACHE_DIR, job 1261398, and its JIT builds in SGLANG_JIT_CACHE_DIR,
 # job 1261434: both default to ~/.cache/sglang)
 export TMPDIR=$L/tmp TRITON_CACHE_DIR=$L/triton TILELANG_CACHE_DIR=$L/tilelang FLASHINFER_WORKSPACE_BASE=$L \
