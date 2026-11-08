@@ -27,6 +27,14 @@ milabench install --config milabench/config/torchtitan_native_kimi.yaml --select
 milabench prepare --config milabench/config/torchtitan_native_kimi.yaml --select k3-1n-l4
 ```
 
+`--optimizer muon` imports upstream's Kimi K3 recipe (`torchtitan_recipes.tests.models.kimi_k3`), whose multimodal
+imports need torchvision, which the pack does not install: add the nightly of the torch build, into the K3 venv only:
+
+```bash
+uv pip install --python output/venv/torchtitan_native/bin/python --no-deps \
+    --index-url https://download.pytorch.org/whl/nightly/cu130 "torchvision==0.30.0.dev20261005+cu130"
+```
+
 The bench venv is the Qwen pack's (same requirements and torch nightly). `prepare` downloads FineWeb sample-10BT
 (500,000 documents) and DeepSeek-V3.1's tokenizer: K3's own is tiktoken (`tiktoken.model` with remote code), which
 TorchTitan's `HuggingFaceTokenizer` cannot read; DeepSeek's ids (< 129,280) index K3's 163,840-entry embedding.
