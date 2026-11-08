@@ -595,6 +595,18 @@ slime-glm5-grpo-r3:
   argv:
     --use-rollout-routing-replay: true
 
+# Disaggregated, on the same 32 nodes: the trainer on the first 16 (TP1 / CP1, PP8 x EP16, DP16) and 2 SGLang engines
+# of 64 GPUs on the other 16. No offload either side; after every step each pipeline stage's DP0 rank broadcasts its
+# stage's weights to the engines over NCCL (slime's update_weight_from_distributed: no CUDA IPC, no expert routing).
+# 64 samples per trainer rank (32-64 micro-batches, bubble 10-18 %), 8 sequences per DP-attention rank.
+slime-glm5-grpo-disagg:
+  inherits: slime-glm5-grpo
+  argv:
+    --colocate: null
+    --actor-num-nodes: 16
+    --expert-model-parallel-size: 16
+    --rollout-num-gpus: 128
+
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
 # colocated over both nodes: the trainer at the GRPO entry's TP1 / CP1, PP2 x EP8, DP 8 (stage 2 starts at layer 7,
@@ -629,6 +641,16 @@ slime-glm5-l10-grpo-2n:
     --rollout-num-gpus-per-engine: 16
     --sglang-ep-size: 16
     --sglang-dp-size: 16
+
+# The disaggregated layout on 4 nodes with the 10-layer checkpoint, before slime-glm5-grpo-disagg: the trainer on 2
+# (TP1 / CP1, PP2 x EP8, DP8), one SGLang engine of 16 GPUs on the other 2; tests the NCCL weight sync.
+slime-glm5-l10-grpo-disagg-4n:
+  inherits: slime-glm5-l10-grpo-2n
+  num_machines: 4
+  argv:
+    --colocate: null
+    --actor-num-nodes: 2
+    --rollout-num-gpus: 16
 
 # --- GLM-5.3-Flash (300B MoE, glm5_next architecture): the step between the 30B proxy and the 744B ---
 # Follows slime's scripts/run-glm5.3-flash-300B.sh: 8 nodes x 8 GPUs, PP4 x CP8 x EP16, the HF checkpoint is

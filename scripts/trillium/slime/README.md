@@ -308,6 +308,16 @@ the script:
 The first step-4 run's `rollout/truncated` and reward say whether Low and 8k are enough; the reward is there to show
 the loop learns, not measured.
 
+### Step 4, prepared entries (not posted)
+
+GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
+
+| entry | what | estimates |
+|---|---|---|
+| `slime-glm5-grpo-r3` | GLM-RL-01 with rollout routing replay (the user's comparison; slime's sglang-router fork is in the venv) | as GLM-RL-01; host +about 90 GB on the first node (routed experts of 1,024 samples: 21 GB, + Qwen's measured ~70 GB). On Qwen3-30B-A3B the times did not differ beyond the spread |
+| `slime-glm5-l10-grpo-disagg-4n` | bring-up, 4 nodes: the 10-layer checkpoint, trainer on 2 nodes (TP1 / CP1, PP2 x EP8), one 16-GPU engine on the other 2 | tests slime's NCCL weight sync (`update_weight_from_distributed`: each pipeline stage's DP0 rank broadcasts its stage to the engines; no CUDA IPC, no expert routing) before the 32-node one |
+| `slime-glm5-grpo-disagg` | 32 nodes: trainer on 16 (TP1 / CP1, PP8 x EP16, DP16), 2 SGLang engines of 64 GPUs on 16 | trainer GPU: 13.9 B parameters on the largest stage, 77.8 GiB static, about 125-135 GiB with activations, no engine beside it; host on its last stage's nodes about 1.2-1.4 TB (Adam for 79 B parameters, no offload copies). Per step: rollout 20-50 min (8 sequences per DP-attention rank), training 5-9 min (half the GPUs, bubble 10-18 %), sync 1-3 min (8 stage sources at once), no offload. slime's `train.py` is synchronous: each side waits while the other works |
+
 ## Untested
 
 - More than 2 nodes, the GLM-5.3 entries, disaggregated rollout across nodes.
