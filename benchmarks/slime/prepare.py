@@ -53,11 +53,23 @@ def prepare_model(cfg):
     )
     # >1 spreads the layers over the GPUs (the converter makes pipeline size = world size), needed for big models
     nproc = os.environ.get("SLIME_CONVERT_NPROC") or str(cfg["model"].get("convert_nproc", 1))
+    launch = ["torchrun", f"--nproc-per-node={nproc}"]
+    # convert_nodes > 1: one torchrun per node of the Slurm job (prepare runs on its first node), for checkpoints that
+    # do not fit one node's GPUs (GLM-5.3: 1.49 TB in bf16)
+    nodes = int(cfg["model"].get("convert_nodes", 1))
+    if nodes > 1:
+        head = subprocess.check_output(["scontrol", "show", "hostnames", os.environ["SLURM_JOB_NODELIST"]],
+                                       text=True).split()[0]
+        launch = ["srun", "--overlap", f"--nodes={nodes}", f"--ntasks={nodes}", "--ntasks-per-node=1", *launch,
+                  f"--nnodes={nodes}", "--rdzv-backend=c10d", f"--rdzv-endpoint={head}:29400"]
     run(
         [
-            "torchrun", f"--nproc-per-node={nproc}",
+            *launch,
             str(common.slime_src() / "tools" / "convert_hf_to_torch_dist.py"),
             *common.model_argv(),
+            # the parallel layout of the conversion, when the converter's own (pipeline = world size, even split) does
+            # not work: GLM-5's DSA index sharing needs every pipeline stage to start on a computing layer
+            *common.assemble(cfg["model"].get("convert_argv")),
             "--hf-checkpoint", str(hf_dir),
             "--save", str(torch_dist),
         ],
