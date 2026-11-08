@@ -156,7 +156,7 @@ k3-pp4-l7-rbf16:
   argv:
     --grad-reduce: bf16
 # Timeouts (job 1262377): the init timeout now reaches every group before step 1, the pipeline's included
-# (configs._patch_init_timeouts); its 2-rank P2P child groups, created during step 1, keep it for the whole run.
+# (configs._patch_init_timeouts); after step 1 TorchTitan lowers every group, the P2P ones included, to the train timeout.
 # Check on 4 nodes: 30 s is shorter than stage 3's wait for its first shape metadata (~55 s: stages 0-2 infer one after
 # another, ~10 / 20 / 25 s, job 1262230), so this must fail there, on the pipeline group, after 30 s
 k3-pp4-l7-rbf16-t30:
@@ -238,6 +238,13 @@ k3-pp4-l8-depth-detach:
   inherits: k3-pp4-l8-depth
   argv:
     --pp-detach-losses: "1"
+# The train timeout reaches every group after step 1: 10 s is shorter than stage 0's wait for step 2's first backward
+# (~18 s on this stand-in, job 1263515), so this must fail in step 2, after "adjusting timeout ... to 0:00:10"
+k3-pp4-l8-depth-t10:
+  inherits: k3-pp4-l8-depth-detach
+  argv:
+    --train-timeout-seconds: 10
+    --memory-snapshot-freq: 0
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), at most 2 layers per stage, an MoE layer on
 #     every stage (PP4 failed with a stage of none: jobs 1261433-1261567; with both less-layers options at 0, stage 0
@@ -248,7 +255,10 @@ k3-pp4-l8-depth-detach:
 #     each: ~10-25 s and ~5 s per stage on 4 nodes (jobs 1262230, 1262576), 10-28 s forward at 48 (job 1262377). The
 #     longest wait, stage 0's for the backward metadata, is ~48 x 21-28 + 47 x 5 s = 21-26 min (est.): init timeout
 #     60 min, which configs._patch_init_timeouts applies to every group (the pipeline's: 600 s before, job 1262377);
-#     the pipeline's P2P child groups keep it after step 1 (README, "Running the scale rows").
+#     after step 1 TorchTitan lowers every group, the pipeline's P2P communicators included, to the train timeout. Train
+#     timeout 30 min: step 2's first backward reaches the stages one after another from the last, each paying a one-time
+#     cost (~15 s per 2-layer stage at PP48, job 1263757; ~3 s per 1-layer stage, K3-TRN-07), so stage 0 waits ~12 min
+#     for it; 180 s (the pack's default) aborted K3-TRN-08 there (job 1263757). A dead stage holds the others <= 30 min.
 #     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min.
 #     A log line per step (TorchTitan's default here, 10, printed steps 1, 10 and 20 only: job 1263259), for the
 #     cancel rule on steps and each step's peak reserved memory. --pp-detach-losses: without it the last stage keeps
@@ -271,6 +281,7 @@ _k3_scale:
     --init-timeout-seconds: 3600
     --log-freq: 1
     --pp-detach-losses: "1"
+    --train-timeout-seconds: 1800
 # Full size needs the BF16 gradient reduction (the campaign's default is FP32): with FP32 a stage of 2 MoE layers runs
 # out of memory with the in-flight load of PP48's worst stages (k3-pp4-l7-gpipe with AdamW, the allocator's garbage
 # collection, Muon, Muon + gc, the native allocator: jobs 1261657-1262141); with BF16, 143.3 GiB reserved on the

@@ -319,9 +319,9 @@ def _patch_init_timeouts(seconds: int) -> None:
     ``set_pg_timeouts`` lowers them and the default group to the train timeout after
     step 1. A 48-stage K3 pipeline infers its stage shapes one stage after another before
     step 1, ~21 s each: the last stages timed out at 600 s (job 1262377). Apply the init
-    timeout to every group with that same function before training starts. The
-    pipeline's 2-rank P2P child groups, created during step 1, copy it and keep it for
-    the whole run (the lowering after step 1 does not reach them)."""
+    timeout to every group with that same function before training starts. After step 1
+    TorchTitan lowers every group to ``train_timeout_seconds``, the pipeline's P2P
+    communicators included (job 1263757: P2P waits timed out at 180 s during step 2)."""
     from datetime import timedelta
 
     from torchtitan.distributed import utils as dist_utils

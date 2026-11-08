@@ -94,11 +94,19 @@ forward on each, then a backward in reverse, `recv_object_list` between them). S
 receive after 600 s: TorchTitan gives `--init-timeout-seconds` to the default group only, the mesh groups (the
 pipeline's included) keep torch's 10-min NCCL default until its `set_pg_timeouts` lowers the mesh groups and the
 default group to the train timeout after step 1. `configs._patch_init_timeouts` (K3 only) calls that same function
-with the init timeout when training starts. The pipeline's 2-rank P2P child groups are created during step 1 and copy
-their parent's timeout then (torch `distributed/pipelining/_p2p.py`): they get the init timeout and keep it for the
-whole run, as the lowering after step 1 does not reach them (job 1261501, at 600 s: lowered to 0:03:00 at 18:59:02,
-rank 0 timed out in a P2P wait after 600 s at 19:09:40). A stage that dies after step 1 can hold the others for up to
-the init timeout (1 h): see the cancel rule below. Check (job 1262556, `k3-pp4-l7-rbf16-t30`, 30 s): local rank 0 of
+with the init timeout when training starts. After step 1 TorchTitan lowers every group to `--train-timeout-seconds`,
+the pipeline's P2P communicators included: K3-TRN-08 (job 1263757) aborted 3 min after step 1, the P2P waits of
+stages 0-34 timing out after 180 s (the pack's default train timeout). (Job 1261501 had seen a P2P wait keep 600 s
+after the lowering, before the init timeout reached every group.) The scale rows set the train timeout to 30 min:
+step 2's first backward (1F1B: micro-batch 0, from the last stage back to stage 0) reaches the stages one after
+another, each paying a one-time cost, ~15 s per 2-layer stage at PP48 (job 1263757: stage 44 at 02:42:48, stage 35
+at 02:45:04), ~3 s per 1-layer stage (K3-TRN-07), ~4 s per stage on the 4-node stand-in (job 1263515: stages 3, 2,
+1, 0 resume at +11, +15, +19, +23 s after step 1), so stage 0 waits ~12 min at PP48. Not identified: the one-time
+cost. Each stage's reserved memory grows from step 1 to step 2 (the AdamW moments created at step 1's end hold memory
+the step-1 peak had used: +13 GiB median per 1-layer stage in K3-TRN-07, +19-26 per 2-MoE-layer stage on the stand-in),
+and expandable segments map new memory 20 MiB at a time (the ~10 s first-mapping phase of the shape inference above),
+so mapping is the leading candidate (inferred, not measured); it does not explain 5x for 2x the layers by itself. A
+stage that dies after step 1 can hold the others for up to the train timeout: see the cancel rule below. Check (job 1262556, `k3-pp4-l7-rbf16-t30`, 30 s): local rank 0 of
 each node logs "adjusting timeout for all ProcessGroups to 0:00:30", and stage 2 fails 39 s after training starts on
 its 2-rank pipeline communicator ("[TC][rank=1] ... Operation timed out after 30661 ms") while stages 0-1 infer their
 shapes.
@@ -122,8 +130,9 @@ segments and a 60-min init timeout. Static stage shapes would skip the inference
 ### Running the scale rows (K3-TRN-01..03)
 
 Step 1 is expected about 25-30 min after the job starts (the shape-inference chain, est.); cancel if there is none by
-45 min. After step 1, cancel if there is no new step for 5 min: the P2P groups keep the 60-min init timeout, so a stage
-that dies would otherwise hold every node until it expires. The rows log every step (`--log-freq 1`); K3-TRN-04..06
+45 min. Step 2 takes ~12-15 min at 93 layers (est., the sweep above, ~4 min at 49); cancel if there is none 20 min
+after step 1. From step 3 on, cancel if there is no new step for 5 min: a dead stage would otherwise hold every node up
+to the 30-min train timeout. The rows log every step (`--log-freq 1`); K3-TRN-04..06
 (job 1263259) logged steps 1, 10 and 20 only, so there a step line comes ~10 min after step 1 (est.).
 
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
