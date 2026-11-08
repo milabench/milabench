@@ -341,7 +341,8 @@ slime-qwen3-30b-a3b-sft-routing:
 # scripts/run-qwen3-30B-A3B.sh (DAPO-Math-17k, deepscaler rule-based reward, the GLM-5 entry's GRPO flags) with
 # 4k-token responses instead of 128k, no eval, and the attention / sampling backends of the validated GRPO entries.
 # MoE in SGLang's Triton kernels: on B200 SGLang picks flashinfer_trtllm, which downloads its cubins at the first
-# forward (no internet on Trillium's compute nodes, job 1261477).
+# forward (no internet on Trillium's compute nodes, job 1261477). No rollout routing replay: it needs the sglang-router
+# fork that slime's Dockerfile installs (PyPI's 0.3.2 returns no routed experts, job 1261523), not in this install.
 slime-qwen3-30b-a3b-grpo:
   inherits: _qwen3_30b_a3b
   tags: [rl]
@@ -360,7 +361,6 @@ slime-qwen3-30b-a3b-grpo:
     --tis-clip: 2
     --disable-grpo-std-normalization: true
     --calculate-per-token-loss: true
-    --use-rollout-routing-replay: true
     --log-probs-chunk-size: 1024
     --max-tokens-per-gpu: 20480
     --rollout-num-gpus-per-engine: 8
