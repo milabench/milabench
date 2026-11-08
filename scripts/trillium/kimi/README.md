@@ -128,5 +128,59 @@ Repeat of the same config on the same nodes (1262824 and 1263424, conc1): 111.28
 Autotune buys 5.7% at conc1 and 37% at conc64 (TTFT p50 1.65x), far beyond that: the study runs with autotune and pays
 its ~24 min at every start. The two runs used different node pairs; the campaign's E1 measured under 1% between them.
 
-Not tested yet: the study's other passes and the accuracy pass; prefix caching, DCP and speculative decoding stay off as
-in the MI355X study.
+### The study on 2 nodes: K3-INF-01
+
+`kimi-vllm-2n-tp8pp2`, job 1263799, `trig[0145-0146]`, 2026-11-08 02:45:55-04:49:02 (2:03:07), milabench `79b0af94`, exit
+0 after 7370 s; both nodes "GPUs free", neither drained; `ulimit -c` 0 on both. Weights 676 s (PP0) and 669 s (PP1),
+engine init 1443 s, ready 39 min after the job started; the 21 passes 52 min (3126 s, 2430 s of it measured), the eval
+31 min. Estimated in the row: ready ~37 min, passes ~1 h, eval 35-60 min, 2.2-2.7 h in all: each part at or under it.
+0 failed requests in every pass. Raw data: `runs/kimi-vllm-2n-tp8pp2.1263799/`; the tables from
+`scripts/analysis/kimi_study.py` (`passes.csv`, `itl_by_context.csv`, `accuracy.csv`), recomputed from the `.data` files for
+conc64, conc512 and ctx128k-c1 (throughput = requests x output length / duration, TTFT median from the per-request
+samples, power = the main node's mean over the pass window, x2).
+
+Per GPU = /16, per node = /2. Power: the main node's 8 GPUs, times 2 (voir samples the main node only).
+
+| pass | in / out | output tok/s (/GPU, /node) | total tok/s (/GPU, /node) | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | W, 2 nodes | J / out tok |
+|---|---|---|---|---|---|---|---|---|
+| warmup (throwaway) | 1024 / 64 | 305 (19, 153) | 5189 (324, 2594) | 1907 / 12063 | 182.4 / 202.7 | 21.1 / 534.8 | 6020 | 19.7 |
+| conc1 | 1024 / 256 | 111.1 (6.9, 56) | 556 (35, 278) | 85 / 88 | 8.70 / 8.71 | 8.69 / 8.90 | 7022 | 63.2 |
+| conc4 | 1024 / 256 | 326.7 (20.4, 163) | 1634 (102, 817) | 256 / 288 | 11.27 / 12.04 | 11.26 / 11.47 | 9549 | 29.2 |
+| conc16 | 1024 / 256 | 876.3 (54.8, 438) | 4381 (274, 2191) | 693 / 721 | 15.63 / 17.96 | 15.55 / 16.09 | 9729 | 11.1 |
+| conc64 | 1024 / 256 | 2002.6 (125.2, 1001) | 10013 (626, 5007) | 1462 / 2968 | 26.42 / 30.11 | 20.88 / 23.56 | 11972 | 6.0 |
+| conc128 | 1024 / 256 | 2243.0 (140.2, 1121) | 11215 (701, 5607) | 2837 / 9338 | 44.76 / 61.15 | 27.18 / 450.2 | 11104 | 5.0 |
+| conc256 | 1024 / 256 | 2865.0 (179.1, 1433) | 14325 (895, 7163) | 2698 / 14761 | 70.72 / 93.22 | 37.80 / 1342 | 11501 | 4.0 |
+| conc512 | 1024 / 256 | 3466.4 (216.6, 1733) | 17332 (1083, 8666) | 4176 / 21833 | 131.6 / 143.3 | 51.25 / 1390 | 11632 | 3.4 |
+| conc1024 | 1024 / 256 | 3451.8 (215.7, 1726) | 17259 (1079, 8629) | 40131 / 59875 | 140.0 / 145.9 | 50.39 / 1397 | 11558 | 3.3 |
+| ctx1k-c1 | 1024 / 128 | 107.5 (6.7, 54) | 968 (60, 484) | 85 / 88 | 8.70 / 8.73 | 8.69 / 8.99 | 7152 | 66.5 |
+| ctx8k-c1 | 8192 / 128 | 84.2 (5.3, 42) | 5475 (342, 2738) | 399 / 402 | 8.82 / 8.83 | 8.82 / 9.01 | 7678 | 91.1 |
+| ctx32k-c1 | 32768 / 128 | 55.0 (3.4, 28) | 14138 (884, 7069) | 1168 / 1176 | 9.13 / 9.14 | 9.11 / 9.48 | 9171 | 166.7 |
+| ctx64k-c1 | 65536 / 128 | 39.1 (2.4, 20) | 20043 (1253, 10021) | 2087 / 2100 | 9.37 / 9.38 | 9.34 / 9.85 | 10616 | 271.7 |
+| ctx128k-c1 | 131072 / 128 | 21.5 (1.3, 11) | 22017 (1376, 11009) | 4555 / 4607 | 11.06 / 12.06 | 9.67 / 28.92 | 11394 | 530.5 |
+| ctx1k-c16 | 1024 / 128 | 766.3 (47.9, 383) | 6896 (431, 3448) | 692 / 717 | 15.58 / 20.27 | 15.51 / 16.04 | 9755 | 12.7 |
+| ctx8k-c16 | 8192 / 128 | 220.5 (13.8, 110) | 14331 (896, 7165) | 3501 / 11821 | 37.24 / 120.7 | 13.68 / 1350 | 9016 | 40.9 |
+| ctx32k-c16 | 32768 / 128 | 78.0 (4.9, 39) | 20041 (1253, 10021) | 11009 / 18809 | 115.4 / 246.4 | 17.95 / 1471 | 9895 | 126.9 |
+| ctx64k-c16 | 65536 / 128 | 44.0 (2.7, 22) | 22571 (1411, 11285) | 14714 / 46235 | 249.9 / 359.4 | 20.25 / 1620 | 10705 | 243.3 |
+| ctx128k-c16 | 131072 / 128 | 19.5 (1.2, 10) | 19987 (1249, 9994) | 30368 / 101805 | 594.7 / 786.8 | 25.14 / 1965 | 10451 | 535.9 |
+| decodelong-c1 | 1024 / 4096 | 114.3 (7.1, 57) | 143 (9, 71) | 87 / 88 | 8.73 / 8.73 | 8.73 / 8.79 | 6905 | 60.4 |
+| decodelong-c16 | 1024 / 4096 | 968.9 (60.6, 484) | 1211 (76, 606) | 699 / 720 | 16.42 / 16.57 | 16.33 / 17.18 | 9883 | 10.2 |
+
+Saturation: output 2003 tok/s at conc64, 2865 at conc256, 3466 at conc512 and 3452 at conc1024. The server runs at most
+512 sequences (`--max-num-seqs`, the study's flag): conc1024 queues, its TTFT p50 is 40 s. The p99 ITL of 0.45-2 s from
+conc128 up, and in the c16 context passes, is decode waiting behind 16,384-token prefill chunks (chunked prefill).
+
+Cost of context length, one request (c1): TTFT 85 ms at 1k, 399 at 8k, 1168 at 32k, 2087 at 64k, 4555 at 128k (prefill
+20.5k tok/s at 8k, 28-31k from 32k: close to linear in the prompt); TPOT 8.70, 8.82, 9.13, 9.37, 11.06 ms (+27% at 128k).
+In decodelong-c1 the ITL stays at 8.70, 8.73, 8.75 ms over context positions 1-2k, 2-4k, 4-8k (`itl_by_context.csv`): 69
+of the 93 layers are KDA, with a fixed-size state. At 16 concurrent requests the prompts of the others dominate: TTFT p50
+0.69, 3.5, 11.0, 14.7, 30.4 s from 1k to 128k.
+
+Accuracy (lm-eval through the server, `eval` pass, temperature 0, up to 8192 generated tokens; ± stderr):
+
+| GSM8K (1319) | ARC-Challenge (1172) | GPQA diamond (198) | MMLU-Pro (2002 of 12,032) |
+|---|---|---|---|
+| 97.5 ± 0.4 | 98.5 ± 0.4 | 84.8 ± 2.6 | 87.7 ± 0.7 |
+
+MoE backend `FLASHINFER_TRTLLM_MXFP4_MXFP8`: activations in MXFP8 (vLLM 0.32's default on B200), the checkpoint is W4A16.
+
+Not tested yet: prefix caching, DCP and speculative decoding stay off as in the MI355X study.
