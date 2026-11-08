@@ -270,15 +270,28 @@ site's `flashinfer_cubin-0.7.0.post1+computecanada` holds 0.6.18's `fmha/trtllm-
 not its `batched_gemm` or `gemm` ones.
 
 Step 4 at TP1 / CP1 (the campaign's GLM-5 layouts), colocated on 32 nodes, PP8 x EP32 (DP32 for the dense part; slime's
-split 14 / 8 x 6 / 16), estimates. GPU, training: the largest stage (16 MoE layers + LM head) holds 9.09 B parameters
-per GPU: BF16 weights 18.1 GB + FP32 main gradients 36.3 GB = 54 GB that stay on the GPU (Adam's moments and the master
-weights are on the CPU, `--optimizer-cpu-offload`); the rest is activations, recompute and the allocator: the Qwen
-stand-in's 10.7 GB per billion parameters (42.7 GB used for 4.0 B), which includes them, gives about 97 GB, plus PP8's
-in-flight micro-batches: 112-122 GB. Rollout: SGLang's static pool (the entry sets no `--sglang-mem-fraction-static`;
-SGLang picked 0.751 in job 1264182: 144 GB) + the offloaded trainer's ~7 GB = about 151 GB. Sync: the engine + the
-trainer's BF16 weights (18.1 GB) + the 4 GiB staging = about 167 GB, of 192. Host: the last stage's nodes hold 72.6 B
-parameters each (8 GPUs x 9.09 B): 365 GB + 16.3 GB per billion parameters per node (fit to Qwen's 862 GB at 1 node, 613
-GB at 2) = about 1.55 TB of 2.0 TB, +70 GB with routing replay.
+split 14 / 8 x 6 / 16), 128 prompts x 8 = 1,024 samples per step. Estimates, from the 10-layer test (job 1264931):
+
+| per GPU (of 178.3 GiB) | |
+|---|---|
+| training | 85-115 GiB: BF16 weights 16.9 + FP32 main gradients 33.8 = 50.7 GiB static (9.09 B parameters on the largest stage; Adam and the master weights on the CPU), the rest activations, recompute and the allocator (the 10-layer trainer: 56.7 GiB used for 6.4 B, 8.9 GiB per billion, plus PP8's 6 more micro-batches in flight). 1F1B keeps at most 8 in flight, whatever the batch |
+| rollout | about 147 GiB: SGLang's static 0.751 (133.9 GiB; 146.8 GiB peak in the 10-layer test); the KV of 4 sequences x 8.3k tokens is about 2 GB |
+| sync | about 155-160 GiB: the engine + the trainer's BF16 weights (16.9) + the 4 GiB staging |
+
+Host per node (psutil's `used`: process memory; page cache and `/dev/shm`, Ray's object store included, are not in it):
+the 10-layer test's 987 GB on its first node is CPU Adam (12 B x its stage's 32.2 B = 386 GB), the trainer's weights
+saved during rollouts (104 GB BF16, +208 GB if its FP32 gradients are saved too), SGLang's weights saved during training
+(70 GB) and about 220-430 GB of the rest (pinned buffers, processes). At full size, on the last stage's nodes (39.7 B
+parameters each: 16 MoE layers + LM head over 4 nodes): Adam 476 GB + trainer 145-435 GB + SGLang 224 GB + 220-430 GB =
+about 1.3-1.35 TB of 2.0 TB. The rollout buffers of 1,024 samples are under 1 GB (+21 GB of routed experts and about
+70 GB more, as Qwen, with routing replay). Above 1.8 TB, PP16 would halve the optimizer and trainer parts per node.
+
+Per step: rollout 20-45 min (about 0.15-0.3 s per decode step at 4 sequences per DP-attention rank, the 10-layer test's
+1.8-3.8 ms per layer x 78, to 8,192 tokens for the longest response); training 2.5-4.5 min (3-6 M tokens at 25-30k
+tokens/s: the 10-layer test's 17.6k tokens/s on 16 GPUs x 256 / 16 GPUs x 10 / 78 layers = 36k, less an 18-30 %
+bubble); sync 1.5-2 min (10 times the 10-layer test's 8-10 s); trainer and engine offload about 0.5 min. Startup to the
+first sync: 10-20 min (8.5 min in the 10-layer test). `--time` = 20 + 3 x (45 + 4.5 + 2 + 0.5) + 3 (warm-up training)
++ 15 margin = 194 min: 3:15:00.
 
 `slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference forward pass;
 per-token loss), its reward and `--sglang-moe-dense-tp-size 1`, without rollout routing replay (`slime-glm5-grpo-r3` has
@@ -290,7 +303,7 @@ the script:
 |---|---|---|---|
 | response cap | 262,144 | 8,192 | at CP1 a sample stays on one GPU (slime gives an oversized one a micro-batch of its own); the memory estimate assumes 8,192-token micro-batches |
 | reasoning effort | the template's Max (slime passes no kwargs) | Low (`--apply-chat-template-kwargs '{"reasoning_effort": "low"}'`; the prompt still ends `<\|assistant\|><think>`) | with Max and an 8k cap most responses would be cut before `</think>`: reward 0, advantages 0 |
-| batch | 8 prompts x 8 = 64 (its DP1) | 32 x 8 = 256 | at DP32: 8 samples per rank, 4-8 micro-batches through PP8 (bubble 47-64 %), one sample per DP-attention rank of the 4 engines |
+| batch | 8 prompts x 8 = 64 (its DP1) | 128 x 8 = 1,024 | at DP32: 32 samples per rank, 16-32 micro-batches through PP8 (bubble 18-30 %); 4 sequences per DP-attention rank of the 4 engines (one leaves decoding latency-bound) |
 
 The first step-4 run's `rollout/truncated` and reward say whether Low and 8k are enough; the reward is there to show
 the loop learns, not measured.

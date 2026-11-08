@@ -524,8 +524,9 @@ slime-glm5-fineweb:
 # of slime's scripts/run-glm5.3-744B-A40B.sh, without its rollout routing replay (the -r3 entry has it). Deviations:
 # responses capped at 8,192 tokens instead of 262,144 (at CP1 a sample stays on one GPU; an oversized one gets a
 # micro-batch of its own) with "Reasoning Effort: Low" instead of the template's Max (responses cut before </think>
-# score 0); 32 prompts x 8 samples instead of 8 x 8, which was sized for the script's DP1: at DP32, 8 samples per rank
-# (4-8 micro-batches through PP8, bubble 7 / (m + 7) = 47-64 %), and one sample per DP-attention rank of the 4 engines.
+# score 0); 128 prompts x 8 samples instead of 8 x 8, which was sized for the script's DP1: at DP32, 32 samples per
+# rank (16-32 micro-batches through PP8, bubble 7 / (m + 7) = 18-30 %), and 4 sequences per DP-attention rank of the 4
+# engines (one would leave decoding latency-bound).
 slime-glm5-grpo:
   inherits: _glm5
   tags: [rl]
@@ -544,9 +545,9 @@ slime-glm5-grpo:
     --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
     --num-rollout: 3
     # prompts per rollout: slime requires global-batch-size == rollout-batch-size * n-samples-per-prompt
-    --rollout-batch-size: 32
+    --rollout-batch-size: 128
     --n-samples-per-prompt: 8
-    --global-batch-size: 256
+    --global-batch-size: 1024
     --rollout-max-response-len: 8192
     --apply-chat-template-kwargs: '{"reasoning_effort": "low"}'
     --tensor-model-parallel-size: 1
@@ -622,6 +623,9 @@ slime-glm5-l10-grpo-2n:
     --decoder-last-pipeline-num-layers: 4
     --expert-model-parallel-size: 8
     --rollout-max-response-len: 4096
+    # the batch job 1264931 ran (32 prompts x 8)
+    --rollout-batch-size: 32
+    --global-batch-size: 256
     --rollout-num-gpus-per-engine: 16
     --sglang-ep-size: 16
     --sglang-dp-size: 16
