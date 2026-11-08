@@ -478,6 +478,14 @@ kimi-vllm-2n-tp8pp2-bringup:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
+# the full model with random weights: memory, CUDA graphs and FlashInfer's autotune at 93 layers. The autotune cache is
+# keyed by the vLLM config hash, which leaves the load format out: the bring-up with the real weights reuses it
+kimi-vllm-2n-tp8pp2-dummy:
+  inherits: kimi-vllm-2n-tp8pp2-bringup
+  server:
+    argv:
+      --load-format: dummy
+
 # -----------------------------------------------------------------------------
 # Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
 # -----------------------------------------------------------------------------
