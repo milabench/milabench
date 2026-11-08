@@ -78,5 +78,19 @@ vLLM and Ray on every node, then a wait until `nvidia-smi --query-compute-apps` 
 20 min, ended in the autotune): both nodes "GPUs free", neither drained. milabench delays a first SIGTERM; the second
 one, sent by hand there, stopped it: the trap now sends both (not run since).
 
-Not tested yet: the real weights (load time of 1.45 TiB per node); prefix caching, DCP and speculative decoding stay off
-as in the MI355X study.
+**Kimi-K3, 2 nodes, `kimi-vllm-2n-tp8pp2-bringup`, job 1262824, `trig[0101-0102]`, 2026-11-07 22:45-23:27: PASS**
+(milabench 2509 s, job 42:04, both nodes "GPUs free", neither drained). Weights 688 s (PP0) and 651 s (PP1): each stage
+reads its own ~47 shards, ~1.1 GB/s per node from VAST, cold. Engine init 1434 s: MoE autotune 22 profiles in 11-13 min
+plus 8 in 4-5 min, BF16 GEMM 4.5 min, graphs 27 s. MoE backend `FLASHINFER_TRTLLM_MXFP4_MXFP8` (vLLM 0.32's default on
+B200: activations in MXFP8). 1k in, 256 out, random tokens:
+
+| pass | output tok/s (per GPU) | total tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes | J / output tok |
+|---|---|---|---|---|---|---|---|
+| conc1 | 111.3 (7.0) | 556 | 85 / 88 | 8.69 / 8.70 | 8.68 / 8.89 | 7014 | 63.0 |
+| conc64 | 1304.7 (81.5) | 6523 | 1881 / 11689 | 26.7 / 64.1 | 20.6 / 30.1 | 9165 | 7.0 |
+
+Power: main node's GPUs only (voir), times 2 (`scripts/analysis/kimi_study.py`). conc64's p99 TTFT is the first burst:
+64 prompts of 1024 tokens at once, 16,384 batched tokens per step (also in job 1261890).
+
+Not tested yet: the study's other passes and the accuracy pass; `-notune` (no FlashInfer autotune, against this run);
+prefix caching, DCP and speculative decoding stay off as in the MI355X study.
