@@ -3,7 +3,8 @@
 # job's nodes, then a clean end on every node (vLLM and Ray stopped, no process left on a GPU). Needs MILABENCH_BASE and
 # ENTRY (--export=ALL).
 set -uo pipefail
-ulimit -c 0  # the compute nodes allow core dumps (a K3 crash left 681 GB of them, 2026-11-07)
+ulimit -c 0  # the compute nodes allow core dumps (a K3 crash left 681 GB of them, 2026-11-07); --propagate=CORE takes
+# it to the other nodes' tasks (PropagateResourceLimits=NONE)
 : "${MILABENCH_BASE:?}" "${ENTRY:?}"
 SRC=$MILABENCH_BASE/src
 export PATH=$SRC/.venv/bin:$PATH MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1
@@ -12,14 +13,15 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_H
 # node-local files in RAM (/tmp holds 2 GB): TMPDIR and FlashInfer's workspace, removed at the end. Triton's kernels in a
 # cache that persists across jobs: a kernel compiled during a measured pass stalls it (9.8 s, job 1262824)
 LOCAL=/dev/shm/$USER/k3inf
-srun --overlap --ntasks-per-node=1 mkdir -p "$LOCAL/tmp"
+srun --overlap --propagate=CORE --ntasks-per-node=1 mkdir -p "$LOCAL/tmp"
 export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$MILABENCH_BASE/cache/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
-trap 'srun --overlap --ntasks-per-node=1 rm -rf "$LOCAL"' EXIT
+trap 'srun --overlap --propagate=CORE --ntasks-per-node=1 rm -rf "$LOCAL"' EXIT
 
 run=$ENTRY.$SLURM_JOB_ID
 echo "[k3inf] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST entry=$ENTRY run=$run milabench=$(git -C "$SRC" rev-parse --short HEAD)" \
      "data=${MILABENCH_DIRS_DATA:-$MILABENCH_BASE/data}"
-srun --overlap --ntasks-per-node=1 bash "$SRC/scripts/trillium/power_check.sh" || exit 4
+srun --overlap --propagate=CORE --ntasks-per-node=1 bash -c 'echo "[k3inf] $(hostname -s): ulimit -c $(ulimit -c)"; bash "$1"' \
+    _ "$SRC/scripts/trillium/power_check.sh" || exit 4
 system=$MILABENCH_BASE/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
 start=$(date +%s)
@@ -34,7 +36,7 @@ echo "[k3inf] $ENTRY: exit $status after $(( $(date +%s) - start )) s, run data 
 
 # A node drained right after a job whose processes still held its GPUs at teardown (another workload, 2026-11-07):
 # stop vLLM and Ray on every node, then wait until no process holds a GPU (the nodes are exclusive: any is ours)
-srun --overlap --ntasks-per-node=1 bash -c '
+srun --overlap --propagate=CORE --ntasks-per-node=1 bash -c '
     "$1/ray" stop --force > /dev/null 2>&1
     pkill -u "$USER" -f "[v]llm serve|[r]ay::|[r]aylet|[g]cs_server"
     for i in $(seq 60); do
