@@ -1265,6 +1265,55 @@ def kimi_training(t):
     return fig
 
 
+def glm_rl(t):
+    """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), and the
+    per-sequence decode speed in the engines' log lines over the measured rollouts (a sample: Ray prints one rank's line per
+    repeat window). Completed runs only."""
+    st, dc = t.get("glm_rl_steps", pd.DataFrame()), t.get("glm_rl_decode", pd.DataFrame())
+    if st.empty or "rest_s" not in st:
+        return None
+    st = st.sort_values("step")
+    fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.4), gridspec_kw={"width_ratios": [1, 1.7]})
+    parts = [("rollout_s", "rollout", SERIES[0]), ("train_s", "training", SERIES[1]), ("sync_s", "weight sync", SERIES[2]),
+             ("rest_s", "rest (offload, onload, data)", LIGHT)]
+    x = np.arange(len(st))
+    bottom = np.zeros(len(st))
+    for col, label, color in parts:
+        v = st[col].to_numpy(dtype=float) / 60
+        a.bar(x, v, bottom=bottom, width=0.6, color=color, edgecolor="white", linewidth=0.8, label=label)
+        bottom += v
+    for xi, total, pct in zip(x, st.step_s / 60, st.rollout_pct):
+        a.annotate(f"{total:.1f} min\nrollout {pct:.0f} %", (xi, total), xytext=(0, 2), textcoords="offset points", ha="center",
+                   va="bottom", fontsize=5.5, color=INK2)
+    a.set_xticks(x)
+    a.set_xticklabels([f"{int(s)}\n(warm-up)" if w else str(int(s)) for s, w in zip(st.step, st.warmup.astype(bool))], fontsize=6)
+    a.set_xlabel("step")
+    a.set_ylabel("time per step (min)")
+    a.set_ylim(0, bottom.max() * 1.3)
+    a.legend(loc="upper right", fontsize=5.5, frameon=False)
+    meas = st[~st.warmup.astype(bool)]
+    d = dc[dc.step.isin(meas.step) & ~dc.idle.astype(bool)] if len(dc) and "idle" in dc else dc.iloc[:0]
+    if d.empty:
+        b.set_visible(False)
+    else:
+        handles = []
+        for (step, g), marker in zip(d.groupby("step"), ("o", "s", "D")):
+            _pt(b, g.minute, g.tok_s_seq, SERIES[0], False, marker=marker, ms=2.6, alpha=0.75, lw=0)
+            end = float(meas[meas.step == step].rollout_s.iloc[0]) / 60
+            b.axvline(end, color=MUTED, lw=0.6, ls=":")
+            b.annotate(f"rollout {int(step)} ends", (end, 0.02), xycoords=b.get_xaxis_transform(), xytext=(-2, 0), textcoords="offset points",
+                       fontsize=5.5, color=MUTED, ha="right", va="bottom", rotation=90)
+            handles.append(_handle(SERIES[0], f"rollout {int(step)}", False, marker=marker))
+        b.set_ylim(0, 11)
+        b.set_xlabel("minutes into the rollout")
+        b.set_ylabel("decode tokens/s per sequence")
+        b.legend(handles=handles, loc="lower left", fontsize=6, frameon=False)
+    for ax in (a, b):
+        style.finish(ax, trim=False)
+    fig.tight_layout()
+    return fig
+
+
 FIGURES = {
     "machine_status": machine_status,
     "health_gpus": health_gpus,
@@ -1289,6 +1338,7 @@ FIGURES = {
     "energy": energy,
     "kimi_inference": kimi_inference,
     "kimi_training": kimi_training,
+    "glm_rl": glm_rl,
 }
 
 

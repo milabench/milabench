@@ -89,7 +89,21 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriKtMemWorst", "TriKtMemWorstAlloc", "TriKtMemWorstStage", "TriKtMemWorstHost", "TriKtMemLast", "TriKtMemLastAlloc", "TriKtMemZero",
           "TriKtMemZeroAlloc", "TriKtMemEdgeLo", "TriKtMemEdgeHi", "TriKtMemMidLo", "TriKtMemMidHi", "TriKtMemLimit", "TriKtHeadroom",
           "TriKtLossFirst", "TriKtLossLast", "TriKtSmallLayers", "TriKtSmallStep", "TriKtSmallStepLo", "TriKtSmallStepHi", "TriKtSmallTok",
-          "TriKtSmallMfu", "TriKtSmallMemLast", "TriKtSmallMemZero", "TriKtSmallStepTwo", "TriKtSmallSweep", "TriKtSmallLossLast"]
+          "TriKtSmallMfu", "TriKtSmallMemLast", "TriKtSmallMemZero", "TriKtSmallStepTwo", "TriKtSmallSweep", "TriKtSmallLossLast",
+          # New workloads: GLM-5.3 GRPO with slime (_glm_rl_numbers): setup, the warm-up step 0, then steps 1 and 2 (One, Two)
+          "TriGrNodes", "TriGrGpus", "TriGrLayers", "TriGrPp", "TriGrEp", "TriGrDp", "TriGrFirstLayers", "TriGrMidLayers", "TriGrLastLayers",
+          "TriGrMeanLayers", "TriGrLastRatio", "TriGrEngines", "TriGrEngineGpus", "TriGrEngineEp", "TriGrPrompts", "TriGrSamplesPer", "TriGrSamples",
+          "TriGrMaxResp", "TriGrMemFraction", "TriGrSteps", "TriGrStartup", "TriGrEnginesUp",
+          "TriGrWarmRollout", "TriGrWarmTrain", "TriGrWarmStep", "TriGrWarmStepMin", "TriGrWarmTrainTok", "TriGrCompilesAfter",
+          "TriGrRolloutOne", "TriGrRolloutTwo", "TriGrRolloutMinOne", "TriGrRolloutMinTwo", "TriGrTrainOne", "TriGrTrainTwo", "TriGrSyncOne",
+          "TriGrSyncTwo", "TriGrSyncFinal", "TriGrRestOne", "TriGrRestTwo", "TriGrStepOne", "TriGrStepTwo", "TriGrStepMinOne", "TriGrStepMinTwo",
+          "TriGrRolloutPctOne", "TriGrRolloutPctTwo", "TriGrTrainPctOne", "TriGrTrainPctTwo",
+          "TriGrTrainTokOne", "TriGrTrainTokTwo", "TriGrTrainTokensOne", "TriGrTrainTokensTwo", "TriGrMicroOne", "TriGrMicroTwo", "TriGrBubbleOne",
+          "TriGrBubbleTwo", "TriGrRollTokOne", "TriGrRollTokTwo", "TriGrRespMeanOne", "TriGrRespMeanTwo", "TriGrRespMedOne", "TriGrRespMedTwo",
+          "TriGrTruncOne", "TriGrTruncTwo", "TriGrRewardWarm", "TriGrRewardOne", "TriGrRewardTwo", "TriGrLatMedOne", "TriGrLatMedTwo",
+          "TriGrLatMaxOne", "TriGrLatMaxTwo", "TriGrDecodeReqOne", "TriGrDecodeReqTwo", "TriGrDecodeFast", "TriGrDecodeSlow", "TriGrSlowFirstOne",
+          "TriGrSlowFirstTwo", "TriGrGpuRollout", "TriGrGpuCap", "TriGrHostLastLo", "TriGrHostLastHi", "TriGrHostLastTb", "TriGrHostOtherHi",
+          "TriGrHostTotal"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1192,6 +1206,102 @@ def kimi_train_runs_table(t) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _glm_rl_numbers(t) -> dict[str, tuple]:
+    """GLM-5.3 GRPO with slime, TriGr*: the completed run (one so far). Per-step numbers are slime's own timers and metrics (glm_rl.py);
+    steps 1 and 2 are the measured steps (One, Two), step 0 the warm-up. The bubble is computed, (p - 1) / (m + p - 1), not measured."""
+    r, st, h, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode"))
+    out = {}
+    done = r[r.job_state == "COMPLETED"] if len(r) else r
+    if done.empty or st.empty:
+        return out
+    x = done.iloc[-1]
+    job = str(x.job)
+    s = st[st.job.astype(str) == job].set_index("step")
+    out.update({"TriGrNodes": (int(x.nodes), "d", False), "TriGrGpus": (int(x.gpus), "d", False), "TriGrLayers": (int(x.layers), "d", False),
+                "TriGrPp": (int(x.pp), "d", False), "TriGrEp": (int(x.ep), "d", False), "TriGrDp": (int(x.dp), "d", False),
+                "TriGrFirstLayers": (int(x.first_stage_layers), "d", False), "TriGrMidLayers": (x.middle_stage_layers, "g", False),
+                "TriGrLastLayers": (int(x.last_stage_layers), "d", False), "TriGrMeanLayers": (x.layers / x.pp, "g", False),
+                "TriGrLastRatio": (x.last_stage_layers / (x.layers / x.pp), ".1f", False),
+                "TriGrEngines": (int(x.engines), "d", False), "TriGrEngineGpus": (int(x.engine_gpus), "d", False), "TriGrEngineEp": (int(x.engine_ep), "d", False),
+                "TriGrPrompts": (int(x.prompts), "d", False), "TriGrSamplesPer": (int(x.samples_per_prompt), "d", False), "TriGrSamples": (int(x.samples), ",d", False),
+                "TriGrMaxResp": (int(x.max_response), ",d", False), "TriGrMemFraction": (float(x.mem_fraction), "g", False),
+                "TriGrSteps": (int(x.steps_logged), "d", False), "TriGrStartup": (x.startup_min, ".1f", False), "TriGrEnginesUp": (x.engines_up_min, ".1f", False),
+                "TriGrSyncFinal": (x.get("sync_after_last_s"), ".1f", False)})
+    if 0 in s.index:
+        w = s.loc[0]
+        out.update({"TriGrWarmRollout": (w.rollout_s, ",.1f", False), "TriGrWarmTrain": (w.train_s, ",.1f", False), "TriGrWarmStep": (w.step_s, ",.1f", False),
+                    "TriGrWarmStepMin": (w.step_s / 60, ".1f", False), "TriGrWarmTrainTok": (w.train_tok_s, ",.0f", False),
+                    "TriGrRewardWarm": (w.raw_reward, ".3f", False),
+                    "TriGrCompilesAfter": (int(s.loc[s.index > 0, "compiles"].sum()), "d", False)})
+    for k, n in ((1, "One"), (2, "Two")):
+        if k not in s.index:
+            continue
+        y = s.loc[k]
+        out.update({f"TriGrRollout{n}": (y.rollout_s, ",.1f", False), f"TriGrRolloutMin{n}": (y.rollout_s / 60, ".1f", False),
+                    f"TriGrTrain{n}": (y.train_s, ".1f", False), f"TriGrSync{n}": (y.sync_s, ".1f", False), f"TriGrRest{n}": (y.rest_s, ".1f", False),
+                    f"TriGrStep{n}": (y.step_s, ",.1f", False), f"TriGrStepMin{n}": (y.step_s / 60, ".1f", False),
+                    f"TriGrRolloutPct{n}": (y.rollout_pct, ".1f", False), f"TriGrTrainPct{n}": (100 * y.train_s / y.step_s, ".0f", False),
+                    f"TriGrTrainTok{n}": (y.train_tok_s, ",.0f", False), f"TriGrTrainTokens{n}": (y.train_tokens / 1e6, ".2f", False),
+                    f"TriGrMicro{n}": (int(y.microbatches), "d", False), f"TriGrBubble{n}": (y.bubble_pct, ".0f", False),
+                    f"TriGrRollTok{n}": (y.rollout_tok_s_gpu, ".2f", False), f"TriGrRespMean{n}": (y.resp_mean, ",.0f", False),
+                    f"TriGrRespMed{n}": (y.resp_median, ",.0f", False), f"TriGrTrunc{n}": (y.truncated_pct, ".1f", False),
+                    f"TriGrReward{n}": (y.raw_reward, ".3f", False), f"TriGrLatMed{n}": (y.latency_median_s, ".0f", False),
+                    f"TriGrLatMax{n}": (y.latency_max_s, ",.0f", False), f"TriGrDecodeReq{n}": (y.decode_tok_s_median, ".2f", False)})
+    out["TriGrGpuRollout"] = (s.gpu_rollout_gib.max(), ".1f", False)
+    if len(dc):
+        d = dc[(dc.job.astype(str) == job) & (dc.step > 0) & ~dc.idle.astype(bool)]
+        one = d[d.running == 1]  # one sequence per DP-attention rank: the line's throughput is that sequence's speed
+        out.update({"TriGrDecodeFast": (one[~one.slow.astype(bool)].tok_s_seq.median(), ".1f", False),
+                    "TriGrDecodeSlow": (one[one.slow.astype(bool)].tok_s_seq.median(), ".1f", False)})
+        first = d[d.slow.astype(bool)].groupby("step").minute.min()
+        for k, n in ((1, "One"), (2, "Two")):
+            if k in first:
+                out[f"TriGrSlowFirst{n}"] = (first[k], ".1f", False)
+    hh = h[h.job.astype(str) == job] if len(h) else h
+    if len(hh):
+        last = hh[hh.stage == x.pp - 1]
+        other = hh[hh.stage != x.pp - 1]
+        out.update({"TriGrHostLastLo": (last.host_used_gib.min(), ",.1f", False), "TriGrHostLastHi": (last.host_used_gib.max(), ",.1f", False),
+                    "TriGrHostLastTb": (last.host_used_gib.max() * 2**30 / 1e12, ".2f", False),
+                    "TriGrHostOtherHi": (other.host_used_gib.max(), ".0f", False), "TriGrHostTotal": (hh.host_total_gib.max(), ",.0f", False),
+                    "TriGrGpuCap": (hh.gpu_total_gib.max(), ".1f", False)})
+    return out
+
+
+def glm_rl_runs_table(t) -> str:
+    """GLM-5.3 GRPO runs in the report: request, job, nodes, the trainer's and the engines' layout, the batch, steps, start and end, state."""
+    r = t.get("glm_rl_runs", pd.DataFrame())
+    if r.empty:
+        return ""
+    lines = [r"\begin{tabular}{lllllrrlll}", r"\toprule",
+             r"Request & Job & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
+             r" & & & & & per step & & & & \\", r"\midrule"]
+    for x in r.sort_values("start").itertuples():
+        trainer = f"TP{int(x.tp)} PP{int(x.pp)} CP{int(x.cp)} EP{int(x.ep)} (DP{int(x.dp)})"
+        engines = f"{int(x.engines)} $\\times$ {int(x.engine_gpus)} GPUs (EP{int(x.engine_ep)})"
+        lines.append(f"{x.request} & {x.job} & {int(x.nodes)} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
+                     f"{str(x.start).replace('T', ' ')[:16]} & {str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
+def glm_rl_steps_table(t) -> str:
+    """GLM-5.3 GRPO per step (slime's timers and metrics): where the time goes, training and rollout speed, responses, reward."""
+    st = t.get("glm_rl_steps", pd.DataFrame())
+    if st.empty:
+        return ""
+    lines = [r"\begin{tabular}{lrrrrrrrrrrrrr}", r"\toprule",
+             r"Step & Rollout & Training & Sync & Rest & Step & Rollout & Train & Micro- & Bubble & Rollout & Response & Trunc. & Reward \\",
+             r" & s & s & s & s & s & \% of step & tok/s & batches & \% (comp.) & tok/s/GPU & mean / median & \% & \\", r"\midrule"]
+    for x in st.sort_values("step").itertuples():
+        step = f"{x.step} (warm-up)" if x.warmup else str(x.step)
+        lines.append(f"{step} & {x.rollout_s:,.1f} & {x.train_s:,.1f} & {x.sync_s:.1f} & {x.rest_s:.1f} & {x.step_s:,.1f} & {x.rollout_pct:.1f} & "
+                     f"{x.train_tok_s:,.0f} & {int(x.microbatches)} & {x.bubble_pct:.0f} & {x.rollout_tok_s_gpu:.2f} & "
+                     f"{x.resp_mean:,.0f} / {x.resp_median:,.0f} & {x.truncated_pct:.1f} & {x.raw_reward:.3f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def _operations_numbers(t) -> dict[str, tuple]:
     out = {}
     runs = t["runs"]
@@ -1370,6 +1480,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_operations_numbers(t))
     out.update(_kimi_numbers(t))
     out.update(_kimi_train_numbers(t))
+    out.update(_glm_rl_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -1589,6 +1700,8 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_passes_four.tex").write_text(kimi_passes_table(tables, 4))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
+    (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
+    (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     if len(runs):
         if "in_report" in runs:
             (out / "ledger.tex").write_text(ledger(runs))
