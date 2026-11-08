@@ -405,6 +405,62 @@ device_uuid`, NCCL error or `main: FAILED`; fewer than 4 `Engine startup timings
 update_weights end` at 40 min; no `perf N` rollout line 22 min after the previous sync (measured 15.0-15.8: 8,192 tokens
 x 113 ms + 0.5 min bounds it); no `Timer train end` 10 min after it; a sync over 5 min.
 
+### GLM-RL-03 (job 1266065): GLM-5.3 GRPO on 32 nodes
+
+trig[0101-0113,0115-0121,0123-0124,0126-0131,0133-0136], 09:17:13-10:52:02 (1:34:49), exit 0, milabench PASS, 3
+steps. Step 0 is the warm-up (its training: 634 s, the 103 TileLang compiles); steps 1-2 against the estimates:
+
+| per step | step 1 | step 2 | estimate |
+|---|---|---|---|
+| rollout | 1,047.3 s (17.5 min) | 1,111.0 s (18.5 min) | 18 min (GLM-RL-02: 15.0-15.8 for one engine) |
+| rollout tokens/s per GPU | 5.72 | 4.46 | GLM-RL-02: 6.6-8.4 |
+| training | 215.2 s | 202.7 s | 2.5-4.5 min |
+| training tokens/s (global) | 7,881 (1.69 M tokens) | 7,046 (1.42 M) | 25-30k on 3-6 M tokens |
+| sync | 34.7 s | 32.8 s | 1.5-2 min |
+| offload (engine sleep) + onload (wake) | 16.5 + 12.0 s | 11.4 + 14.8 s | 0.5 min |
+| other wait | 12.6 s | 11.3 s | |
+| step | 1,338.3 s (22.3 min) | 1,384.1 s (23.1 min) | 25 min |
+| response mean / median, truncated | 1,496 / 589, 7.0 % | 1,239 / 530, 4.6 % | |
+| raw reward, grad norm | 0.735, 0.061 | 0.767, 0.067 | |
+| TIS mean, abs, clip fraction | 1.000, 0.081, 1.7 % | 1.000, 0.073, 1.5 % | (10-layer: 0.059, 1e-4) |
+
+Step 0: rollout 1,209.7 s, training 634.1 s (2,640 tokens/s), sync 33.7 s, truncated 5.4 %, reward 0.736. Where the
+step goes (steps 1-2): rollout 79 %, training 15 %, sync 2.5 %, offload and onload 2 %, the rest 1 %.
+
+Training took the estimated time for other reasons: 1.4-1.7 M tokens instead of 3-6 M (responses of 1.2-1.5k tokens
+on average), so about 50k tokens and 7 micro-batches of 8,192 per DP rank, and a PP8 bubble of 7 / 14 = 50 % instead of
+18-30 %; that brings the estimate to about 18k tokens/s, still 2.4 times the measured. The logs do not split the rest
+(candidates: EP32's all-to-all over 4 nodes, where the 10-layer test's EP8 stayed in a node; the CPU Adam step, fixed
+per step). Sync 33 s, not 1.5-2 min (ten times the 10-layer test's was too much).
+
+The tail (rough: busy ranks from the `Decode batch` lines and their Ray repeat counts, at one line per 40 decode steps,
+4.2-6.7 s): the last 10 % of the responses (about 100 of 1,024) ran from minute 6-9 to the end, 9-12 of the 17.5-18.5
+minutes (55-70 % of the rollout, 40-50 % of the step); the last 25 or so from minute 14.
+
+The 6.0 instead of 9.5-9.9 tokens/s at one sequence per rank: per engine. Grouping the nodes by IP 8 at a time (assumed
+to be the engines; no line names them, but every group then switches at one time), every node of an engine switches
+within the same minute, once per rollout, 6.5-13 min in (rollout 0: engines 0, 1, 2 at 6.5, 10.5, 13 min; rollout 1:
+engines 2 and 0 at 9 and 11.5), and some engines never. Not the idle ranks' dummy batches: ranks go idle from minute 2
+at full speed, and GLM-RL-02's engine kept 8.8-9.9 to its end with as many idle. Not the KV length (the fast engines
+reach 8.3k tokens at 10), the CUDA graph (on in every line), a queue or a retraction (none), nor SGLang's DP padding
+mode (`dp_attention.py:182-189`, by token counts, the same for all engines). On engine 0's first node (the only one
+milabench monitors) the GPUs go from 331 to 297 W at the switch while their load rises from 0.92 to 0.95: they wait
+longer per step, so the slower part is elsewhere in the engine. Not determined; it costs about 2.5 min per rollout (some
+2.5k tokens x 62 ms more), the difference with GLM-RL-02. Per-node GPU clocks and power and CPU frequency on every node
+during a rollout would tell.
+
+Memory. GPU, the first node (stage 0, nvml): rollout 149.8-150.9 GiB (estimate about 145), training 81.3-84.2 GiB
+(85-115), sync 58.9 GiB (155-160: the KV is onloaded after the sync, `train.py:19, 31`, not before). Host, slime's
+`Memory-Usage` snapshots (at offload and sync, not continuous): the last stage's 4 nodes (trig0133-0136) 992-998 GB
+(estimate 1.3-1.35 TB), the first node 784 GB (milabench: 816-845 GB), the others 295-557 GB.
+
+Startup, 16.8 min to the first sync (estimate 30 with margin): install to 09:18:41; the 4 engines up at
+09:24:15-09:24:33 (`load_weight` 125.8-128.6 s, decode graphs 94-95 s); the trainer's actors at 09:25:26, its model at
+09:31:10, its checkpoint loaded by 09:32:18; offload, then the sync to 09:34:03. /scratch: each node reads all of the
+HF checkpoint in 126-137 s (one rank 45.8 s: GLM-RL-02's 8 nodes may have had it cached), so at least 24 x 756 GB =
+18.1 TB in about 2.2 min (135 GB/s or more, 5.5-6.0 GB/s per node); the trainer's 1.49 TB in at most 68 s (22 GB/s or
+more).
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
