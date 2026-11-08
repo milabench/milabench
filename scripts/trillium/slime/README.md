@@ -640,15 +640,17 @@ Cause of the failures not determined. The engines hold the trainer's weights: st
 against GLM-RL-03's 0.0812 and 0.0727. None happened in GLM-RL-02, -03, -04 (6,656 requests) nor in the disaggregated
 4-node test; logging the failing array would tell NaN from -inf.
 
-Training: 8.2-8.6k tokens/s on 128 GPUs against 7.0-7.9k on 256, 2.2 times per GPU (estimated: about 13 micro-batches
-per DP16 rank, bubble about 35 %; and no offload). Sync over NCCL 22-23 s against IPC's 33-35 s. Startup to the first
-sync 12.9 min (estimate 20).
+Training: 8.2-8.6k tokens/s on 128 GPUs against 7.0-7.9k on 256, 2.25 times per GPU (slime's training timer leaves out
+offload and onload). Part of it is the pipeline: with half the DP copies, 14 and 12 micro-batches per DP rank against 7
+and 6, an idle share of 33 and 37 % against 50 and 54 %, about 1.35 times on the busy share; the rest is not determined.
+Sync over NCCL 22-23 s against IPC's 33-35 s. Startup to the first sync 12.9 min (estimate 20).
 
-Memory (slime's `Memory-Usage` snapshots, GiB): trainer host, flat from step 0's optimizer step: stage 0 1,246-1,253,
-the middle stages 871-879 (trig0109 and trig0111 inferred: no snapshot after the optimizer step), the last stage
-1,676.5-1,677.3 (1.80 TB; estimate 1.63-1.75 TB) of 2,015.6. Trainer GPU at the snapshots: last stage up to 122.6, stage
-0 up to 92.0, middle 43-58 (estimate 110-115 for the largest stage; not peaks). Engine GPU (the head node, nvml): 152.0
-(estimate 150-159).
+Memory (GiB; host: each node's highest slime `Memory-Usage` snapshot, phases with a dot such as
+`TrainRayActor.clear_memory` included, as for the colocated runs: snapshots, not peaks): trainer host, flat from step
+0's optimizer step: stage 0 1,246-1,253, the middle stages 871-879 (trig0109 and trig0111 inferred: no snapshot after
+the optimizer step), the last stage 1,676.5-1,677.3 (1.64 TiB, 1.80 TB; estimate 1.63-1.75 TB) of 2,015.6. Trainer GPU
+at the snapshots: last stage up to 122.6, stage 0 up to 92.0, middle 43-58 (estimate 110-115 for the largest stage; not
+peaks). Engine GPU (the head node, nvml): 152.0 (estimate 150-159).
 
 The drains. 9 of the 16 trainer nodes drained with `health.chk.nvidia-smi.unresponsive`, none of the 16 engine nodes.
 Slurm's reason timestamps (`sinfo -R` at 15:28:36, set by root; sacctmgr's 15:26:06 is when the events were recorded,
@@ -665,19 +667,19 @@ after the job ended):
 | 15:25:59 | trig0131 (7) |
 
 The sequence (sacct): slime returned at 15:25:07; milabench's own `ray stop` (no `--force`, step .4) ran
-15:25:12-15:26:00, 48 s against 7 s in GLM-RL-03, and 14 of the 32 nodes logged `Stopped only N out of M Ray processes
-within the grace period` between 15:25:23 and 15:25:54; job.sbatch's `release_gpus` (step .5) ran only after,
-15:26:01-04, and found the GPUs free. Every drain came inside the `ray stop` step, while the job's processes were still
-exiting. Slurm runs its health check every 300 s in any node state (`HealthCheckInterval=300`,
+15:25:12-15:26:00, 48 s against 7 s in GLM-RL-03 and 23 s in GLM-RL-04, and 14 of the 32 nodes logged `Stopped only N
+out of M Ray processes within the grace period` between 15:25:23 and 15:25:54; job.sbatch's `release_gpus` (step .5) ran
+only after, 15:26:01-04, and found the GPUs free. Every drain came inside the `ray stop` step, while the job's processes
+were still exiting. Slurm runs its health check every 300 s in any node state (`HealthCheckInterval=300`,
 `HealthCheckNodeState=ANY`), so a check landing in that window drains the node whatever runs after it. Not drained:
 trig0109, 0111, 0113, 0116, 0121, 0126, 0129, middle stages at 871-879 GiB like the drained middle nodes (0109's and
 0111's inferred). Host memory per node separates them only at the extremes (every node at 1,246 GiB or more drained, 5
 of the 12 at about 875), and the reason time grows with it. A likely contributor (inferred, not verified): the
-disaggregated trainers exit holding about 94 GiB of GPU memory and up to 1.68 TiB of pinned host memory, and Ray's stop
-took 48 s against 7; the colocated trainers end offloaded (GLM-RL-03's last lines: "offload model", 72.6 to 10.2 GiB)
-with 992-1,039 GiB of host, and did not drain. No teardown change: a fix, if one is ever needed, belongs in the exit
-itself (offload or free before stopping), not after it (one in `release_gpus` was written and reverted at the review of
-a8fcf82e).
+disaggregated trainers exit holding about 94 GiB of GPU memory and up to 1.64 TiB (1.80 TB) of pinned host memory, and
+Ray's stop took 48 s against 7 and 23; the colocated trainers end offloaded (GLM-RL-03's last lines: "offload model",
+72.6 to 10.2 GiB) with 992-1,039 GiB of host, and did not drain. No teardown change: a fix, if one is ever needed,
+belongs in the exit itself (offload or free before stopping), not after it (one in `release_gpus` was written and
+reverted at the review of a8fcf82e).
 
 ### Step 4, prepared entries (not posted)
 
