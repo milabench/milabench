@@ -206,7 +206,7 @@ def workload_block() -> dict[str, Any]:
         "quantized_linears": d.get("quantized_linears", 0),
         "grad_reduce_dtype": d.get("grad_reduce_dtype"),
         "stacked_layout": d.get("stacked_layout"),
-        "optimizer": "DistMuon + AdamW" if d.get("options", {}).get("optimizer") == "muon" else "AdamW",
+        "optimizer": "AdamW",
         "optimizer_state_dtype": d.get("adam_moments"),
         "activation_checkpointing": d.get("activation_checkpointing"),
         "compile": d.get("compile"),

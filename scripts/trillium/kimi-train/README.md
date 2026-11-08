@@ -27,14 +27,6 @@ milabench install --config milabench/config/torchtitan_native_kimi.yaml --select
 milabench prepare --config milabench/config/torchtitan_native_kimi.yaml --select k3-1n-l4
 ```
 
-`--optimizer muon` imports upstream's Kimi K3 recipe (`torchtitan_recipes.tests.models.kimi_k3`), whose multimodal
-imports need torchvision, which the pack does not install: add the nightly of the torch build, into the K3 venv only:
-
-```bash
-uv pip install --python output/venv/torchtitan_native/bin/python --no-deps \
-    --index-url https://download.pytorch.org/whl/nightly/cu130 "torchvision==0.30.0.dev20261005+cu130"
-```
-
 The bench venv is the Qwen pack's (same requirements and torch nightly). `prepare` downloads FineWeb sample-10BT
 (500,000 documents) and DeepSeek-V3.1's tokenizer: K3's own is tiktoken (`tiktoken.model` with remote code), which
 TorchTitan's `HuggingFaceTokenizer` cannot read; DeepSeek's ids (< 129,280) index K3's 163,840-entry embedding.
@@ -68,8 +60,8 @@ on stage 1 (2 MoE layers).
 | 1261745 | `k3-pp4-l7-gpipe-4k`, 64 of 4096 in flight | step 1 reserved 141 GiB on stages 1-2, then the same failures on ranks 8 and 16, no step 2 in 4 min: out of memory |
 
 | 1261880 | `k3-pp4-l7-gpipe-gc`: + `garbage_collection_threshold:0.8`, `per_process_memory_fraction:0.99` (on top of the pack's `expandable_segments:True`) | step-1 peaks identical to 1261657 to 0.01 GiB, no step 2: no effect |
-| 1261917 | `k3-pp4-l7-gpipe-muon`: DistMuon + AdamW (upstream's Kimi K3 recipe) | step 1 reserved 164.5-166.8 GiB on stages 1-3 (+5 against AdamW), then a worker exited (its output is filtered: local rank 0 only) |
-| 1261943 | `k3-pp4-l7-gpipe-muon-gc`: Muon + the allocator setting | the same step-1 peaks, no step 2 in 8 min |
+| 1261917 | Muon: DistMuon + AdamW (upstream's Kimi K3 recipe; option removed after the test, commit 3b0c87f3) | step 1 reserved 164.5-166.8 GiB on stages 1-3 (+5 against AdamW), then a worker exited (its output is filtered: local rank 0 only) |
+| 1261943 | Muon + the allocator setting | the same step-1 peaks, no step 2 in 8 min |
 | 1262015 | `k3-pp4-l5-gpipe`: one MoE layer per stage, 64 of 8192 in flight | step 1 reserved 104.7 / 106.4 GiB on stages 1-2; stage 3 (output and loss, 64 in flight, which PP48's last stage never holds) hit the limit and held the run at step 1 |
 | 1262121 | `k3-pp4-l5`: the same split, 1F1B, 16 micro-batches | 4.76 s per step; stages 1-2: step 1 84.6 / 82.3 GiB, after step 2 98.1 / 95.3 reserved (62.0 / 59.4 allocated); stage 0 77.0 / 108.7, stage 3 73.3 / 107.1 |
 
@@ -87,5 +79,5 @@ Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual 
 ## Untested
 
 `k3-pp48-l49` and `k3-pp40-l41` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
-Not measured: Muon's optimizer step (no Muon run reached its traced step); why reserved exceeds allocated by ~35-50 GiB
+Not measured: why reserved exceeds allocated by ~35-50 GiB
 on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.

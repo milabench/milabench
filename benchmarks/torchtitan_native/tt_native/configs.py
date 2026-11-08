@@ -118,9 +118,6 @@ class Options:
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
     adam_moments: Literal["fp32", "bf16"] = "fp32"
     """AdamW moment dtype. bf16 saves 4 B/param (low-memory fallback)."""
-    optimizer: Literal["adamw", "muon"] = "adamw"
-    """``muon``: TorchTitan's DistMuon on the matrices and AdamW on the rest, as upstream's
-    Kimi K3 recipe (``torchtitan_recipes.tests.models.kimi_k3``); ``kimi_k3`` only."""
     training_dtype: Literal["float32", "bfloat16"] = "float32"
     """TorchTitan's ``training.dtype``. ``float32``: FP32 master weights, BF16
     compute through FSDP mixed precision. ``bfloat16``: parameters, gradients
@@ -483,42 +480,6 @@ def qwen38() -> Trainer.Config:
     # Recorded in the summary pushed by the voirfile (tt_native.instrument).
     instrument.RUN_DESCRIPTION = description
 
-    parallelism = ParallelismConfig(
-        data_parallel_replicate_degree=degrees["dp_replicate"],
-        data_parallel_shard_degree=degrees["dp_shard"],
-        tensor_parallel_degree=degrees["tp"],
-        pipeline_parallel_degree=degrees["pp"],
-        pipeline_parallel_schedule=opts.pp_schedule,
-        num_pp_microbatches=pp_microbatches,
-        pipeline_parallel_layers_per_stage=opts.pp_layers_per_stage,
-        pipeline_parallel_first_stage_less_layers=opts.pp_first_stage_less_layers,
-        pipeline_parallel_last_stage_less_layers=opts.pp_last_stage_less_layers,
-        expert_parallel_degree=opts.ep,
-        fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
-    )
-    if opts.optimizer == "muon":
-        from torchtitan_recipes.tests.models.kimi_k2_7 import (
-            _align_dist_muon_expert_compute_layouts,
-        )
-        from torchtitan_recipes.tests.models.kimi_k3 import _dist_muon_optimizer
-
-        optimizer = _align_dist_muon_expert_compute_layouts(
-            _dist_muon_optimizer(model, muon_lr=3e-4, adamw_lr=3e-4, parallelism=parallelism),
-            parallelism=parallelism,
-        )
-    else:
-        optimizer = OptimizersContainer.Config(
-            optimizers=[
-                AdamW.Config(
-                    pattern=r".*",
-                    lr=3e-4,
-                    moment_dtype=(
-                        "bfloat16" if opts.adam_moments == "bf16" else "parameter"
-                    ),
-                )
-            ]
-        )
-
     return Trainer.Config(
         model=model,
         loss=ChunkedLossWrapper.Config(
@@ -528,7 +489,17 @@ def qwen38() -> Trainer.Config:
         tokenizer=tokenizer,
         dataloader=dataloader,
         optim=Optim.Config(
-            optimizer=optimizer,
+            optimizer=OptimizersContainer.Config(
+                optimizers=[
+                    AdamW.Config(
+                        pattern=r".*",
+                        lr=3e-4,
+                        moment_dtype=(
+                            "bfloat16" if opts.adam_moments == "bf16" else "parameter"
+                        ),
+                    )
+                ]
+            ),
             lr_scheduler=LRSchedulersContainer.Config(warmup_steps=10),
         ),
         training=TrainingConfig(
@@ -542,7 +513,19 @@ def qwen38() -> Trainer.Config:
             mixed_precision_param="bfloat16",
             mixed_precision_reduce="bfloat16" if opts.grad_reduce == "bf16" else "float32",
         ),
-        parallelism=parallelism,
+        parallelism=ParallelismConfig(
+            data_parallel_replicate_degree=degrees["dp_replicate"],
+            data_parallel_shard_degree=degrees["dp_shard"],
+            tensor_parallel_degree=degrees["tp"],
+            pipeline_parallel_degree=degrees["pp"],
+            pipeline_parallel_schedule=opts.pp_schedule,
+            num_pp_microbatches=pp_microbatches,
+            pipeline_parallel_layers_per_stage=opts.pp_layers_per_stage,
+            pipeline_parallel_first_stage_less_layers=opts.pp_first_stage_less_layers,
+            pipeline_parallel_last_stage_less_layers=opts.pp_last_stage_less_layers,
+            expert_parallel_degree=opts.ep,
+            fsdp_reshard_after_forward=opts.fsdp_reshard_after_forward,
+        ),
         comm=CommConfig(
             init_timeout_seconds=opts.init_timeout_seconds,
             train_timeout_seconds=opts.train_timeout_seconds,
