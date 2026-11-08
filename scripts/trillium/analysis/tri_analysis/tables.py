@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_AGAIN_JOB, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB)
+from .kimi import LOG_INTERVAL_S
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
                      with_energy)
@@ -70,6 +71,16 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriKimiCtxTopK", "TriKimiCtxOneTtft", "TriKimiCtxTtft", "TriKimiCtxTok", "TriKimiCtxOneTpot", "TriKimiCtxTpot", "TriKimiCtxTpotPct", "TriKimiCtxSixteenTtft",
           "TriKimiPowerOne", "TriKimiJOne", "TriKimiPowerSixtyFour", "TriKimiJSixtyFour", "TriKimiPowerPeak", "TriKimiJPeak", "TriKimiMainGpuW", "TriKimiMainHost",
           "TriKimiGsm", "TriKimiGsmErr", "TriKimiArc", "TriKimiArcErr", "TriKimiGpqa", "TriKimiGpqaErr", "TriKimiMmlu", "TriKimiMmluErr", "TriKimiMmluN",
+          "TriKimiCtxSixteenTok", "TriKimiCtxSixteenTokThirtyTwo", "TriKimiCtxSixteenTokSixtyFour", "TriKimiTopMainW", "TriKimiStalls", "TriKimiMmluUnparsed",
+          # ... and the 4-node server (_kimi_four_numbers), with its gains over the 2-node one
+          "TriKimiFourNodes", "TriKimiFourGpus", "TriKimiFourLayout", "TriKimiFourMaxSeqs", "TriKimiFourMainHost", "TriKimiFourKvTokens", "TriKimiFourKvUsePct",
+          "TriKimiFourPasses", "TriKimiFourRequests", "TriKimiFourFailed", "TriKimiFourOneTok", "TriKimiFourOneTpot",
+          "TriKimiFourSixtyFourTok", "TriKimiFourSixtyFourPct", "TriKimiFourSixtyFourNoStall", "TriKimiFourSixtyFourNoStallPct",
+          "TriKimiFourFiveTwelveTok", "TriKimiFourFiveTwelvePct", "TriKimiFourTopTok", "TriKimiFourTopGpu", "TriKimiFourTopNode", "TriKimiFourTopTpot",
+          "TriKimiFourTopPct", "TriKimiFourPowerTop", "TriKimiFourJTop", "TriKimiFourTopMainW",
+          "TriKimiFourCtxTtft", "TriKimiFourCtxSixteenTok", "TriKimiFourCtxSixteenTokThirtyTwo", "TriKimiFourCtxSixteenTokSixtyFour", "TriKimiFourCtxSixteenPct",
+          "TriKimiFourStalls", "TriKimiFourGsm", "TriKimiFourGsmErr", "TriKimiFourArc", "TriKimiFourArcErr", "TriKimiFourGpqa", "TriKimiFourGpqaErr",
+          "TriKimiFourMmlu", "TriKimiFourMmluErr", "TriKimiFourMmluN", "TriKimiFourMmluUnparsed", "TriKimiMmluOnlyTwo", "TriKimiMmluOnlyFour", "TriKimiMmluPairZ",
           # New workloads: Kimi K3 pretraining (_kimi_train_numbers): the full-size run, then the 49-layer one (Small)
           "TriKtRuns", "TriKtFailed", "TriKtLayers", "TriKtNodes", "TriKtGpus", "TriKtPp", "TriKtEp", "TriKtMicro", "TriKtSeq", "TriKtTokens",
           "TriKtParams", "TriKtActive", "TriKtStepOne", "TriKtStepTwo", "TriKtSweepFirst", "TriKtSweepSplit", "TriKtSweepHi", "TriKtSweepLo",
@@ -900,13 +911,13 @@ def _long_run_numbers(t, done) -> dict[str, tuple]:
 
 
 def _kimi_numbers(t) -> dict[str, tuple]:
-    """Kimi K3 inference, TriKimi*: the study's passes on the largest server measured (kimi_passes, kimi_runs, kimi_accuracy). Power and
-    J per token are estimates: the main node's GPUs, times the node count."""
+    """Kimi K3 inference, TriKimi*: the study's passes on the 2-node server (kimi_passes, kimi_runs, kimi_accuracy); TriKimiFour* for
+    the 4-node one (_kimi_four_numbers). Power and J per token are estimates: the main node's GPUs, times the node count."""
     p, runs, acc = (t.get(k, pd.DataFrame()) for k in ("kimi_passes", "kimi_runs", "kimi_accuracy"))
     out = {}
-    if p.empty or runs.empty:
+    if p.empty or runs.empty or not (runs.nodes == 2).any():
         return out
-    run = runs.sort_values(["nodes", "job"]).iloc[-1]
+    run = runs[runs.nodes == 2].sort_values("job").iloc[-1]
     p = p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass")
     out.update({"TriKimiNodes": (int(run.nodes), "d", False), "TriKimiGpus": (int(run.gpus), "d", False),
                 "TriKimiLayout": (rf"TP{int(run.tp)}\,$\times$\,PP{int(run.pp)}", "", False), "TriKimiVllm": (run.vllm_version, "", False),
@@ -952,15 +963,99 @@ def _kimi_numbers(t) -> dict[str, tuple]:
                 out[f"TriKimi{tag}"], out[f"TriKimi{tag}Err"] = (100 * a.value[task], ".1f", False), (100 * a.stderr[task], ".1f", False)
         if "mmlu_pro" in a.index:
             out["TriKimiMmluN"] = (int(a.n["mmlu_pro"]), ",d", False)
+    out.update(_kimi_more(p, run, t.get("kimi_questions", pd.DataFrame()), "TriKimi"))
+    out.update(_kimi_four_numbers(t, run, p))
     return out
 
 
-def kimi_passes_table(t) -> str:
-    """Kimi K3 inference: the study's passes (throwaway warm-up left out), one row each; power and J per token are estimates."""
-    p = t.get("kimi_passes", pd.DataFrame())
+def _kimi_more(p, run, questions, prefix) -> dict[str, tuple]:
+    """Both servers: output tok/s at 16 concurrent requests of 32k, 64k and 128k tokens, the main node's mean GPU power at the top
+    concurrency (per GPU, measured), zero windows over the passes, unparsed MMLU-Pro answers."""
+    out = {}
+    sixteen = p[p.index.str.fullmatch(r"ctx\d+k-c16")].set_index("input_len")
+    for k, tag in ((131072, ""), (32768, "ThirtyTwo"), (65536, "SixtyFour")):
+        if k in sixteen.index:
+            out[f"{prefix}CtxSixteenTok{tag}"] = (sixteen.output_throughput[k], ".1f", False)
+    conc = p[p.index.str.fullmatch(r"conc\d+")].sort_values("concurrency")
+    if len(conc):
+        out[f"{prefix}TopMainW"] = (conc.iloc[-1].power_w_est / run.gpus, ",.0f", False)
+    out[f"{prefix}Stalls"] = (int(p.zero_windows.sum()), "d", False)
+    if not questions.empty:
+        q = questions[(questions.job.astype(str) == str(run.job)) & (questions.task == "mmlu_pro")]
+        if len(q):
+            out[f"{prefix}MmluUnparsed"] = (int((~q.parsed.astype(bool)).sum()), "d", False)
+    return out
+
+
+def _kimi_four_numbers(t, two, p2) -> dict[str, tuple]:
+    """Kimi K3 inference on the 4-node server, TriKimiFour*, and its change against the 2-node one (two, p2: its run and passes),
+    pass for pass. Without the zero windows (NoStall): output tokens over the pass's duration less 10 s per window, a derived bound."""
+    p, runs, acc = (t.get(k, pd.DataFrame()) for k in ("kimi_passes", "kimi_runs", "kimi_accuracy"))
+    out = {}
+    if not (runs.nodes == 4).any():
+        return out
+    run = runs[runs.nodes == 4].sort_values("job").iloc[-1]
+    p = p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass")
     if p.empty:
+        return out
+
+    def gain(name):
+        return 100 * (p.output_throughput[name] / p2.output_throughput[name] - 1)
+
+    out.update({"TriKimiFourNodes": (int(run.nodes), "d", False), "TriKimiFourGpus": (int(run.gpus), "d", False),
+                "TriKimiFourLayout": (rf"TP{int(run.tp)}\,$\times$\,PP{int(run.pp)}", "", False), "TriKimiFourMaxSeqs": (int(run.max_num_seqs), ",d", False),
+                "TriKimiFourMainHost": (str(run.hosts).split(";")[0], "", False), "TriKimiFourKvTokens": (run.kv_cache_tokens / 1e6, ".1f", False),
+                "TriKimiFourKvUsePct": (run.kv_use_pct_full, ".1f", False), "TriKimiFourPasses": (len(p), "d", False),
+                "TriKimiFourRequests": (int(p.completed.sum()), ",d", False), "TriKimiFourFailed": (int(p.failed.sum()), "d", False)})
+    if "conc1" in p.index:
+        out.update({"TriKimiFourOneTok": (p.output_throughput["conc1"], ",.1f", False), "TriKimiFourOneTpot": (p.tpot_ms_p50["conc1"], ".2f", False)})
+    if "conc64" in p.index and "conc64" in p2.index:
+        r = p.loc["conc64"]
+        nostall = r.output_throughput * r.duration_s / (r.duration_s - LOG_INTERVAL_S * r.zero_windows)
+        out.update({"TriKimiFourSixtyFourTok": (r.output_throughput, ",.0f", False), "TriKimiFourSixtyFourPct": (-gain("conc64"), ".0f", False),
+                    "TriKimiFourSixtyFourNoStall": (nostall, ",.0f", False),
+                    "TriKimiFourSixtyFourNoStallPct": (100 * (1 - nostall / p2.output_throughput["conc64"]), ".0f", False)})
+    if "conc512" in p.index and "conc512" in p2.index:
+        out.update({"TriKimiFourFiveTwelveTok": (p.output_throughput["conc512"], ",.0f", False), "TriKimiFourFiveTwelvePct": (gain("conc512"), ".0f", False)})
+    conc = p[p.index.str.fullmatch(r"conc\d+")].sort_values("concurrency")
+    if len(conc) and conc.index[-1] in p2.index:
+        top = conc.iloc[-1]
+        out.update({"TriKimiFourTopTok": (top.output_throughput, ",.0f", False), "TriKimiFourTopGpu": (top.output_throughput_gpu, ".1f", False),
+                    "TriKimiFourTopNode": (top.output_throughput_node, ",.0f", False), "TriKimiFourTopTpot": (top.tpot_ms_p50, ".0f", False),
+                    "TriKimiFourTopPct": (gain(conc.index[-1]), ".0f", False), "TriKimiFourPowerTop": (top.power_w_est, ",.0f", False),
+                    "TriKimiFourJTop": (top.j_per_output_tok_est, ".1f", False)})
+    one = p[p.index.str.fullmatch(r"ctx\d+k-c1")].sort_values("input_len")
+    if len(one):
+        out["TriKimiFourCtxTtft"] = (one.iloc[-1].ttft_ms_p50, ",.0f", False)
+    sixteen = p[p.index.str.fullmatch(r"ctx\d+k-c16")].sort_values("input_len")
+    if len(sixteen) and sixteen.index[-1] in p2.index:
+        out["TriKimiFourCtxSixteenPct"] = (gain(sixteen.index[-1]), ".0f", False)
+    out.update(_kimi_more(p, run, t.get("kimi_questions", pd.DataFrame()), "TriKimiFour"))
+    if not acc.empty:
+        a = acc[acc.job.astype(str) == str(run.job)].set_index("task")
+        for task, tag in (("gsm8k", "Gsm"), ("arc_challenge", "Arc"), ("gpqa_diamond", "Gpqa"), ("mmlu_pro", "Mmlu")):
+            if task in a.index:
+                out[f"TriKimiFour{tag}"], out[f"TriKimiFour{tag}Err"] = (100 * a.value[task], ".1f", False), (100 * a.stderr[task], ".1f", False)
+        if "mmlu_pro" in a.index:
+            out["TriKimiFourMmluN"] = (int(a.n["mmlu_pro"]), ",d", False)
+    q = t.get("kimi_questions", pd.DataFrame())
+    if not q.empty:  # MMLU-Pro paired on the same questions: right on one server only; z of McNemar's test, (b - c) / sqrt(b + c)
+        q = q[q.task == "mmlu_pro"].assign(job=q.job.astype(str))
+        m = q[q.job == str(two.job)].merge(q[q.job == str(run.job)], on="doc_hash", suffixes=("_two", "_four"))
+        if len(m):
+            b, c = int(((m.correct_two == 1) & (m.correct_four == 0)).sum()), int(((m.correct_two == 0) & (m.correct_four == 1)).sum())
+            out.update({"TriKimiMmluOnlyTwo": (b, "d", False), "TriKimiMmluOnlyFour": (c, "d", False),
+                        "TriKimiMmluPairZ": ((b - c) / (b + c) ** 0.5 if b + c else float("nan"), ".1f", False)})
+    return out
+
+
+def kimi_passes_table(t, nodes: int) -> str:
+    """Kimi K3 inference: the study's passes on the server of that many nodes (throwaway warm-up left out), one row each; power
+    and J per token are estimates."""
+    p = t.get("kimi_passes", pd.DataFrame())
+    if p.empty or not (p.nodes == nodes).any():
         return ""
-    p = p[~p.throwaway.astype(bool)].rename(columns={"pass": "name"})  # "pass" is no attribute name
+    p = p[(p.nodes == nodes) & ~p.throwaway.astype(bool)].rename(columns={"pass": "name"})  # "pass" is no attribute name
     lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
              r"Pass & Conc. & In / out & Output tok/s (/GPU, /node) & Total tok/s (/GPU, /node) & TTFT p50 / p99 & TPOT p50 / p99 & ITL p50 / p99 & Requests ok / failed & GPU W, J / output tok \\",
              rf" & & tokens & & & ms & ms & ms & & est.: main node $\times$\,{int(p.nodes.max())} \\", r"\midrule"]
@@ -985,14 +1080,15 @@ def kimi_passes_table(t) -> str:
 
 
 def kimi_runs_table(t) -> str:
-    """Kimi K3 inference runs in the report: entry, job, nodes, start and end, Slurm state."""
+    """Kimi K3 inference runs in the report: entry, job, nodes, layout, the server's sequence cap, start and end, Slurm state."""
     r = t.get("kimi_runs", pd.DataFrame())
     if r.empty:
         return ""
-    lines = [r"\begin{tabular}{llllll}", r"\toprule", r"Entry & Job & Nodes & Started & Ended & State \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llllrlll}", r"\toprule", r"Entry & Job & Nodes & Layout & Max seqs & Started & Ended & State \\", r"\midrule"]
     for x in r.sort_values("start").itertuples():
         hosts = str(x.hosts).replace(";", ", ")
-        lines.append(f"\\texttt{{{_esc(x.entry)}}} & {x.job} & {int(x.nodes)} ({hosts}) & {str(x.start).replace('T', ' ')[:16]} & "
+        lines.append(f"\\texttt{{{_esc(x.entry)}}} & {x.job} & {int(x.nodes)} ({hosts}) & TP{int(x.tp)}\\,$\\times$\\,PP{int(x.pp)} & {int(x.max_num_seqs):,} & "
+                     f"{str(x.start).replace('T', ' ')[:16]} & "
                      f"{str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
@@ -1489,7 +1585,8 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kernel_change.tex").write_text(kernel_change_table(tables))
     (out / "loss_gaps.tex").write_text(loss_table(tables))
     (out / "checkpoints.tex").write_text(checkpoint_table(tables))
-    (out / "kimi_passes.tex").write_text(kimi_passes_table(tables))
+    (out / "kimi_passes.tex").write_text(kimi_passes_table(tables, 2))
+    (out / "kimi_passes_four.tex").write_text(kimi_passes_table(tables, 4))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     if len(runs):

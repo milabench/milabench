@@ -1142,58 +1142,66 @@ def energy(t):
 
 
 def kimi_inference(t):
-    """Kimi K3 inference on B200 (vLLM): output tokens/s per GPU and time per output token vs concurrency (1k in, 256 out), then time
-    to first token and time per output token vs input length at 1 and 16 concurrent requests (128 out). Measured passes only."""
+    """Kimi K3 inference on B200 (vLLM), one series per server (colour and marker): output tokens/s per GPU and time per output token
+    vs concurrency (1k in, 256 out), each server's sequence cap as a line; then time to first token and time per output token vs input
+    length at 1 and 16 concurrent requests (128 out). Measured passes only."""
     p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
     if p.empty:
         return None
     p = p[~p.throwaway.astype(bool)]
-    conc = p[p["pass"].str.fullmatch(r"conc\d+")].sort_values("concurrency")
-    ctx = p[p["pass"].str.fullmatch(r"ctx\d+k-c\d+")].sort_values("input_len")
-    if conc.empty:
+    if not p["pass"].str.fullmatch(r"conc\d+").any():
         return None
-    fig, axes = plt.subplots(2, 2, figsize=(TEXT_WIDTH, 3.9))
+    fig, axes = plt.subplots(2, 2, figsize=(TEXT_WIDTH, 4.3))
     (a, b), (c, d) = axes
-    col = SERIES[0]
-    a.plot(conc.concurrency, conc.output_throughput_gpu, color=col, lw=1.0)
-    _pt(a, conc.concurrency, conc.output_throughput_gpu, col, False)
-    peak = conc.loc[conc.output_throughput_gpu.idxmax()]
-    a.annotate(f"{peak.output_throughput_gpu:.0f} per GPU\n({peak.output_throughput:,.0f} in all)", (peak.concurrency, peak.output_throughput_gpu),
-               xytext=(4, -8), textcoords="offset points", fontsize=6, color=INK2, ha="left", va="top")
-    if len(runs) and pd.notna(runs.max_num_seqs.max()):
-        cap = int(runs.max_num_seqs.max())
-        a.axvline(cap, color=LIGHT, lw=0.6, zorder=1)
-        a.annotate(f"server limit:\n{cap} sequences", (cap, 0.04), xycoords=a.get_xaxis_transform(), xytext=(-3, 0),
-                   textcoords="offset points", fontsize=6, color=MUTED, ha="right", va="bottom")
+    servers = []
+    for i, (job, g) in enumerate(sorted(p.groupby(p.job.astype(str)), key=lambda x: (x[1].nodes.iloc[0], x[0]))):
+        n = int(g.nodes.iloc[0])
+        run = runs[runs.job.astype(str) == job].iloc[0] if len(runs) and (runs.job.astype(str) == job).any() else None
+        servers.append((g, SERIES[i], ("o", "s", "D")[i % 3], f"{n} nodes ({n * 8} GPUs)", run))
+    conc_ticks = set()
+    for g, col, mk, label, run in servers:
+        conc = g[g["pass"].str.fullmatch(r"conc\d+")].sort_values("concurrency")
+        conc_ticks |= set(conc.concurrency)
+        a.plot(conc.concurrency, conc.output_throughput_gpu, color=col, lw=1.0)
+        _pt(a, conc.concurrency, conc.output_throughput_gpu, col, False, marker=mk)
+        if run is not None and pd.notna(run.max_num_seqs):
+            cap = int(run.max_num_seqs)
+            a.axvline(cap, color=col, lw=0.6, ls=":", alpha=0.7, zorder=1)
+            a.annotate(f"cap {cap:,} sequences", (cap, 0.04), xycoords=a.get_xaxis_transform(), xytext=(-2, 0), textcoords="offset points",
+                       fontsize=5.5, color=col, ha="right", va="bottom", rotation=90)
+        for q, ls, alpha in (("p50", "-", 1.0), ("p99", "--", 0.55)):
+            y = conc[f"tpot_ms_{q}"]
+            b.plot(conc.concurrency, y, color=col, lw=1.0 if q == "p50" else 0.7, ls=ls, alpha=alpha)
+            _pt(b, conc.concurrency, y, col, False, marker=mk, alpha=alpha, ms=3.5 if q == "p99" else 4.5)
+        ctx = g[g["pass"].str.fullmatch(r"ctx\d+k-c\d+")].sort_values("input_len")
+        for n, h in ctx.groupby("concurrency"):
+            k = h.input_len / 1024
+            for ax, ycol, scale in ((c, "ttft_ms_p50", 1000), (d, "tpot_ms_p50", 1)):
+                y = h[ycol] / scale
+                ax.plot(k, y, color=col, lw=1.0, ls="-" if n == 1 else "--")
+                _pt(ax, k, y, col, False, marker=mk)
+    runs_legend = [_handle(col, label, False, marker=mk) for _, col, mk, label, _ in servers]
     a.set_ylim(0, None)
     a.set_ylabel("output tokens/s per GPU")
-    for q, marker, alpha, lw in (("p50", "o", 1.0, 1.0), ("p99", "v", 0.55, 0.7)):
-        y = conc[f"tpot_ms_{q}"]
-        b.plot(conc.concurrency, y, color=col, lw=lw, alpha=alpha)
-        _pt(b, conc.concurrency, y, col, False, marker=marker, alpha=alpha)
+    a.legend(handles=runs_legend, loc="upper left", fontsize=6)
     b.set_yscale("log")
     b.set_ylabel("time per output token (ms)")
-    b.legend(handles=[_handle(col, "median", False), _handle(col, "p99", False, marker="v", alpha=0.55)], loc="upper left", fontsize=6)
+    b.legend(handles=runs_legend + [_handle(INK2, "median", False, marker="", ls="-"), _handle(INK2, "p99", False, marker="", ls="--", alpha=0.55)],
+             loc="upper left", fontsize=6, ncol=2)
+    ticks = sorted(x for x in conc_ticks if np.log2(x) % 2 == 0)  # 1, 4, 16, ...: 128, 256, 512 side by side do not read
     for ax in (a, b):
         ax.set_xscale("log", base=2)
-        ticks = [n for n in conc.concurrency if np.log2(n) % 2 == 0]  # 1, 4, 16, ...: 128, 256, 512 side by side do not read
         ax.set_xticks(ticks)
-        ax.set_xticklabels([str(int(n)) for n in ticks], fontsize=6)
+        ax.set_xticklabels([str(int(x)) for x in ticks], fontsize=6)
         ax.minorticks_off()
         ax.set_xlabel("concurrent requests (1k in, 256 out)")
-    handles = []
-    for (n, g), color, marker in zip(ctx.groupby("concurrency"), (SERIES[0], SERIES[1]), ("o", "s")):
-        k = g.input_len / 1024
-        for ax, ycol, scale in ((c, "ttft_ms_p50", 1000), (d, "tpot_ms_p50", 1)):
-            y = g[ycol] / scale
-            ax.plot(k, y, color=color, lw=1.0)
-            _pt(ax, k, y, color, False, marker=marker)
-        handles.append(_handle(color, f"{int(n)} concurrent", False, marker=marker))
+    ctx_all = p[p["pass"].str.fullmatch(r"ctx\d+k-c\d+")]
+    conc_legend = [_handle(INK2, "1 concurrent", False, marker="", ls="-"), _handle(INK2, "16 concurrent", False, marker="", ls="--")]
     for ax, label in ((c, "time to first token, median (s)"), (d, "time per output token, median (ms)")):
-        if ctx.empty:
+        if ctx_all.empty:
             ax.set_visible(False)
             continue
-        ks = sorted(ctx.input_len.unique() // 1024)
+        ks = sorted(ctx_all.input_len.unique() // 1024)
         ax.set_xscale("log", base=2)
         ax.set_yscale("log")
         ax.set_xticks(ks)
@@ -1201,7 +1209,8 @@ def kimi_inference(t):
         ax.minorticks_off()
         ax.set_xlabel("input tokens (128 out)")
         ax.set_ylabel(label)
-        ax.legend(handles=handles, loc="upper left", fontsize=6)
+    if not ctx_all.empty:  # one legend for the bottom row: on the left it would cross the lines
+        d.legend(handles=runs_legend + conc_legend, loc="upper left", fontsize=6)
     for ax in axes.flat:
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
         style.finish(ax, trim=False)

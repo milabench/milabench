@@ -38,7 +38,7 @@ from .select import NO_DATA_RUNS, UNFINISHED_JOB_STATES, mark_beside, mark_selec
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
           "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared",
-          "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs",
+          "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs", "kimi_questions",
           "kimi_train_runs", "kimi_train_steps", "kimi_train_stages"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}

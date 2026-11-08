@@ -8,24 +8,35 @@ facts (vLLM version, MoE backend, KV cache size and use) from the server's log l
 
 Power: voir samples the GPUs of the main node only, so a pass's power is that node's mean times the node count, an
 estimate (``power_nodes_measured`` = 1), as in kimi_study.py.
+
+Zero windows: vLLM logs its prompt and generation throughput every 10 s; a pass's ``zero_windows`` counts the logged
+intervals overlapping it with requests running and no token at all, prompt or output. The log's clock is Trillium's
+local time (America/Toronto), the passes' Unix time.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 # The study's entries on B200 (config/kimi_study.yaml). The -bringup, -notune and -dummy entries are tests: not read.
-STUDY_ENTRIES = ("kimi-vllm-2n-tp8pp2",)
+# The 4-node bring-up is kimi-vllm-4n-tp8pp4-bringup (1264956): not read; the study on 4 nodes is one job, 1265338.
+STUDY_ENTRIES = ("kimi-vllm-2n-tp8pp2", "kimi-vllm-4n-tp8pp4")
 THROWAWAY = {"warmup"}  # run before the measured passes, so that kernels compile outside them
 
 _VLLM_VERSION = re.compile(r"\bversion (\d+\.\d+\.\d+\S*)")
 _MOE_BACKEND = re.compile(r"Using '(\w+)' Mxfp4 MoE backend")
 _KV_TOKENS = re.compile(r"GPU KV cache size: ([\d,]+) tokens")
 _KV_USE = re.compile(r"Running: (\d+) reqs, Waiting: (\d+) reqs, GPU KV cache usage: ([\d.]+)%")
+_THROUGHPUT = re.compile(r"INFO (\d\d-\d\d \d\d:\d\d:\d\d) \[loggers\.py:\d+\] Engine \d+: Avg prompt throughput: ([\d.]+) tokens/s, "
+                         r"Avg generation throughput: ([\d.]+) tokens/s, Running: (\d+) reqs")
+LOG_TZ = ZoneInfo("America/Toronto")
+LOG_INTERVAL_S = 10
 
 
 def _events(path: Path):
@@ -49,10 +60,11 @@ def _pass_power(summary: dict, power: list, nodes: int) -> dict:
             "j_per_output_tok_est": watts * dur / out_tokens if out_tokens else float("nan")}
 
 
-def _server_facts(run_dir: Path, entry: str, max_seqs) -> dict:
-    """vLLM version, MoE backend, KV cache capacity, and the highest KV use with the server full (max_seqs running)."""
+def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict, list]:
+    """vLLM version, MoE backend, KV cache capacity, and the highest KV use with the server full (max_seqs running); and the
+    zero windows: Unix end time of each logged 10 s interval with requests running and no prompt or output token."""
     facts = {}
-    full = []
+    full, zero = [], set()
     for path in sorted(run_dir.glob(f"{entry}.*server*.data")):
         for e in _events(path):
             if e.get("event") != "line" or not isinstance(e.get("data"), str):
@@ -66,13 +78,26 @@ def _server_facts(run_dir: Path, entry: str, max_seqs) -> dict:
                 facts["kv_cache_tokens"] = int(m[1].replace(",", ""))
             if (m := _KV_USE.search(text)) and max_seqs and int(m[1]) == int(max_seqs):
                 full.append(float(m[3]))
+            if (m := _THROUGHPUT.search(text)) and int(m[4]) > 0 and float(m[2]) == 0 and float(m[3]) == 0:
+                zero.add(datetime.strptime(f"{year}-{m[1]}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOG_TZ).timestamp())
     if full:
         facts["kv_use_pct_full"] = max(full)
-    return facts
+    return facts, sorted(zero)
 
 
-def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict]:
-    """(passes, evals, run) of one run directory <entry>.<job>."""
+def _questions(run_dir: Path, entry: str, job: str) -> list[dict]:
+    """One row per eval question (lm-eval samples files): right or not, and whether an answer was parsed at all."""
+    rows = []
+    for path in sorted(run_dir.glob(f"{entry}.eval.lm_eval/*/samples_milabench_*.jsonl")):
+        task = re.sub(r"_\d{4}-\d\d-\d\dT.*$", "", path.stem.removeprefix("samples_milabench_"))
+        for e in _events(path):
+            rows.append({"entry": entry, "job": job, "task": task, "doc_hash": e["doc_hash"], "correct": float(e[e["metrics"][0]]),
+                         "parsed": e["filtered_resps"][0] != "[invalid]"})
+    return rows
+
+
+def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
+    """(passes, evals, run, questions) of one run directory <entry>.<job>."""
     entry, _, job = run_dir.name.rpartition(".")
     passes, evals, run = [], [], {"entry": entry, "job": job, "run": run_dir.name}
     for path in sorted(run_dir.glob(f"{entry}.*.data")):
@@ -99,7 +124,7 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict]:
         gpus_per_node = int((config.get("system") or {}).get("gpu", {}).get("count") or 8)
         server = (config.get("server") or {}).get("argv") or {}
         hosts = [n["name"] for n in (config.get("system") or {}).get("nodes", [])]
-        run.update(nodes=nodes, gpus=nodes * gpus_per_node, hosts=";".join(hosts), tp=gpus_per_node, pp=nodes,
+        run.update(nodes=nodes, gpus=nodes * gpus_per_node, hosts=";".join(hosts), tp=gpus_per_node, pp=nodes, layout=f"tp{gpus_per_node}pp{nodes}",
                    max_num_seqs=server.get("--max-num-seqs"), max_model_len=server.get("--max-model-len"),
                    max_batched_tokens=server.get("--max-num-batched-tokens"))
         settings = {p["name"]: p.get("argv", {}) for p in (config.get("client") or {}).get("passes", []) if "name" in p}
@@ -109,24 +134,28 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict]:
             row = {"entry": entry, "job": job, "order": list(settings).index(s["name"]) if s["name"] in settings else None,
                    "pass": s.pop("name"), "concurrency": argv.get("--max-concurrency"),
                    "prompts": argv.get("--num-prompts"), "input_len": argv.get("--random-input-len"),
-                   "output_len": argv.get("--random-output-len"), "nodes": nodes, "gpus": nodes * gpus_per_node,
+                   "output_len": argv.get("--random-output-len"), "nodes": nodes, "layout": f"tp{gpus_per_node}pp{nodes}", "gpus": nodes * gpus_per_node,
                    **{k: v for k, v in s.items()}, **_pass_power(s, power, nodes)}
             row["throwaway"] = row["pass"] in THROWAWAY
             for col in ("output_throughput", "total_throughput"):
                 row[f"{col}_gpu"] = row[col] / row["gpus"]
                 row[f"{col}_node"] = row[col] / nodes
             passes.append(row)
-    run.update(_server_facts(run_dir, entry, run.get("max_num_seqs")))
-    return passes, evals, run
+    year = datetime.fromtimestamp(passes[0]["start_time"], LOG_TZ).year if passes else datetime.now().year
+    facts, zero = _server_facts(run_dir, entry, run.get("max_num_seqs"), year)
+    run.update(facts)
+    for row in passes:  # logged intervals (t - 10 s, t] overlapping the pass
+        row["zero_windows"] = sum(row["start_time"] < t and t - LOG_INTERVAL_S < row["end_time"] for t in zero)
+    return passes, evals, run, _questions(run_dir, entry, job)
 
 
 def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
-    """kimi_passes, kimi_accuracy, kimi_runs. Only jobs that have ended (the collector's sacct snapshot)."""
+    """kimi_passes, kimi_accuracy, kimi_runs, kimi_questions. Only jobs that have ended (the collector's sacct snapshot)."""
     states = {}
     if sacct.exists():
         s = pd.read_csv(sacct, sep="|", dtype=str)
         states = dict(zip(s.JobID, zip(s.State, s.Start, s.End)))
-    passes, evals, runs = [], [], []
+    passes, evals, runs, questions = [], [], [], []
     for d in sorted(runs_dir.glob("*.*")) if runs_dir.is_dir() else []:
         entry, _, job = d.name.rpartition(".")
         if entry not in STUDY_ENTRIES or not job.isdigit():
@@ -134,12 +163,14 @@ def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFr
         state, start, end = states.get(job, ("RUNNING", None, None))
         if state.startswith(unfinished):
             continue  # a job still running is not a failed run: left out until it ends
-        p, e, r = read_run(d)
+        p, e, r, q = read_run(d)
         r.update(job_state=state, start=start, end=end)
         passes += p
         evals += e
         runs.append(r)
+        questions += q
     passes = pd.DataFrame(passes)
     if len(passes):
         passes = passes.sort_values(["job", "order"]).reset_index(drop=True)
-    return {"kimi_passes": passes, "kimi_accuracy": pd.DataFrame(evals), "kimi_runs": pd.DataFrame(runs)}
+    return {"kimi_passes": passes, "kimi_accuracy": pd.DataFrame(evals), "kimi_runs": pd.DataFrame(runs),
+            "kimi_questions": pd.DataFrame(questions)}
