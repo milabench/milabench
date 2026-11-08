@@ -197,6 +197,14 @@ def _patch_kimi_pp_stage() -> None:
 
     AttnResPipelineStage.forward_one_chunk = patched
 
+    # The cached block transport (the default) failed at PP4 after step 1: per-stage gradient norms, then "Invalid
+    # access of peer GPU memory over nvlink" on different nodes (jobs 1261433, 1261501). With one stage per rank
+    # (1F1B) both transports carry the whole stack on every hop; the uncached one keeps no rank store.
+    from torchtitan.models.kimi_k3.model import KimiK3Model
+    from torchtitan.models.kimi_k3.pipeline_parallel import pipeline_kimi_k3
+
+    KimiK3Model.pipeline = lambda self, **kwargs: pipeline_kimi_k3(self, attn_res_cache=False, **kwargs)
+
 
 def _model_config(opts: Options):
     build = build_model_config
