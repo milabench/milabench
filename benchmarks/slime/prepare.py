@@ -60,7 +60,8 @@ def prepare_model(cfg):
     if nodes > 1:
         head = subprocess.check_output(["scontrol", "show", "hostnames", os.environ["SLURM_JOB_NODELIST"]],
                                        text=True).split()[0]
-        launch = ["srun", "--overlap", f"--nodes={nodes}", f"--ntasks={nodes}", "--ntasks-per-node=1", *launch,
+        launch = ["srun", "--overlap", "--propagate=CORE", f"--nodes={nodes}", f"--ntasks={nodes}",
+                  "--ntasks-per-node=1", *launch,
                   f"--nnodes={nodes}", "--rdzv-backend=c10d", f"--rdzv-endpoint={head}:29400"]
     run(
         [

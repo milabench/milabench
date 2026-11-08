@@ -10,8 +10,9 @@
 # Everything lives in B = $SCRATCH/trillium/new/glm-rl (install.sh); $HOME is read-only from the compute nodes.
 set -uo pipefail
 # no core files: the compute nodes allow them and Slurm does not pass on the login node's limit (a K3 crash left
-# 681 GB of them, 2026-11-07); this applies to the batch step's processes; srun steps get it only with
-# --propagate=CORE, which this script's own steps do not use (harmless for their commands)
+# 681 GB of them, 2026-11-07); srun steps get it only with --propagate=CORE (PropagateResourceLimits=NONE): this
+# script's `nodes`, milabench's srun (milabench/cli/slurm/srun.py: Ray's bring-up, `rayrun`) and the conversion's
+# (benchmarks/slime/prepare.py) pass it; each node's limit is in the log at the start
 ulimit -c 0
 while [[ ${1:-} == [A-Za-z_]*=* ]]; do export "$1"; shift; done
 B=${SCRATCH:?}/trillium/new/glm-rl
@@ -30,11 +31,15 @@ export LIBRARY_PATH=/usr/lib64/nvidia${LIBRARY_PATH:+:$LIBRARY_PATH}
 export XDG_CACHE_HOME=$B/cache
 # node-local files in RAM (/tmp holds 2 GB): TMPDIR (Ray's session directory among them) and the kernel caches
 L=/dev/shm/$USER/glm-rl
-nodes() { srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
+nodes() {
+    srun --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" \
+        --ntasks-per-node=1 "$@"
+}
 # `NVRM: knvlinkSendInbandData_IMPL` lines in each node's kernel log at the start and the end, for the hardware checks
 # (the epilog's kernel messages are the first node's only)
 nvrm() { nodes bash -c "echo \"$P nvrm-inband $1 \$(hostname -s) \$(dmesg | grep -c knvlinkSendInbandData)\""; }
 nodes mkdir -p "$L/tmp"
+nodes bash -c "echo \"$P \$(hostname -s): ulimit -c \$(ulimit -c)\""
 nvrm start
 # At the end, and on the time limit (submit.sh: SIGUSR1 5 min before it): stop Ray on every node, then wait until no
 # process holds a GPU (killed after 2 min), before Slurm cleans up: trig0146-0147 drained with
