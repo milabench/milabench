@@ -202,12 +202,34 @@ def _patch_kimi_pp_stage() -> None:
     AttnResPipelineStage.forward_one_chunk = patched
 
 
+def _patch_init_timeouts(seconds: int) -> None:
+    """TorchTitan gives ``init_timeout_seconds`` to the default group only: the mesh
+    groups, the pipeline's included, keep torch's 10-min NCCL default until its
+    ``set_pg_timeouts`` lowers every group to the train timeout after step 1. A
+    48-stage K3 pipeline infers its stage shapes one stage after another before step 1,
+    ~21 s each: the last stages timed out at 600 s (job 1262377). Apply the init timeout
+    to every group with that same function before training starts."""
+    from datetime import timedelta
+
+    from torchtitan.distributed import utils as dist_utils
+    from torchtitan.trainer import Trainer
+
+    train = Trainer.train
+
+    def patched(self, *args, **kwargs):
+        dist_utils.set_pg_timeouts(timedelta(seconds=seconds), self.engine.parallelism_context)
+        return train(self, *args, **kwargs)
+
+    Trainer.train = patched
+
+
 def _model_config(opts: Options):
     build = build_model_config
     if opts.model == "kimi_k3":
         from torchtitan.models.kimi_k3 import build_model_config as build
 
         _patch_kimi_pp_stage()
+        _patch_init_timeouts(opts.init_timeout_seconds)
     model = build(opts.flavor, seq_len=opts.seq_len, attn_backend=opts.attn_backend)
     # Text-only pre-training: the 27B and Kimi-K3 flavors ship a vision encoder, which would
     # run on dummy inputs every step and is not part of the decoder FLOPs.

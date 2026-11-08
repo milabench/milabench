@@ -155,6 +155,18 @@ k3-pp4-l7-rbf16:
   inherits: k3-pp4-l7
   argv:
     --grad-reduce: bf16
+# Timeouts (job 1262377): the init timeout now reaches every group, the pipeline's included (configs._patch_init_timeouts).
+# Check on 4 nodes: 30 s is shorter than stage 3's wait for its first shape metadata (~55 s: stages 0-2 infer one after
+# another, ~10 / 20 / 25 s, job 1262230), so this must fail there, on the pipeline group, after 30 s
+k3-pp4-l7-rbf16-t30:
+  inherits: k3-pp4-l7-rbf16
+  argv:
+    --init-timeout-seconds: 30
+# What the ~21 s of single-core CPU per stage before step 1 is: the same without torch.compile
+k3-pp4-l7-rbf16-eager:
+  inherits: k3-pp4-l7-rbf16
+  argv:
+    --compile: eager
 # Fewer layers (review option b): a stage of one MoE layer with 64 micro-batches in flight. 5 layers with no extra
 # weight for the embedding / output: emb + 0-1 / 2 / 3 / 4 + out, so stages 1-2 hold one MoE layer and no output
 k3-pp4-l5-gpipe:
