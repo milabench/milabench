@@ -468,8 +468,8 @@ kimi-vllm-2n-tp8pp2:
       --tensor-parallel-size: "{gpu_count}"
       --pipeline-parallel-size: "{num_machines}"
 
-# bring-up: the server loads and two passes of the study run against it. In a 1 h job: the first start on a server
-# config autotunes FlashInfer's kernels (20 min on the 4-layer test, job 1261631; cached per config hash after)
+# bring-up: the server loads and two passes of the study run against it. In a 1 h job: every start autotunes FlashInfer's
+# kernels, 20-25 min (jobs 1261631, 1261890; the MXFP4 MoE entries of the saved cache do not match again, job 1262548)
 kimi-vllm-2n-tp8pp2-bringup:
   inherits: kimi-vllm-2n-tp8pp2
   max_duration: 3420
@@ -478,8 +478,8 @@ kimi-vllm-2n-tp8pp2-bringup:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
-# the full model with random weights: memory, CUDA graphs and FlashInfer's autotune at 93 layers. The autotune cache is
-# keyed by the vLLM config hash, which leaves the load format out: the bring-up with the real weights reuses it
+# the full model with random weights: memory, CUDA graphs and FlashInfer's autotune at 93 layers, before the checkpoint
+# is there
 kimi-vllm-2n-tp8pp2-dummy:
   inherits: kimi-vllm-2n-tp8pp2-bringup
   server:

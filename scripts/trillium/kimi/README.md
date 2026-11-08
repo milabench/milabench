@@ -63,15 +63,20 @@ Output: `slurm/nw-k3inf-<entry>.<job>.out`, run data `runs/<entry>.<job>/` (one 
 vLLM picked `FLASHINFER_TRTLLM_MXFP4_MXFP8` for the MXFP4 experts (activations quantized to MXFP8; the checkpoint is
 W4A16), the native fused KDA decode and FlashKDA prefill, FLASHINFER_MLA decode with FA2 prefill (FA4 does not take
 head size 192). Weights 19 s (PP0) and 46 s (PP1) for 54.5 GiB, cold. Engine init 1209 s, almost all of it FlashInfer's
-autotune (MXFP4 MoE 22 + 8 profiles at 25-40 s each, then MLA decode and BF16 GEMM): it runs once per server config
-(`cache/vllm/flashinfer_autotune_cache/<vllm config hash>`, one file per rank), so the full model tunes again on its
-first start. conc1 60/60, conc64 128/128 requests; numbers of a 4-layer model, not of Kimi-K3.
+autotune (MXFP4 MoE 22 + 8 profiles at 25-40 s each, then MLA decode and BF16 GEMM). vLLM saves it
+(`cache/vllm/flashinfer_autotune_cache/<vllm config hash>`, one file per rank) and loads it at the next start (job 1262548:
+"Loaded 35 configs"), but the MXFP4 MoE op tunes again: its cached keys carry values that look per process. Every start
+pays the 20-25 min. conc1 60/60, conc64 128/128 requests; numbers of a 4-layer model, not of Kimi-K3.
 
 Full model with random weights, `kimi-vllm-2n-tp8pp2-dummy`, job 1261890, `trig[0101-0102]`: PASS in 1888 s. Weights
 95.7-96.1 GiB per GPU (PP0 47 layers, PP1 46), CUDA graphs 3.8 GiB in 32 s, 51.4-53.5 GiB left for the KV cache:
-3.6M tokens, 27 requests at the full 133,120. Engine init 1499 s, the autotune again (new config hash); it left
-the cache that the real weights' run reuses (load format is not in the hash). conc1 TPOT 8.70 ms, conc64 1467 output
-tok/s, TPOT p50 21.4 ms: random weights route at random, not Kimi-K3 numbers.
+3.6M tokens, 27 requests at the full 133,120. Engine init 1499 s, the autotune. conc1 TPOT 8.70 ms, conc64 1467
+output tok/s, TPOT p50 21.4 ms: random weights route at random, not Kimi-K3 numbers.
+
+Clean end (`job.sh`): after the run, or at USR1 5 min before `--time`, `ray stop --force` and a kill of what is left of
+vLLM and Ray on every node, then a wait until `nvidia-smi --query-compute-apps` is empty. Job 1262548 (4-layer model,
+20 min, ended in the autotune): both nodes "GPUs free", neither drained. milabench delays a first SIGTERM; the second
+one, sent by hand there, stopped it: the trap now sends both (not run since).
 
 Not tested yet: the real weights (load time of 1.45 TiB per node); prefix caching, DCP and speculative decoding stay off
 as in the MI355X study.
