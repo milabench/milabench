@@ -62,12 +62,20 @@ on stage 1 (2 MoE layers).
 | 1261880 | `k3-pp4-l7-gpipe-gc`: + `garbage_collection_threshold:0.8`, `per_process_memory_fraction:0.99` (on top of the pack's `expandable_segments:True`) | step-1 peaks identical to 1261657 to 0.01 GiB, no step 2: no effect |
 | 1261917 | Muon: DistMuon + AdamW (upstream's Kimi K3 recipe; option removed after the test, commit 3b0c87f3) | step 1 reserved 164.5-166.8 GiB on stages 1-3 (+5 against AdamW), then a worker exited (its output is filtered: local rank 0 only) |
 | 1261943 | Muon + the allocator setting | the same step-1 peaks, no step 2 in 8 min |
+| 1262141 | `k3-pp4-l7-gpipe-noexp`: native allocator (`expandable_segments:False`) | step 1 reserved 162-166 GiB; then on rank 24, in FSDP's `finalize_backward` (gradient dtype cast in `foreach_reduce`): "Tried to allocate 6.89 GiB. GPU 0 has a total capacity of 178.34 GiB of which 3.36 GiB is free ... 81.34 GiB is allocated by PyTorch, and 86.45 GiB is reserved by PyTorch but unallocated" |
+| 1262143 | `k3-pp4-l7-noexp`: the same, 1F1B | allocated as with expandable segments (106.3 / 107.4 GiB on stages 1-2), reserved 161.4 / 161.5 (+3), stage 0 125.4 (+17); 5.93 s per step |
 | 1262015 | `k3-pp4-l5-gpipe`: one MoE layer per stage, 64 of 8192 in flight | step 1 reserved 104.7 / 106.4 GiB on stages 1-2; stage 3 (output and loss, 64 in flight, which PP48's last stage never holds) hit the limit and held the run at step 1 |
 | 1262121 | `k3-pp4-l5`: the same split, 1F1B, 16 micro-batches | 4.76 s per step; stages 1-2: step 1 84.6 / 82.3 GiB, after step 2 98.1 / 95.3 reserved (62.0 / 59.4 allocated); stage 0 77.0 / 108.7, stage 3 73.3 / 107.1 |
 
 One MoE layer per stage with PP48's worst in-flight load: ~120 GiB reserved after step 2 (1262121's steady state + the
 +22 GiB that 64 micro-batches in flight add at step 1 in 1262015), stage 0 (embedding + layers 0-1) ~138 GiB. Hence
 `k3-pp48-l49` (49 layers on 48 nodes) and `k3-pp40-l41`; `k3-pp48-full` and `k3-pp40-l78` do not fit.
+
+The limit is fragmentation, not memory: with expandable segments the failures report the driver's free memory at
+~18 MiB of 178.3 GiB while ~35-50 GiB of torch's reserved memory is unallocated, and the native allocator fails with
+81 GiB allocated and 86 GiB reserved but unallocated, at a 6.89 GiB request (one MoE layer's expert weights in BF16
+per GPU) while FSDP casts gradients for the reduction (FP32 by default, on a one-rank group for the experts).
+`TORCH_NCCL_AVOID_RECORD_STREAMS` is not read by this torch build (not among its `TORCH_NCCL_*` variables).
 
 So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-less-layers 0`; which collective
 diverges is not established), and a stage of 2 MoE layers does not hold the in-flight activations of PP48's worst
