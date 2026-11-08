@@ -24,10 +24,10 @@ start=$(date +%s)
 # in the background: bash runs a trap only between commands, `wait` lets the time-limit signal in
 milabench run --config "$SRC/config/kimi_study.yaml" --system "$system" --select "$ENTRY" --run-name "$run" &
 pid=$!
-# serve.sh asks Slurm for USR1 5 min before --time
-trap 'echo "[k3inf] time limit in 5 min: stopping the run"; kill -TERM $pid' USR1
-wait $pid; status=$?
-kill -0 $pid 2>/dev/null && { wait $pid; status=$?; }
+# serve.sh asks Slurm for USR1 5 min before --time. milabench delays a first SIGTERM, a second one stops it (job 1262548)
+trap 'echo "[k3inf] time limit in 5 min: stopping the run"; kill -TERM $pid; sleep 2; kill -TERM $pid' USR1
+status=0
+while kill -0 $pid 2>/dev/null; do wait $pid; status=$?; done
 echo "[k3inf] $ENTRY: exit $status after $(( $(date +%s) - start )) s, run data $MILABENCH_BASE/runs/$run"
 
 # A node drained right after a job whose processes still held its GPUs at teardown (another workload, 2026-11-07):
