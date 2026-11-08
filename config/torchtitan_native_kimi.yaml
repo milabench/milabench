@@ -203,20 +203,20 @@ k3-pp40-l78:
 # (k3-pp4-l7-gpipe: AdamW, the allocator's garbage collection, Muon, Muon + gc; jobs 1261657-1261943). One MoE layer
 # per stage fits: ~120 GiB reserved after step 2 with 64 micro-batches in flight (1F1B steady state of k3-pp4-l5, job
 # 1262121, + the in-flight cost of k3-pp4-l5-gpipe at step 1, job 1262015). So one layer per stage, the first holding
-# layers 0-1 (an MoE layer on every stage): 49 layers (12 MLA, 37 KDA) on 48 nodes, 41 (10 MLA, 31 KDA) on 40
+# layers 0-1 (an MoE layer on every stage): 49 layers (12 MLA, 37 KDA) on 48 nodes, the fallback of k3-pp48-full-rbf16
 k3-pp48-l49:
   inherits: k3-pp48-full
   argv:
     --n-layers: 49
-k3-pp40-l41:
-  inherits: k3-pp48-full
-  num_machines: 40
-  argv:
-    --layout: pp40-fsdp
-    --n-layers: 41
 # Full size with a BF16 gradient reduction (the campaign's default is FP32): 2 MoE layers per stage then hold the
 # worst in-flight load, 143.3 GiB reserved on the stand-in's 2-MoE-layer stages after step 2 (job 1262207)
 k3-pp48-full-rbf16:
   inherits: k3-pp48-full
+  argv:
+    --grad-reduce: bf16
+# 40 nodes, 78 layers, the same 2 MoE layers per stage: stage 0 = embedding + layers 0-1, stages 1-37 two layers
+# each, 38 = layer 76, 39 = layer 77 + output (TorchTitan's split, checked)
+k3-pp40-l78-rbf16:
+  inherits: k3-pp40-l78
   argv:
     --grad-reduce: bf16

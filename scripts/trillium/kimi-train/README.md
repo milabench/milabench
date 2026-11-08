@@ -71,7 +71,7 @@ on stage 1 (2 MoE layers).
 
 One MoE layer per stage with PP48's worst in-flight load: ~120 GiB reserved after step 2 (1262121's steady state + the
 +22 GiB that 64 micro-batches in flight add at step 1 in 1262015), stage 0 (embedding + layers 0-1) ~138 GiB. Hence
-`k3-pp48-l49` (49 layers on 48 nodes) and `k3-pp40-l41`; `k3-pp48-full` and `k3-pp40-l78` do not fit.
+`k3-pp48-l49` (49 layers on 48 nodes); `k3-pp48-full` and `k3-pp40-l78` do not fit with the FP32 reduction.
 
 The limit is fragmentation, not memory: with expandable segments the failures report the driver's free memory at
 ~18 MiB of 178.3 GiB while ~35-50 GiB of torch's reserved memory is unallocated, and the native allocator fails with
@@ -79,7 +79,7 @@ The limit is fragmentation, not memory: with expandable segments the failures re
 per GPU) while FSDP casts gradients for the reduction (FP32 by default, on a one-rank group for the experts).
 `TORCH_NCCL_AVOID_RECORD_STREAMS` is not read by this torch build (not among its `TORCH_NCCL_*` variables).
 With the BF16 reduction (no cast), the 2-MoE-layer stages hold the stand-in's load with ~22 GiB to spare, hence
-`k3-pp48-full-rbf16` (93 layers, 48 nodes). On Qwen the campaign measured the same option at +2% (13 nodes) and +0.2%
+`k3-pp48-full-rbf16` (93 layers, 48 nodes) and `k3-pp40-l78-rbf16` (78 layers, 40 nodes). On Qwen the campaign measured the same option at +2% (13 nodes) and +0.2%
 (50 nodes) tokens/s per GPU and 5-6 GiB less memory.
 
 So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-less-layers 0`; which collective
@@ -91,6 +91,6 @@ Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual 
 
 ## Untested
 
-`k3-pp48-full-rbf16`, `k3-pp48-l49` and `k3-pp40-l41` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
+`k3-pp48-full-rbf16`, `k3-pp40-l78-rbf16` and `k3-pp48-l49` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
 Not measured: why reserved exceeds allocated by ~35-50 GiB
 on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.
