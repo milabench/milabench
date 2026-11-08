@@ -338,8 +338,10 @@ slime-qwen3-30b-a3b-sft-routing:
     --prompt-data: "{milabench_data}/slime/datasets/openhermes_small.parquet"
 
 # GRPO, colocated: the trainer (TP4 x EP8, DP=2) and one SGLang engine of 8 GPUs take turns on the node. slime's
-# scripts/run-qwen3-30B-A3B.sh (DAPO-Math-17k, deepscaler rule-based reward, the GLM-5 entry's GRPO flags) with
-# 4k-token responses instead of 128k, no eval, and the attention / sampling backends of the validated GRPO entries.
+# scripts/run-qwen3-30B-A3B.sh (DAPO-Math-17k, the GLM-5 entry's GRPO flags) with 4k-token responses instead of 128k,
+# no eval, and the attention / sampling backends of the validated GRPO entries. Reward: slime's `dapo` rule (+1 / -1 on
+# the prompt's "Answer:" line); the recipe's `deepscaler` gives 0 to any response without </think>, i.e. every
+# response of this non-thinking model (job 1261612: all 512 samples at 0).
 # MoE in SGLang's Triton kernels: on B200 SGLang picks flashinfer_trtllm, which downloads its cubins at the first
 # forward (no internet on Trillium's compute nodes, job 1261477). No rollout routing replay: it needs the sglang-router
 # fork that slime's Dockerfile installs (PyPI's 0.3.2 returns no routed experts, job 1261523), not in this install.
@@ -350,6 +352,8 @@ slime-qwen3-30b-a3b-grpo:
   argv:
     <<: *grpo_argv
     --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
+    --rm-type: dapo
+    --reward-key: score
     --rollout-batch-size: 32
     --n-samples-per-prompt: 8
     --global-batch-size: 256
