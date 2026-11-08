@@ -461,6 +461,26 @@ HF checkpoint in 126-137 s (one rank 45.8 s: GLM-RL-02's 8 nodes may have had it
 18.1 TB in about 2.2 min (135 GB/s or more, 5.5-6.0 GB/s per node); the trainer's 1.49 TB in at most 68 s (22 GB/s or
 more).
 
+### GLM-RL-04 (draft): GLM-RL-03 with rollout routing replay
+
+`slime-glm5-grpo-r3` (`slime-glm5-grpo` + `--use-rollout-routing-replay`; slime's sglang-router fork is installed), 32
+nodes, the user's with / without comparison against GLM-RL-03. `--time 2:10:00` = 20 (startup; 16.8 measured) + step 0
+(rollout 22 + training 20, the warm-up's cancel bound + 1.5) + 2 x (20 + 4.5 + 1.5) + 10 margin = 125.5 min.
+
+Memory against GLM-RL-03. Host: SGLang pins a routed-experts cache per engine rank sized by its KV pool
+(`state_capturer/base.py:69-72`: 1,982,976 tokens x 78 layers x top-8 x int32 = 4.95 GB), 39.6 GB per node, on every
+node; and each step's routes, 1.4-1.7 M tokens x 78 x 8 x 4 B = 3.5-4.2 GB, through the rollout manager to the
+trainer. The last stage's nodes: 998 + 40 = about 1.04 TB; the first node 0.83-0.89 TB; of 2.0 TB. (Qwen's +72 GB on
+its first node is the same cache: a much larger KV pool per rank.) GPU: +0.33 GB per GPU (the capture buffer,
+max(256, 2048) x 64 DP x 78 x 8 x int32), outside the static memory (44 GiB there; peak 150.9 GiB).
+
+Expected lines and cancel rules as GLM-RL-03, with its numbers: engines up about 7 min after the start, the first sync
+by 17-20 min, rollouts 17.5-20.2 min, training 3.4-3.6 min after step 0 (10.6 min), sync 33-35 s. Cancel: the
+GLM-RL-03 errors; no `perf N` rollout line 22 min after a sync; step 0's training over 20 min, later ones over 10;
+`SGLang routed_experts element count does not match` (slime `types.py:447`). Routing replay has not run on GLM-5.3
+yet; a 4-node bring-up first (`slime-glm5-l10-grpo-4n` with it) would check the engine's capture and the trainer's
+replay.
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
