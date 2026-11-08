@@ -18,7 +18,10 @@ power check, `milabench install` (offline), `milabench prepare` on the first nod
 The job runs `$B/src` as it is: `git -C $B/src pull --ff-only` first. At its end, and 5 min before its time limit
 (SIGUSR1), it stops Ray on every node and waits until no process holds a GPU before Slurm cleans up (`GPUs free
 after N s` per node): `trig0146-0147` drained with `health.chk.nvidia-smi.unresponsive` 1 s after job 1262234 ended,
-3 s after its `ray stop` (1 drain in 4 two-node teardowns; cleared at once).
+3 s after its `ray stop` (1 drain in 4 two-node teardowns; cleared at once). Tested on 2 nodes: a normal end (job
+1262531: `GPUs free after 0 s` on both, 6 s from the end of Ray to the end of the job) and SIGUSR1 mid-run (job
+1262532, `--time 00:15:00`: stopped at 10:00, `ray stop --force` took 10 s, GPUs free after 0 s, ended 12 s after the
+signal, exit 124); no drain after either (`sinfo -n`). 3 drain-free teardowns are not proof against a 1-in-4 event.
 
 ## Install
 
@@ -138,10 +141,14 @@ All passed, 6 steps each, 29.9-32.8 min per job. Steps 1-5, mean, seconds (1 nod
   longest response (40-57 % at the 4,096 cap, as on 1 node), and the per-GPU rollout rate falls from 604 to about 420
   tokens/s. The sync goes
   to 2 engines: 15-18 s against 13.
-- Rollout routing replay (against the repeat, same router): the actor 5.0 s longer (35.5 against 30.4; per-step
-  medians 35.3 against 29.7; the two runs without it differ by 0.4 s), training tokens/s 13 % lower; the rollout
-  +2.7 s and the sync +3.0 s, within the 2.3-2.7 s by which the two runs without it differ. Step +6.1 s (+2.9 %).
-  Host memory on the first node 667-688 GB against 600-615 GB (2n, same nodes).
+- Rollout routing replay, against 3 runs without it (the two above and job 1262531, trig0145-0146, fork router:
+  step 207.3, rollout 111.2, training 51.6 with actor 35.5, sync 17.7, offload 14.4 + 6.0, 22,870 training
+  tokens/s): the step 217.2 against 207.3-211.2 (+6.0 s over the slowest, +8.3 s over the mean, 4 %), from the
+  rollout (116.0 against 111.1-113.4) and the sync (20.9 against 15.2-17.9). Training shows no cost beyond the spread:
+  the actor 35.5 against 30.1-35.5 (26.8-41.0 per step without it). One run with it: not enough to size a 4 %
+  difference. Host memory on the first node 667-688 GB against 599-626 GB in all three: +65 GB, the one clear
+  difference. (An earlier version of this section, from the first two runs only, gave the actor +5 s and training
+  tokens/s -13 %: the third run without routing replay has the same.)
 - The router fork alone (2n against 2n again, other nodes): no difference beyond that spread.
 - One 16-GPU engine over both nodes (TP 16, EP 16, DP attention 16, `nnodes 2`): works. Rollout 121 s against 111-113
   with 2 engines of 8; the sync 12.3 s against 15-18 (not analysed; with EP 16 each GPU holds 8 of the 128 experts).
