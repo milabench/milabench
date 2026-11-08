@@ -152,6 +152,14 @@ k3-pp4-l5-gpipe:
     --n-layers: 5
     --pp-first-stage-less-layers: 0
     --pp-last-stage-less-layers: 0
+# GPipe's last stage also keeps 64 micro-batches with the output and loss (PP48's keeps 1): it hit the memory limit and
+# held the run at step 1 (job 1262015, all failures on rank 24). 1F1B on the same split, for the steady state after
+# step 2: steady(64 in flight) = this run's steady + (k3-pp4-l5-gpipe step 1 - this run's step 1)
+k3-pp4-l5:
+  inherits: k3-pp4-l5-gpipe
+  argv:
+    --pp-schedule: 1F1B
+    --pp-microbatches: 16
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), 2 layers per stage at most, BF16: the FP32
 #     master did not fit 2 MoE layers + the output on a stage (job 1261155). 1F1B, 128 micro-batches per data-parallel rank: bubble (PP-1)/(m+PP-1) = 27% at
