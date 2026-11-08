@@ -5,6 +5,7 @@
 #   k3_job.sh TT38=<base> NAME=value ... <bench>    (arguments passed on to tt_native.sh)
 #
 # Slurm runs a copy of this script from its spool directory: the repository is found through TT38, as in tt_native.sh.
+ulimit -c 0  # no core files (job 1262377 left 160, ~0.5 TB); PropagateResourceLimits=NONE: this shell and its children only
 set -euo pipefail
 for arg in "$@"; do
     [[ "$arg" == TT38=* ]] && export "$arg"
