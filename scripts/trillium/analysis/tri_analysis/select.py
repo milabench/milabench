@@ -23,6 +23,8 @@ SET_ASIDE = {
     "1241330": "cancelled",
     "1251904": "trig0114 stopped responding at 17:03 on Nov 6, after step 30 of 500, NODE_FAIL: says nothing about the recipe",
     "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
+    "1265619": "1 node, repetition 3: the site drained trig0102 during the job (08:25:48, nvidia-smi unresponsive), cancelled; "
+               "2 of 4 entries, held until the rerun",
 }
 # Stopped before they wrote any event, so their run data is empty; they still answer something, or belong in the ledger. Job -> what the launcher ran.
 NO_DATA_RUNS = {
