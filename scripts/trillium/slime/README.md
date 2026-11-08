@@ -517,6 +517,44 @@ entry without replay (job 1265529), steps 1-2:
 - step 243.6 s against 242.5: rollout 169.0 against 170.2 s, training 42.4 against 41.3 s, sync 10.7 against 6.6 s
   (one run each).
 
+### GLM-RL-04 (job 1267147): with rollout routing replay
+
+On GLM-RL-03's 32 nodes, 12:04:03-13:39:34 (1:35:31), exit 0, milabench PASS, no drains. Steps 1-2 against GLM-RL-03
+(step 0, the warm-up: rollout 1,163.8 / 1,209.7 s, training 640.4 / 634.1 s, tis_abs 0.0345 / 0.0792):
+
+| per step | step 1, with / without | step 2, with / without |
+|---|---|---|
+| rollout | 1,204.0 / 1,047.3 s | 1,094.4 / 1,111.0 s |
+| longest request (`e2e_latency` max) | 1,197.6 / 1,040.0 s | 1,088.1 / 1,107.5 s |
+| median decode, tokens/s per request | 9.38 / 9.56 | 9.48 / 9.53 |
+| training | 218.1 / 215.2 s (7,642 / 7,881 tokens/s) | 205.9 / 202.7 s (7,315 / 7,046) |
+| sync | 33.9 / 34.7 s | 33.9 / 32.8 s |
+| trainer offload + onload | 20.4 + 12.2 / 16.5 + 12.0 s | 15.9 + 14.0 / 11.4 + 14.8 s |
+| other wait | 14.3 / 12.0 s (mean of both steps) | |
+| step | 1,504.9 / 1,338.3 s | 1,376.4 / 1,384.1 s |
+| `train/tis_abs` | 0.0350 / 0.0812 | 0.0318 / 0.0727 |
+| TIS clip fraction | 0.0007 / 0.0171 | 0.0006 / 0.0152 |
+| reward, response mean, truncated | 0.735 / 0.735, 1,469 / 1,496, 7.0 / 7.0 % | 0.772 / 0.767, 1,317 / 1,239, 5.2 / 4.6 % |
+| grad norm | 0.064 / 0.061 | 0.127 / 0.067 |
+
+The routes: slime has no timer for them. They come back with each response inside the rollout, and the trainer fills
+the replay inside `actor_train`; `data_preprocess` stays 0.1 s, the other wait is 2.3 s longer, training 1-3 s.
+Decode is not slower (the median per request is the same), and the 6.0 tokens/s engine mode shows here too. With one
+run each the time cost cannot be separated: each rollout follows its longest request (1,088-1,198 s here, 1,040-1,107
+s without), and the steps differ by +157 s and -17 s; the step means (1,441 / 1,361 s) differ by less than one
+rollout's tail spread.
+
+The effect on the policy ratio: `tis_abs` halves (0.032-0.035 against 0.073-0.081) and the clip fraction falls 25
+times (0.0006-0.0007 against 0.015-0.017): the trainer's log-probs follow the rollout's with its routing replayed, as
+in the 4-node test (0.028 against 0.059). Step 2's grad norm, 0.127 against 0.064 for steps 0-1, is a single value;
+no cause is claimed.
+
+Host, against the estimated +36.9 GiB per node (SGLang's routed-experts cache) and 3.3-3.9 GiB of routes: the head node
+in milabench (continuous) 837.2 against 793.1 GiB, +44.1; slime's snapshots on the nodes where both runs logged a
+comparable phase, +6 to +52 GiB (the last stage's peak 1,038.6 against 997.7 GiB on trig0133, +40.9; the head +31.7).
+Four nodes' snapshots fall on different phases in the two runs (differences of +293 to +396 and -172 to -207 GiB) and
+say nothing. GPU 149-151.6 GiB in rollout, as without.
+
 ### Disaggregated bring-up (job 1266823)
 
 `slime-glm5-l10-grpo-disagg-4n` on trig0115-0118: the trainer on 2 nodes (PP2 x EP8, DP8), one 16-GPU engine on the
