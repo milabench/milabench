@@ -199,7 +199,7 @@ k3-pp40-l78:
   argv:
     --layout: pp40-fsdp
     --n-layers: 78
-# Neither entry above fits: a stage of 2 MoE layers runs out of memory with the in-flight load of PP48's worst stages
+# Neither entry above fits with the FP32 reduction: a stage of 2 MoE layers runs out of memory with the in-flight load of PP48's worst stages
 # (k3-pp4-l7-gpipe: AdamW, the allocator's garbage collection, Muon, Muon + gc; jobs 1261657-1261943). One MoE layer
 # per stage fits: ~120 GiB reserved after step 2 with 64 micro-batches in flight (1F1B steady state of k3-pp4-l5, job
 # 1262121, + the in-flight cost of k3-pp4-l5-gpipe at step 1, job 1262015). So one layer per stage, the first holding
@@ -214,3 +214,9 @@ k3-pp40-l41:
   argv:
     --layout: pp40-fsdp
     --n-layers: 41
+# Full size with a BF16 gradient reduction (the campaign's default is FP32): 2 MoE layers per stage then hold the
+# worst in-flight load, 143.3 GiB reserved on the stand-in's 2-MoE-layer stages after step 2 (job 1262207)
+k3-pp48-full-rbf16:
+  inherits: k3-pp48-full
+  argv:
+    --grad-reduce: bf16

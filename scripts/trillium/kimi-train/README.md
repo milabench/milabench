@@ -64,6 +64,8 @@ on stage 1 (2 MoE layers).
 | 1261943 | Muon + the allocator setting | the same step-1 peaks, no step 2 in 8 min |
 | 1262141 | `k3-pp4-l7-gpipe-noexp`: native allocator (`expandable_segments:False`) | step 1 reserved 162-166 GiB; then on rank 24, in FSDP's `finalize_backward` (gradient dtype cast in `foreach_reduce`): "Tried to allocate 6.89 GiB. GPU 0 has a total capacity of 178.34 GiB of which 3.36 GiB is free ... 81.34 GiB is allocated by PyTorch, and 86.45 GiB is reserved by PyTorch but unallocated" |
 | 1262143 | `k3-pp4-l7-noexp`: the same, 1F1B | allocated as with expandable segments (106.3 / 107.4 GiB on stages 1-2), reserved 161.4 / 161.5 (+3), stage 0 125.4 (+17); 5.93 s per step |
+| 1262207 | `k3-pp4-l7-gpipe-rbf16`: BF16 gradient reduction (`--grad-reduce bf16`) | reaches step 13, 22.2 s per step (5,900 tokens/s per GPU); allocated / reserved GiB: stages 1-2 (2 MoE layers, 64 in flight) 110.1 / 141.9 and 111.3 / 143.3, stage 0 84.1 / 108.8, stage 3 (output, 64 in flight) 147.2 / 160.6; no allocator failure |
+| 1262230 | `k3-pp4-l7-rbf16`: the same, 1F1B | 5.55 s per step (5.90 with the FP32 reduction); stages 1-2 90.6 / 109.9 and 91.3 / 111.2 (FP32: 106.3 / 158.0, 107.6 / 158.6); losses as the FP32 reduction's to 0.003 at step 13 |
 | 1262015 | `k3-pp4-l5-gpipe`: one MoE layer per stage, 64 of 8192 in flight | step 1 reserved 104.7 / 106.4 GiB on stages 1-2; stage 3 (output and loss, 64 in flight, which PP48's last stage never holds) hit the limit and held the run at step 1 |
 | 1262121 | `k3-pp4-l5`: the same split, 1F1B, 16 micro-batches | 4.76 s per step; stages 1-2: step 1 84.6 / 82.3 GiB, after step 2 98.1 / 95.3 reserved (62.0 / 59.4 allocated); stage 0 77.0 / 108.7, stage 3 73.3 / 107.1 |
 
@@ -76,6 +78,9 @@ The limit is fragmentation, not memory: with expandable segments the failures re
 81 GiB allocated and 86 GiB reserved but unallocated, at a 6.89 GiB request (one MoE layer's expert weights in BF16
 per GPU) while FSDP casts gradients for the reduction (FP32 by default, on a one-rank group for the experts).
 `TORCH_NCCL_AVOID_RECORD_STREAMS` is not read by this torch build (not among its `TORCH_NCCL_*` variables).
+With the BF16 reduction (no cast), the 2-MoE-layer stages hold the stand-in's load with ~22 GiB to spare, hence
+`k3-pp48-full-rbf16` (93 layers, 48 nodes). On Qwen the campaign measured the same option at +2% (13 nodes) and +0.2%
+(50 nodes) tokens/s per GPU and 5-6 GiB less memory.
 
 So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-less-layers 0`; which collective
 diverges is not established), and a stage of 2 MoE layers does not hold the in-flight activations of PP48's worst
@@ -86,6 +91,6 @@ Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual 
 
 ## Untested
 
-`k3-pp48-l49` and `k3-pp40-l41` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
+`k3-pp48-full-rbf16`, `k3-pp48-l49` and `k3-pp40-l41` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
 Not measured: why reserved exceeds allocated by ~35-50 GiB
 on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.
