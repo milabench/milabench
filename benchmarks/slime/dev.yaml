@@ -566,6 +566,11 @@ slime-glm5-grpo:
     --sglang-kv-cache-dtype: fp8_e4m3
     # without DeepGEMM (env below) SGLang's FP8 GEMMs pick flashinfer_trtllm, which downloads its cubins (job 1264112)
     --sglang-fp8-gemm-runner-backend: triton
+    # One expert-update batch per layer, so that every engine rank gets tensors in every batch: slime pads a rank that
+    # gets none with an empty tensor on the gather source's GPU, whose CUDA IPC handle an engine rank on another node
+    # cannot open ("Invalid device_uuid", jobs 1264147, 1264179). Per rank and layer: GLM-5.3 experts of 75.5 MB, up to
+    # 32 sent (trainer EP8) + 16 received (engine EP16) = 3.6 GB in the 10-layer test; 512 MiB by default
+    --update-weight-buffer-size: 4294967296
 
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
