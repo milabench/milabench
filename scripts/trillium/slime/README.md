@@ -515,10 +515,10 @@ back to reserved. Against the colocated 2-node test with the same trainer and en
 
 The NCCL sync works: from each pipeline stage's DP0 rank to the engine, 3.4-4.4 s after the first. Training takes half
 the time, and not because of the offload, which is timed apart (`sleep`, `wake_up`); not determined (candidates: the
-idle engine's processes beside the CPU Adam step, slime's reloadable process groups, `offload_train` only). The
-engine's node holds 158.5-158.8 GiB in rollouts and syncs alike (132.4 static + 26 outside it, more than the colocated
-engines' 150; no visible sync peak). The trainer's nodes are not monitored by milabench. slime's `train.py` is synchronous: each side waits while the
-other works, so on 4 nodes a step costs 1.57 times the node-seconds of the colocated 2.
+idle engine's processes beside the CPU Adam step, slime's reloadable process groups, `offload_train` only). The engine's
+node holds 158.5-158.8 GiB in rollouts and syncs alike (132.4 static + 26 outside it, more than the colocated engines'
+150; no visible sync peak). The trainer's nodes are not monitored by milabench. slime's `train.py` is synchronous: each
+side waits while the other works, so on 4 nodes a step costs 1.57 times the node-seconds of the colocated 2.
 
 ### GLM-RL-05 (draft): disaggregated on 32 nodes
 
@@ -533,10 +533,10 @@ sequences per DP-attention rank), no offload, NCCL sync. Estimates from GLM-RL-0
 - step 20-28 min, against GLM-RL-03's 22.3-23.1.
 
 Memory: trainer GPU 77.8 GiB static (13.9 B parameters on the largest stage) + 31-33 GiB as GLM-RL-03's stage 0 above
-its static = 110-115 GiB; engine GPU 150-159 GiB (GLM-RL-03's engines; the bring-up's engine without memory saver: 158.8);
-host on the trainer's last stage's nodes: Adam for 79 B parameters 948 GB + about 120 GB (GLM-RL-03's rest without its
-offload copies) = 1.05-1.2 TB of 2.0; the engine nodes about 120 GB (GLM-RL-02). /scratch at the start: 16 nodes x 756
-GB = 12.1 TB of HF checkpoint, then 1.49 TB of torch_dist.
+its static = 110-115 GiB; engine GPU 150-159 GiB (GLM-RL-03's engines; the bring-up's engine without memory saver:
+158.8); host on the trainer's last stage's nodes: Adam for 79 B parameters 948 GB + about 120 GB (GLM-RL-03's rest
+without its offload copies) = 1.05-1.2 TB of 2.0; the engine nodes about 120 GB (GLM-RL-02). /scratch at the start: 16
+nodes x 756 GB = 12.1 TB of HF checkpoint, then 1.49 TB of torch_dist.
 
 `--time 2:10:00` = 20 (startup) + step 0 (rollout 22 + training 20 + 1.5) + 2 x 28 + 10 margin = 129.5 min. Expected
 lines: as GLM-RL-03 for 2 engines, without `Timer sleep` / `wake_up`; `Timer update_weights end` 0.5-1.5 min. Cancel:
