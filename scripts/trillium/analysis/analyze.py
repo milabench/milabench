@@ -62,6 +62,11 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # New workloads: Kimi K3 inference (vLLM), one directory per job; 91 MB on Nov 8. Outside runs/,
                 # so the training build does not read it (tt_analysis.runs.data_files globs runs/*/*.data).
                 ("trillium/new/k3-inf/runs/", "k3-inf/runs"),
+                # Kimi K3 pretraining (TorchTitan): run directories (172 MB on Nov 8), and the GPU telemetry of the two
+                # completed 48-node runs only (gpu.tsv, 119 MB; the other nodemon files and jobs are not read).
+                ("trillium/new/k3-trn/runs/", "k3-trn/runs"),
+                *[(f"trillium/new/k3-trn/nodemon/{run}/nodes/*.gpu.tsv", f"k3-trn/nodemon/{run}")
+                  for run in ("k3-pp48-full-rbf16.1263956", "k3-pp48-l49.1263476")],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),

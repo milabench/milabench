@@ -30,7 +30,7 @@ import pandas as pd
 
 from tt_analysis.runs import data_files, parse_run
 
-from . import kimi
+from . import kimi, kimi_train
 from .fabric import parse_collectives, parse_health, parse_pairs
 from .machine import CLUSTER, PEAK_BF16, PSTATE_BOOTS, SUBNET_OF
 from .runs import canonical_model, drop_warmup, failed_operation, parse_extras, real_step_times
@@ -38,7 +38,8 @@ from .select import NO_DATA_RUNS, UNFINISHED_JOB_STATES, mark_beside, mark_selec
 
 TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "node_health", "pairs", "collectives",
           "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared",
-          "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs"]
+          "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs",
+          "kimi_train_runs", "kimi_train_steps", "kimi_train_stages"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept per GPU and minute (gpu_monitor: stability)
@@ -240,6 +241,9 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
         tables[name] = pd.read_csv(path, sep="\t", index_col=False) if path.exists() else pd.DataFrame()
     # New workloads: Kimi K3 inference (vLLM), its own run directories (collect: k3-inf/runs), measured only.
     tables.update(kimi.build(raw / CLUSTER / "k3-inf" / "runs", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
+    # Kimi K3 pretraining (TorchTitan) at 48 nodes: its own run directories and GPU telemetry (collect: k3-trn/), measured only.
+    tables.update(kimi_train.build(raw / CLUSTER / "k3-trn" / "runs", raw / CLUSTER / "k3-trn" / "nodemon", raw / CLUSTER / "sacct.txt",
+                                   UNFINISHED_JOB_STATES))
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
     r = tables["runs"]
