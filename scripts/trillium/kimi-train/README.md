@@ -188,12 +188,37 @@ in step 2 without it). Stages 0-2 (2 MoE layers; stage 0 + dense layer + embeddi
 53.8 s per step (median, steps 3-5; 64 x 2: 55 s); step 1 4.0 min after the job start (4.85 without it). No
 "memory mapping failed".
 
+### Full size at PP48 (K3-TRN-09, job 1263956, 48 nodes)
+
+`k3-pp48-full-rbf16` at d618ac25 (`--pp-detach-losses`, `--train-timeout-seconds 1800`, `--log-freq 1`): 93 layers,
+20 steps, completed in 1:02:23. Sources: L = `logs/nw-k3trn-k3-pp48-full-rbf16-1263956.out`, S = the run's summary
+(`runs/k3-pp48-full-rbf16.1263956/k3-pp48-full-rbf16.0.data`, line 119), G = `nodemon/.../nodes/<host>.gpu.tsv`.
+
+- Step 1 24.9 min after the job start (loss 12.50958, grad_norm 2.5469 on all 48 lines), step 2 12.05 min after step
+  1. The step-2 sweep (GPU 0 utilization dips in G): stage 44 at +31 s after step 1, stage 13 at +506 s, stage 0 at
+  +655 s, 624 s in all; 15.3 s per stage for stages 44-13, 11.5 s for 13-0; none on stages 47-45.
+- Steps 4-20 (milabench's 17 measured steps, S): median 81.756 s, p90 87.55, max 89.235. TorchTitan's step intervals
+  match milabench's within 2 ms; the 2.59 s data fetch per step is inside both. 8 x 128 x 8192 = 8,388,608 tokens per
+  step: 267.2 tokens/s per GPU at the median (245-285 over the steps, L); MFU 7.88% against 2.25e15 with TorchTitan's
+  6.633e11 FLOPs per token (L:770), 7.42% with 6N alone. Loss 7.06114 at step 20.
+- Against the estimates (65-80 s for this row; 9-12% MFU at 50-70 s for K3-TRN-01): measured, the 2.6 s fetch, and
+  GPU 0 under 350 W for 19-24% of steps 4-20 on every stage, about 1F1B's 27% bubble. Not determined: the rest of the
+  gap, and the drift 76.7 -> 89.2 -> 79.3 s over the run (not throttling: the slowest steps have fewer power-cap
+  samples).
+- Memory, max over each stage's 8 ranks (S `per_rank`), GiB reserved / allocated: worst stage 24 (trig0127) 145.41 /
+  124.60, last stage 84.51 / 67.51, stage 0 95.35 / 79.19. Stages 6, 12, 18, 24, 30, 36 and 42 sit high (134.2-145.4,
+  their neighbours 124-134): they hold layers 12, 24, ..., 84, the first layer of each AttnRes block (flavors.py:557,
+  model.py:231), as estimated below. No "memory mapping failed", no timeout.
+- Health: the job epilog has 12 "NVRM: knvlinkSendInbandData_IMPL: Failed to send inband data" lines (L:36542-36555,
+  at 04:50, 05:14 and 05:51; the node is not named).
+
 ## Untested
 
-`k3-pp48-full-rbf16`, `k3-pp40-l78-rbf16` and `k3-pp48-l49` only dry-run; their memory comes from 4-node stand-ins, not
-measured at depth. The review estimates the worst PP48 stages at the block boundaries (stages 6, 12, 18, 24, 30, where
-the second layer also keeps the concatenated AttnRes stack): 144-157 GiB reserved, within 165 GiB but closer than the
-stand-in's 143.3; PP40 about 1 GiB above the stand-in (est.). The shape-inference chain at 48 stages after the timeout
+`k3-pp40-l78-rbf16` only dry-runs. `k3-pp48-l49` ran as K3-TRN-07 (job 1263476, at 705f595c, without
+`--pp-detach-losses`: last stage ~170 GiB reserved from step 2, median 91.6 s per step). Before K3-TRN-09 the review
+estimated the worst PP48 stages at the block boundaries (stages 6, 12, 18, 24, 30, where the second layer also keeps
+the concatenated AttnRes stack): 144-157 GiB reserved (measured: 145.4, above); PP40 about 1 GiB above the stand-in
+(est.). The shape-inference chain at 48 stages after the timeout
 fix: ~21-26 min (est., from 21 s per stage at 48 and the 4-node backward).
 Not measured: why reserved exceeds allocated by ~35-50 GiB
 on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.
