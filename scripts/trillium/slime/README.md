@@ -291,7 +291,8 @@ Per step: rollout 20-45 min (about 0.15-0.3 s per decode step at 4 sequences per
 tokens/s: the 10-layer test's 17.6k tokens/s on 16 GPUs x 256 / 16 GPUs x 10 / 78 layers = 36k, less an 18-30 %
 bubble); sync 1.5-2 min (10 times the 10-layer test's 8-10 s); trainer and engine offload about 0.5 min. Startup to the
 first sync: 10-20 min (8.5 min in the 10-layer test). `--time` = 20 + 3 x (45 + 4.5 + 2 + 0.5) + 3 (warm-up training)
-+ 15 margin = 194 min: 3:15:00.
++ 15 margin = 194 min: 3:15:00. The rollout measured since: 15.0-15.8 min (GLM-RL-02, below); GLM-RL-03's `--time`
+is 2:05:00.
 
 `slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference forward pass;
 per-token loss), its reward and `--sglang-moe-dense-tp-size 1`, without rollout routing replay (`slime-glm5-grpo-r3` has
@@ -354,6 +355,55 @@ time GLM-RL-01 only estimated (20-45 min). milabench gets no metrics from it (it
 times are slime's `Engine startup timings (s): load_weight=` and `rollout_metrics.py:286 - perf N: {...
 'perf/rollout_time': ...}` lines. `--time 2:15:00`: startup 10-20 min (each node reads the 756 GB checkpoint, about 7
 min at 1.8 GB/s), 2 x 20-45 min, 15 min margin and the install.
+
+### GLM-RL-02 (job 1265764): the engine at TP64, rollout only
+
+8 nodes (trig[0115-0121,0123]), 08:27:40-09:07:51. Slurm says FAILED (exit 1) because milabench got no training rate,
+as expected without a trainer; slime returned cleanly. Against the estimates:
+
+| | measured | estimate |
+|---|---|---|
+| engine up | 7 min 47 s after the job's start; `load_weight` 132.6 s (ranks 128.5-135.6 s), decode graphs 94.2 s, scheduler 258.8 s | startup 10-20 min; load about 7 min at 1.8 GB/s per node |
+| checkpoint read | every node reads all 756 GB once (SGLang's iterator `get_tensor`s every tensor, `weight_utils.py:1160-1162`; its 8 ranks share the page cache): 6.0 TB in 128-136 s, 5.7 GB/s per node, 46 GB/s in all (if cold) | |
+| memory | `mem_fraction_static` 0.75, decode graphs to 32; weights 32.26 GB per GPU; KV 100.04 GB, 1,991,296 tokens per rank; 36.1-36.5 GB free after it; GPU peak 150.0 GiB; host 120 GB | weights about 33, KV about 99; rollout about 145 GiB |
+| rollout 0 | 898.2 s: 424 tokens/s per engine, 6.63 per GPU | 20-45 min |
+| rollout 1 | 949.9 s: 535 tokens/s per engine, 8.37 per GPU | |
+| decode step | 100-113 ms (one sequence: 8.8-9.9 tokens/s; 4 per rank: 35 tokens/s) | 150-300 ms |
+| response length | mean / median / max / min 1,488 / 457 / 8,192 / 62, then 1,986 / 687 / 8,192 / 95 | |
+
+Reward and `rollout/truncated` are not logged in rollout-only mode (slime's `rollout N:` line comes after the
+`debug_rollout_only` return, `rollout.py:377`); what is: groups of 8 with identical rewards (no GRPO signal), 14 all 1
+and 2 all 0 of 32 in rollout 0, 10 all 1 in rollout 1.
+
+The tail. Ray deduplicates the `Decode batch` lines across ranks (`[repeated Nx across cluster]`); each busy rank
+logs one every 40 decode steps (about 4.4 s), so the lines and their repeats per minute give the busy ranks. Rollout 0:
+about 60 of 64 in the first two minutes, 45 by minute 2, about 25 (one sequence each: 10 % of the 256) from minute 6,
+and still about 19 in the last minute. Rollout 1: about 25 from minute 9 to minute 14. The last 10 % of the responses
+kept the engine busy 9 and 6 of the 15 minutes, and about 20 (8 %) ran to the 8,192 cap. The rollout time is the
+longest response: 8,192 tokens x 104-113 ms = 14.2-15.4 min, plus about 30 s of prefill and the first tokens,
+whatever the batch: 4 engines (GLM-RL-03) take the same time if each has a response at the cap.
+
+### GLM-RL-03 (draft): the 32-node colocated repost
+
+`slime-glm5-grpo` at the current commit, 32 nodes, `--time 2:05:00` = 30 (startup) + 3 x 25 (rollout 18: the
+measured 15.0-15.8 min, the max over 4 engines and a longer tail; KV onload and offload 0.5; training 2.5-4.5; sync
+1.5-2) + 3 (warm-up training) + 15 margin = 123 min.
+
+Reads from /scratch at the start: the 4 engines first (`train.py:109`), each node all of the 756 GB HF checkpoint:
+24.2 TB, 2.2 min at GLM-RL-02's 5.7 GB/s per node, 9 min if /scratch stays at its 46 GB/s in all; then the trainer's
+torch_dist once (fully parallel load, `megatron_utils/arguments.py:173`): 1.49 TB. About 25.7 TB in the first 10-20
+min. (`--sglang-load-format dummy` would skip the 24.2 TB, the weights coming from the first sync: untested.)
+
+Expected lines, in order: `install: ok`, `main: train.main`; per engine (4) `mem_fraction_static': 0.75`, `Load weight
+end ... mem usage=32.26 GB`, `KV Cache is allocated ... #tokens:` about 1,991,296, `Engine startup timings (s):
+load_weight=`; `expert_routing.py:369 - Enabled rank-local expert update: Megatron PP=8 EP=32, SGLang EP=64`; `Timer
+update_weights end` (1.5-2 min); `rollout_metrics.py:286 - perf 0: {... 'perf/rollout_time': 900-1080`; `Timer train
+end` (2.5-4.5 min, the first longer); `train_metric_utils.py:404 - perf 0`.
+
+Cancel (`scancel -b -s USR1`): any `Scheduler hit an exception`, `Not enough memory`, `CUDA out of memory`, `Invalid
+device_uuid`, NCCL error or `main: FAILED`; fewer than 4 `Engine startup timings` lines at 30 min; no `Timer
+update_weights end` at 40 min; no `perf N` rollout line 22 min after the previous sync (measured 15.0-15.8: 8,192 tokens
+x 113 ms + 0.5 min bounds it); no `Timer train end` 10 min after it; a sync over 5 min.
 
 ### Step 4, prepared entries (not posted)
 
