@@ -67,6 +67,16 @@ on stage 1 (2 MoE layers).
 | 1261657 | `k3-pp4-l7-gpipe`, 64 micro-batches of 8192 in flight | step 1 reserved 159-161 GiB on stages 1-3, then allocator failures (`memory mapping failed`) and no step 2 in 4 min: out of memory |
 | 1261745 | `k3-pp4-l7-gpipe-4k`, 64 of 4096 in flight | step 1 reserved 141 GiB on stages 1-2, then the same failures on ranks 8 and 16, no step 2 in 4 min: out of memory |
 
+| 1261880 | `k3-pp4-l7-gpipe-gc`: + `garbage_collection_threshold:0.8`, `per_process_memory_fraction:0.99` (on top of the pack's `expandable_segments:True`) | step-1 peaks identical to 1261657 to 0.01 GiB, no step 2: no effect |
+| 1261917 | `k3-pp4-l7-gpipe-muon`: DistMuon + AdamW (upstream's Kimi K3 recipe) | step 1 reserved 164.5-166.8 GiB on stages 1-3 (+5 against AdamW), then a worker exited (its output is filtered: local rank 0 only) |
+| 1261943 | `k3-pp4-l7-gpipe-muon-gc`: Muon + the allocator setting | the same step-1 peaks, no step 2 in 8 min |
+| 1262015 | `k3-pp4-l5-gpipe`: one MoE layer per stage, 64 of 8192 in flight | step 1 reserved 104.7 / 106.4 GiB on stages 1-2; stage 3 (output and loss, 64 in flight, which PP48's last stage never holds) hit the limit and held the run at step 1 |
+| 1262121 | `k3-pp4-l5`: the same split, 1F1B, 16 micro-batches | 4.76 s per step; stages 1-2: step 1 84.6 / 82.3 GiB, after step 2 98.1 / 95.3 reserved (62.0 / 59.4 allocated); stage 0 77.0 / 108.7, stage 3 73.3 / 107.1 |
+
+One MoE layer per stage with PP48's worst in-flight load: ~120 GiB reserved after step 2 (1262121's steady state + the
++22 GiB that 64 micro-batches in flight add at step 1 in 1262015), stage 0 (embedding + layers 0-1) ~138 GiB. Hence
+`k3-pp48-l49` (49 layers on 48 nodes) and `k3-pp40-l41`; `k3-pp48-full` and `k3-pp40-l78` do not fit.
+
 So every stage needs an MoE layer (the scale entries set `--pp-first/last-stage-less-layers 0`; which collective
 diverges is not established), and a stage of 2 MoE layers does not hold the in-flight activations of PP48's worst
 stages (13-24, ~35 micro-batches with 3-4 AttnRes blocks), neither at 8192 nor at 4096 tokens per micro-batch.
@@ -76,6 +86,6 @@ Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual 
 
 ## Untested
 
-PP48 / PP40 as entered do not fit (above). Not measured: the step-time cost of 4096-token micro-batches; why
-reserved exceeds allocated by ~50 GiB on MoE stages (fragmentation; allocated stays ~107 GiB at 2-3 in flight); the
-P2P rate at 40-48 nodes; startup at 48 nodes.
+`k3-pp48-l49` and `k3-pp40-l41` only dry-run; their memory is composed from two 4-node runs, not measured at depth.
+Not measured: Muon's optimizer step (no Muon run reached its traced step); why reserved exceeds allocated by ~35-50 GiB
+on MoE stages; the step-time cost of 4096-token micro-batches; the P2P rate at 40-48 nodes; startup at 48 nodes.
