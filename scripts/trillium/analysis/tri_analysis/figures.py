@@ -1141,6 +1141,74 @@ def energy(t):
     return fig
 
 
+def kimi_inference(t):
+    """Kimi K3 inference on B200 (vLLM): output tokens/s per GPU and time per output token vs concurrency (1k in, 256 out), then time
+    to first token and time per output token vs input length at 1 and 16 concurrent requests (128 out). Measured passes only."""
+    p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
+    if p.empty:
+        return None
+    p = p[~p.throwaway.astype(bool)]
+    conc = p[p["pass"].str.fullmatch(r"conc\d+")].sort_values("concurrency")
+    ctx = p[p["pass"].str.fullmatch(r"ctx\d+k-c\d+")].sort_values("input_len")
+    if conc.empty:
+        return None
+    fig, axes = plt.subplots(2, 2, figsize=(TEXT_WIDTH, 3.9))
+    (a, b), (c, d) = axes
+    col = SERIES[0]
+    a.plot(conc.concurrency, conc.output_throughput_gpu, color=col, lw=1.0)
+    _pt(a, conc.concurrency, conc.output_throughput_gpu, col, False)
+    peak = conc.loc[conc.output_throughput_gpu.idxmax()]
+    a.annotate(f"{peak.output_throughput_gpu:.0f} per GPU\n({peak.output_throughput:,.0f} in all)", (peak.concurrency, peak.output_throughput_gpu),
+               xytext=(4, -8), textcoords="offset points", fontsize=6, color=INK2, ha="left", va="top")
+    if len(runs) and pd.notna(runs.max_num_seqs.max()):
+        cap = int(runs.max_num_seqs.max())
+        a.axvline(cap, color=LIGHT, lw=0.6, zorder=1)
+        a.annotate(f"server limit:\n{cap} sequences", (cap, 0.04), xycoords=a.get_xaxis_transform(), xytext=(-3, 0),
+                   textcoords="offset points", fontsize=6, color=MUTED, ha="right", va="bottom")
+    a.set_ylim(0, None)
+    a.set_ylabel("output tokens/s per GPU")
+    for q, marker, alpha, lw in (("p50", "o", 1.0, 1.0), ("p99", "v", 0.55, 0.7)):
+        y = conc[f"tpot_ms_{q}"]
+        b.plot(conc.concurrency, y, color=col, lw=lw, alpha=alpha)
+        _pt(b, conc.concurrency, y, col, False, marker=marker, alpha=alpha)
+    b.set_yscale("log")
+    b.set_ylabel("time per output token (ms)")
+    b.legend(handles=[_handle(col, "median", False), _handle(col, "p99", False, marker="v", alpha=0.55)], loc="upper left", fontsize=6)
+    for ax in (a, b):
+        ax.set_xscale("log", base=2)
+        ticks = [n for n in conc.concurrency if np.log2(n) % 2 == 0]  # 1, 4, 16, ...: 128, 256, 512 side by side do not read
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([str(int(n)) for n in ticks], fontsize=6)
+        ax.minorticks_off()
+        ax.set_xlabel("concurrent requests (1k in, 256 out)")
+    handles = []
+    for (n, g), color, marker in zip(ctx.groupby("concurrency"), (SERIES[0], SERIES[1]), ("o", "s")):
+        k = g.input_len / 1024
+        for ax, ycol, scale in ((c, "ttft_ms_p50", 1000), (d, "tpot_ms_p50", 1)):
+            y = g[ycol] / scale
+            ax.plot(k, y, color=color, lw=1.0)
+            _pt(ax, k, y, color, False, marker=marker)
+        handles.append(_handle(color, f"{int(n)} concurrent", False, marker=marker))
+    for ax, label in ((c, "time to first token, median (s)"), (d, "time per output token, median (ms)")):
+        if ctx.empty:
+            ax.set_visible(False)
+            continue
+        ks = sorted(ctx.input_len.unique() // 1024)
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        ax.set_xticks(ks)
+        ax.set_xticklabels([f"{int(x)}k" for x in ks], fontsize=6)
+        ax.minorticks_off()
+        ax.set_xlabel("input tokens (128 out)")
+        ax.set_ylabel(label)
+        ax.legend(handles=handles, loc="upper left", fontsize=6)
+    for ax in axes.flat:
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        style.finish(ax, trim=False)
+    fig.tight_layout()
+    return fig
+
+
 FIGURES = {
     "machine_status": machine_status,
     "health_gpus": health_gpus,
@@ -1163,6 +1231,7 @@ FIGURES = {
     "stragglers": stragglers,
     "startup": startup,
     "energy": energy,
+    "kimi_inference": kimi_inference,
 }
 
 
