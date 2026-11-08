@@ -569,12 +569,16 @@ slime-glm5-grpo:
 
 # Truncated GLM-5.3 for step 3's 2-node test: the first 10 decoder layers of the FP8 checkpoint (3 dense, 7 MoE; no MTP;
 # scripts/trillium/slime/truncate_hf.py), converted by the job's prepare on its first node, then the GRPO entry
-# colocated over both nodes: the trainer at TP4 x PP2 x CP2 x EP8 (stage 2 starts at layer 7, a DSA computing
+# colocated over both nodes: the trainer at TP1 x PP2 x EP8, DP 8 (stage 2 starts at layer 7, a DSA computing
 # layer), one SGLang engine of 16 GPUs over the 2 nodes (EP 16, DP attention 16), 4k-token responses.
+# TP1 and CP1 for the plugin's RoPE: with TP or CP > 1 it needs apex (not installed, job 1264182); SGLang's RoPE kernel
+# instead, as the campaign's Megatron GLM-5 runs (MEGATRON_USE_SGLANG_ROPE, TP1 / CP1 only).
 slime-glm5-l10-grpo-2n:
   inherits: slime-glm5-grpo
   num_machines: 2
   max_duration: 3000
+  env:
+    MEGATRON_USE_SGLANG_ROPE: "1"
   model:
     convert: true
     convert_nodes: 1
@@ -593,7 +597,9 @@ slime-glm5-l10-grpo-2n:
     --pipeline-model-parallel-size: 2
     --decoder-first-pipeline-num-layers: 6
     --decoder-last-pipeline-num-layers: 4
-    --context-parallel-size: 2
+    --tensor-model-parallel-size: 1
+    --sequence-parallel: null
+    --context-parallel-size: 1
     --expert-model-parallel-size: 8
     --rollout-max-response-len: 4096
     --rollout-num-gpus-per-engine: 16
@@ -601,8 +607,8 @@ slime-glm5-l10-grpo-2n:
     --sglang-dp-size: 16
 
 # Which of the trainer's PP2 or the 16-GPU engine over both nodes breaks the colocated weight sync ("Invalid
-# device_uuid" on the second node's engine ranks, job 1264147): the trainer without PP (DP 2), and PP2 with one engine
-# of 8 GPUs per node.
+# device_uuid" on the second node's engine ranks, job 1264147): the trainer without PP (still failed, job 1264179), and
+# PP2 with one engine of 8 GPUs per node (synced, job 1264182: the 2-node engine's expert update is the problem).
 slime-glm5-l10-grpo-2n-pp1:
   inherits: slime-glm5-l10-grpo-2n
   argv:
