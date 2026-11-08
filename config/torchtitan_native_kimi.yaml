@@ -155,7 +155,8 @@ k3-pp4-l7-rbf16:
   inherits: k3-pp4-l7
   argv:
     --grad-reduce: bf16
-# Timeouts (job 1262377): the init timeout now reaches every group, the pipeline's included (configs._patch_init_timeouts).
+# Timeouts (job 1262377): the init timeout now reaches every group before step 1, the pipeline's included
+# (configs._patch_init_timeouts); its 2-rank P2P child groups, created during step 1, keep it for the whole run.
 # Check on 4 nodes: 30 s is shorter than stage 3's wait for its first shape metadata (~55 s: stages 0-2 infer one after
 # another, ~10 / 20 / 25 s, job 1262230), so this must fail there, on the pipeline group, after 30 s
 k3-pp4-l7-rbf16-t30:
@@ -199,7 +200,8 @@ k3-pp4-l5:
 #     traced. Before step 1 torch infers the stage shapes one stage after another, a real forward then a backward
 #     each: ~10-25 s and ~5 s per stage on 4 nodes (jobs 1262230, 1262576), 10-28 s forward at 48 (job 1262377). The
 #     longest wait, stage 0's for the backward metadata, is ~48 x 21-28 + 47 x 5 s = 21-26 min (est.): init timeout
-#     60 min, which configs._patch_init_timeouts applies to every group (the pipeline's: 600 s before, job 1262377).
+#     60 min, which configs._patch_init_timeouts applies to every group (the pipeline's: 600 s before, job 1262377);
+#     the pipeline's P2P child groups keep it after step 1 (README, "Running the scale rows").
 #     max_duration: 2 min of startup (1262377) + the chain + 20 steps of 50-70 s (est.) ~ 50 min, so 90 min. ---
 _k3_scale:
   inherits: _k3

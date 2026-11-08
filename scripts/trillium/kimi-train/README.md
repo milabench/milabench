@@ -92,11 +92,16 @@ PP48's worst stages, neither at 8192 nor at 4096 tokens per micro-batch; with th
 All 48 stages came up; before step 1 torch's pipeline stage infers the stage shapes one stage after another (a real
 forward on each, then a backward in reverse, `recv_object_list` between them). Stages 29-47 timed out in that
 receive after 600 s: TorchTitan gives `--init-timeout-seconds` to the default group only, the mesh groups (the
-pipeline's included) keep torch's 10-min NCCL default until its `set_pg_timeouts` lowers every group to the train
-timeout after step 1. `configs._patch_init_timeouts` (K3 only) calls that same function with the init timeout when
-training starts. Check (job 1262556, `k3-pp4-l7-rbf16-t30`, 30 s): all ranks log "adjusting timeout for all
-ProcessGroups to 0:00:30", and stage 2 fails 39 s after training starts on its 2-rank pipeline communicator
-("[TC][rank=1] ... Operation timed out after 30661 ms") while stages 0-1 infer their shapes.
+pipeline's included) keep torch's 10-min NCCL default until its `set_pg_timeouts` lowers the mesh groups and the
+default group to the train timeout after step 1. `configs._patch_init_timeouts` (K3 only) calls that same function
+with the init timeout when training starts. The pipeline's 2-rank P2P child groups are created during step 1 and copy
+their parent's timeout then (torch `distributed/pipelining/_p2p.py`): they get the init timeout and keep it for the
+whole run, as the lowering after step 1 does not reach them (job 1261501, at 600 s: lowered to 0:03:00 at 18:59:02,
+rank 0 timed out in a P2P wait after 600 s at 19:09:40). A stage that dies after step 1 can hold the others for up to
+the init timeout (1 h): see the cancel rule below. Check (job 1262556, `k3-pp4-l7-rbf16-t30`, 30 s): local rank 0 of
+each node logs "adjusting timeout for all ProcessGroups to 0:00:30", and stage 2 fails 39 s after training starts on
+its 2-rank pipeline communicator ("[TC][rank=1] ... Operation timed out after 30661 ms") while stages 0-1 infer their
+shapes.
 
 Per-stage shape inference (4 nodes, node telemetry: the active stage runs ~1 core per rank with its GPUs idle, the
 waiting ones sit in NCCL receives):
@@ -113,6 +118,12 @@ identified. The native allocator would shorten the 48-stage chain but reserves m
 2-MoE-layer stage (job 1262643, BF16 reduction) against 143.3 with expandable segments, so the rows keep expandable
 segments and a 60-min init timeout. Static stage shapes would skip the inference, but TorchTitan builds K3's
 `AttnResPipelineStage` without them, and the first micro-batch would still meet each cold stage in turn.
+
+### Running the scale rows (K3-TRN-01..03)
+
+Step 1 is expected about 25-30 min after the job starts (the shape-inference chain, est.); cancel if there is none by
+45 min. After step 1, cancel if there is no new step for 5 min: the P2P groups keep the 60-min init timeout, so a stage
+that dies would otherwise hold every node until it expires.
 
 Upstream fix needed at this pin: K3's pipeline stage does not set FSDP's manual backward finalization (job 1261124,
 `configs._patch_kimi_pp_stage`).
