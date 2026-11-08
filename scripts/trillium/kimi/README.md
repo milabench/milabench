@@ -239,7 +239,26 @@ Bring-up, `kimi-vllm-4n-tp8pp4-bringup` (warm-up, conc1, conc64, conc1024: the c
 390 GB instead of 780 (~6 min cold at the ~1.1 GB/s per node of job 1263799). The autotune does not hit the cache: the
 key is the vLLM config hash, new for PP4, and the MoE entries miss at every start anyway (job 1262548). Its per-GPU
 shapes are the TP8 ones of 2 nodes, so expect the same ~24 min. Ready after ~33 min, done after ~46 (estimates);
-`job.sh` stops the run cleanly 5 min before `--time`. Not run yet (PAUSE).
+`job.sh` stops the run cleanly 5 min before `--time`.
+
+**Bring-up, job 1264956**, `trig[0117-0120]`, 2026-11-08 05:59:03-06:45:24 (46:21), `fb31a435`, exit 0 after 2762 s; all
+four nodes "GPUs free", none drained; `ulimit -c` 0 in the batch tasks, raylets and Ray workers of all four. vLLM:
+"Hidden layers were unevenly partitioned: [23,23,24,23]"; weights 46.3 / 47.8 / 49.88 / 48.05 GiB per GPU (PP0-PP3);
+KV memory 99.7-105.4 GiB; "GPU KV cache size: 13,042,751 tokens, Maximum concurrency for 133,120 tokens per request:
+97.98x" (2 nodes: 27.09x). Each rank still reads all 96 shards: loads 721-759 s, not the ~6 min estimated. Engine init
+1296 s (autotune), ready at 38.2 min. Every JIT falls in the warm-up (last at 06:37:58, conc1 from 06:38:24).
+
+| pass | done / failed | output tok/s | total tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | 2 nodes, output tok/s |
+|---|---|---|---|---|---|---|---|
+| conc1 | 60 / 0 | 109.0 | 545 | 85 / 87 | 8.87 / 8.88 | 8.87 / 8.95 | 111.1 (TPOT 8.70) |
+| conc64 | 128 / 0 | 1012.2 | 5061 | 1883 / 20123 | 22.7 / 93.9 | 18.1 / 18.9 | 2002.6 |
+| conc1024 | 2048 / 0 | 3865.3 | 19327 | 6368 / 59048 | 213.6 / 284.9 | 52.6 / 2826 | 3451.8 |
+
+The estimates did not hold beyond conc1. conc1024 gains 12%, not 2x: with 1024 sequences admitted (KV usage 29.5%,
+about the 30% estimated) the engine is prefill-bound. It logs 22-24k prompt tok/s while generation falls to ~330 tok/s,
+then bursts of 15-17k generation tok/s between prefill waves. conc64 halves: for its first ~25 s the engine logs
+1.8-2.6k prompt tok/s and almost no generation (22 requests with TTFT of about 20 s), with no JIT or other event logged.
+Not explained; the 2.5 h study run on 4 nodes would show whether it comes back.
 
 Dropped: two 2-node replicas behind one endpoint (vLLM DP2). vLLM's fused MoE takes its size from the DP group, so the
 experts would be sharded over DP x TP = 16 GPUs across both replicas, with the engines in lockstep: not two
