@@ -11,6 +11,7 @@ milabench CLI venv in `src/.venv`), `venv/torch` (the pack's venv), `data`, `run
 |------|------------------|------|
 | install | `src/scripts/trillium/slime/install.sh` | downloads (below) |
 | 1 | `src/scripts/trillium/slime/submit.sh q30-1n 00:55:00 1 slime-qwen3-30b-a3b-grpo -- --nodelist=trig0146` | 1 node: GPU build of TE and torch_memory_saver (first job only), the HF -> torch_dist conversion (once), 6 GRPO steps |
+| 2 | `src/scripts/trillium/slime/submit.sh q30-2n 00:45:00 2 slime-qwen3-30b-a3b-grpo-2n -- --nodelist=trig0146,trig0147` | 2 nodes, Ray across them; `-2n-r3` with rollout routing replay, `-2n-engine16` with one SGLang engine over both nodes |
 
 `submit.sh NAME TIME NODES ENTRY... [-- sbatch args]` submits one job named `nw-glm-rl-NAME` that runs `job.sbatch`:
 power check, `milabench install` (offline), `milabench prepare` on the first node, then one `milabench run` per entry.
@@ -39,6 +40,13 @@ entry's HF checkpoint and dataset (`milabench prepare` with `SLIME_DOWNLOAD_ONLY
   both under `~/.cache/sglang` by default. `job.sbatch` puts them in `/dev/shm`.
 - With the 1.56 TB Kimi K3 download running beside it (2026-11-07), uv's 30 s HTTP timeout failed on torch's
   `nvidia-cublas`: `install.sh` sets 300 s. The login-node install then took about 40 min, Qwen3-30B-A3B (61 GB) 14 min.
+- Rollout routing replay needs slime's `sglang-router` fork (PyPI's 0.3.2 returns no routed experts, job 1261523), as
+  slime's Dockerfile installs it: `0.3.2+slime` from Zilin Zhu's `github.com/zhuzilin/sgl-router`, release
+  `v0.3.2-9daabcd`, installed `--no-deps` in this workload's venv only (the user's approval, 2026-11-07).
+  `install.sh` checks its sha256 before installing it:
+  `https://github.com/zhuzilin/sgl-router/releases/download/v0.3.2-9daabcd/sglang_router-0.3.2-cp38-abi3-manylinux_2_28_x86_64.whl`,
+  sha256 `c26d31b9decd4bef04c5c2bf72470e7660c2802b9599b885eb7c1dfbfbd9a4b5` (the digest GitHub lists for that asset).
+  Since 2026-11-07 21:10 every entry in this venv runs with it (jobs 1262032, 1262053 and before: PyPI's).
 
 ## Entries
 
@@ -52,8 +60,16 @@ loss, TIS) except rollout routing replay. Differences from the recipe, each from
 |---|---|
 | `--rm-type dapo --reward-key score` (+1 / -1 on the prompt's `Answer:` line) | the recipe's `deepscaler` scores 0 any response without `</think>`: every response of Instruct-2507 (job 1261612, 512 samples) |
 | `--sglang-moe-runner-backend triton` | on B200 SGLang picks `flashinfer_trtllm`, which downloads its cubins at the first forward (job 1261477) |
-| no `--use-rollout-routing-replay` | PyPI's `sglang-router` 0.3.2 returns no routed experts (job 1261523). slime's Dockerfile installs a fork for it (`zhuzilin/sgl-router` v0.3.2-9daabcd, `0.3.2+slime`); not in this install |
+| no `--use-rollout-routing-replay` (the `-2n-r3` entry has it) | simpler; it needs the router fork (Install) |
 | `--sglang-attention-backend triton`, `--sglang-sampling-backend pytorch` | as the validated GRPO entries (no flashinfer JIT) |
+
+2 nodes (`num_machines: 2`, Ray through milabench's `RayCluster`: one `rayrun` per node, the driver on the first):
+
+| entry | trainer | rollout |
+|---|---|---|
+| `slime-qwen3-30b-a3b-grpo-2n` | 16 GPUs, TP4 x EP8, DP 4 | 2 SGLang engines of 8 GPUs, one per node, behind slime's router on the first node |
+| `slime-qwen3-30b-a3b-grpo-2n-r3` | same, with `--use-rollout-routing-replay` | same; SGLang returns each token's experts, the trainer replays them |
+| `slime-qwen3-30b-a3b-grpo-2n-engine16` | same | 1 engine of 16 GPUs over both nodes, the GLM-5 entry's engine layout: EP 16, DP attention 16, DP LM head |
 
 ## Measured
 
@@ -95,7 +111,51 @@ Bring-up jobs on `trig0146`: 1261365 (install, torch_memory_saver link), 1261382
 lines in the kernel messages of every job that ran on the GPUs (6 to 332, more in longer jobs); the K3 training jobs on `trig0145` / `trig0146` have
 them too, the campaign's GLM logs that list kernel messages do not. No effect seen.
 
+### Step 2: 2 nodes
+
+All passed, 6 steps each, 29.9-32.8 min per job. Steps 1-5, mean, seconds (1 node from above):
+
+| | 1 node (1261710) | 2n (1262032) | 2n again (1262235) | 2n-r3 (1262234) | 2n-engine16 (1262053) |
+|---|---|---|---|---|---|
+| nodes | trig0146 | trig0146-0147 | trig0149-0150 | trig0146-0147 | trig0149-0150 |
+| sglang-router | PyPI | PyPI | fork | fork | PyPI |
+| step | 279.7 | 208.1 | 211.2 | 217.2 | 213.4 |
+| rollout | 155.5 | 111.1 | 113.4 | 116.0 | 120.9 |
+| training (actor + reference log-probs) | 80.7 (55.6 + 24.8) | 44.2 (30.1 + 13.7) | 47.2 (30.4 + 16.4) | 52.9 (35.5 + 17.0) | 52.6 (31.8 + 20.4) |
+| weight sync | 13.3 | 15.2 | 17.9 | 20.9 | 12.3 |
+| offload + onload | 18.3 + 5.7 | 20.4 + 7.7 | 15.2 + 9.5 | 14.2 + 5.8 | 14.3 + 6.7 |
+| rest of the trainer's wait | 6.2 | 9.6 | 8.0 | 7.5 | 6.6 |
+| rollout tokens/s per GPU | 604 | 422 | 414 | 404 | 389 |
+| training tokens/s (global) | 14,288 | 26,274 | 26,050 | 22,627 | 25,233 |
+| reward | -0.31 | -0.32 | -0.33 | -0.34 | -0.32 |
+| startup (`time_to_first_step`) | 471 | 790 | 631 | 572 | 641 |
+
+- 2 nodes against 1: the step 1.32-1.34 times shorter. Training 1.71-1.83 times shorter (actor tokens/s 1.82-1.84
+  times higher with 2 times the GPUs), the rollout 1.37-1.40 times: twice the engines, but it lasts as long as the
+  longest response (40-57 % at the 4,096 cap, as on 1 node), and the per-GPU rollout rate falls from 604 to about 420
+  tokens/s. The sync goes
+  to 2 engines: 15-18 s against 13.
+- Rollout routing replay (against the repeat, same router): the actor 5.0 s longer (35.5 against 30.4; per-step
+  medians 35.3 against 29.7; the two runs without it differ by 0.4 s), training tokens/s 13 % lower; the rollout
+  +2.7 s and the sync +3.0 s, within the 2.3-2.7 s by which the two runs without it differ. Step +6.1 s (+2.9 %).
+  Host memory on the first node 667-688 GB against 600-615 GB (2n, same nodes).
+- The router fork alone (2n against 2n again, other nodes): no difference beyond that spread.
+- One 16-GPU engine over both nodes (TP 16, EP 16, DP attention 16, `nnodes 2`): works. Rollout 121 s against 111-113
+  with 2 engines of 8; the sync 12.3 s against 15-18 (not analysed; with EP 16 each GPU holds 8 of the 128 experts).
+- What 1 node did not exercise, now run: Megatron's NCCL across nodes inside the Ray actors (the expert gradients
+  reduce between the nodes at TP4 x EP8; training scales 1.75 times, so NCCL is on InfiniBand, inferred, NCCL's own
+  log is off), the router reaching the engine on the other node, the weight sync to 2 engines and to an engine over 2
+  nodes.
+- Addresses: Ray registers the nodes on ib0 (172.30.x, `rayrun --head-ip` from milabench's system file), slime gives
+  the engines Ray's node IP (`host` and `dist_init_addr` on 172.30.x), the router listens on ens27f0 (172.21.x, the
+  hostname's address) and reaches the engines on 172.30.x. No problem seen.
+- Memory: GPU at most 147 GB of 192 (nvml, first node; 145 GB with the 16-GPU engine), the trainer 41-42 GB used;
+  host 580-620 GB per node after step 0 (CPU Adam over 16 GPUs instead of 8).
+- `NVRM: knvlinkSendInbandData_IMPL` lines, counted on every node (`job.sbatch`; each job starts at 0): 332 on each
+  node of the three runs with 2 engines of 8 (trig0146, 0147, 0149, 0150), 324 on each with the 16-GPU engine, 332 on
+  trig0146 alone at 1 node. The same count on every node of a configuration: they follow the workload, not a node.
+
 ## Untested
 
-- More than one node (Ray across nodes through `RayCluster`), the GLM-5.3 entries.
-- Rollout routing replay (the router fork), SGLang's flashinfer MoE kernels on B200 (`flashinfer-cubin`, offline).
+- More than 2 nodes, the GLM-5.3 entries, disaggregated rollout across nodes.
+- SGLang's flashinfer MoE kernels on B200 (cubins offline: `scripts/trillium/kimi/kernels.sh` stages FlashInfer's).
