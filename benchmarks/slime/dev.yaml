@@ -520,10 +520,12 @@ slime-glm5-fineweb:
 # GRPO on GLM-5.3, colocated, at the layout of the campaign's GLM-5 runs on Trillium: TP1 / CP1 (the GLM-5 plugin's RoPE
 # imports apex at every TP / CP unless MEGATRON_USE_SGLANG_ROPE is set, and that one requires TP1 and CP1: job 1264182),
 # PP8 x EP32 on 32 nodes (DP32 for the dense part; slime's split 14 / 8 x 6 / 16, every stage from a DSA computing
-# layer). GRPO flags, reward (deepscaler: GLM-5.3 reasons in <think> by default, the answer after </think> is scored)
-# and batch (8 prompts x 8 samples) of slime's scripts/run-glm5.3-744B-A40B.sh, without its rollout routing replay (the
-# -r3 entry has it) and with responses capped at 8,192 tokens instead of 262,144: at CP1 a sample stays on one GPU
-# (an oversized one gets a micro-batch of its own), and responses cut before </think> score 0.
+# layer). GRPO flags and reward (deepscaler: GLM-5.3 reasons in <think> by default, the answer after </think> is scored)
+# of slime's scripts/run-glm5.3-744B-A40B.sh, without its rollout routing replay (the -r3 entry has it). Deviations:
+# responses capped at 8,192 tokens instead of 262,144 (at CP1 a sample stays on one GPU; an oversized one gets a
+# micro-batch of its own) with "Reasoning Effort: Low" instead of the template's Max (responses cut before </think>
+# score 0); 32 prompts x 8 samples instead of 8 x 8, which was sized for the script's DP1: at DP32, 8 samples per rank
+# (4-8 micro-batches through PP8, bubble 7 / (m + 7) = 47-64 %), and one sample per DP-attention rank of the 4 engines.
 slime-glm5-grpo:
   inherits: _glm5
   tags: [rl]
@@ -542,10 +544,11 @@ slime-glm5-grpo:
     --prompt-data: "{milabench_data}/slime/datasets/dapo-math-17k/dapo-math-17k.jsonl"
     --num-rollout: 3
     # prompts per rollout: slime requires global-batch-size == rollout-batch-size * n-samples-per-prompt
-    # (the 64 inherited from _glm5 is a sample count, right for the SFT entries only)
-    --rollout-batch-size: 8
+    --rollout-batch-size: 32
     --n-samples-per-prompt: 8
+    --global-batch-size: 256
     --rollout-max-response-len: 8192
+    --apply-chat-template-kwargs: '{"reasoning_effort": "low"}'
     --tensor-model-parallel-size: 1
     --sequence-parallel: null
     --context-parallel-size: 1
@@ -564,6 +567,9 @@ slime-glm5-grpo:
     --sglang-dp-size: 64
     --sglang-enable-dp-attention: true
     --sglang-enable-dp-lm-head: true
+    # dense layers (0-2) unsplit, as slime's script: at TP64 their FP8 MLPs split 12288 / 64 = 192, not a multiple of
+    # the 128 block, and the engine fails at load
+    --sglang-moe-dense-tp-size: 1
     # what ran offline on B200 with the Qwen3-30B-A3B stand-in: flashinfer_trtllm MoE downloads its cubins (job 1261477)
     --sglang-moe-runner-backend: triton
     --sglang-sampling-backend: pytorch
