@@ -222,6 +222,15 @@ k3-pp4-l8-depth-4k:
   argv:
     --seq-len: 4096
     --pp-microbatches: 256
+# k3-pp4-l8-depth (job 1263416): the last stage's allocated memory grows by 0.875 GiB per micro-batch ([T, 8, D] in
+# BF16, the received hidden + 7 blocks or the 8-block stack) and drops at the next step: out of memory in step 2.
+# Half the micro-batches per schedule step, two schedule steps per optimizer step (the same 8.4M tokens per step at
+# PP48): does it drop between the two?
+k3-pp4-l8-depth-m64ga2:
+  inherits: k3-pp4-l8-depth
+  argv:
+    --pp-microbatches: 64
+    --grad-accum: 2
 
 # --- One copy over the machine: PP x EP8 (expert groups inside a node), at most 2 layers per stage, an MoE layer on
 #     every stage (PP4 failed with a stage of none: jobs 1261433-1261567; with both less-layers options at 0, stage 0
