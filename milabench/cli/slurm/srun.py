@@ -59,8 +59,10 @@ def _exec_native_srun() -> None:
 
     args = list(sys.argv[idx + 1 :])
     args = _shrink_srun_allocation_for_exclude(args)
-    print(f"[srun] {srun} --overlap {' '.join(args)}", file=sys.stderr, flush=True)
-    os.execvp(srun, [srun, "--overlap", *args])
+    # The tasks get the batch script's core-file limit (``ulimit -c 0``) only if srun propagates it: Trillium
+    # sets PropagateResourceLimits=NONE, and a 384-rank abort wrote ~0.5 TB of core files (job 1262377).
+    print(f"[srun] {srun} --overlap --propagate=CORE {' '.join(args)}", file=sys.stderr, flush=True)
+    os.execvp(srun, [srun, "--overlap", "--propagate=CORE", *args])
 
 
 def _has_srun_nodes_override(args: list[str]) -> bool:
