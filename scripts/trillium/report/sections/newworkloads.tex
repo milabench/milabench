@@ -1,0 +1,40 @@
+\section{New workloads}
+\label{sec:newworkloads}
+
+\begin{question}
+  \textbf{What do workloads beyond the campaign's two get from these nodes?} Kimi K3 inference first: what two nodes serve with vLLM, at what latency, how the cost grows with the context, and whether the answers stay accurate.
+\end{question}
+
+\paragraph{Kimi K3 inference, answer.} Two B200 nodes serve Kimi K3 with vLLM at up to \TriKimiPeakTok{} output tokens/s (\TriKimiPeakGpu{} per GPU) with \TriKimiPeakConc{} requests of 1k tokens in and 256 out in flight, \TriKimiSixtyFourTok{} with 64, and \TriKimiOneTok{} to a single request, one token every \TriKimiOneTpot\,ms. Throughput stops growing at \TriKimiPeakConc{} requests, the server's limit on sequences in flight, while its KV cache is about half full.
+
+\paragraph{Setup.} Kimi K3 (\texttt{moonshotai/Kimi-K3}, about 2.8T parameters; a mixture of experts whose routed experts ship in MXFP4, the rest in BF16; text only here) does not fit on one node. It runs on \TriKimiNodes{} nodes, \TriKimiGpus{} GPUs: vLLM \TriKimiVllm{}, tensor parallelism over the 8 GPUs of each node and one pipeline stage per node, over Ray (\TriKimiLayout). vLLM runs the MXFP4 experts with activations quantized to MXFP8 (its \texttt{\TriKimiMoeBackend} backend), where the checkpoint expects BF16 activations, and FlashInfer's kernel autotuning is on. The server holds at most \TriKimiMaxSeqs{} sequences, up to \TriKimiMaxLen{} tokens each, and prefills in chunks of \TriKimiChunk{} tokens; prefix caching is off. Against it, the client runs the MI355X study's \TriKimiPasses{} passes unchanged, with random tokens and the end of sequence ignored: 1 to 1,024 concurrent requests of 1k tokens in and 256 out; inputs of 1k to 128k tokens, 128 out, at 1 and at 16 concurrent requests; and long decodes of 4k tokens. Then an accuracy pass: lm-eval through the server, temperature 0, up to 8,192 generated tokens. A throwaway warm-up pass runs first, so that kernels that compile on their first batches do so outside the measured passes. One run (\cref{tab:kimi_runs}), on \texttt{\TriKimiMainHost} and its neighbour; \texttt{\TriKimiMainHost} was held at 200\,W until November~6 (\cref{sec:machine}), and its GPUs averaged up to \TriKimiMainGpuW\,W each here, so that limit is gone. It is also one of the five nodes whose GPU boards run 1-node Qwen a little slower; any effect on this run is not measured.
+
+\begin{table}[h]
+  \caption{Kimi K3 inference runs in this report.}
+  \label{tab:kimi_runs}
+  \centering\small
+  \IfFileExists{generated/tables/kimi_runs.tex}{\input{generated/tables/kimi_runs}}{\textit{No data yet.}}
+\end{table}
+
+\paragraph{What was measured.} All \TriKimiPasses{} passes ran: \TriKimiRequests{} requests, \TriKimiFailed{} failed (\cref{tab:kimi_passes,fig:kimi_inference}). \textbf{Concurrency.} Output grows from \TriKimiOneTok{} tokens/s for one request to \TriKimiSixtyFourTok{} at 64 and \TriKimiPeakTok{} at \TriKimiPeakConc, while the median time per output token grows from \TriKimiOneTpot{} to \TriKimiSixtyFourTpot{} and \TriKimiPeakTpot\,ms. At \TriKimiTopConc{} requests, output is \TriKimiTopPct\,\% lower than at \TriKimiPeakConc, and the median time to first token is \TriKimiTopTtft\,s: the server's log shows \TriKimiMaxSeqs{} requests running and the rest waiting. \textbf{Context.} For one request at a time, the median time to first token grows from \TriKimiCtxOneTtft\,ms at 1k tokens to \TriKimiCtxTtft\,ms at \TriKimiCtxTopK k, about in proportion to the prompt from 32k on, and the time per output token from \TriKimiCtxOneTpot{} to \TriKimiCtxTpot\,ms (+\TriKimiCtxTpotPct\,\%). With 16 at a time, each request waits for the others' prompts: \TriKimiCtxSixteenTtft\,s to the first token at \TriKimiCtxTopK k. From 128 concurrent requests up, and with 16 prompts of 8k tokens or more, the 99th percentile of the time between tokens rises to between 0.45 and 2\,s. \textbf{Accuracy} (\%, $\pm$ standard error): GSM8K \TriKimiGsm{} $\pm$ \TriKimiGsmErr, ARC-Challenge \TriKimiArc{} $\pm$ \TriKimiArcErr, GPQA diamond \TriKimiGpqa{} $\pm$ \TriKimiGpqaErr, and MMLU-Pro \TriKimiMmlu{} $\pm$ \TriKimiMmluErr{} on \TriKimiMmluN{} of its 12,032 questions. GSM8K and ARC-Challenge sit near their ceiling: they would catch a broken setup, not a small loss.
+
+\begin{figure}[h]
+  \centering\fig{kimi_inference}
+  \caption{Kimi K3 inference on \TriKimiNodes{} B200 nodes (vLLM, \TriKimiLayout). Top: output tokens/s per GPU, and time per output token (median and 99th percentile), vs concurrent requests of 1k tokens in and 256 out; gray line: the server's limit of \TriKimiMaxSeqs{} sequences. Bottom: median time to first token and time per output token vs input length, 128 tokens out, at 1 and 16 concurrent requests. Log scales except top left.}
+  \label{fig:kimi_inference}
+\end{figure}
+
+\begin{table}[h]
+  \caption{Kimi K3 inference: the study's passes on \TriKimiNodes{} B200 nodes, random tokens, end of sequence ignored; the warm-up pass is left out. Per GPU: divided by \TriKimiGpus; per node: by \TriKimiNodes. Power is an estimate: the mean GPU power of the main node over each pass, times \TriKimiNodes, as the second node was not sampled; joules per output token follow from it.}
+  \label{tab:kimi_passes}
+  \centering\scriptsize
+  \begin{adjustbox}{max width=\linewidth}
+  \IfFileExists{generated/tables/kimi_passes.tex}{\input{generated/tables/kimi_passes}}{\textit{No data yet.}}
+  \end{adjustbox}
+\end{table}
+
+\paragraph{Inferred.} The plateau from \TriKimiPeakConc{} requests on comes from the limit of \TriKimiMaxSeqs{} sequences, not from memory: vLLM sized the KV cache for \TriKimiKvTokens{} million tokens, its capacity, and with \TriKimiMaxSeqs{} sequences running it was at most \TriKimiKvUsePct\,\% full. If its use grows in proportion to the sequences, about \TriKimiKvFillSeqs{} would fill it; that was not run. The long tail of the time between tokens is likely decode steps waiting behind prefill chunks of \TriKimiChunk{} tokens. \textbf{Power and energy are estimates}, the main node's GPU power times \TriKimiNodes: about \TriKimiPowerOne\,W and \TriKimiJOne\,J per output token for one request, \TriKimiPowerSixtyFour\,W and \TriKimiJSixtyFour\,J at 64, and \TriKimiPowerPeak\,W and \TriKimiJPeak\,J at \TriKimiPeakConc{} (all est.). The two pipeline stages need not draw the same power, so the estimate can be off either way.
+
+\paragraph{Missing.} The comparison with MI355X, pass for pass: its numbers are not in yet. The 4-node step, not run yet. The second node's power. A repeat: the study ran once.
+
+\paragraph{Still to come.} Blocks for Kimi K3 pretraining and GLM-5.3 RL.
