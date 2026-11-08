@@ -15,7 +15,10 @@ milabench CLI venv in `src/.venv`), `venv/torch` (the pack's venv), `data`, `run
 
 `submit.sh NAME TIME NODES ENTRY... [-- sbatch args]` submits one job named `nw-glm-rl-NAME` that runs `job.sbatch`:
 power check, `milabench install` (offline), `milabench prepare` on the first node, then one `milabench run` per entry.
-The job runs `$B/src` as it is: `git -C $B/src pull --ff-only` first.
+The job runs `$B/src` as it is: `git -C $B/src pull --ff-only` first. At its end, and 5 min before its time limit
+(SIGUSR1), it stops Ray on every node and waits until no process holds a GPU before Slurm cleans up (`GPUs free
+after N s` per node): `trig0146-0147` drained with `health.chk.nvidia-smi.unresponsive` 1 s after job 1262234 ended,
+3 s after its `ray stop` (1 drain in 4 two-node teardowns; cleared at once).
 
 ## Install
 

@@ -18,5 +18,5 @@ mkdir -p "$B/slurm"
 /opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable --job-name="$name" --account=rrg-bengioy-ad \
     --partition=compute_b200_full_node --gpus-per-node=b200:8 --reservation=b200-friendly-users --qos=bump \
     --nodes="$nodes" --ntasks-per-node=1 --exclusive --mem=0 --time="$time" --output="$B/slurm/%x-%j.out" \
-    --exclude=trig0125,trig0132 \
+    --exclude=trig0125,trig0132 --signal=B:USR1@300 \
     "$@" "$B/src/scripts/trillium/slime/job.sbatch" "${entries[@]}"

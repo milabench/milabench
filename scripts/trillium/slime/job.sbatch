@@ -32,7 +32,23 @@ nodes() { srun --overlap --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM
 nvrm() { nodes bash -c "echo \"$P nvrm-inband $1 \$(hostname -s) \$(dmesg | grep -c knvlinkSendInbandData)\""; }
 nodes mkdir -p "$L/tmp"
 nvrm start
-trap 'nvrm end; nodes rm -rf "$L"' EXIT
+# At the end, and on the time limit (submit.sh: SIGUSR1 5 min before it): stop Ray on every node, then wait until no
+# process holds a GPU (killed after 2 min), before Slurm cleans up: trig0146-0147 drained with
+# health.chk.nvidia-smi.unresponsive 1 s after job 1262234 ended, 3 s after its `ray stop`
+release_gpus() {
+    nodes bash -c '"$1" stop --force > /dev/null 2>&1
+        for i in $(seq 90); do
+            pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | tr -d " ")
+            [ -z "$pids" ] && { echo "$2 $(hostname -s): GPUs free after $((2 * i - 2)) s"; exit 0; }
+            [ "$i" = 60 ] && kill -KILL $pids
+            sleep 2
+        done
+        echo "$2 $(hostname -s): GPUs still held by" $pids' _ "$B/venv/torch/bin/ray" "$P"
+}
+trap 'release_gpus; nvrm end; nodes rm -rf "$L"' EXIT
+trap 'echo "$P time limit in 5 min: stopping"; kill -TERM "${child:-}" 2>/dev/null; exit 124' USR1
+# prepare and run in the background, so that the USR1 trap runs while they do
+bg_wait() { "$@" & child=$!; wait $child; }
 # (sglang puts the inductor and CUDA caches in SGLANG_CACHE_DIR, job 1261398, and its JIT builds in SGLANG_JIT_CACHE_DIR,
 # job 1261434: both default to ~/.cache/sglang)
 export TMPDIR=$L/tmp TRITON_CACHE_DIR=$L/triton TILELANG_CACHE_DIR=$L/tilelang FLASHINFER_WORKSPACE_BASE=$L \
@@ -47,7 +63,7 @@ echo "$P install: $(cat "$B/venv/torch/.slime_installed")"
 system=$B/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
 # in the batch step (the first node), not a step of its own: a multi-node conversion starts its own srun from there
-milabench prepare --config "$C" --select "$select" || { echo "$P prepare failed" >&2; exit 6; }
+bg_wait milabench prepare --config "$C" --select "$select" || { echo "$P prepare failed" >&2; exit 6; }
 [ -n "${SLIME_CONVERT:-}" ] && { echo "$P SLIME_CONVERT: conversion done, no run"; exit 0; }
 
 status_all=0
@@ -55,7 +71,7 @@ for entry in "$@"; do
     run=$SLURM_JOB_NAME.$SLURM_JOB_ID.$entry
     echo "$P === $entry (run $run)"
     start=$(date +%s)
-    milabench run --config "$C" --system "$system" --select "$entry" --run-name "$run"
+    bg_wait milabench run --config "$C" --system "$system" --select "$entry" --run-name "$run"
     status=$?
     [ $status = 0 ] || status_all=$status
     echo "$P $entry: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)") $(( $(date +%s) - start )) s"
