@@ -13,6 +13,8 @@ tensorboard
 wandb
 # Megatron-LM (NVIDIA) at the commit slime's docker image is built against
 megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d
+# GLM-5's DSA indexer and sparse MLA are TileLang kernels; the version of the campaign's GLM-5 runs on B200
+tilelang==0.1.15
 # sglang's own imports (slime imports sglang even for train-only). sglang itself is installed
 # --no-deps by benchfile.py: its pins (cuda-tile, flash-attn-4, flashinfer, ...) are heavy and unused here
 orjson
