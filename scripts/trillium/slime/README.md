@@ -270,21 +270,30 @@ site's `flashinfer_cubin-0.7.0.post1+computecanada` holds 0.6.18's `fmha/trtllm-
 not its `batched_gemm` or `gemm` ones.
 
 Step 4 at TP1 / CP1 (the campaign's GLM-5 layouts), colocated on 32 nodes, PP8 x EP32 (DP32 for the dense part; slime's
-split 14 / 8 x 6 / 16), estimates: the largest stage (16 MoE layers + LM head) holds 9.09 B parameters per GPU; at the
-Qwen stand-in's 10.7 GB per billion (42.7 GB for 4.0 B) about 97 GB, plus PP8's in-flight activations: 112-122 GB in
-training. Rollout: SGLang's static 0.7 (125 GiB) + the offloaded trainer's ~7 GB, as Qwen's 147 GB peak. Sync: engine +
-the trainer's bf16 weights (18.2 GB) + the 4 GiB staging: about 156 GB. Host per node: 365 GB + 16.3 GB per billion
-parameters per node (fit to Qwen's 862 GB at 1 node, 613 GB at 2) = about 740 GB for 23.2 B per node (+70 GB with
-routing replay), of 2,015 GB.
+split 14 / 8 x 6 / 16), estimates. GPU, training: the largest stage (16 MoE layers + LM head) holds 9.09 B parameters
+per GPU: BF16 weights 18.1 GB + FP32 main gradients 36.3 GB = 54 GB that stay on the GPU (Adam's moments and the master
+weights are on the CPU, `--optimizer-cpu-offload`); the rest is activations, recompute and the allocator: the Qwen
+stand-in's 10.7 GB per billion parameters (42.7 GB used for 4.0 B), which includes them, gives about 97 GB, plus PP8's
+in-flight micro-batches: 112-122 GB. Rollout: SGLang's static pool (the entry sets no `--sglang-mem-fraction-static`;
+SGLang picked 0.751 in job 1264182: 144 GB) + the offloaded trainer's ~7 GB = about 151 GB. Sync: the engine + the
+trainer's BF16 weights (18.1 GB) + the 4 GiB staging = about 167 GB, of 192. Host: the last stage's nodes hold 72.6 B
+parameters each (8 GPUs x 9.09 B): 365 GB + 16.3 GB per billion parameters per node (fit to Qwen's 862 GB at 1 node, 613
+GB at 2) = about 1.55 TB of 2.0 TB, +70 GB with routing replay.
 
 `slime-glm5-grpo` follows slime's `run-glm5.3-744B-A40B.sh` GRPO flags (no KL loss, so no reference forward pass;
-per-token loss), its reward and batch, without rollout routing replay (`slime-glm5-grpo-r3` has it: the user's order is
-without first), at TP1 / CP1, PP8 x EP32. Reward at step 4: slime's `deepscaler`, which scores the answer after
-`</think>`; GLM-5.3 reasons in `<think>` by default (its chat template), so it fits this model, unlike Instruct-2507.
-Responses are capped at 8,192 tokens, not the script's 262,144: at CP1 a sample stays on one GPU (slime gives an
-oversized one a micro-batch of its own), and the memory estimate above assumes 8,192-token micro-batches. Reasoning cut
-before `</think>` scores 0, so the reward may stay near 0 if most responses reach the cap (`rollout/truncated` in the
-first step-4 run says); the reward is there to show the loop learns, not measured.
+per-token loss), its reward and `--sglang-moe-dense-tp-size 1`, without rollout routing replay (`slime-glm5-grpo-r3` has
+it: the user's order is without first), at TP1 / CP1, PP8 x EP32. Reward: slime's `deepscaler`, which scores the answer
+after `</think>`; GLM-5.3 reasons in `<think>` by default, so it fits this model, unlike Instruct-2507. Deviations from
+the script:
+
+| | slime's script | here | why |
+|---|---|---|---|
+| response cap | 262,144 | 8,192 | at CP1 a sample stays on one GPU (slime gives an oversized one a micro-batch of its own); the memory estimate assumes 8,192-token micro-batches |
+| reasoning effort | the template's Max (slime passes no kwargs) | Low (`--apply-chat-template-kwargs '{"reasoning_effort": "low"}'`; the prompt still ends `<\|assistant\|><think>`) | with Max and an 8k cap most responses would be cut before `</think>`: reward 0, advantages 0 |
+| batch | 8 prompts x 8 = 64 (its DP1) | 32 x 8 = 256 | at DP32: 8 samples per rank, 4-8 micro-batches through PP8 (bubble 47-64 %), one sample per DP-attention rank of the 4 engines |
+
+The first step-4 run's `rollout/truncated` and reward say whether Low and 8k are enough; the reward is there to show
+the loop learns, not measured.
 
 ## Untested
 
