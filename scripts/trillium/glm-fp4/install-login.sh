@@ -15,5 +15,11 @@ export MILABENCH_BASE=$G MILABENCH_GPU_ARCH=cuda
 cd $G/src
 export SLIME_DOWNLOAD_ONLY=1
 nice -n 10 milabench install --config benchmarks/megatron/dev.yaml --select megatron-glm5-tri-test-n2-gbs16; echo "install rc=$?"
+# milabench gives the requirements install its own -c (platform pins), which replaces UV_CONSTRAINT there: 13 packages
+# released since the campaign install came in newer (2026-11-08). Put every package at the campaign version (TE: te_build.sbatch)
+grep -v '^transformer_engine' $G/pins-campaign.txt > $G/pins-campaign-no-te.txt
+nice -n 10 uv pip install --python $G/venv/torch/bin/python --no-deps --index-strategy unsafe-best-match \
+    --extra-index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://flashinfer.ai/whl/cu130 \
+    -r $G/pins-campaign-no-te.txt; echo "pins rc=$?"
 # TE's dependencies, installed by hand in the campaign venv
 nice -n 10 uv pip install --python $G/venv/torch/bin/python onnxscript onnx nvdlfw-inspect nvidia-cudnn-frontend importlib-metadata; echo "te deps rc=$?"

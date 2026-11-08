@@ -23,6 +23,11 @@ start=$(date +%s)
 milabench install --config $G/src/benchmarks/megatron/dev.yaml --select megatron-glm5-tri-test-n2-gbs16
 echo "[glm-fp4] install rc=$? in $(( $(date +%s) - start )) s"
 cat $G/venv/torch/.slime_installed
-srun --export=ALL --propagate=CORE --overlap --ntasks=1 bash -c 'echo "[glm-fp4] step ulimit -c $(ulimit -c)"; \
-    CUDA_VISIBLE_DEVICES=0 '"$G"'/venv/torch/bin/python '"$G"'/src/scripts/trillium/glm-fp4/nvfp4_check.py'
+CHECK="CUDA_VISIBLE_DEVICES=0 $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py"
+srun --export=ALL --propagate=CORE --overlap --ntasks=1 bash -c "echo \"[glm-fp4] step ulimit -c \$(ulimit -c)\"; $CHECK"
 echo "[glm-fp4] check rc=$?"
+# again with cuBLASLt's trace log (its times are not used): the operand types each GEMM ran with
+mkdir -p $G/logs
+srun --export=ALL --propagate=CORE --overlap --ntasks=1 bash -c \
+    "CUBLASLT_LOG_LEVEL=2 CUBLASLT_LOG_FILE=$G/logs/nvfp4_check.$SLURM_JOB_ID.lt.%i.log $CHECK > /dev/null"
+echo "[glm-fp4] logged check rc=$?"
