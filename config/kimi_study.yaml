@@ -489,31 +489,30 @@ kimi-vllm-2n-tp8pp2-bringup:
       - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
-# 4 nodes: two of the 2-node servers (TP8 x PP2 each) behind one endpoint, vLLM data parallelism over Ray with each DP
-# rank spanning two nodes (VLLM_RAY_DP_PACK_STRATEGY=span). The 2-node server saturates at its 512 sequences
-# (--max-num-seqs): conc512 3466 output tok/s, conc1024 3452 and queued (TTFT p50 40 s), job 1263799; a second replica
-# runs 512 more. The same server over 4 nodes (PP4) would keep 512 in flight
-kimi-vllm-4n-dp2-tp8pp2:
+# 4 nodes: the same server over four nodes, TP8 inside each and PP4 across them. The 2-node server's limit was its 512
+# sequences (--max-num-seqs), with KV left: 26.7% of its 3,606,273-token pool in use at 256 running, 53.4% at 512 (job
+# 1263799), full at about 960. PP4 halves the weights per GPU (95.7-96.1 GiB -> about 48) and so leaves about 1.9x the
+# KV memory (51.4-53.5 GiB -> about 100), and halves the layers whose KV and KDA state each GPU keeps (46-47 -> 23-24):
+# about 3,650 sequences (estimate), 1,820 on the memory alone. 1024, the study's highest concurrency, then fills about
+# 28% of the pool (56% on the memory alone). The one server change beyond the layout
+kimi-vllm-4n-tp8pp4:
   inherits: kimi-vllm-2n-tp8pp2
   num_machines: 4
-  env:
-    VLLM_RAY_DP_PACK_STRATEGY: span
   server:
     argv:
-      --pipeline-parallel-size: 2
-      --data-parallel-size: 2
-      --data-parallel-backend: ray
+      --max-num-seqs: 1024
 
-# its bring-up: the server loads, a pass at each end of the curve and the saturation point
-kimi-vllm-4n-dp2-tp8pp2-bringup:
-  inherits: kimi-vllm-4n-dp2-tp8pp2
+# its bring-up in a 1 h job: each node loads its ~24 shards (~390 GB instead of ~780: ~6 min cold at the ~1.1 GB/s per
+# node of job 1263799), then FlashInfer's autotune again (a new config hash; the same TP8 shapes per GPU, ~24 min), the
+# warm-up, conc1 and conc64; job.sh's USR1 stop 5 min before --time
+kimi-vllm-4n-tp8pp4-bringup:
+  inherits: kimi-vllm-4n-tp8pp4
   max_duration: 3420
   client:
     passes:
       - *warmup
-      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
 
 # the bring-up without FlashInfer's autotune, as vLLM's Kimi-K3 recipes run: what the 20-25 min of autotune at every
 # start buys, against kimi-vllm-2n-tp8pp2-bringup

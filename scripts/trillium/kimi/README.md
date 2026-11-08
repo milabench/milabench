@@ -100,7 +100,7 @@ reads its own ~47 shards, ~1.1 GB/s per node from VAST, cold. Engine init 1434 s
 plus 8 in 4-5 min, BF16 GEMM 4.5 min, graphs 27 s. MoE backend `FLASHINFER_TRTLLM_MXFP4_MXFP8` (vLLM 0.32's default on
 B200: activations in MXFP8). 1k in, 256 out, random tokens:
 
-| pass | output tok/s (per GPU) | total tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes | J / output tok |
+| pass | output tok/s (per GPU) | total tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes (est.) | J / output tok (est.) |
 |---|---|---|---|---|---|---|---|
 | conc1 | 111.3 (7.0) | 556 | 85 / 88 | 8.69 / 8.70 | 8.68 / 8.89 | 7014 | 63.0 |
 | conc64 | 1304.7 (81.5) | 6523 | 1881 / 11689 | 26.7 / 64.1 | 20.6 / 30.1 | 9165 | 7.0 |
@@ -117,7 +117,7 @@ out) before the measured passes, and Triton's cache in `cache/triton`, kept acro
 the warm-up, none in conc1 or conc64. Both PASS, nodes "GPUs free", none drained; `ulimit -c` 0 in the batch tasks of all
 four nodes and in their raylet and Ray workers (`/proc/<pid>/limits`).
 
-| pass | autotune | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes | J / output tok |
+| pass | autotune | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | power W, 2 nodes (est.) | J / output tok (est.) |
 |---|---|---|---|---|---|---|---|
 | conc1 | on | 111.25 | 85 / 89 | 8.69 / 8.70 | 8.68 / 8.84 | 7016 | 63.1 |
 | conc1 | off | 105.22 | 102 / 106 | 9.14 / 9.14 | 9.14 / 9.19 | 6871 | 65.3 |
@@ -139,9 +139,10 @@ engine init 1443 s, ready 39 min after the job started; the 21 passes 52 min (31
 conc64, conc512 and ctx128k-c1 (throughput = requests x output length / duration, TTFT median from the per-request
 samples, power = the main node's mean over the pass window, x2).
 
-Per GPU = /16, per node = /2. Power: the main node's 8 GPUs, times 2 (voir samples the main node only).
+Per GPU = /16, per node = /2. Power and J / token are estimates: the main node's 8 GPUs, times 2; the PP1 node was never
+sampled (voir samples the main node only).
 
-| pass | in / out | output tok/s (/GPU, /node) | total tok/s (/GPU, /node) | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | W, 2 nodes | J / out tok |
+| pass | in / out | output tok/s (/GPU, /node) | total tok/s (/GPU, /node) | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | W, 2 nodes (est.) | J / out tok (est.) |
 |---|---|---|---|---|---|---|---|---|
 | warmup (throwaway) | 1024 / 64 | 305 (19, 153) | 5189 (324, 2594) | 1907 / 12063 | 182.4 / 202.7 | 21.1 / 534.8 | 6020 | 19.7 |
 | conc1 | 1024 / 256 | 111.1 (6.9, 56) | 556 (35, 278) | 85 / 88 | 8.70 / 8.71 | 8.69 / 8.90 | 7022 | 63.2 |
@@ -213,11 +214,31 @@ To set the scenario beside theirs: 8k/1k passes at concurrency 4, 16, 64 and 256
 
 ## 4 nodes (step 4)
 
-Two of the 2-node servers behind one endpoint: `kimi-vllm-4n-dp2-tp8pp2` (`--data-parallel-size 2`, Ray backend, each
-replica TP8 x PP2 over two nodes with `VLLM_RAY_DP_PACK_STRATEGY=span`). The 2-node server saturates at the 512
-sequences it runs (`--max-num-seqs`, the study's flag), not at memory: conc512 3466 tok/s, conc1024 3452 with a 40 s TTFT
-p50 of queueing, 3.6M tokens of KV free. The same server over 4 nodes (TP8 x PP4) would keep those 512 in flight: decode
-reads every expert's weights, so a stage of half the layers is about twice as fast but carries half the sequences per
-micro-batch, and each token crosses 3 links instead of 1. A second replica runs 512 more: expected about twice the
-saturated throughput (estimate), conc1 unchanged. It is also how the MI355X study scaled (replicas behind one
-endpoint). Untested: `kimi-vllm-4n-dp2-tp8pp2-bringup` (warmup, conc1, conc64, conc1024; 4 nodes, under 1 h) first.
+The same server over four nodes: `kimi-vllm-4n-tp8pp4`, TP8 inside each node, PP4 across them, the study's passes
+unchanged. The one server change beyond the layout: `--max-num-seqs` 1024 instead of 512.
+
+Why: the 2-node server's limit is its 512-sequence cap. conc512 gives 3466 output tok/s, conc1024 3452 with a TTFT p50
+of 40 s (queueing). Memory is not the limit at that cap only: its KV pool holds 3,606,273 tokens (log line 562), 26.7% in
+use with 256 sequences running and 53.4% with 512, so it would be full at about 960.
+
+`--max-num-seqs` for PP4, from the KV capacity (estimates):
+- weights per GPU: 95.7-96.1 GiB at PP2 (47 and 46 layers), about 48 GiB at PP4 (24/23/23/23 layers);
+- KV memory per GPU: 51.4-53.5 GiB at PP2, so about 100 GiB at PP4 (the same budget, about 1.9x);
+- the KV and KDA state a GPU keeps per sequence is for its own layers only: half as many at PP4;
+- capacity: about 960 x 1.9 x 2 = 3,650 sequences, or 960 x 1.9 = 1,820 if the per-sequence state did not shrink;
+- 1024 (the study's highest concurrency, conc1024) then fills about 28% of the pool, 56% on the memory-only bound.
+
+Estimates, to check in the bring-up: conc1 TPOT about the same, 8.7 ms plus two more inter-node hops per token (the
+same weights read per token, over 4 stages instead of 2); saturated output about 2x the 2-node 3466 tok/s, with up to
+1024 sequences in flight over twice the GPUs. Power on 4 nodes is extrapolated: `scripts/analysis/kimi_study.py`
+multiplies the main node by the node count (x4), three nodes unsampled.
+
+Bring-up, `kimi-vllm-4n-tp8pp4-bringup` (warm-up, conc1, conc64), in a 1 h job: each node loads its ~24 shards, about
+390 GB instead of 780 (~6 min cold at the ~1.1 GB/s per node of job 1263799). The autotune does not hit the cache: the
+key is the vLLM config hash, new for PP4, and the MoE entries miss at every start anyway (job 1262548). Its per-GPU
+shapes are the TP8 ones of 2 nodes, so expect the same ~24 min. Ready after ~33 min, done after ~37 (estimates);
+`job.sh` stops the run cleanly 5 min before `--time`. Not run yet (PAUSE).
+
+Dropped: two 2-node replicas behind one endpoint (vLLM DP2). vLLM's fused MoE takes its size from the DP group, so the
+experts would be sharded over DP x TP = 16 GPUs across both replicas, with the engines in lockstep: not two
+independent servers (review, 2026-11-08).
