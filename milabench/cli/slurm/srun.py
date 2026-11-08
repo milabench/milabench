@@ -98,10 +98,14 @@ def _shrink_srun_allocation_for_exclude(args: list[str]) -> list[str]:
     With ``-w`` (explicit node list), request exactly one task per listed
     node; otherwise srun inherits the job's task count and may stack several
     tasks on the listed nodes.
+
+    Only srun's own options count, the arguments before ``--``: the command may
+    take a ``--nodes`` of its own (benchmate.server_worker, job 1269960).
     """
-    if _has_srun_nodes_override(args):
+    options = args[: args.index("--")] if "--" in args else args
+    if _has_srun_nodes_override(options):
         return args
-    n_listed = _nodelist_host_count(args)
+    n_listed = _nodelist_host_count(options)
     if n_listed > 0:
         return [
             f"--nodes={n_listed}",
@@ -110,8 +114,8 @@ def _shrink_srun_allocation_for_exclude(args: list[str]) -> list[str]:
             *args,
         ]
 
-    n_excl = _exclude_host_count(args)
-    if n_excl <= 0 or _has_srun_nodes_override(args):
+    n_excl = _exclude_host_count(options)
+    if n_excl <= 0:
         return args
 
     job_nodes = int(

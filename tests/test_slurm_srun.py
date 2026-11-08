@@ -113,6 +113,14 @@ class TestShrinkAllocation:
         assert _shrink_srun_allocation_for_exclude(args) == args
         assert _has_srun_nodes_override(args)
 
+    def test_command_nodes_flag_is_not_an_override(self, monkeypatch):
+        # benchmate.server_worker takes --nodes; only srun's options (before --) count
+        monkeypatch.setenv("SLURM_JOB_NUM_NODES", "2")
+        out = _shrink_srun_allocation_for_exclude(
+            ["-x", "tri0001", "--", "python", "-m", "benchmate.server_worker", "--nodes", "a,b"]
+        )
+        assert out[:3] == ["--nodes=1", "--ntasks=1", "--ntasks-per-node=1"]
+
     def test_no_job_size_leaves_args(self, monkeypatch):
         monkeypatch.delenv("SLURM_JOB_NUM_NODES", raising=False)
         monkeypatch.delenv("SLURM_NNODES", raising=False)
