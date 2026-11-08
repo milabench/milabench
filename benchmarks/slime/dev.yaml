@@ -600,6 +600,23 @@ slime-glm5-l10-grpo-2n:
     --sglang-ep-size: 16
     --sglang-dp-size: 16
 
+# Which of the trainer's PP2 or the 16-GPU engine over both nodes breaks the colocated weight sync ("Invalid
+# device_uuid" on the second node's engine ranks, job 1264147): the trainer without PP (DP 2), and PP2 with one engine
+# of 8 GPUs per node.
+slime-glm5-l10-grpo-2n-pp1:
+  inherits: slime-glm5-l10-grpo-2n
+  argv:
+    --pipeline-model-parallel-size: 1
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+
+slime-glm5-l10-grpo-2n-e8:
+  inherits: slime-glm5-l10-grpo-2n
+  argv:
+    --rollout-num-gpus-per-engine: 8
+    --sglang-ep-size: 8
+    --sglang-dp-size: 8
+
 # --- GLM-5.3-Flash (300B MoE, glm5_next architecture): the step between the 30B proxy and the 744B ---
 # Follows slime's scripts/run-glm5.3-flash-300B.sh: 8 nodes x 8 GPUs, PP4 x CP8 x EP16, the HF checkpoint is
 # loaded directly (--load + --megatron-to-hf-mode raw, no torch_dist conversion). NOT yet validated end to end.
