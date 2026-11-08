@@ -217,6 +217,20 @@ First jobs (2026-11-08, 2 nodes each; nothing trained yet):
 | 1263400 | 10-layer test, its conversion | the GLM-5 plugin does not import without `tilelang` (spec `None`): added, `tilelang==0.1.12` |
 | 1263439 | 10-layer test | conversion done (FP8 read, PP2 6 + 4 x EP4, 18.7-21.3 GB allocated per GPU, 2 min); SGLang fell back to its Transformers backend (`GlmMoeDsaForCausalLM` is registered by `glm4_moe.py`, which imports `deep_gemm`): added `sgl-deep-gemm==0.2.0`; the run then waited on the dead engine, stopped with `scancel -b -s USR1` |
 | 1263451 | full conversion | launched on both nodes; `--expert-tensor-parallel-size` defaults to TP (8 x 8 x 2 = 128 > 16 GPUs): set to 1 |
+| 1263932 | full conversion | done in 6 min 31 s (job), saved 5 min after the start: 1,486,940,657,885 bytes, 16 `.distcp` + 3 files; 93.5 GB allocated per GPU |
+| 1263931 | 10-layer test | SGLang sized `q_b_proj` for 384-wide heads: transformers 5.9 maps `head_dim` (192) onto `qk_rope_head_dim` (64): `transformers==5.12.1` (sglang's pin; it also checks the per-layer lists, which `truncate_hf.py` now cuts) |
+| 1263962 | 10-layer test | DSA attention picked trtllm (flashinfer cubins, downloaded): FlashMLA as slime's script (`dsa`, `flashmla_sparse` / `flashmla_kv`, page 64, FP8 KV) |
+| 1263975 | 10-layer test | prefills up to 2048 tokens take dense MHA on trtllm: `SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD=0` |
+| 1264056 | 10-layer test | weight sync: slime packs the indexer `wk` scales as UE8M0 on B200, SGLang dequantizes FP32 ones: `SGLANG_ENABLE_JIT_DEEPGEMM=0` |
+| 1264112 | 10-layer test | without DeepGEMM the FP8 GEMMs pick flashinfer_trtllm (cubins): `--sglang-fp8-gemm-runner-backend triton` |
+| 1264147 | 10-layer test | weight sync: `Invalid device_uuid` on the second node's engine ranks, in the expert update (slime's rank-local expert routing into the 16-GPU engine) |
+| 1264179 | the same, trainer PP1 | the same error: not PP2. The Qwen 16-GPU engine (same nodes, same expert routing) synced |
+| 1264182 | PP2, one 8-GPU engine per node | weight sync 9.8 s, the first rollout (64 x 4,096 tokens, 72 s, 227 tokens/s per GPU), then the trainer's RoPE needs apex at TP / CP > 1: TP1 / CP1 with SGLang's RoPE (`MEGATRON_USE_SGLANG_ROPE`, as the campaign) |
+
+The flashinfer cubins (`flashinfer-cubin` 0.6.18, FlashInfer's GitHub release, 1.57 GB) and apex (slime's Dockerfile
+builds it from NVIDIA's git) would remove 3 of these workarounds; installing them was refused by the permission
+check (external code) and needs the user's decision. Without them the engine runs Triton FP8 GEMMs and Triton MoE,
+and the trainer TP1 / CP1 only.
 
 `tilelang` and `sgl-deep-gemm` are at sglang 0.5.21's pins (with `apache-tvm-ffi` 0.1.11); they went into the venv
 by hand (`uv pip install`, its `.slime_installed` marker stops the pack's install). With them, `GlmMoeDsaForCausalLM`
