@@ -51,6 +51,14 @@ if len(sys.argv) > 3:
     ratio = [mine[s] / theirs[s] for s in common]
     print(f"  against {Path(sys.argv[3]).name} over {len(ratio)} steps (same samples: {same}): period ratio median"
           f" {st.median(ratio):.3f}, sum ratio {sum(mine[s] for s in common) / sum(theirs[s] for s in common):.3f}")
+    ref_ranks = steps(Path(sys.argv[3]))
+    if len(ref_ranks) == len(ranks):
+        n = min(len(r0), len(ref))
+        diff = [st.mean(v[i]["loss"] for v in ranks.values()) - st.mean(v[i]["loss"] for v in ref_ranks.values())
+                for i in range(n)]
+        print(f"  loss (mean over ranks) minus REF's, steps 1-{n}: mean {st.mean(diff):+.3f}, mean absolute"
+              f" {st.mean(abs(d) for d in diff):.3f}, largest {max(diff, key=abs):+.3f}; per 10 steps: "
+              + " ".join(f"{st.mean(diff[i:i + 10]):+.3f}" for i in range(0, n, 10)))
 gap_share = {k: sum(r["gap_s"] for r in v) / sum(r["gap_s"] + r["step_s"] for r in v) for k, v in kept.items()}
 print(f"  rank 0: step {st.median(r['step_s'] for r in kept[0]):.3f} s, gap {st.median(r['gap_s'] for r in kept[0]):.3f} s median;"
       f" gap share of time, mean over ranks {st.mean(gap_share.values()):.1%}, max {max(gap_share.values()):.1%} (rank {max(gap_share, key=gap_share.get)})")
