@@ -739,6 +739,19 @@ slime-glm5-l10-grpo-4n-trtllm:
   env: *trtllm_env
   argv: *trtllm_argv
 
+# It ran out of memory in that autotune (job 1275077) with 28.1-28.5 GiB free after the KV pool. The two choices for
+# GLM-RL-06: the full engine's headroom (36.1-36.5 GiB after its pool, GLM-RL-02: 0.045 x 176.5 GiB more than at 0.75),
+# or SGLang's requests capped at 2048, the autotune's tokens with them
+slime-glm5-l10-grpo-4n-trtllm-headroom:
+  inherits: slime-glm5-l10-grpo-4n-trtllm
+  argv:
+    --sglang-mem-fraction-static: 0.705
+
+slime-glm5-l10-grpo-4n-trtllm-mrr2048:
+  inherits: slime-glm5-l10-grpo-4n-trtllm
+  argv:
+    --sglang-max-running-requests: 2048
+
 # slime-glm5-l10-grpo-4n with rollout routing replay (the switch of slime-glm5-grpo-r3), before GLM-RL-04: the 32-GPU
 # engine records the routes, the trainer replays them.
 slime-glm5-l10-grpo-4n-r3:
