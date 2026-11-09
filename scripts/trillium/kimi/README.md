@@ -569,6 +569,65 @@ compare like for like with K3-INF-01. ctx64k-c16 (16 x 65.6k) is at capacity.
 `deep_gemm_mega_moe` only, the shared experts (`KimiMLP`: all-gather of the TP group's tokens, partial GEMMs,
 reduce-scatter): about 21 GiB per GPU back for the KV cache with DeepEP, 1.2 with `allgather_reducescatter` (est.).
 
+### K3-XN-01: the study on EP16, both backends, 2 nodes
+
+`kimi-vllm-2n-dp2tp8-ep16` (all-gather) and `kimi-vllm-2n-dp2tp8-ep16-deepep` (DeepEP), checkout `add6000c`, submitted by
+the experiment coordinator: job 1271952 on `trig[0109-0110]`, 2026-11-08 22:44:40-2026-11-09 01:05:31 (2:20:51), and job
+1271953 on `trig[0111-0112]`, 22:44:40-01:19:36 (2:34:56); milabench exit 0 after 8431 and 9274 s, 18 passes each, no
+failed request. Engine up 23.2 and 25.8 min after the job's start (weights 390-438 and 338-378 s, cold; engine init with
+the autotune 774-822 and 978 s); the serving passes 74.2 and 82.9 min (60.3 min of passes and 13.9 of gaps between them,
+all-gather); the eval 42.5 and 45.4 min. Weights, KV and the other differences between the two entries: above. Tables
+from `scripts/analysis/kimi_study.py` over the three run folders (`passes.csv`, `accuracy.md`; plots not made: no
+`altair` in that venv).
+
+| pass | all-gather: out tok/s, TTFT p50 / p99 ms, TPOT p50 ms | DeepEP | K3-INF-01, TP8 x PP2 (1263799) | AG / PP | DeepEP / PP |
+|---|---|---|---|---|---|
+| warmup | 491.8, 1607 / 3361, 105.8 | 440.5, 2205 / 4149, 111.7 | 305.2, 1907 / 12063, 182.4 |  |  |
+| warmup-mixed | 1030.9, 1234 / 4568, 56.6 | 648.7, 2214 / 21771, 61.9 |  |  |  |
+| conc1 | 31.0, 150 / 296, 31.8 | 31.3, 206 / 370, 31.3 | 111.1, 85 / 88, 8.7 | 0.28 | 0.28 |
+| conc4 | 119.6, 356 / 903, 32.0 | 100.8, 361 / 17054, 34.1 | 326.7, 256 / 288, 11.3 | 0.37 | 0.31 |
+| conc16 | 451.2, 492 / 1338, 33.7 | 383.1, 1132 / 1180, 38.1 | 876.3, 693 / 721, 15.6 | 0.51 | 0.44 |
+| conc64 | 1304.6, 1254 / 1892, 43.9 | 1179.5, 2141 / 2741, 45.5 | 2002.6, 1462 / 2968, 26.4 | 0.65 | 0.59 |
+| conc128 | 2046.3, 1903 / 3213, 53.7 | 1901.9, 3137 / 4961, 53.8 | 2243.0, 2837 / 9338, 44.8 | 0.91 | 0.85 |
+| conc256 | 2839.0, 2035 / 10098, 77.1 | 1847.1, 3360 / 13812, 103.1 | 2865.0, 2698 / 14761, 70.7 | 0.99 | 0.64 |
+| ctx1k-c1 | 30.5, 150 / 295, 31.8 | 30.6, 206 / 370, 31.2 | 107.5, 85 / 88, 8.7 | 0.28 | 0.28 |
+| ctx8k-c1 | 27.8, 574 / 717, 31.8 | 26.8, 845 / 995, 31.4 | 84.2, 399 / 402, 8.8 | 0.33 | 0.32 |
+| ctx32k-c1 | 22.3, 1662 / 1694, 32.1 | 19.5, 2528 / 2538, 31.8 | 55.0, 1168 / 1176, 9.1 | 0.41 | 0.35 |
+| ctx64k-c1 | 18.2, 2939 / 2972, 32.3 | 14.6, 4701 / 4718, 32.0 | 39.1, 2087 / 2100, 9.4 | 0.46 | 0.37 |
+| ctx128k-c1 | 12.6, 6002 / 6023, 32.7 | 9.4, 9495 / 9525, 32.4 | 21.5, 4555 / 4607, 11.1 | 0.59 | 0.44 |
+| ctx1k-c16 | 418.8, 654 / 1221, 34.5 | 352.1, 781 / 1142, 39.2 | 766.3, 692 / 717, 15.6 | 0.55 | 0.46 |
+| ctx8k-c16 | 260.5, 1682 / 5929, 42.7 | 191.3, 3132 / 8036, 56.6 | 220.5, 3501 / 11821, 37.2 | 1.18 | 0.87 |
+| ctx32k-c16 | 123.9, 4393 / 12123, 94.5 | 87.4, 6644 / 19206, 131.8 | 78.0, 11009 / 18809, 115.4 | 1.59 | 1.12 |
+| decodelong-c1 | 31.4, 197 / 437, 31.8 | 31.9, 279 / 555, 31.3 | 114.3, 87 / 88, 8.7 | 0.27 | 0.28 |
+| decodelong-c16 | 485.7, 664 / 1141, 32.8 | 439.1, 676 / 1127, 36.3 | 968.9, 699 / 720, 16.4 | 0.50 | 0.45 |
+
+Accuracy (the study's `eval` pass: GSM8K in full, 1,319, not the first 200):
+
+| | GSM8K | ARC-Challenge | GPQA diamond | MMLU-Pro (2002) |
+|---|---|---|---|---|
+| all-gather | 98.0 | 98.1 | 87.4 | 87.2 |
+| DeepEP | 97.6 | 98.3 | 84.3 | 87.2 |
+| K3-INF-01 | 97.5 | 98.5 | 84.8 | 87.7 |
+
+On the same 2 nodes EP16 gives less than TP8 x PP2 at nearly every pass: one request decodes at 31-32 against 8.7 ms
+per token (conc1 0.28x; the all-to-all is a third of a step, profile above), conc64 0.65x and 0.59x. It gives more only
+with long prompts at 16 concurrent: ctx8k-c16 1.18x and ctx32k-c16 1.59x on all-gather (1.12x on DeepEP), and the same at
+conc256 on all-gather (0.99x). DeepEP gives less than all-gather everywhere but conc1 (+1%).
+
+Anomalies, from the raw files:
+- DeepEP conc4, TTFT p99 17.1 s: requests 1, 2 and 3 waited 17.1 s, the other 57 had a median of 0.36 s: the pass's
+  first batch, once. Inferred: DeepEP compiling its kernel for a batch size neither warm-up made.
+- conc256, TTFT p99 10.1 s (all-gather) and 13.8 s (DeepEP): requests 128-255 (by index) wait for the first half's
+  prefill, on both backends (medians 6.6-7.3 and 6.1-10.4 s), then 1.6-3.4 s; not a stall. Five late DeepEP requests
+  (448-511) reach 20.5 s: not explained.
+- `JSONDecodeError`: during the run, 3 lines of voir's telemetry (one `gpudata` or `torchmem` sample each, in conc16,
+  conc128 and ctx1k-c1) came split in the stream and were dropped (one GPU sample each); at the end, milabench's
+  `_parse_report` (`milabench/common.py`) failed on 8 lines of `<entry>.0.server.nolog.dpworker.data` (the second node's
+  server: FlashInfer's autotune progress bars, stored as Python repr, not JSON), in both jobs. Every pass `.data` file
+  parses; no number lost.
+- The all-gather main node's GPU 0 drew 25% more than the others at conc1 (experiment coordinator's read; not checked
+  here).
+
 ### Part 1 on 4 nodes: EP32
 
 `kimi-vllm-4n-dp4tp8-ep32`: EP16's server over 4 nodes, DP4 x TP8, 28 experts per GPU (all-gather all-to-all, shared
