@@ -4,9 +4,10 @@
                                    tokens each at top-8 (glm5.py get_glm5_spec, dev.yaml model.argv)
     python nvfp4_check.py qwen3    Qwen3 32B (hidden 5120, 64 x 128 query heads, 8 x 128 KV heads, FFN 25600, SwiGLU)
                                    at 4096 and 8192 tokens
-    python nvfp4_check.py moe DIR  the routed experts of each DIR/<model>/config.json (hidden, expert FFN with gate +
-                                   up fused, experts, top-k): te.GroupedLinear over the experts one GPU holds at EP8, at
-                                   128 / 512 / 2048 / 8192 tokens per expert; GEMMs only
+    python nvfp4_check.py moe DIR [EP [MODEL...]]
+                                   the routed experts of each DIR/<model>/config.json (hidden, expert FFN with gate +
+                                   up fused, experts, top-k): te.GroupedLinear over the experts one GPU holds at EP
+                                   (default 8), at 128 / 512 / 2048 / 8192 tokens per expert; GEMMs only
 
 Each module as Megatron's TE spec builds it (te.Linear, te.LayerNormLinear with RMSNorm where the norm is fused,
 te.GroupedLinear for the experts), under te.fp8_autocast with the recipe Megatron builds (MXFP8BlockScaling(),
@@ -128,13 +129,15 @@ def bench(name, kind, n_in, n_out, tokens, results, experts=EXPERTS, per_expert=
         torch.cuda.empty_cache()
 
 
-def moe(configs):
-    """Routed experts of each model at EP8, swept over the tokens per expert."""
+def moe(configs, ep=8, only=()):
+    """Routed experts of each model at EP ranks, swept over the tokens per expert."""
     import json
     from pathlib import Path
 
     results = {}
     for path in sorted(Path(configs).glob("*/config.json")):
+        if only and path.parent.name not in only:
+            continue
         c = json.loads(path.read_text())
         c = c.get("text_config", c)
         get = lambda *keys: next(c[k] for k in keys if c.get(k) is not None)
@@ -143,11 +146,11 @@ def moe(configs):
         ffn = get("moe_intermediate_size", "intermediate_size")
         experts = get("n_routed_experts", "num_experts", "num_local_experts")
         topk = get("num_experts_per_tok", "num_experts_per_token", "experts_per_token")
-        local = experts // 8
+        local = experts // ep
         model = path.parent.name
-        # an EP8 group of ranks with 8192 tokens each: 8 x 8192 x top-k routed tokens over all the experts
-        print(f"model {model}: hidden {hidden}, expert FFN {ffn}, {experts} experts top-{topk}; EP8: {local} experts per "
-              f"GPU, {8 * 8192 * topk / experts:.0f} tokens per expert on average at 8192 tokens per micro-batch", flush=True)
+        # an EP group of ranks with 8192 tokens each: ep x 8192 x top-k routed tokens over all the experts
+        print(f"model {model}: hidden {hidden}, expert FFN {ffn}, {experts} experts top-{topk}; EP{ep}: {local} experts per "
+              f"GPU, {ep * 8192 * topk / experts:.0f} tokens per expert on average at 8192 tokens per micro-batch", flush=True)
         for per_expert in (128, 512, 2048, 8192):
             for name, n_in, n_out in (("fc1", hidden, 2 * ffn), ("fc2", ffn, hidden)):
                 try:
@@ -165,7 +168,7 @@ def main():
     model = sys.argv[1] if len(sys.argv) > 1 else "glm5"
     if model == "moe":
         print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), flush=True)
-        return moe(sys.argv[2])
+        return moe(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 8, sys.argv[4:])
     print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), torch.cuda.get_device_capability(), flush=True)
     print("NVFP4BlockScaling():", RECIPES["nvfp4"], flush=True)
     results = {}

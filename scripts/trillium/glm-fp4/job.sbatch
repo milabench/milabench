@@ -35,7 +35,8 @@ SP=$(echo $G/venv/torch/lib/python3.*/site-packages)
 for item in "$@"; do
     if [ "${item#check:}" != "$item" ]; then
         args=${item#check:}
-        [ "$args" = moe ] && args="moe $G/data/moe-configs"  # the models' config.json, staged from a login node
+        # check:moe[:EP[:MODEL...]]: the models' config.json, staged from a login node
+        [ "${args%%:*}" = moe ] && args="moe $G/data/moe-configs $(echo ${args#moe} | tr ':' ' ')"
         srun --export=ALL --overlap --propagate=CORE --ntasks=1 env CUDA_VISIBLE_DEVICES=0 CUDA_HOME=$SP/nvidia/cu13 \
             NVTE_CUDA_INCLUDE_DIR=$SP/nvidia/cu13/include LD_LIBRARY_PATH=$SP/nvidia/cu13/lib:${LD_LIBRARY_PATH:-} \
             $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py $args
