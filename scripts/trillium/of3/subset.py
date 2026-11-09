@@ -4,7 +4,7 @@
 - long monomer distillation: the first N_MONO entries of its cache.json (the dataset reads it in order,
   sample_in_order: true); CACHES/long_head.json is the start of that 15 GB file, cut anywhere;
 - RNA distillation: N_RNA entries drawn uniformly.
-Writes OUT/{pdb,long_monomer,rna}_cache.json and OUT/keys.txt, the S3 keys these entries read (structure, MSA arrays,
+Writes OUT/{pdb,long_monomer,rna}_cache.json (indented: OpenFold3 reads the cache type on its second line) and OUT/keys.txt, the S3 keys these entries read (structure, MSA arrays,
 template caches, template structures, reference molecules).
 Usage: python subset.py CACHES OUT N_PDB N_MONO N_RNA [SEED]"""
 import json
@@ -52,7 +52,7 @@ for pid, e in pdb["structure_data"].items():
             if c.get("template_ids"):
                 keys.add(f"{P}/templates/train_template_cache/{rep}.npz")
         templates(c)
-json.dump(pdb, open(out / "pdb_cache.json", "w"))
+json.dump(pdb, open(out / "pdb_cache.json", "w"), indent=4)
 points = sum(len(e["chains"]) + len(e["interfaces"]) for e in pdb["structure_data"].values())
 print(f"pdb: {len(chosen)} of {len(ids)} entries, {points} chains and interfaces")
 
@@ -80,7 +80,7 @@ for mid, e in entries.items():
         if c.get("template_ids"):
             keys.add(f"{M}/{c['alignment_representative_id']}/template.npz")
         templates(c)
-json.dump(mono, open(out / "long_monomer_cache.json", "w"))
+json.dump(mono, open(out / "long_monomer_cache.json", "w"), indent=4)
 print(f"long monomers: first {len(entries)}")
 
 # RNA: uniform
@@ -90,7 +90,7 @@ print(f"rna: {len(chosen)} of {len(rna['structure_data'])}")
 rna["structure_data"] = {r: rna["structure_data"][r] for r in chosen}
 for r in chosen:
     keys.update(f"rna_distillation_set/rna_monomer_preprocessed_cache/{r}/{f}.npz" for f in ("structure", "alignment"))
-json.dump(rna, open(out / "rna_cache.json", "w"))
+json.dump(rna, open(out / "rna_cache.json", "w"), indent=4)
 
 (out / "keys.txt").write_text("".join(f"{k}\n" for k in sorted(keys)))
 print(f"keys: {len(keys)} (reference molecules not included)")
