@@ -419,8 +419,33 @@ replicated shared experts, which every GPU now reads whole, is not known. With e
 all-gather and reduce-scatter (`cuda_communicator.py`). After the passes milabench's loggers raised `Bad file descriptor`
 ("1 still alive after end of benchmark", the DP worker); the pass `.data` files are complete.
 
-Not run yet: the autotune (its time on EP shapes), the study's other passes. At 3.89 x max-model-len per engine,
-ctx64k-c16 (16 x 65.6k tokens over two engines of 517k) is at capacity and ctx128k-c16 queues.
+**The 128.31 GiB per GPU, from the checkpoint's tensor headers** (GiB: routed experts 1347.12, attention 67.43, shared
+experts 22.64, latent projections 8.81, embed and lm_head 2.19 each, layer 0's dense MLP 1.35, router 1.10; vision 0.83,
+not loaded). Per GPU, with the layouts as vLLM builds them:
+
+| part | TP8 x PP2 | DP2 x TP8 EP16 | why |
+|---|---|---|---|
+| routed experts | 84.20 (/16) | 84.20 (/16) | 56 of 896 per GPU either way: no second copy |
+| attention | 4.21 (/16) | 8.43 (/8) | TP8 of every layer instead of half |
+| shared experts | 1.42 (/16) | 22.64 (whole) | sequence-parallel MoE builds them with `disable_tp` (`KimiMLP`) |
+| latent projections | 4.40 (/2) | 8.81 (whole) | `ReplicatedLinear`, every layer instead of half |
+| router, dense MLP, embed, lm_head | about 0.9 | 3.0 | |
+| sum | about 95.1 (measured 95.7-96.1) | 127.1 (measured 128.31) | |
+
+So +32 GiB: 21.2 from the shared experts held whole, 9.2 from attention, latent projections and router over all layers
+(the non-expert weights replicated over DP2), 1.2 more. Not a configuration choice with this backend:
+`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1` shards the shared experts only with `deepep_v2` or `deep_gemm_mega_moe`
+(`can_shard_sequence_parallel_shared_expert`); with `allgather_reducescatter` it shards layer 0's dense MLP only (1.35).
+
+Not run yet: the autotune (its time on EP shapes), the study's other passes.
+
+**Known limit (review, 2026-11-08):** with K3-INF's flags (kept, like for like) the KV memory holds about 150 requests
+of 1,280 tokens per engine, about 300 in all (est.), and 3.89 x max-model-len per engine. So conc256 and up, and
+ctx128k-c16 (16 x 131k tokens against two engines of 517k), queue on KV memory here where K3-INF-01 did not: they do not
+compare like for like with K3-INF-01. ctx64k-c16 (16 x 65.6k) is at capacity.
+`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1` (off by default) TP-shards layer 0's dense MLP and, with `deepep_v2` or
+`deep_gemm_mega_moe` only, the shared experts (`KimiMLP`: all-gather of the TP group's tokens, partial GEMMs,
+reduce-scatter): about 21 GiB per GPU back for the KV cache with DeepEP, 1.2 with `allgather_reducescatter` (est.).
 
 ### Part 3: prefill and decode on separate nodes (read, not run)
 
