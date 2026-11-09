@@ -13,6 +13,10 @@ for kv in "$@"; do export "$kv"; done
 F=${SCRATCH}/trillium/new/flux
 B=$F/dev/runs/gap.${SLURM_JOB_ID}
 mkdir -p "$B"
+# A rank that dies must end its run at once, so the next run starts (job 1277931 waited 22 min to its limit): every srun
+# ends its step when a task fails (--kill-on-bad-exit) or 120 s after the first task ends however it ends (--wait), and
+# each run's training step stops after RUN_MINUTES (a run takes about 8 min)
+export SLURM_KILL_BAD_EXIT=1 SLURM_WAIT=120
 srun --propagate=CORE --ntasks-per-node=1 nvidia-smi --query-gpu=index,power.limit,enforced.power.limit,power.default_limit,power.max_limit,clocks.max.sm,clocks.applications.graphics --format=csv > "$B/gpu-limits.csv"
 srun --propagate=CORE --overlap --ntasks-per-node=1 bash -c 'while :; do echo "$(date +%s) $(awk "/MHz/ {s += \$4; n++} END {printf \"%.0f\", s / n}" /proc/cpuinfo)"; sleep 5; done > "$0/cpu-$(hostname -s).csv"' "$B" &
 
@@ -21,7 +25,8 @@ run() {
     shift
     mkdir -p "$B/$name"
     echo "GAP_RUN_START $name $(date +%s)"
-    bash "$SRC/scripts/trillium/flux/flux.sub" SRC="$SRC" CONT="$F/dev/flux.sif" LOGDIR="$B/$name" MAX_STEPS="${STEPS:-200}" "$@"
+    bash "$SRC/scripts/trillium/flux/flux.sub" SRC="$SRC" CONT="$F/dev/flux.sif" LOGDIR="$B/$name" MAX_STEPS="${STEPS:-200}" \
+        RUN_MINUTES=12 "$@"
     echo "GAP_RUN_STOP $name $(date +%s)"
 }
 run base NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,TUNING,COLL  # NCCL's algorithm and protocol choices, message sizes
