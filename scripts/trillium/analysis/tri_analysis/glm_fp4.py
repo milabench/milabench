@@ -7,8 +7,9 @@ campaign one either).
 Read with the campaign's own parser (``tt_analysis.runs.parse_run`` and ``runs.parse_extras``): the same summary fields and the
 ``.0.data`` rate events, milabench's timer, which in this job equals rank 0's ``metrics`` elapsed to a few ms. Step times are over
 steps 3-20, as the review's: step 1 is the warm-up, step 2 the slow first measured step (the rate events' ``batch_id`` counts from
-0, so step = batch_id + 1). Memory: the summary's peak allocated, max over ranks. Loss: the loss event of step 20 (one run each,
-early in training). Software power cap: share of the GPU samples whose ``clocks_event_reasons`` has NVML's SwPowerCap bit (0x4),
+0, so step = batch_id + 1). Memory: the summary's peak allocated, max over ranks. Loss: the loss event of step 20, after 20 steps at
+the command line's constant learning rate (``--lr``, ``--lr-decay-style`` in the ``start`` event; 1e-6, constant, and Megatron's
+argument dump has ``lr_warmup_iters`` 0), one run each: not a loss comparison. Software power cap: share of the GPU samples whose ``clocks_event_reasons`` has NVML's SwPowerCap bit (0x4),
 over steps 3-20, per node.
 """
 
@@ -39,12 +40,17 @@ def _cap_shares(nodemon: Path, t0: float, t1: float) -> dict[str, float]:
     return out
 
 
-def _summary(path: Path) -> dict:
+def _summary(path: Path) -> tuple[dict, dict]:
+    """The summary, and the command line's --flag value pairs (the ``start`` event)."""
+    summary, argv = {}, {}
     for e in read_events(path):
         d = e.get("data")
-        if isinstance(d, dict) and isinstance(d.get("summary"), dict):
-            return d["summary"]
-    return {}
+        if e.get("event") == "start" and isinstance(d, dict) and isinstance(d.get("command"), list):
+            c = d["command"]
+            argv = {k: v for k, v in zip(c, c[1:]) if k.startswith("--") and not v.startswith("--")}
+        elif isinstance(d, dict) and isinstance(d.get("summary"), dict):
+            summary = d["summary"]
+    return summary, argv
 
 
 def build(root: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
@@ -70,7 +76,7 @@ def build(root: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]
         window = st[st.step.between(FIRST_STEP, LAST_STEP)].step_s
         losses = {x["step"]: x["loss"] for x in loss if x.get("step") is not None}
         hosts = row["hosts"].split(";")
-        summ = _summary(f)
+        summ, argv = _summary(f)
         detail, split = summ.get("workload", {}).get("precision_detail") or {}, summ.get("parallelism", {}).get("pp_split") or [None]
         caps = _cap_shares(root / "nodemon" / f.parent.name, extra["rates_t0"] + st.step_s[st.step < FIRST_STEP].sum(),
                            extra["rates_t0"] + st.step_s.sum())
@@ -80,6 +86,7 @@ def build(root: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]
                      "layout": extra["layout"], "seq_len": row["seq_len"], "seqs": row["global_batch_tokens"] // row["seq_len"],
                      "global_batch_tokens": row["global_batch_tokens"], "n_layers": row["n_layers"], "status": row["status"],
                      "bf16_layers_last": detail.get("bf16_layers_last", 0), "last_stage_layers": split[-1],
+                     "lr": float(argv["--lr"]) if "--lr" in argv else None, "lr_schedule": argv.get("--lr-decay-style"),
                      "steps_logged": len(st), "measured": len(window), "step_mean": window.mean(), "step_median": window.median(),
                      "step_sd": window.std(), "step_first": window.iloc[0], "step_last": window.iloc[-1],
                      "step_end3": st[st.step > LAST_STEP - 3].step_s.mean(), "step_start3": st[st.step.between(FIRST_STEP, FIRST_STEP + 2)].step_s.mean(),

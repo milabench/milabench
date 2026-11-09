@@ -6,6 +6,7 @@ so a placeholder can never read as a measurement in the text.
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -129,7 +130,7 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           # New workloads: GLM-5 C-speed with NVFP4 (_glm_fp4_numbers, GLM-FP4-01): setup, then per recipe (Bf, Mx, Nv), ratios, power cap,
           # and the campaign's 13-node run (Camp*) on the same measure
           "TriFpFourNodes", "TriFpFourGpus", "TriFpFourSeqs", "TriFpFourSeqLen", "TriFpFourLayers", "TriFpFourBfLast", "TriFpFourSteps",
-          "TriFpFourFrom", "TriFpFourMeasured", "TriFpFourLastHost",
+          "TriFpFourFrom", "TriFpFourMeasured", "TriFpFourLastHost", "TriFpFourLr",
           "TriFpFourStepBf", "TriFpFourMedBf", "TriFpFourSdBf", "TriFpFourMemBf", "TriFpFourLossBf", "TriFpFourTokBf", "TriFpFourStartBf",
           "TriFpFourEndBf", "TriFpFourCapBf",
           "TriFpFourStepMx", "TriFpFourMedMx", "TriFpFourSdMx", "TriFpFourMemMx", "TriFpFourLossMx", "TriFpFourTokMx", "TriFpFourStartMx",
@@ -1445,6 +1446,9 @@ def _glm_fp4_numbers(t) -> dict[str, tuple]:
     out["TriFpFourSteps"] = (int(nv.steps_logged), "d", False)
     out["TriFpFourFrom"] = (glm_fp4.FIRST_STEP, "d", False)
     out["TriFpFourLastHost"] = (nv.last_host, "", False)
+    if pd.notna(nv.lr) and set(done.lr_schedule) == {"constant"} and done.lr.nunique() == 1:  # the same constant rate in every entry
+        e = math.log10(nv.lr)
+        out["TriFpFourLr"] = (f"$10^{{{int(round(e))}}}$" if abs(e - round(e)) < 1e-9 else f"{nv.lr:g}", "", False)
     for rec, name, _ in FP4_RECIPES:
         x = m.loc[rec]
         for col, macro, fmt in (("step_mean", "Step", ".2f"), ("step_median", "Med", ".2f"), ("step_sd", "Sd", ".2f"), ("mem_alloc_gib", "Mem", ".0f"),
