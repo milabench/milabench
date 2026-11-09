@@ -376,6 +376,11 @@ mkdir -p cache/triton; cp -an $K/cache/triton/. cache/triton/
 
 ### DeepEP (decided 2026-11-08: the driver settings are there)
 
+**vLLM's low-latency DeepEP path cannot run Kimi-K3.** `--all2all-backend deepep_low_latency` uses DeepEP V1's
+low-latency kernels, which accept at most 11 experts per token (`kNumMaxTopK = 11`, asserted in dispatch and combine,
+`csrc/kernels/legacy/internode_ll.cu`); K3 routes each token to 16. The path K3 runs on is `deepep_v2` (DeepEP V2, top-k
+up to 32), which vLLM 0.32 runs in one mode for decode and prefill alike (below).
+
 DeepEP's current main (V2.5, 2026-09-29) renamed the API vLLM 0.32's `deepep_v2` calls (`deep_ep.ElasticBuffer`) and
 needs NCCL >= 2.32.3; `a56d615` (2026-09-16) is the last commit with it, and needs NCCL >= 2.30.4 (vLLM checks the same).
 Its V2 kernels run on NCCL Gin and are compiled at run time (DeepJIT: nvcc and cuobjdump from `CUDA_HOME`); the build
