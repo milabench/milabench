@@ -8,7 +8,8 @@
 # train.py (run_openfold train plus a per-step log). Per run in $O/runs/of3.<job>.<variant>: runner.yml, train.log,
 # steps-r<rank>.jsonl, nodemon/ (benchmate's node monitor: GPU power and clocks, CPU clocks, InfiniBand bytes), nccl/
 # (NCCL's INIT and NET log per process); with variant prof, prof/ (each node's local rank 0 trace) and prof.txt (prof.py
-# on the first node's trace). Core dumps off.
+# on the first node's trace), and the gradient-sync timing of train.py (OF3_SYNC_TIMING; both slow the steps: timing
+# runs go without prof). Core dumps off.
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-of3-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-of3-s1 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=8 \
@@ -48,7 +49,9 @@ for variant in "$@"; do
     echo "[of3] === $variant ($run)"
     start=$(date +%s)
     mkdir -p "$run/nccl"
-    NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET NCCL_DEBUG_FILE="$run/nccl/%h.%p.log" OF3_STEPLOG="$run/steps-r{rank}.jsonl" srun --export=ALL --propagate=CORE --kill-on-bad-exit=1 --cpus-per-task=12 \
+    timing=0
+    [[ $name == *prof* ]] && timing=1
+    OF3_SYNC_TIMING=$timing NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET NCCL_DEBUG_FILE="$run/nccl/%h.%p.log" OF3_STEPLOG="$run/steps-r{rank}.jsonl" srun --export=ALL --propagate=CORE --kill-on-bad-exit=1 --cpus-per-task=12 \
         $PY "$S/train.py" train --runner-yaml "$run/runner.yml" --seed 42 --use_tf32 $tf32 > "$run/train.log" 2>&1
     status=$?
     kill $monitor; wait $monitor
