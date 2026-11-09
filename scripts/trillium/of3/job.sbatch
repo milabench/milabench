@@ -1,5 +1,7 @@
 #!/bin/bash
 # OF3 bring-up job: OpenFold3 0.5.1 training on the job's nodes, one run per VARIANT (variants.yml) of STEPS steps each,
+# VARIANT+tf32 the same with run_openfold's --use_tf32 True (TF32 for FP32 matmuls; cuEquivariance's triangle attention
+# backward needs it);
 # 8 ranks per node (DDP, one GPU and 12 cores each, Lightning's SLURM environment). The runner yaml is
 # initial_training.yml (the published first stage on the data.sh subset) merged with the variant (merge.py), run by
 # train.py (run_openfold train plus a per-step log). Per run in $O/runs/of3.<job>.<variant>: runner.yml, train.log,
@@ -34,13 +36,16 @@ status_all=0
 for variant in "$@"; do
     run=$O/runs/of3.$SLURM_JOB_ID.$variant
     mkdir -p "$run"
-    $PY "$S/merge.py" "$S/initial_training.yml" "$S/variants.yml" "$variant" "$O/data" "$run" "$NODES" "$STEPS" > "$run/runner.yml" || exit 1
+    name=${variant%+tf32}
+    tf32=False
+    [ "$name" != "$variant" ] && tf32=True
+    $PY "$S/merge.py" "$S/initial_training.yml" "$S/variants.yml" "$name" "$O/data" "$run" "$NODES" "$STEPS" > "$run/runner.yml" || exit 1
     run_nodes $PY -m benchmate.nodemon --out "$run/nodemon" --bench "of3-$variant" 2> "$run/nodemon.log" &
     monitor=$!
     echo "[of3] === $variant ($run)"
     start=$(date +%s)
     OF3_STEPLOG="$run/steps-r{rank}.jsonl" srun --export=ALL --propagate=CORE --kill-on-bad-exit=1 --cpus-per-task=12 \
-        $PY "$S/train.py" train --runner-yaml "$run/runner.yml" --seed 42 > "$run/train.log" 2>&1
+        $PY "$S/train.py" train --runner-yaml "$run/runner.yml" --seed 42 --use_tf32 $tf32 > "$run/train.log" 2>&1
     status=$?
     kill $monitor; wait $monitor
     [ $status != 0 ] && status_all=$status
