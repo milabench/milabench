@@ -1,8 +1,9 @@
 """Summary of one OF3 run directory (job.sbatch): from steps-r*.jsonl, the step period (time between successive step
 ends, rank 0, the throughput step time), the step itself and the gap before it (waiting for the batch), samples/s per GPU
 (batch 1), peak memory over ranks, loss, crop sizes; from nodemon/nodes/*.tsv over the same window, GPU power and SM
-clock, CPU clock of the busy cores and CPU use. Steps after the first SKIP (default 5) only.
-Usage: python summary.py RUN [SKIP]"""
+clock, CPU clock of the busy cores and CPU use. Steps after the first SKIP (default 5) only. With REF, a run of the same
+seed and data (same sample at each step), the median over those steps of this run's period over REF's, step by step.
+Usage: python summary.py RUN [SKIP [REF]]"""
 import csv
 import glob
 import json
@@ -13,10 +14,17 @@ from pathlib import Path
 
 run = Path(sys.argv[1])
 skip = int(sys.argv[2]) if len(sys.argv) > 2 else 5
-ranks = {}
-for f in glob.glob(str(run / "steps-r*.jsonl")):
-    rows = [json.loads(line) for line in open(f)]
-    ranks[int(f.rsplit("-r", 1)[1].split(".")[0])] = [r for r in rows if "step" in r]
+
+
+def steps(run):
+    ranks = {}
+    for f in glob.glob(str(run / "steps-r*.jsonl")):
+        rows = [json.loads(line) for line in open(f)]
+        ranks[int(f.rsplit("-r", 1)[1].split(".")[0])] = [r for r in rows if "step" in r]
+    return ranks
+
+
+ranks = steps(run)
 r0 = ranks[0]
 period = [b["t"] - a["t"] for a, b in zip(r0, r0[1:])][skip:]
 kept = {k: v[skip + 1:] for k, v in ranks.items()}
@@ -24,6 +32,13 @@ med = st.median(period)
 print(f"{run.name}: {len(ranks)} ranks, {len(r0)} steps, statistics over steps {skip + 2}-{len(r0)}")
 print(f"  step period median {med:.3f} s (p10 {st.quantiles(period, n=10)[0]:.3f}, p90 {st.quantiles(period, n=10)[-1]:.3f}),"
       f" {1 / med:.3f} samples/s per GPU, {len(ranks) / med:.2f} samples/s in all")
+if len(sys.argv) > 3:
+    ref = steps(Path(sys.argv[3]))[0]
+    ref_period = [b["t"] - a["t"] for a, b in zip(ref, ref[1:])][skip:]
+    same = all(a["pdb_id"] == b["pdb_id"] for a, b in zip(r0, ref))
+    ratio = [a / b for a, b in zip(period, ref_period)]
+    print(f"  against {Path(sys.argv[3]).name} over {len(ratio)} steps (same samples: {same}): period ratio median"
+          f" {st.median(ratio):.3f}, sum ratio {sum(period[:len(ratio)]) / sum(ref_period[:len(ratio)]):.3f}")
 gap_share = {k: sum(r["gap_s"] for r in v) / sum(r["gap_s"] + r["step_s"] for r in v) for k, v in kept.items()}
 print(f"  rank 0: step {st.median(r['step_s'] for r in kept[0]):.3f} s, gap {st.median(r['gap_s'] for r in kept[0]):.3f} s median;"
       f" gap share of time, mean over ranks {st.mean(gap_share.values()):.1%}, max {max(gap_share.values()):.1%} (rank {max(gap_share, key=gap_share.get)})")
