@@ -327,8 +327,10 @@ had no `rep:` then): 1272020 is BF16's second run by its entry name, `-loss-bf16
 The five repeats at b5ca2453, all COMPLETED (BF16 1:08:06, MXFP8 46:07 and 46:05, NVFP4 44:21 and 44:58), with
 GLM-FP4-02's four: each recipe has 3 runs at seed 1234, `run.repetition` 1 / 1 / 3 for BF16 (1272019, 1272020 `-rep2`,
 1272416), 1 / 2 / 3 for MXFP8 (1272021, 1272419, 1272423) and NVFP4 (1272022, 1272429, 1272431). Loss: mean of each
-run's window, then the mean and min-max over the 3 runs; windows set before these runs (GLM-FP4-02). Step time: rank 0,
-steps 3-500.
+run's window, then the mean and min-max over the 3 runs. Windows: 401-500 and 491-500 as in GLM-FP4-02; 91-100 chosen
+after GLM-FP4-02's runs showed the early gap; 241-250 set after all 9 runs. Loss from rank 4's step rows (the last
+stage, averaged over data parallel; Megatron's lm loss within 6e-6, the results review). Step time: rank 0, steps
+3-500.
 
 | | BF16 | MXFP8 | NVFP4 |
 |---|---|---|---|
@@ -342,25 +344,26 @@ steps 3-500.
 
 The end of the run (401-500, 491-500): the three ranges overlap, and the gaps to BF16 (+0.03 MXFP8, -0.06 NVFP4) are
 small against the run-to-run spread (BF16 0.37-0.39, NVFP4 0.34, MXFP8 0.14). 3 runs cannot rank the recipes at step 500;
-a gap as large as the spread of 3 runs would have shown, and none did.
+a gap as large as the spread of 3 runs would likely have shown (estimate: such a gap separates all 3 runs only about
+60-70 % of the time, the results review's normal-model estimate), and none did.
 
 Early (steps 91-100): all 6 quantized runs are above all 3 BF16 runs, by 0.002 at the closest (NVFP4's second run 7.501
-against BF16's second 7.499). If the 9 runs were exchangeable, 6 above 3 in one window is 1 of 84 orderings; the window
-was set before these runs, but the steps are correlated, so this is not a p-value, and the NVFP4 margin is thin. Per
-step (the envelope of all 6 quantized runs against all 3 BF16): above on 25 of 500 steps, in one stretch only at steps
-100-107; within 91-100 at steps 91, 92, 98 and 100; the envelopes overlap from step 108 on. On 10-step means: above in
-steps 1-10, 91-100 and 101-110 only. By recipe: MXFP8 alone is above all BF16 runs on 78 steps, in stretches through
-step 107 (1-34 with gaps, 59-68, 83-93, 96-107), on 10-step means in 1-40, 61-70, 81-110 and 121-130; NVFP4 alone only at
-100-107 (10-step means: 1-10, 91-110). So over most of the first 110 steps MXFP8 trails BF16 in all 3 runs, NVFP4 mostly sits in
-BF16's range, and after that no recipe separates from BF16. In every recipe the same-seed runs first differ at step 3.
+against BF16's second 7.499). If the 9 runs were exchangeable, 6 above 3 in one window is 1 of 84 orderings, but the
+window and grouping were chosen after seeing the runs: context, not a test. On the 5 new runs alone, the one new BF16
+run (7.449) is below all 4 new quantized runs (7.501-7.725) over 91-100; by chance that ordering is 1 in 5, so the new
+runs agree with the early gap, but weakly. Per step (each group's runs all above all 3 BF16 runs): all 6 above on 25
+steps, longest stretch 100-107, last at step 128; MXFP8 alone 78 (71 of them in 1-110, last 132); NVFP4 alone 27, about
+chance (3 runs above 3 is 1 in 20 per step, 25 expected over 500 steps). In every recipe the same-seed runs first
+differ at step 3.
 
 Step times: 3-run spreads 1.6 % (BF16), 0.4 % (MXFP8), 0.6 % (NVFP4). At this 1-node layout (TP2 x PP2, no CUDA graphs)
 MXFP8 is 1.49x BF16, NVFP4 1.55x BF16 and 1.04x MXFP8: the 13-node 1.20x NVFP4 over MXFP8 (TP2 x data parallel, CUDA
 graphs, GLM-FP4-03) does not hold here, as measured before at 1 node with PP2 (1.03x; the host-bound launches and the
 BF16 last stage, above).
 
-What 3 runs rank: the step times (spreads under 2 %), and MXFP8 above BF16 over most of the first 110 steps. What
-they cannot: the loss at step 500, or NVFP4 against BF16 at any point after step 110.
+3 runs rank the step times. Up to about step 110 (a cutoff read from the data), both quantized recipes are above BF16:
+all 3 runs of each are above all 3 BF16 runs on the 1-50, 91-100 and 101-110 means, and MXFP8 also on 51-110. That is the
+most 3 runs can show. They can't rank any recipe after that, nor at step 500.
 
 ## GLM-FP4-03: Qwen3 32B C-speed at 13 nodes (job 1272011, 2026-11-08 22:54-23:09, COMPLETED)
 
