@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_AGAIN_JOB, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB)
+from . import glm_fp4
 from .kimi import LOG_INTERVAL_S
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
@@ -124,7 +125,20 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGrDgTruncTwo", "TriGrDgTopkWarm", "TriGrDgTopkOne", "TriGrDgTopkTwo", "TriGrDgTopkAll", "TriGrDgRetryMinOne",
           "TriGrDgLastGroupMinOne", "TriGrDgLatMaxOne", "TriGrDgHostLastLo", "TriGrDgHostLastHi", "TriGrDgHostLastTb", "TriGrDgHostFirstLo",
           "TriGrDgHostFirstHi", "TriGrDgHostMidLo", "TriGrDgHostMidHi", "TriGrDgHostMidNodes", "TriGrDgHostMidAll", "TriGrDgHostEngine",
-          "TriGrDgGpuRollout", "TriGrDgGpuTrainer"]
+          "TriGrDgGpuRollout", "TriGrDgGpuTrainer",
+          # New workloads: GLM-5 C-speed with NVFP4 (_glm_fp4_numbers, GLM-FP4-01): setup, then per recipe (Bf, Mx, Nv), ratios, power cap,
+          # and the campaign's 13-node run (Camp*) on the same measure
+          "TriFpFourNodes", "TriFpFourGpus", "TriFpFourSeqs", "TriFpFourSeqLen", "TriFpFourLayers", "TriFpFourBfLast", "TriFpFourSteps",
+          "TriFpFourFrom", "TriFpFourMeasured", "TriFpFourLastHost",
+          "TriFpFourStepBf", "TriFpFourMedBf", "TriFpFourSdBf", "TriFpFourMemBf", "TriFpFourLossBf", "TriFpFourTokBf", "TriFpFourStartBf",
+          "TriFpFourEndBf", "TriFpFourCapBf",
+          "TriFpFourStepMx", "TriFpFourMedMx", "TriFpFourSdMx", "TriFpFourMemMx", "TriFpFourLossMx", "TriFpFourTokMx", "TriFpFourStartMx",
+          "TriFpFourEndMx", "TriFpFourCapMx",
+          "TriFpFourStepNv", "TriFpFourMedNv", "TriFpFourSdNv", "TriFpFourMemNv", "TriFpFourLossNv", "TriFpFourTokNv", "TriFpFourStartNv",
+          "TriFpFourEndNv", "TriFpFourCapNv",
+          "TriFpFourNvBf", "TriFpFourNvMx", "TriFpFourMxBf", "TriFpFourNvBfPct", "TriFpFourMxBfPct", "TriFpFourNvMxDiff", "TriFpFourNvMxDiffMed",
+          "TriFpFourMemMxNv", "TriFpFourMemNvBf", "TriFpFourCapOtherBfLo", "TriFpFourCapOtherBfHi", "TriFpFourCapOtherMx", "TriFpFourCapOtherNv",
+          "TriFpFourMxBfSpeed", "TriFpFourCampBf", "TriFpFourCampMx", "TriFpFourCampMxBf"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1411,6 +1425,84 @@ def _glm_rl_replay_numbers(x, y, st, h, mem) -> dict[str, tuple]:
     return out
 
 
+FP4_RECIPES = (("bf16", "Bf", "BF16"), ("mxfp8", "Mx", "MXFP8"), ("nvfp4", "Nv", "NVFP4"))
+
+
+def _glm_fp4_numbers(t) -> dict[str, tuple]:
+    """GLM-5 C-speed with NVFP4 (GLM-FP4-01, glm_fp4.py), TriFpFour*: step times over steps 3-20 on milabench's timer, against the job's own
+    BF16 entry; the campaign's 13-node C-speed run (Camp*) on the same measure, from the campaign's runs and steps tables."""
+    r = t.get("glm_fp4_runs", pd.DataFrame())
+    out = {}
+    done = r[r.job_state == "COMPLETED"] if len(r) else r
+    if done.empty or not {"bf16", "mxfp8", "nvfp4"} <= set(done.precision):
+        return out
+    m = done.set_index("precision")
+    nv = m.loc["nvfp4"]
+    for key, fmt in (("nodes", "d"), ("gpus", "d"), ("seqs", "d"), ("seq_len", ",d"), ("n_layers", "d"), ("measured", "d")):
+        out[{"nodes": "TriFpFourNodes", "gpus": "TriFpFourGpus", "seqs": "TriFpFourSeqs", "seq_len": "TriFpFourSeqLen",
+             "n_layers": "TriFpFourLayers", "measured": "TriFpFourMeasured"}[key]] = (int(nv[key]), fmt, False)
+    out["TriFpFourBfLast"] = (int(nv.bf16_layers_last), "d", False)
+    out["TriFpFourSteps"] = (int(nv.steps_logged), "d", False)
+    out["TriFpFourFrom"] = (glm_fp4.FIRST_STEP, "d", False)
+    out["TriFpFourLastHost"] = (nv.last_host, "", False)
+    for rec, name, _ in FP4_RECIPES:
+        x = m.loc[rec]
+        for col, macro, fmt in (("step_mean", "Step", ".2f"), ("step_median", "Med", ".2f"), ("step_sd", "Sd", ".2f"), ("mem_alloc_gib", "Mem", ".0f"),
+                                ("loss_last", "Loss", ".3f"), ("tok_s_gpu", "Tok", ".0f"), ("step_start3", "Start", ".1f"), ("step_end3", "End", ".1f"),
+                                ("cap_last_pct", "Cap", ".0f")):
+            out[f"TriFpFour{macro}{name}"] = (x[col], fmt, False)
+    s = m.step_mean
+    out["TriFpFourNvBf"] = (s.nvfp4 / s.bf16, ".3f", False)
+    out["TriFpFourNvMx"] = (s.nvfp4 / s.mxfp8, ".3f", False)
+    out["TriFpFourMxBf"] = (s.mxfp8 / s.bf16, ".3f", False)
+    out["TriFpFourNvBfPct"] = (100 * (1 - s.nvfp4 / s.bf16), ".1f", False)
+    out["TriFpFourMxBfPct"] = (100 * (1 - s.mxfp8 / s.bf16), ".1f", False)
+    out["TriFpFourNvMxDiff"] = (s.nvfp4 - s.mxfp8, "+.2f", False)
+    out["TriFpFourNvMxDiffMed"] = (m.step_median.nvfp4 - m.step_median.mxfp8, "+.2f", False)
+    out["TriFpFourMemMxNv"] = (m.mem_alloc_gib.mxfp8 - m.mem_alloc_gib.nvfp4, ".0f", False)
+    out["TriFpFourMemNvBf"] = (m.mem_alloc_gib.nvfp4 - m.mem_alloc_gib.bf16, ".0f", False)
+    out["TriFpFourCapOtherBfLo"] = (m.cap_others_lo.bf16, ".0f", False)
+    out["TriFpFourCapOtherBfHi"] = (m.cap_others_hi.bf16, ".0f", False)
+    out["TriFpFourCapOtherMx"] = (m.cap_others_hi.mxfp8, ".0f", False)
+    out["TriFpFourCapOtherNv"] = (m.cap_others_hi.nvfp4, ".0f", False)
+    out["TriFpFourMxBfSpeed"] = (m.tok_s_gpu_measured.mxfp8 / m.tok_s_gpu_measured.bf16, ".2f", False)  # as TriGlmFpMx
+    runs, steps = t["runs"], t["steps"]
+    if len(runs) and not runs.synthetic.any():
+        cs = _completed(runs, "C-speed")
+        g = cs[(cs.model == GLM) & (cs.nodes == 13) & cs.precision.isin(["bf16", "mxfp8"])].set_index("precision")
+        if {"bf16", "mxfp8"} <= set(g.index):
+            # Megatron's steps table counts from the first measured step (step 2); steps 3-20 leave it out, as TriGlmFp*TopMean
+            mean = {rec: steps[steps.run_id == g.run_id[rec]].sort_values("step").step_s.iloc[1:].mean() for rec in ("bf16", "mxfp8")}
+            out["TriFpFourCampBf"] = (mean["bf16"], ".2f", False)
+            out["TriFpFourCampMx"] = (mean["mxfp8"], ".2f", False)
+            out["TriFpFourCampMxBf"] = (mean["mxfp8"] / mean["bf16"], ".3f", False)
+    return out
+
+
+def glm_fp4_runs_table(t) -> str:
+    """GLM-5 C-speed at 13 nodes by recipe, one job (GLM-FP4-01): steps 3-20 on milabench's timer, peak allocated memory, loss at step 20,
+    and the last stage's node's share of GPU samples at the software power cap."""
+    r = t.get("glm_fp4_runs", pd.DataFrame())
+    if r.empty:
+        return ""
+    m = r.set_index("precision")
+    if not {"bf16", "mxfp8"} <= set(m.index):
+        return ""
+    lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
+             r"Recipe & Mean step & Median & SD & Step vs & Step vs & Tokens/s & Peak alloc. & Loss at & Last node at \\",
+             r" & s & s & s & BF16 & MXFP8 & per GPU & GiB & step 20 & power cap, \% \\", r"\midrule"]
+    for rec, _, label in FP4_RECIPES:
+        if rec not in m.index:
+            continue
+        x = m.loc[rec]
+        if x.bf16_layers_last:
+            label += f" (last {int(x.bf16_layers_last)} layers BF16)"
+        lines.append(f"{label} & {x.step_mean:.2f} & {x.step_median:.2f} & {x.step_sd:.2f} & {x.step_mean / m.step_mean.bf16:.3f} & "
+                     f"{x.step_mean / m.step_mean.mxfp8:.3f} & {x.tok_s_gpu:,.0f} & {x.mem_alloc_gib:.1f} & {x.loss_last:.3f} & {x.cap_last_pct:.0f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def glm_rl_runs_table(t) -> str:
     """GLM-5.3 GRPO runs in the report: request, job, nodes, the trainer's and the engines' layout, the batch, steps, start and end, state."""
     r = t.get("glm_rl_runs", pd.DataFrame())
@@ -1663,6 +1755,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_kimi_numbers(t))
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
+    out.update(_glm_fp4_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -1883,6 +1976,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
+    (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):
