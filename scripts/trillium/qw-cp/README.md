@@ -265,9 +265,56 @@ megatron-qwen3-32b-cp-n12-128k-cp8`, BF16, 20 steps, 32,768 tokens per GPU per s
 
 About 27 min in all (first steps 1-2.5 min in, 128 CUDA graphs built in 60-90 s for 32k). Across nodes per node and step
 (est.): about 108-120 GiB for the CP4 entries (gradients), 450-460 for CP8 (336 of K/V and the gradients).
+## QW-CP-01: 32k and 128k at 13 nodes (job 1273505, 2026-11-09 04:47:58-05:15:49, COMPLETED)
+
+`job.sbatch exp:C-speed megatron-qwen3-32b-cp-n13-32k megatron-qwen3-32b-cp-n13-128k megatron-qwen3-32b-cp-n12-128k-cp8`
+at 71901214 on trig[0129-0131,0136-0137,0139-0144,0147,0149], GLM-FP4-03's nodes; BF16, learning rate 1e-6 constant, 20
+steps, 32,768 tokens per GPU per step. The CP8 entry ran on the first 12 of them by the placement (trig0149 idle). All
+recomputed from the raw files: rank 0's step rows (median of steps 3-20; the CUDA-graph entries also 5-20, the same
+medians), peaks over all ranks, MFU with causal attention counted (the summaries' FLOPs per token: 295.0 / 604.2 G).
+
+| entry | layout, recompute | step: median (min-max), mean | first step | tokens/s per GPU | MFU | peak allocated / reserved | loss at step 20 |
+|---|---|---|---|---|---|---|---|
+| 8k reference: GLM-FP4-03 BF16 (job 1272011) | TP2 x DP52, CUDA graphs, none | 7.143 s (7.124-7.236), 7.154 | 86.4 s | 4,588 (4,580 from the mean) | 39.8 % | 125.9 / 130.9 GiB | 9.478 |
+| 32k | TP2 x CP4 x DP13, CUDA graphs, none | 10.913 s (10.865-10.986), 10.923 | 118.8 s | 3,003 | 39.4 % | 125.9 / 132.6 | 9.176 |
+| 128k | TP2 x CP4 x DP13, full | 26.269 s (26.205-26.441), 26.283 | 51.4 s | 1,247 | 33.5 % | 91.5 / 98.7 | 9.081 |
+| 128k, 12 nodes | TP2 x CP8 x DP6, selective | 23.894 s (23.395-24.323), 23.892 | 52.3 s | 1,371 | 36.8 % | 112.6 / 121.6 | 9.100 |
+
+- Against 8k on the same nodes: the 8k reference ran at the same learning rate (1e-6, constant) and without recompute, with
+  CUDA graphs (Megatron's argument dumps in both logs), but with its attention inside 1,024-token slots (195.1 GFLOP per
+  token). Per GPU, 32k keeps 0.655x of its tokens/s, 128k 0.272x with CP4 x DP13 and 0.299x with CP8 x DP6 (medians); MFU
+  39.8 % against 39.4 / 33.5 / 36.8 %. With one 8k causal mask the 8k point would be about 9 % slower (on one node 4,622
+  against 5,088 tokens/s per GPU; not run at 13 nodes, so an estimate there).
+- Scale, the same layout and length:
+
+  | layout | 1 node | 2 nodes | 4 nodes | 12-13 nodes |
+  |---|---|---|---|---|
+  | 32k CP4 x DP, CUDA graphs | 10.337 s | 10.733 | | 10.913 (+1.7 % over 2 nodes) |
+  | 128k CP4 x DP, full | 24.999-25.239 | 25.844 | 25.953 | 26.269 (+1.2 % over 4) |
+  | 128k CP8 x DP, selective | | 23.130 (DP1) | 23.236 (DP2) | 23.894 (DP6, +2.8 % over 4) |
+
+- CP across nodes at scale: CP8 x DP6 on 12 nodes takes a 9.0 % shorter step than CP4 x DP13 on 13 (1,371 against 1,247
+  tokens/s per GPU), against 10.5 % on 2 and 4 nodes. Across nodes per node and step, measured on every node / counted:
+  128k CP4 x DP13 118.9-119.5 / 119.7 GiB (the gradient reduce-scatter and parameter all-gather over the 52 ranks of the
+  data-parallel x CP group, as rings); CP8 x DP6 460.1-460.4 / 455.5 (336 of K/V, each CP8 group on a pair of nodes with 4
+  micro-batches, as on 4 nodes, plus 119.5 of gradients over 48); 32k 120.9 / 119.7; the 8k reference 118.5-119.8 / 119.7.
+  These entries were not profiled. From the step times: CP8's step grows 2.8 % from 4 to 12 nodes where CP4 x DP grows 1.2 %
+  from 4 to 13, and its steps vary more (23.40-24.32 s against 23.16-23.45 on 4 nodes, and 26.21-26.44 for CP4 x DP13).
+  So with 6 pairs crossing at once the exchange stays mostly hidden; about 1.6 % of the step beyond the data-parallel growth,
+  and the spread, are not explained (an estimate, without a profile at this scale).
+- Power, over the same steps, range over the nodes (share of samples at the software cap; mean power; SM clock median,
+  lowest): 8k 88.1-89.4 %, 896-903 W, 1,507-1,560 (1,215) MHz; 32k 92.4-95.0 %, 924-934 W, 1,507-1,537 (1,237); 128k CP4
+  94.1-97.1 %, 943-962 W, 1,425-1,455 (1,095); 128k CP8 90.2-92.6 %, 921-938 W, 1,455-1,485 (1,275). trig0149 is with its
+  peers in the first two entries (92.4 %, 924 W; 94.3 %, 943 W); in the third it held no rank, and the node monitor runs
+  beside the ranks, so its idle power was not sampled. No Xid in the samples.
+- NCCL channel counts: not in the logs (`NCCL_DEBUG` unset).
+- Summaries (71901214): `params_total` 32.763 B, `tokens_per_gpu_per_step` 65,536 in all three.
+- Estimated before the run: 32k 10.7-11.0 s, 128k CP4 25.9-26.5 s, CP8 23.2-24.0 s; peaks 125.9, 91-97 and about 116 GiB.
+  Measured 10.913, 26.269, 23.894 s; 125.9, 91.5, 112.6 GiB.
+
 ## Not run, untested
 
-- Above 4 nodes; CP across more than 4 nodes; anything but CP4 at 13 nodes (the 52 TP pairs).
+- CP across more than 2 nodes per group at scale (CP16 x DP); a profile at 12-13 nodes; MXFP8 at 13 nodes.
 - `--overlap-grad-reduce` (the data-parallel reduce runs at the end of the step in every entry) and the TP comm overlap.
 - The all_gather and a2a+p2p implementations at full depth on one node; a2a+p2p with selective recompute or CUDA graphs.
 - MXFP8 across nodes; NVFP4 with CP.
