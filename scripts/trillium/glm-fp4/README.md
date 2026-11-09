@@ -269,7 +269,11 @@ steps each (8.04 s), `--time=01:40:00`; MXFP8 44 min (5.26 s) and NVFP4 43 min (
 5,400 s). First lines: `[glm-fp4] job=...`, `=== megatron-qwen3-32b-loss-...`, Megatron's arguments, the first step
 about 1 min in (28 s in the speed runs); loss at step 1 about 12.95 (the 8-layer test: 12.95, then 7.7 by step 50). Peak
 allocated: BF16 115, MXFP8 129, NVFP4 112 GiB (the speed runs). Cancel: no first step 15 min into a run, NaN loss, steps
-above 1.5x those times.
+above 1.5x those times. Checked on `megatron-qwen3-32b-loss-check-n1` (the NVFP4 entry for 20 steps, warm-up 5; job
+1271699, trig0145, on the 200,000 documents then staged): passed, `run.experiment` from `exp:`, `precision` nvfp4, loss
+12.94 at step 1, 27.4 at step 3 (the 5-step warm-up to 3e-4), 8.98 at step 20, 4.8-5.5 s per step; `data_loading`:
+stride 4, 5,120 slots from 13,815 documents (2.7 per slot), highest index 20,477, no wrap. 500 steps read about 128,000
+slots up to about index 512,000.
 
 Qwen3 32B C-speed at 13 nodes, one job: `job.sbatch exp:C-speed megatron-qwen3-32b-n13-bf16 megatron-qwen3-32b-n13-mxfp8
 megatron-qwen3-32b-n13-nvfp4`, `--time=00:45:00`. TP2 x data parallel 52, CUDA graphs, 416 x 8192 tokens per step, 20
