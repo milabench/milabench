@@ -150,18 +150,18 @@ software power cap (0x4); mean power; SM clock median (lowest) over the nodes' s
 |---|---|---|---|---|---|---|---|
 | 1, TP2 x CP4 p2p | full | 24.999 s | 1,311 | 35.2 % | 108.6 GiB | 0 / 0 | 99.4 %, 976 W, 1,447 (1,275) MHz |
 | 1, TP2 x CP4 p2p, MXFP8 | full | 22.557 s | 1,453 | 39.0 % | 146.2 | 0 / 0 | 98.0 %, 973 W, 1,455 (1,282) |
-| 2, CP8 p2p | full | 27.349 s | 1,198 | 32.2 % | 91.5 | 574 / 555 | 96.0 %, 958 W, 1,466 (1,320) |
-| 2, CP8 a2a+p2p (4 x 2) | full | 28.124 s | 1,165 | 31.3 % | 91.5 | 365 / 363 | 97.0 %, 969 W, 1,534 (1,357) |
-| 2, CP4 x DP2 | full | 25.844 s | 1,268 | 34.0 % | 97.1 | 108 / 107 | 97.5 %, 968 W, 1,432 (1,162) |
-| 2, CP8 p2p | selective (MLP) | 23.130 s | 1,417 | 38.0 % | 122.1 | 451 / 443 | 93.1 %, 950 W, 1,462 (1,312) |
+| 2, CP8 p2p | full | 27.349 s | 1,198 | 32.2 % | 91.5 | 563.4 / 554.8 | 96.0 %, 958 W, 1,466 (1,320) |
+| 2, CP8 a2a+p2p (4 x 2) | full | 28.124 s | 1,165 | 31.3 % | 91.5 | 366.1-366.4 / 362.8 | 97.0 %, 969 W, 1,534 (1,357) |
+| 2, CP4 x DP2 | full | 25.844 s | 1,268 | 34.0 % | 97.1 | 108.5 / 106.8 | 97.5 %, 968 W, 1,432 (1,162) |
+| 2, CP8 p2p | selective (MLP) | 23.130 s | 1,417 | 38.0 % | 122.1 | 449.0 / 442.8 | 93.1 %, 950 W, 1,462 (1,312) |
 | 2, CP4 x DP2 | selective (MLP) | out of memory in step 2 (162.4 GiB allocated, 9.3 more asked) | | | | | |
-| 4, CP16 p2p | full | 36.354 s | 901 | 24.2 % | 91.5 | 1,095 / 1,074 | 79.5 %, 857 W, 1,627 (1,402) |
-| 4, CP16 a2a+p2p (4 x 4) | full | 32.543 s | 1,007 | 27.0 % | 91.5 | 890 / 882 | 86.5 %, 886 W, 1,537 (1,372) |
-| 4, CP4 x DP4 | full | 25.953 s | 1,263 | 33.9 % | 91.5 | 117 / 114 | 99.5 %, 965 W, 1,432 (1,117) |
-| 4, CP16 p2p, CUDA graphs | none | 25.252 s | 1,298 | 34.8 % | 125.9 | 838 / 834 | 96.0 %, 951 W, 1,612 (1,417) |
-| 4, CP4 x DP4 | selective (MLP) | 34.373 s (31.6-35.0) | 953 | 25.6 % | 165.9 | 118 / 114 | 61 %, 714 W, 1,470 (1,185) |
-| 4, CP16 p2p | none | 27.783 s | 1,179 | 31.7 % | 131.6 | 850 / 834 | 82 %, 884 W, 1,620 (1,410) |
-| 4, CP8 x DP2 p2p (job 1273445) | selective (MLP) | 23.236 s | 1,410 | 37.9 % | 116.4 | 448 / 450 | 93 %, 947 W, 1,459 (1,305) |
+| 4, CP16 p2p | full | 36.354 s | 901 | 24.2 % | 91.5 | 1,090.6-1,090.8 / 1,074.4 | 79.5 %, 857 W, 1,627 (1,402) |
+| 4, CP16 a2a+p2p (4 x 4) | full | 32.543 s | 1,007 | 27.0 % | 91.5 | 891.0-891.3 / 882.4 | 86.5 %, 886 W, 1,537 (1,372) |
+| 4, CP4 x DP4 | full | 25.953 s | 1,263 | 33.9 % | 91.5 | 114.4-114.5 / 114.4 | 99.5 %, 965 W, 1,432 (1,117) |
+| 4, CP16 p2p, CUDA graphs | none | 25.252 s | 1,298 | 34.8 % | 125.9 | 846.5-846.6 / 834.4 | 96.0 %, 951 W, 1,612 (1,417) |
+| 4, CP4 x DP4 | selective (MLP) | 34.373 s (31.6-35.0) | 953 | 25.6 % | 165.9 | 117.0 / 114.4 | 61 %, 714 W, 1,470 (1,185) |
+| 4, CP16 p2p | none | 27.783 s | 1,179 | 31.7 % | 131.6 | 842.0-842.6 / 834.4 | 82 %, 884 W, 1,620 (1,410) |
+| 4, CP8 x DP2 p2p (job 1273445) | selective (MLP) | 23.236 s | 1,410 | 37.9 % | 116.4 | 450.4-450.5 / 450.4 | 93 %, 947 W, 1,459 (1,305) |
 
 The 1-node rows are this job's 12-step profiled runs (24.999 s; the 50-step loss run on trig0121: 24.25 s), so the
 multi-node rows compare with them.
@@ -176,9 +176,18 @@ parameters, 30.5 GiB each per GPU (16.38 B parameters per TP rank), over the dat
 16 on 4), counted as rings: (N - 1) / N x 30.5 GiB per node per collective and TP rank. CP8 p2p, 2 nodes: 2 rings (TP) x
 64 layers x 4 micro-batches x 2 crossings x 28 chunks of 32 MiB = 896 GiB, 448 per node, plus 107 of gradients. Rank 0's
 profile agrees with the per-rank count: 96 / 224 / 480 GiB of K/V sent per step at CP4 / CP8 / CP16 (`record_param_comms`),
-30.5 GiB in the gradient reduce-scatter. The measured bytes are within 3.5 % of the count in every layout: 0.5-3.5 % above,
-0.6 % below for CP8 x DP2 on 4 nodes (the counters are read at the node monitor's 1 s samples nearest the window's ends,
-scaled to the window).
+30.5 GiB in the gradient reduce-scatter. The measured bytes are 0.0-2.3 % above the count in every layout (each port's
+counter interpolated at the window's ends between the 1 s samples around them; the window ends a step earlier when the
+node monitor stopped before the last step ended).
+
+The four cards do not carry the same share. With the gradients only or a2a+p2p, each port sends a quarter (27-30 GiB per
+step; 92 / 223 GiB with a2a+p2p on 2 / 4 nodes). With the p2p rings they do not: CP8 full recompute on 2 nodes `mlx5_0`
+198, `mlx5_1` 84, `mlx5_4` 84, `mlx5_9` 197 GiB per step; CP8 selective (2, 4 and 12 nodes) about 197-200 / 84-87 / 56-59 /
+112-116; CP16 full 394 / 151 / 151 / 394, without recompute 392-394 / 150-151 / 89-90 / 211. In the rings the node pairs
+cross from GPU 6 to GPU 0 of the next node in TP rank 0's rings, and from GPU 7 to GPU 1 in TP rank 1's (rank order TP,
+CP, DP: CP ranks 0-3 on one node). Which port NCCL uses for each is not in the logs (`NCCL_DEBUG` unset), and the GPU-port map is not
+recorded (DESIGN.md: GPUs 0, 2, 4, 6 each share a PCIe switch with one port, 1, 3, 5, 7 with none), so I can't tell which
+GPU sends on `mlx5_0`. The busiest port averages 394 GiB in a 36.4 s step at CP16, about 11.6 GB/s against 50.
 
 Where the time goes (rank 0, the profiled step, kernel time by class; "CP exchange": NCCL SendRecv kernels, the p2p rings
 and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU idle):
@@ -221,7 +230,9 @@ and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU
   a2a+p2p, no recompute) in 80-87 % at 857-886 W, with median SM clocks of 1,537-1,627 MHz against 1,432-1,466 for CP4 x DP
   and CP8 p2p: there the network, not the power cap, sets the step. CP4 x DP4 selective: 61 %, 714 W (the allocator). No Xid.
 - MXFP8 at 128k (1 node): 22.56 against 25.00 s, 1.11x (8k: 1.32x at 13 nodes): its GEMMs take 2.87 s instead of 5.32, and
-  attentio## The 1-node 128k step: 24.25 s in step 1, 25.0 s in step 2
+  attention, BF16 in both, is 74 % of its step. Peak 146.2 GiB.
+
+## The 1-node 128k step: 24.25 s in step 1, 25.0 s in step 2
 
 Not the node: the same entry (`megatron-qwen3-32b-cp-n1-128k-p2p-full`, learning rate 1e-6, 20 steps) took 25.239 s on
 trig0121 (job 1273446) and 25.111 s on trig0145 (job 1273448), 0.5 % apart; step 2's profiled run on trig0145 took 24.999
@@ -237,15 +248,12 @@ The steps are 4-5 % slower at 1e-6, consistent with lower clocks at the same pow
 samples): a mechanism inferred, not measured per kernel (the values the higher learning rate produces would draw less
 power). Every speed entry here, as the campaign's, runs at a constant 1e-6.
 
-5 % above those of training at 3e-4
-(one comparison).
-
 ## 32k across nodes, and the 13-node row
 
 `megatron-qwen3-32b-cp-n2-32k-cg` (job 1273420, trig[0136-0137], COMPLETED 6:54): the 13-node 32k entry's layout on 2
 nodes, TP2 x CP4 x DP2 with CUDA graphs, 16 x 32k per step (8 micro-batches per data-parallel rank): 10.733 s (steps 5-20),
-3,053 tokens/s per GPU, 40.0 % MFU, peak 125.9 GiB; 3.8 % above one node (10.337 s), estimated about 11.2 s. 108 GiB per
-node and step across nodes (107 counted: gradients only); power cap 94 %, 940 W, SM clock median 1,530 MHz.
+3,053 tokens/s per GPU, 40.0 % MFU, peak 125.9 GiB; 3.8 % above one node (10.337 s), estimated about 11.2 s. 107.8-108.1
+GiB per node and step across nodes (steps 5-19; 106.8 counted: gradients only); power cap 94 %, 940 W, SM clock median 1,530 MHz.
 
 At 13 nodes (104 GPUs, 52 TP pairs) CP can only be 1, 2 or 4, so CP stays in the node and data parallel crosses, which on
 2 and 4 nodes cost 3.4-3.8 % over one node at 128k (full recompute) and 3.8 % at 32k (graphs). To see whether CP across
@@ -269,22 +277,27 @@ About 27 min in all (first steps 1-2.5 min in, 128 CUDA graphs built in 60-90 s 
 
 `job.sbatch exp:C-speed megatron-qwen3-32b-cp-n13-32k megatron-qwen3-32b-cp-n13-128k megatron-qwen3-32b-cp-n12-128k-cp8`
 at 71901214 on trig[0129-0131,0136-0137,0139-0144,0147,0149], GLM-FP4-03's nodes; BF16, learning rate 1e-6 constant, 20
-steps, 32,768 tokens per GPU per step. The CP8 entry ran on the first 12 of them by the placement (trig0149 idle). All
-recomputed from the raw files: rank 0's step rows (median of steps 3-20; the CUDA-graph entries also 5-20, the same
-medians), peaks over all ranks, MFU with causal attention counted (the summaries' FLOPs per token: 295.0 / 604.2 G).
+steps, 32,768 tokens per GPU per step, one run per entry. The CP8 entry ran on the first 12 of them by the placement
+(trig0149 idle). All recomputed from the raw files: rank 0's step rows (median, min-max and mean of steps 3-20; the
+CUDA-graph entries' medians over 5-20 are the same), peaks over all ranks, MFU with causal attention counted (the
+summaries' FLOPs per token: 295.0 / 604.2 G). Like every speed entry here, these run at a constant learning rate of 1e-6,
+which was 4-5 % slower than 3e-4 at 128k on one node (two same-node pairs, above; not measured at 8k or 32k).
 
 | entry | layout, recompute | step: median (min-max), mean | first step | tokens/s per GPU | MFU | peak allocated / reserved | loss at step 20 |
 |---|---|---|---|---|---|---|---|
-| 8k reference: GLM-FP4-03 BF16 (job 1272011) | TP2 x DP52, CUDA graphs, none | 7.143 s (7.124-7.236), 7.154 | 86.4 s | 4,588 (4,580 from the mean) | 39.8 % | 125.9 / 130.9 GiB | 9.478 |
-| 32k | TP2 x CP4 x DP13, CUDA graphs, none | 10.913 s (10.865-10.986), 10.923 | 118.8 s | 3,003 | 39.4 % | 125.9 / 132.6 | 9.176 |
+| 8k reference: GLM-FP4-03 BF16 (job 1272011), attention in 1,024-token slots | TP2 x DP52, CUDA graphs, none | 7.143 s (7.123-7.236), 7.154 | 86.4 s | 4,588 (4,580 from the mean) | 39.8 % | 125.9 / 130.9 GiB | 9.478 |
+| 32k | TP2 x CP4 x DP13, CUDA graphs, none | 10.913 s (10.848-10.986), 10.921 | 118.8 s | 3,003 | 39.4 % | 125.9 / 132.6 | 9.176 |
 | 128k | TP2 x CP4 x DP13, full | 26.269 s (26.205-26.441), 26.283 | 51.4 s | 1,247 | 33.5 % | 91.5 / 98.7 | 9.081 |
 | 128k, 12 nodes | TP2 x CP8 x DP6, selective | 23.894 s (23.395-24.323), 23.892 | 52.3 s | 1,371 | 36.8 % | 112.6 / 121.6 | 9.100 |
 
 - Against 8k on the same nodes: the 8k reference ran at the same learning rate (1e-6, constant) and without recompute, with
   CUDA graphs (Megatron's argument dumps in both logs), but with its attention inside 1,024-token slots (195.1 GFLOP per
   token). Per GPU, 32k keeps 0.655x of its tokens/s, 128k 0.272x with CP4 x DP13 and 0.299x with CP8 x DP6 (medians); MFU
-  39.8 % against 39.4 / 33.5 / 36.8 %. With one 8k causal mask the 8k point would be about 9 % slower (on one node 4,622
-  against 5,088 tokens/s per GPU; not run at 13 nodes, so an estimate there).
+  39.8 % against 39.4 / 33.5 / 36.8 %. Against one 8k causal mask (estimates): on one node the mask alone costs 9.2 % of
+  the 8k tokens/s (4,622 against 5,088 tokens/s per GPU, jobs 1273195 and 1271160, both trig0152, 1e-6, CUDA graphs, TP2 x
+  DP4; only the masking differs), about 8.3 % at 13 nodes if the extra attention (0.65 s per step) adds its time; so 32k
+  would keep about 0.71-0.72x, 128k about 0.30x (CP4 x DP13) and 0.33x (CP8 x DP6). Measured like for like, one mask at
+  both lengths, only on one node: 32k 0.69x of 8k (3,170 against 4,622).
 - Scale, the same layout and length:
 
   | layout | 1 node | 2 nodes | 4 nodes | 12-13 nodes |
@@ -293,11 +306,16 @@ medians), peaks over all ranks, MFU with causal attention counted (the summaries
   | 128k CP4 x DP, full | 24.999-25.239 | 25.844 | 25.953 | 26.269 (+1.2 % over 4) |
   | 128k CP8 x DP, selective | | 23.130 (DP1) | 23.236 (DP2) | 23.894 (DP6, +2.8 % over 4) |
 
-- CP across nodes at scale: CP8 x DP6 on 12 nodes takes a 9.0 % shorter step than CP4 x DP13 on 13 (1,371 against 1,247
-  tokens/s per GPU), against 10.5 % on 2 and 4 nodes. Across nodes per node and step, measured on every node / counted:
-  128k CP4 x DP13 118.9-119.5 / 119.7 GiB (the gradient reduce-scatter and parameter all-gather over the 52 ranks of the
-  data-parallel x CP group, as rings); CP8 x DP6 460.1-460.4 / 455.5 (336 of K/V, each CP8 group on a pair of nodes with 4
-  micro-batches, as on 4 nodes, plus 119.5 of gradients over 48); 32k 120.9 / 119.7; the 8k reference 118.5-119.8 / 119.7.
+- CP across nodes at scale: spreading 128k over 8 GPUs lowers memory enough for selective recompute, and CP8 x DP6 with
+  selective on 12 nodes takes a 9.0 % shorter step than CP4 x DP13 with full recompute on 13 (1,371 against 1,247 tokens/s
+  per GPU; 10.5 % on 2 and 4 nodes). It is the recompute that differs: with the same (full) recompute, CP across nodes was
+  5.8 % slower on 2 nodes (CP8 27.35 against CP4 x DP2 25.84 s). CP4 x DP13 with selective recompute was not run (below).
+  Across nodes per node and step, measured on every node / counted: 128k CP4 x DP13 120.8-121.1 / 119.7 GiB (steps 3-19:
+  the node monitor stopped before step 20 ended; the gradient reduce-scatter and parameter all-gather over the 52 ranks of
+  the data-parallel x CP group, as rings); CP8 x DP6 461.8-462.1 / 455.5 (steps 3-19; 336 of K/V, each CP8 group on a pair
+  of nodes with 4 micro-batches, as on 4 nodes, plus 119.5 of gradients over 48), its ports as on 4 nodes (`mlx5_0` 200,
+  `mlx5_1` 87, `mlx5_4` 59, `mlx5_9` 116 GiB); 32k 121.5-121.9 / 119.7 (steps 3-20); the 8k reference 120.2-120.5 / 119.7
+  (steps 3-19, the same monitor stop).
   These entries were not profiled. From the step times: CP8's step grows 2.8 % from 4 to 12 nodes where CP4 x DP grows 1.2 %
   from 4 to 13, and its steps vary more (23.40-24.32 s against 23.16-23.45 on 4 nodes, and 26.21-26.44 for CP4 x DP13).
   So with 6 pairs crossing at once the exchange stays mostly hidden; about 1.6 % of the step beyond the data-parallel growth,
@@ -312,9 +330,22 @@ medians), peaks over all ranks, MFU with causal attention counted (the summaries
 - Estimated before the run: 32k 10.7-11.0 s, 128k CP4 25.9-26.5 s, CP8 23.2-24.0 s; peaks 125.9, 91-97 and about 116 GiB.
   Measured 10.913, 26.269, 23.894 s; 125.9, 91.5, 112.6 GiB.
 
+## QW-CP-02 (proposed, not run): 128k CP4 x DP13 with selective recompute
+
+`megatron-qwen3-32b-cp-n13-128k-sel`: QW-CP-01's `-n13-128k` (TP2 x CP4 x DP13, 26 x 128k per step, 2 micro-batches per
+data-parallel rank, 20 steps, 1e-6) with the selective recompute (MLP) of its CP8 x DP6 entry. It settles whether CP in
+the node beats CP across nodes at the same recompute at 13 nodes. Estimates: peak 158-161 GiB allocated (the 4-node
+CP4 x DP4 selective's 165.9, less the optimizer state that DP13 shards over 52 instead of 16: 7.6 against 2.3 GiB per GPU);
+if it fits without the allocator remapping memory, 22-23 s per step (CP4 x DP13 full, 26.27 s, times CP8's selective / full
+ratio on 2 nodes, 0.846), so about 1,430-1,490 tokens/s per GPU against CP8 x DP6's 1,371. Two other outcomes answer it
+too: out of memory in step 1 or 2 (the run fails by itself), or 31-35 s steps at about 700 W as at 4 nodes (the remapping).
+
 ## Not run, untested
 
 - CP across more than 2 nodes per group at scale (CP16 x DP); a profile at 12-13 nodes; MXFP8 at 13 nodes.
+- 128k CP4 x DP13 with selective recompute (`megatron-qwen3-32b-cp-n13-128k-sel`, proposed as QW-CP-02): the same recompute
+  as CP8 x DP6. At 4 nodes CP4 x DP4 selective fit at 165.9 GiB but the allocator remapped memory every step (34.37 s); at
+  DP13 the optimizer's share per GPU is 1/52 against 1/16, so it may fit about 5-8 GiB lower (est.).
 - `--overlap-grad-reduce` (the data-parallel reduce runs at the end of the step in every entry) and the TP comm overlap.
 - The all_gather and a2a+p2p implementations at full depth on one node; a2a+p2p with selective recompute or CUDA graphs.
 - MXFP8 across nodes; NVFP4 with CP.

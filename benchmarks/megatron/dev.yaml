@@ -1862,3 +1862,9 @@ megatron-qwen3-32b-cp-n1-128k-lr3e-4:
   inherits: megatron-qwen3-32b-cp-n1-128k-loss
   max_duration: 900
   argv: {--train-iters: 12}
+# QW-CP-02 (proposed): QW-CP-01's 128k CP4 x DP13 with selective recompute, the recompute of its CP8 x DP6 entry: does CP
+# in the node beat CP across nodes at the same recompute? At 4 nodes (DP4) it fit at 165.9 GiB with the allocator
+# remapping memory every step (34.37 s, job 1273313); at DP13 the optimizer's share is 1/52 against 1/16
+megatron-qwen3-32b-cp-n13-128k-sel:
+  inherits: megatron-qwen3-32b-cp-n13-128k
+  argv: {<<: *qwcp_none, --recompute-granularity: selective, --recompute-modules: [mlp]}
