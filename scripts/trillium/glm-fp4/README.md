@@ -311,7 +311,9 @@ above 1.5x those times. Checked on `megatron-qwen3-32b-loss-check-n1` (the NVFP4
 1271699, trig0145, on the 200,000 documents then staged): passed, `run.experiment` from `exp:`, `precision` nvfp4, loss
 12.94 at step 1, 27.4 at step 3 (the 5-step warm-up to 3e-4), 8.98 at step 20, 4.8-5.5 s per step; `data_loading`:
 stride 4, 5,120 slots from 13,815 documents (2.7 per slot), highest index 20,477, no wrap. 500 steps read about 128,000
-slots up to about index 512,000.
+slots up to about index 512,000. Staged on tri-dm1 at 22:30 (`stage-loss-data.sh`, about 1 min): 600,000 documents,
+415.9 M GPT-2 tokens, 3 parts, the Arrow cache built; the check again on them (job 1271942, trig0145): passed,
+`docs_available` 600,000, the same 13,815 documents read (the first 200,000 are unchanged), no wrap.
 
 Qwen3 32B C-speed at 13 nodes, one job: `job.sbatch exp:C-speed megatron-qwen3-32b-n13-bf16 megatron-qwen3-32b-n13-mxfp8
 megatron-qwen3-32b-n13-nvfp4`, `--time=00:45:00`. TP2 x data parallel 52, CUDA graphs, 416 x 8192 tokens per step, 20
