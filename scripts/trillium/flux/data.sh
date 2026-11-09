@@ -23,6 +23,7 @@ download)
         bash <(curl -fsS "$R2") ${JOBS:+-j "$JOBS"} "https://training.mlcommons-storage.org/metadata/flux-1-$s.uri"
     done ;;
 check-download)
+    rm -f "$D/download-checked"
     B=https://training.mlcommons-storage.org/flux_1/datasets
     for s in cc12m_preprocessed coco_preprocessed empty_encodings; do
         m=$s/flux-1-${s//_/-}.md5  # the downloader's list, copied into the set's directory
@@ -36,11 +37,12 @@ check-download)
         [ "$listed" -eq "$present" ] || exit 1
         [ "$bad" -eq 0 ] || exit 1
     done
-    verified=$(grep -o "Checksum verification completed successfully" "$F/logs/data-download.log" | wc -l)
+    verified=$(grep -c "Checksum verification completed successfully" "$F/logs/data-download.log" || true)
     echo "downloader md5 verification passed for $verified of 3 sets"
     [ "$verified" -eq 3 ]
     date > "$D/download-checked" ;;
 check-conversion)
+    rm -f "$D/conversion-checked"
     # energon imports torch, which needs the image's NCCL from the host (as flux.sub binds it)
     apptainer exec -B "$D/energon:/dataset/energon,$F/nccl/lib" --env LD_LIBRARY_PATH="$F/nccl/lib" --pwd /workspace/flux \
         "$CONT" python3 - <<'PY'

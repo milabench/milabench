@@ -14,6 +14,7 @@ F=${SCRATCH}/trillium/new/flux
 D=$F/data CONT=$F/images/flux.sif
 unset PYTHONPATH PIP_CONFIG_FILE  # the login environment's, not the image's
 export HF_HOME=/tmp/$USER-hf  # $HOME is not writable from jobs (job 1271975)
+rm -f "$D/conversion-checked"  # the shards are about to change: cleanup must wait for a new check
 # the image's NCCL from the host, as flux.sub binds it: the converter imports torch, which needs it
 in_image() { apptainer exec -B "$D:/dataset,$F/nccl/lib" --env LD_LIBRARY_PATH="$F/nccl/lib" --pwd "$1" "$CONT" "${@:2}"; }
 case ${SET:?val or train} in
@@ -25,6 +26,7 @@ train)
         --output_path /dataset/energon/train --num_workers "${WORKERS:-8}"
     time in_image /dataset/energon python /workspace/flux/scripts/energon_prepare.py ./ --num-workers 8 \
         --template-dir /workspace/flux/scripts/dataset_template/
-    cp -r "$D/empty_encodings" "$D/energon/"
+    mkdir -p "$D/energon/empty_encodings"  # the two encodings, not the downloader's md5 list beside them
+    cp "$D/empty_encodings/t5_empty.npy" "$D/empty_encodings/clip_empty.npy" "$D/energon/empty_encodings/"
     bash "$F/src/scripts/trillium/flux/data.sh" check-conversion ;;
 esac
