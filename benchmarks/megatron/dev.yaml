@@ -1280,6 +1280,10 @@ _tri_nvfp4: &tri_nvfp4
   --first-last-layers-bf16: true
   --num-layers-at-start-in-bf16: 0
   --num-layers-at-end-in-bf16: 5
+# C-speed at 13 nodes beside the campaign's (megatron-glm5-tri-pp13-ep8-n13-gbs256 and its -mxfp8, the same job)
+megatron-glm5-tri-pp13-ep8-n13-gbs256-nvfp4:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {<<: *tri_nvfp4}
 # Step 2: the B200 smoke model (8 layers, 1 dense + 7 MoE, 64 experts, seq 4096) on one node, PP1 x EP8 (data parallel
 # 8), batch 32, the C-loss settings in small (50 steps, warm-up 5). BF16 tail: the last layer, 1 of 8
 _fp4_test_n1:
@@ -1454,4 +1458,22 @@ megatron-qwen3-32b-n4-mxfp8:
   argv: {<<: *qwen3_mxfp8}
 megatron-qwen3-32b-n4-nvfp4:
   inherits: _qwen3_32b_n4
+  argv: {<<: *qwen3_nvfp4}
+# NVFP4 with no BF16 layer: what the BF16 tail costs on the last stage (the pipeline waits for it)
+megatron-qwen3-32b-n1-nvfp4-tail0:
+  inherits: megatron-qwen3-32b-n1-nvfp4
+  argv: {--first-last-layers-bf16: null, --num-layers-at-start-in-bf16: null, --num-layers-at-end-in-bf16: null}
+# 4096 tokens per micro-batch, 16 micro-batches per data-parallel rank as at 8192
+_qwen3_32b_s4k:
+  inherits: _qwen3_32b
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+megatron-qwen3-32b-n1-s4k-bf16:
+  inherits: _qwen3_32b_s4k
+megatron-qwen3-32b-n1-s4k-mxfp8:
+  inherits: _qwen3_32b_s4k
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-n1-s4k-nvfp4:
+  inherits: _qwen3_32b_s4k
   argv: {<<: *qwen3_nvfp4}

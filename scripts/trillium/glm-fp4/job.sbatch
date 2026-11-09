@@ -2,7 +2,8 @@
 # GLM-FP4 bring-up job: one `milabench run` per entry of benchmarks/megatron/dev.yaml, in the order given, as the
 # campaign's scripts/trillium/glm/job.sbatch, with the GLM-FP4 base ($G: venv, data, runs, nodemon, caches), core dumps
 # off (ulimit here, --propagate=CORE on its srun steps), wandb disabled. An entry given as lt:ENTRY runs with cuBLASLt's
-# trace log in $G/logs (the operand types of every GEMM; its times are not used). check:MODEL runs nvfp4_check.py MODEL
+# trace log in $G/logs (the operand types of every GEMM; its times are not used). exp:NAME sets run.experiment for the
+# entries after it (default GLM-FP4-bringup). check:MODEL runs nvfp4_check.py MODEL
 # (glm5, qwen3, moe) on one GPU, with the venv's CUDA headers for TE's runtime-compiled kernels (milabench sets them for runs).
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-glm-fp4-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-glm-fp4-s2 --account=rrg-bengioy-ad \
@@ -33,6 +34,10 @@ mkdir -p $G/logs
 status_all=0
 SP=$(echo $G/venv/torch/lib/python3.*/site-packages)
 for item in "$@"; do
+    if [ "${item#exp:}" != "$item" ]; then
+        export TT_EXPERIMENT=${item#exp:}
+        continue
+    fi
     if [ "${item#check:}" != "$item" ]; then
         args=${item#check:}
         # check:moe[:EP[:MODEL...]]: the models' config.json, staged from a login node

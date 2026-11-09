@@ -98,3 +98,30 @@ again in every call), ms, BF16 / MXFP8 / NVFP4:
 | 8192 | 2.24 / 1.40 / 1.15 | 1.32 / 0.88 / 0.70 | 9.78 / 5.56 / 3.97 | 4.58 / 2.81 / 1.72 | 17.91 / 10.64 / 7.54 (17.91 / 11.25 / 8.02) | 1.68x / 2.37x (1.59x / 2.23x) |
 
 One run of 10 calls each after 3 warm-up calls: no repeat.
+
+## MoE expert GEMMs of other models (`nvfp4_check.py moe`, job 1270575)
+
+GEMMs only: the routed experts' fc1 (gate + up fused) and fc2 through te.GroupedLinear, the path Megatron's
+TEGroupedLinear takes (TE's per-expert GEMMs; its fused grouped GEMM needs cuBLASLt 13.3, these pins have cuBLAS
+13.1.1.3), forward + dgrad + wgrad, weights cached, activation and gradient quantization and the Hadamard transforms
+in every call. Shapes from each model's `config.json`; experts per GPU at EP8. Attention differs per model (sparse MLA
+in GLM-5, MLA in DeepSeek-V3 and Kimi K3, GQA in Qwen3 and gpt-oss) and is not measured here, nor are the router, the
+token dispatch and the shared experts.
+
+NVFP4 over BF16 / NVFP4 over MXFP8 (fc1 + fc2 time), by tokens per expert:
+
+| model (hidden, expert FFN, experts, top-k; experts per GPU) | 128 | 512 | 2048 | 8192 | tokens per expert at 8192 tokens per micro-batch, EP8 |
+|---|---|---|---|---|---|
+| DeepSeek-V3 (7168, 2048, 256, 8; 32) | 0.54x / 0.80x | 0.73x / 0.79x | 1.84x / 1.28x | 2.49x / 1.48x | 2048 |
+| GLM-5 (6144, 2048, 256, 8; 32) | 0.50x / 0.80x | 0.63x / 0.79x | 1.65x / 1.13x | 2.32x / 1.47x | 2048 (the campaign's C-speed) |
+| Qwen3-235B-A22B (4096, 1536, 128, 8; 16) | 0.48x / 0.78x | 0.48x / 0.77x | 0.70x / 0.79x | 1.83x / 1.29x | 4096 |
+| Qwen3-30B-A3B (2048, 768, 128, 8; 16) | 0.48x / 0.77x | 0.48x / 0.77x | 0.48x / 0.77x | 0.68x / 0.81x | 4096 |
+| gpt-oss-120b (2880, 2880, 128, 4; 16) | 0.38x / 0.65x | 0.38x / 0.65x | 0.74x / 0.76x | 1.52x / 1.12x | 2048 |
+| Kimi K3 (3584 latent, 3072, 896, 16; 112) | NVFP4 fails | | | | 1170 |
+
+Below a few thousand tokens per expert the times hardly change with the token count (Qwen3-30B-A3B: 2.1 / 3.3 / 4.3 ms
+BF16 / MXFP8 / NVFP4 from 128 to 2048): the GPU waits for the host to issue the per-expert GEMMs and quantization
+kernels, and NVFP4 issues the most. In a training step part of that issue time can overlap other GPU work, which this
+microbenchmark does not show. Kimi K3 at EP8 (112 experts per GPU): NVFP4 stops in TE's grouped Hadamard transform
+(`group_hadamard_transform.cu:408`, `num_tensors <= kMaxTensorsPerKernel`); BF16 and MXFP8 run (8192 tokens per
+expert: fc1 97.4 / 60.7 ms, fc2 50.0 / 32.5 ms).
