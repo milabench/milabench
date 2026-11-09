@@ -227,12 +227,12 @@ one step; kernel time by class, summed over streams; idle: no kernel running):
 | 1 node TP2 NVFP4, graphs | 4.00 s | 89.9 % | 33.9 % | 12.0 % | 17.5 % | 25.5 % | 7.2 % | 85,947 |
 
 The idle time is launch gaps: the gaps between kernels of 10 us to 1 ms make most of it (3.2 of 3.4 s at 4096 NVFP4,
-1.7 of 1.9 s on 4 nodes), and NVFP4 issues 1.6-1.9x the kernels of BF16 per step (quantization, Hadamard transform,
+1.7 of 1.9 s on 4 nodes), and NVFP4 issues 1.8-1.9x the kernels of BF16 per step (quantization, Hadamard transform,
 scale swizzles around each GEMM). The pipeline adds waits on stage 0 (NCCL SendRecv 0.55 s at 4096 NVFP4 against 0.21
 in BF16) for the last stage, which holds the BF16 layers and the output layer. With graphs the GPUs are 90-97 % busy and
 the remaining limits are TP2's sequence-parallel all-gather and reduce-scatter (17-29 %, little of it overlapped with
 compute), elementwise kernels (15-26 %) and, in NVFP4, quantization (11-12 %); the GEMMs are a third of the NVFP4 step
-and two thirds of the BF16 one (measured GEMM share of a BF16 step: 58-65 %). The 4-node TP2 BF16 trace without graphs
+and two thirds of the BF16 one (measured GEMM share of a BF16 step: 58-65 % with graphs, 50 % at 4096 tokens with PP2). The 4-node TP2 BF16 trace without graphs
 was overwritten by a concurrent job's (fixed in 18fc60af); its step times are not affected.
 
 NVFP4 at 0.88x BF16 (1 node, PP2, 4096 tokens; profiled again in 1271160: 4.365 against 4.141 s): the GPU does the
