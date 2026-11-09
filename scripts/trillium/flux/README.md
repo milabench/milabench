@@ -84,4 +84,20 @@ Conversion (`to_webdataset.py`, then `energon_prepare.py`) writes 10,000-sample 
   (256 text + 256 image tokens). Not determined; likely 1 node x MBS 32 does not fit: the distributed optimizer splits
   the fp32 state over 8 GPUs instead of 16 (about +9 GB per GPU, estimated), and every Florida and NVIDIA config has at
   least 16 GPUs. So the smallest faithful test is 2 nodes.
-- Untested: the data steps, real data, more than 1 node, `VERIFY_MOUNTS`, the whole MLPerf run.
+- Untested: the data steps, real data, more than 2 nodes, `VERIFY_MOUNTS`, the whole MLPerf run.
+
+## Step 2 (2026-11-08): 2 nodes, Florida's 2-node config, synthetic data
+
+    scripts/trillium/flux/submit.sh synth2 2 0:25:00 USE_SYNTHETIC_DATA=1 VERIFY_MOUNTS=0 MAX_STEPS=300 -- --nodelist=trig0145,trig0151
+
+Job 1272079 (trig0145, trig0151, completed, 9:57; GBS 512, LR 2e-4, 1,600 warm-up steps as logged):
+- Step time 0.647 s (median of 13 ten-step intervals between `train_loss` events, 0.630-0.653) against Florida's 0.620
+  at 2 nodes (+4.4%), 791 samples/s, 49.5 per GPU. The mock set holds 9,728 samples, so an epoch ends and Lightning
+  validates every 19 steps (15 evaluations in 300 steps; intervals that hold one take 0.86-0.90 s, and MLPerf's
+  `train_step_time` per 19-step block reads 0.71-0.74 s). Florida's real data evaluates every 512 steps.
+- Memory: peak `memory.used` 174.3-175.7 GiB of 179.1 per GPU (nvidia-smi every 5 s).
+- Startup: job start to `init_start` 52 s (Florida's prolog 9 s, container and imports 31 s); `init_start` to
+  `run_start` 287 s (`warmup_time` 286.8, Florida's median 186-189: +100 s, cause not determined; the Triton and
+  inductor caches start empty in each job's /tmp).
+- GPUs while busy (utilization >= 90%): 685-830 W mean per GPU, 968-985 W peak, SM clock median 1,770-1,897 MHz.
+- Compliance checker: fails only on the quality target, as expected for 300 steps. NCCL's transport is not logged.
