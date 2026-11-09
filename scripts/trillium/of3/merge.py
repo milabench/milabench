@@ -1,11 +1,12 @@
 """Print the runner yaml of one run: BASE (initial_training.yml) with @S3@ and @SUBSET@ set under DATA, deep-merged with
-the entry NAME of VARIANTS, then output_dir, num_nodes and max_steps.
-Usage: python merge.py BASE VARIANTS NAME DATA OUTPUT_DIR NODES STEPS > runner.yml"""
+the entries of VARIANTS named in NAMES (comma-separated, in order), @RUN@ set to OUTPUT_DIR, then output_dir, num_nodes
+and max_steps.
+Usage: python merge.py BASE VARIANTS NAMES DATA OUTPUT_DIR NODES STEPS > runner.yml"""
 import sys
 
 import yaml
 
-base, variants, name, data, out, nodes, steps = sys.argv[1:]
+base, variants, names, data, out, nodes, steps = sys.argv[1:]
 cfg = yaml.safe_load(open(base).read().replace("@S3@", f"{data}/s3").replace("@SUBSET@", f"{data}/subset"))
 
 
@@ -15,7 +16,8 @@ def merge(a, b):
     return a
 
 
-merge(cfg, yaml.safe_load(open(variants))[name] or {})
+for name in names.split(","):
+    merge(cfg, yaml.safe_load(open(variants).read().replace("@RUN@", out))[name] or {})
 cfg["experiment_settings"]["output_dir"] = out
 cfg["pl_trainer_args"].update(num_nodes=int(nodes), max_steps=int(steps))
 yaml.safe_dump(cfg, sys.stdout, sort_keys=False)

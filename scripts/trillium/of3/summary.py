@@ -1,7 +1,7 @@
 """Summary of one OF3 run directory (job.sbatch): from steps-r*.jsonl, the step period (time between successive step
 ends, rank 0, the throughput step time), the step itself and the gap before it (waiting for the batch), samples/s per GPU
 (batch 1), peak memory over ranks, loss, crop sizes; from nodemon/nodes/*.tsv over the same window, GPU power and SM
-clock, CPU clock of the busy cores and CPU use. Steps after the first SKIP (default 5) only. With REF, a run of the same
+clock, CPU clock of the busy cores and CPU use, InfiniBand bytes sent per node and step. Steps after the first SKIP (default 5) only. With REF, a run of the same
 seed and data (same sample at each step), the median over those steps of this run's period over REF's, step by step.
 Usage: python summary.py RUN [SKIP [REF]]"""
 import csv
@@ -42,6 +42,16 @@ if len(sys.argv) > 3:
 gap_share = {k: sum(r["gap_s"] for r in v) / sum(r["gap_s"] + r["step_s"] for r in v) for k, v in kept.items()}
 print(f"  rank 0: step {st.median(r['step_s'] for r in kept[0]):.3f} s, gap {st.median(r['gap_s'] for r in kept[0]):.3f} s median;"
       f" gap share of time, mean over ranks {st.mean(gap_share.values()):.1%}, max {max(gap_share.values()):.1%} (rank {max(gap_share, key=gap_share.get)})")
+if "sync_s" in kept[0][0]:
+    sync_min = [min(v[i]["sync_s"] for v in kept.values()) for i in range(len(kept[0]))]
+    sync_mean = [st.mean(v[i]["sync_s"] for v in kept.values()) for i in range(len(kept[0]))]
+    print(f"  gradient sync: fastest rank (the all-reduces) {st.median(sync_min):.3f} s median,"
+          f" {sum(sync_min) / sum(period[:len(sync_min)]):.1%} of the time; mean over ranks (with waiting for the slowest)"
+          f" {st.median(sync_mean):.3f} s, {sum(sync_mean) / sum(period[:len(sync_mean)]):.1%}")
+    by = {}
+    for p, r in zip(period, r0[skip + 1:]):
+        by.setdefault(r["recycles"], []).append(p)
+    print("  period median by recycles drawn: " + ", ".join(f"{k}: {st.median(v):.2f} s ({len(v)})" for k, v in sorted(by.items())))
 print(f"  peak allocated {max(r['alloc_peak_gib'] for v in ranks.values() for r in v):.1f} GiB,"
       f" reserved {max(r['reserved_peak_gib'] for v in ranks.values() for r in v):.1f} GiB (max over ranks)")
 losses = [[r["loss"] for r in v] for v in ranks.values()]
@@ -78,6 +88,20 @@ if g:
     power, clock = col(h, g, "power_w"), col(h, g, "sm_clock_mhz")
     print(f"  GPU: power mean {st.mean(power):.0f} W, max {max(power):.0f} W; SM clock median {st.median(clock):.0f} MHz;"
           f" util_mean {st.mean(col(h, g, 'util_mean')):.0%} ({len(g)} samples)")
+h, ib = window("ib")
+if ib:
+    tx = h.index("tx_bytes")
+    per = {}
+    for f in glob.glob(str(run / "nodemon/nodes/*.ib.tsv")):
+        rows = [r for r in csv.reader(open(f), delimiter="\t") if r and r[0].isdigit() and t0 <= int(r[0]) <= t1]
+        first, last = {}, {}
+        for r in rows:
+            key = (r[h.index("hca")], r[h.index("port")])
+            first.setdefault(key, (int(r[0]), int(r[tx])))
+            last[key] = (int(r[0]), int(r[tx]))
+        seconds = (max(v[0] for v in last.values()) - min(v[0] for v in first.values())) / 1000
+        per[Path(f).name.split(".")[0]] = sum(last[k][1] - first[k][1] for k in last) / seconds * med
+    print("  InfiniBand sent per node and step (rate x median period): " + ", ".join(f"{k} {v / 1e9:.3f} GB" for k, v in sorted(per.items())))
 h, c = window("cpu")
 if c:
     print(f"  CPU: busy-core clock median {st.median(col(h, c, 'cpu_mhz_busy_mean')):.0f} MHz (min {min(col(h, c, 'cpu_mhz_busy_mean')):.0f}),"

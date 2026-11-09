@@ -1,11 +1,13 @@
 #!/bin/bash
-# OF3 bring-up job: OpenFold3 0.5.1 training on the job's nodes, one run per VARIANT (variants.yml) of STEPS steps each,
+# OF3 bring-up job: OpenFold3 0.5.1 training on the job's nodes, one run per VARIANT of STEPS steps each (entries of
+# variants.yml, comma-separated to combine them),
 # VARIANT+tf32 the same with run_openfold's --use_tf32 True (TF32 for FP32 matmuls; cuEquivariance's triangle attention
 # backward needs it);
 # 8 ranks per node (DDP, one GPU and 12 cores each, Lightning's SLURM environment). The runner yaml is
 # initial_training.yml (the published first stage on the data.sh subset) merged with the variant (merge.py), run by
 # train.py (run_openfold train plus a per-step log). Per run in $O/runs/of3.<job>.<variant>: runner.yml, train.log,
-# steps-r<rank>.jsonl, nodemon/ (benchmate's node monitor: GPU power and clocks, CPU clocks). Core dumps off.
+# steps-r<rank>.jsonl, nodemon/ (benchmate's node monitor: GPU power and clocks, CPU clocks, InfiniBand bytes), nccl/
+# (NCCL's INIT and NET log per process). Core dumps off.
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-of3-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-of3-s1 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=8 \
@@ -44,7 +46,8 @@ for variant in "$@"; do
     monitor=$!
     echo "[of3] === $variant ($run)"
     start=$(date +%s)
-    OF3_STEPLOG="$run/steps-r{rank}.jsonl" srun --export=ALL --propagate=CORE --kill-on-bad-exit=1 --cpus-per-task=12 \
+    mkdir -p "$run/nccl"
+    NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET NCCL_DEBUG_FILE="$run/nccl/%h.%p.log" OF3_STEPLOG="$run/steps-r{rank}.jsonl" srun --export=ALL --propagate=CORE --kill-on-bad-exit=1 --cpus-per-task=12 \
         $PY "$S/train.py" train --runner-yaml "$run/runner.yml" --seed 42 --use_tf32 $tf32 > "$run/train.log" 2>&1
     status=$?
     kill $monitor; wait $monitor

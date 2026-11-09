@@ -19,3 +19,25 @@ cueq-ds:
 # OpenFold3's Triton triangle attention kernels
 triton:
   model_update: {custom: {settings: {memory: {train: {use_triton_triangle_kernels: true}}}}}
+
+# PyTorch profiler (OpenFold3's `profiler` block) over 2 steps after 27, Chrome traces per rank in the run's prof/
+prof:
+  profiler: {enabled: true, dirpath: "@RUN@/prof", skip_first: 25, wait: 0, warmup: 2, active: 2, record_shapes: false,
+             with_stack: false}
+
+# Fine-tuning stage 1 (examples/training_yamls/finetune_1.yml), from random weights: crops of 640 tokens, 32
+# diffusion samples, its chunk sizes, loss weights and model-selection scheme
+ft1:
+  model_update:
+    custom:
+      settings:
+        model_selection_weight_scheme: fine_tuning
+        memory: {train: {msa_module: {swiglu_seq_chunk_size: 1024}}}
+      architecture:
+        shared: {diffusion: {no_samples: 32}}
+        loss_module: {diffusion: {chunk_size: 2}}
+  dataset_configs:
+    train:
+      weighted-pdb: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
+      long-monomer-distillation: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
+      RNA-monomer-distillation: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
