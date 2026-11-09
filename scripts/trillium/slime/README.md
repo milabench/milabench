@@ -837,12 +837,14 @@ run's step-to-step spread:
   measured absence of gain.
 - The rollout's split. It ends with its longest request (8,192 tokens, the cap, in every rollout of both runs: the
   rollout is 4-16 s longer than it). At one sequence per DP-attention rank the decode lines show GLM-RL-03's two
-  engine-wide modes, both faster: 11.5-12.1 against 9.6-10.0 tokens/s, and the slow one 6.5-6.9 against 5.8-6.1 (its
-  cause is not known, GLM-RL-03). With the same time in the slow mode the last request would be 12-20 % faster; it is
-  not, because its engine entered the slow mode earlier: at 5.0 and 5.3 min into rollouts 1 and 2 (.out:25337, :35181)
-  against about 9.8 and 8 min in GLM-RL-03 (.out:27348, :36015), about 70 % of the request's time against 45-57 % (the
-  results review's reading). The rollout time follows when the last request's engine enters the slow mode (5-12 min in
-  both runs), so the rollout comparison is confounded. The kernels' gain shows in the decode rates of both modes and
+  engine-wide modes, both faster: 11.5-12.1 (median 11.7) against 9.6-10.0 (9.8) tokens/s, and the slow one 6.5-6.9
+  (6.8) against 5.8-6.1 (6.0) (its cause is not known, GLM-RL-03). With the same time in the slow mode the last request
+  would be 12-20 % faster; it is not, because its engine entered the slow mode earlier: at 5.0 and 5.3 min into
+  rollouts 1 and 2 (.out:25337, :35181) against 9.8 and 9.0 min in GLM-RL-03, 69-72 % of the rollout against 44-51 %.
+  Onset: the first decode line at one running request under 7.5 tokens/s from a rank of the engine that logs the
+  rollout's last decode line (engines take the nodes 8 at a time in IP order), in minutes from the rollout's start
+  (its perf line less `perf/rollout_time`). The rollout time follows when the last request's engine enters the slow mode
+  (5-10 min in both runs), so the rollout comparison is confounded. The kernels' gain shows in the decode rates of both modes and
   in the median request, +13-15 %, if the cap does not change the decode speed (likely: at most 4 requests run per rank,
   under the 32; untested). Step 0's rollout (926 against 1,210 s) is a single value each.
 - Nodes: trig0122 replaced trig0115. The engines take the nodes in IP order, so engines 1 and 2 got other nodes than in
