@@ -83,6 +83,16 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriKimiFourCtxTtft", "TriKimiFourCtxSixteenTok", "TriKimiFourCtxSixteenTokThirtyTwo", "TriKimiFourCtxSixteenTokSixtyFour", "TriKimiFourCtxSixteenPct",
           "TriKimiFourStalls", "TriKimiFourGsm", "TriKimiFourGsmErr", "TriKimiFourArc", "TriKimiFourArcErr", "TriKimiFourGpqa", "TriKimiFourGpqaErr",
           "TriKimiFourMmlu", "TriKimiFourMmluErr", "TriKimiFourMmluN", "TriKimiFourMmluUnparsed", "TriKimiMmluOnlyTwo", "TriKimiMmluOnlyFour", "TriKimiMmluPairZ",
+          # ... and with the experts over 2 nodes (_kimi_xn_numbers): EP16 with all-gather (Ag) and DeepEP (Dp) all-to-all, against TP8 x PP2 (Pp)
+          "TriKxnNodes", "TriKxnGpus", "TriKxnDp", "TriKxnTp", "TriKxnEp", "TriKxnLayout", "TriKxnMaxSeqs", "TriKxnPasses", "TriKxnRequests",
+          "TriKxnFailed", "TriKxnWarmFailed", "TriKxnNotRun", "TriKxnFasterAg", "TriKxnFasterDp", "TriKxnDpLeadN", "TriKxnDpLeadLo", "TriKxnDpLeadHi",
+          "TriKxnTwoFiftySixTokPp", "TriKxnCtxEightSixteenTokPp", "TriKxnGsmN",
+          *[f"TriKxn{m}{b}" for b in ("Ag", "Dp") for m in (
+              "Weights", "KvGib", "KvTok", "Up", "OneTok", "OneRatio", "OneTpot", "FourTok", "FourRatio", "SixteenTok", "SixteenRatio",
+              "SixtyFourTok", "SixtyFourRatio", "SixtyFourTpot", "OneTwentyEightTok", "OneTwentyEightRatio", "TwoFiftySixTok", "TwoFiftySixRatio",
+              "CtxTok", "CtxRatio", "CtxEightSixteenTok", "CtxEightSixteenRatio", "CtxThirtyTwoSixteenTok", "CtxThirtyTwoSixteenRatio",
+              "Gsm", "GsmErr", "Arc", "ArcErr", "Gpqa", "GpqaErr", "Mmlu", "MmluErr")],
+          "TriKxnDpAgFour", "TriKxnDpAgTwoFiftySix",
           # New workloads: Kimi K3 pretraining (_kimi_train_numbers): the full-size run, then the 49-layer one (Small)
           "TriKtRuns", "TriKtFailed", "TriKtLayers", "TriKtNodes", "TriKtGpus", "TriKtPp", "TriKtEp", "TriKtMicro", "TriKtSeq", "TriKtTokens",
           "TriKtParams", "TriKtActive", "TriKtStepOne", "TriKtStepTwo", "TriKtSweepFirst", "TriKtSweepSplit", "TriKtSweepHi", "TriKtSweepLo",
@@ -1117,6 +1127,145 @@ def _kimi_four_numbers(t, two, p2) -> dict[str, tuple]:
     return out
 
 
+XN_BACKENDS = (("Ag", "allgather_reducescatter", "all-gather"), ("Dp", "deepep_v2", "DeepEP"))
+XN_PASSES = (("conc1", "One"), ("conc4", "Four"), ("conc16", "Sixteen"), ("conc64", "SixtyFour"), ("conc128", "OneTwentyEight"),
+             ("conc256", "TwoFiftySix"), ("ctx128k-c1", "Ctx"), ("ctx8k-c16", "CtxEightSixteen"), ("ctx32k-c16", "CtxThirtyTwoSixteen"))
+
+
+def _kimi_two_node_passes(t):
+    """The 2-node TP8 x PP2 server's measured passes, by pass (the run TriKimi* reads), or an empty frame."""
+    p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
+    if p.empty or runs.empty or not (runs.nodes == 2).any():
+        return pd.DataFrame()
+    run = runs[runs.nodes == 2].sort_values("job").iloc[-1]
+    return p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass")
+
+
+def _kimi_xn_servers(t) -> dict:
+    """EP16 on 2 nodes (K3-XN-01), {tag: (run, measured passes by pass)} for each all-to-all backend (Ag, Dp) that ran."""
+    p, runs = t.get("kimi_xn_passes", pd.DataFrame()), t.get("kimi_xn_runs", pd.DataFrame())
+    out = {}
+    if p.empty or runs.empty:
+        return out
+    for tag, backend, _ in XN_BACKENDS:
+        r = runs[runs.all2all == backend]
+        if len(r):
+            run = r.sort_values("job").iloc[-1]
+            out[tag] = (run, p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass"))
+    return out
+
+
+def _and(items) -> str:
+    items = list(items)
+    return ", ".join(items[:-1]) + (" and " if len(items) > 1 else "") + (items[-1] if items else "")
+
+
+def _kimi_xn_numbers(t) -> dict[str, tuple]:
+    """Kimi K3 inference with the experts over 2 nodes (K3-XN-01), TriKxn*: EP16 (DP2 x TP8, expert parallelism) with each all-to-all
+    backend, Ag (vLLM's all-gather / reduce-scatter) and Dp (DeepEP V2), one run each, against the 2-node TP8 x PP2 server (TriKimi*, Pp),
+    pass for pass. Ratios: EP16's output tokens/s over TP8 x PP2's, derived. Weights, KV and engine-up times from the server logs."""
+    servers, base = _kimi_xn_servers(t), _kimi_two_node_passes(t)
+    out = {}
+    if not servers:
+        return out
+    run0 = next(iter(servers.values()))[0]
+    dp, tp = int(run0.dp), int(run0.tp)
+    out.update({"TriKxnNodes": (int(run0.nodes), "d", False), "TriKxnGpus": (int(run0.gpus), "d", False), "TriKxnDp": (dp, "d", False),
+                "TriKxnTp": (tp, "d", False), "TriKxnEp": (dp * tp, "d", False),
+                "TriKxnLayout": (rf"DP{dp}\,$\times$\,TP{tp}, EP{dp * tp}", "", False),
+                "TriKxnMaxSeqs": (int(run0.max_num_seqs), "d", False),
+                "TriKxnPasses": (min(len(ps) for _, ps in servers.values()), "d", False),
+                "TriKxnRequests": (int(sum(ps.completed.sum() for _, ps in servers.values())), ",d", False),
+                "TriKxnFailed": (int(sum(ps.failed.sum() for _, ps in servers.values())), "d", False)})
+    allp = t.get("kimi_xn_passes", pd.DataFrame())
+    out["TriKxnWarmFailed"] = (int(allp[allp.throwaway.astype(bool)].failed.sum()), "d", False)
+    acc = t.get("kimi_xn_accuracy", pd.DataFrame())
+    for tag, (run, ps) in servers.items():
+        out.update({f"TriKxnWeights{tag}": (run.weights_gib, ".1f", False), f"TriKxnKvGib{tag}": (run.kv_gib, ".1f", False),
+                    f"TriKxnKvTok{tag}": (int(run.kv_cache_tokens), ",d", False), f"TriKxnUp{tag}": (run.engine_up_min, ".0f", False)})
+        for name, ptag in XN_PASSES:
+            if name in ps.index:
+                v = ps.output_throughput[name]
+                out[f"TriKxn{ptag}Tok{tag}"] = (v, ".1f" if v < 1000 else ",.0f", False)
+                if name in base.index:
+                    out[f"TriKxn{ptag}Ratio{tag}"] = (v / base.output_throughput[name], ".2f", False)
+        for name, ptag in (("conc1", "One"), ("conc64", "SixtyFour")):
+            if name in ps.index:
+                out[f"TriKxn{ptag}Tpot{tag}"] = (ps.tpot_ms_p50[name], ".1f", False)
+        if len(base):  # passes where EP16 gives more output than TP8 x PP2
+            common = ps.index.intersection(base.index)
+            out[f"TriKxnFaster{tag}"] = (int((ps.output_throughput[common] > base.output_throughput[common]).sum()), "d", False)
+        if not acc.empty:
+            a = acc[acc.job.astype(str) == str(run.job)].set_index("task")
+            for task, atag in (("gsm8k", "Gsm"), ("arc_challenge", "Arc"), ("gpqa_diamond", "Gpqa"), ("mmlu_pro", "Mmlu")):
+                if task in a.index:
+                    out[f"TriKxn{atag}{tag}"] = (100 * a.value[task], ".1f", False)
+                    out[f"TriKxn{atag}Err{tag}"] = (100 * a.stderr[task], ".1f", False)
+            if "gsm8k" in a.index:
+                out["TriKxnGsmN"] = (int(a.n["gsm8k"]), ",d", False)
+    if len(base):
+        for name, mtag in (("conc256", "TwoFiftySixTokPp"), ("ctx8k-c16", "CtxEightSixteenTokPp")):
+            if name in base.index:
+                v = base.output_throughput[name]
+                out[f"TriKxn{mtag}"] = (v, ".1f" if v < 1000 else ",.0f", False)
+        ran = set().union(*(set(ps.index) for _, ps in servers.values()))
+        out["TriKxnNotRun"] = (_and(n for n in base.sort_values("order").index if n not in ran), "", False)
+    if {"Ag", "Dp"} <= set(servers):
+        ag, dpp = servers["Ag"][1], servers["Dp"][1]
+        common = ag.index.intersection(dpp.index)
+        r = dpp.output_throughput[common] / ag.output_throughput[common]
+        lead = 100 * (r[r > 1] - 1)
+        out["TriKxnDpLeadN"] = (len(lead), "d", False)
+        if len(lead):
+            out.update({"TriKxnDpLeadLo": (lead.min(), ".1f", False), "TriKxnDpLeadHi": (lead.max(), ".1f", False)})
+        for name, ptag in (("conc4", "Four"), ("conc256", "TwoFiftySix")):
+            if name in r.index:
+                out[f"TriKxnDpAg{ptag}"] = (r[name], ".2f", False)
+    return out
+
+
+def kimi_xn_passes_table(t) -> str:
+    """Kimi K3 inference on 2 nodes, pass for pass: TP8 x PP2 (K3-INF-01) against EP16 with each all-to-all backend (K3-XN-01); output
+    tokens/s, TTFT and TPOT medians, and the ratios of output tokens/s (derived). A pass EP16 did not run reads "not run"."""
+    servers, base = _kimi_xn_servers(t), _kimi_two_node_passes(t)
+    if not servers or base.empty:
+        return ""
+    ag, dp = (servers[tag][1] if tag in servers else pd.DataFrame() for tag, _, _ in XN_BACKENDS)
+    cols = [base, ag, dp]
+    lines = [r"\begin{tabular}{lrr" + "r" * 12 + "}", r"\toprule",
+             r"Pass & Conc. & In / out & \multicolumn{3}{c}{Output tok/s} & \multicolumn{3}{c}{TTFT p50, ms} & \multicolumn{3}{c}{TPOT p50, ms} & "
+             r"\multicolumn{3}{c}{Output ratio (derived)} \\",
+             r"\cmidrule(lr){4-6}\cmidrule(lr){7-9}\cmidrule(lr){10-12}\cmidrule(lr){13-15}",
+             r" & & tokens & PP2 & AG & DeepEP & PP2 & AG & DeepEP & PP2 & AG & DeepEP & AG / PP2 & DeepEP / PP2 & DeepEP / AG \\", r"\midrule"]
+
+    def cell(ps, name, col, fmt):
+        return format(ps[col][name], fmt) if len(ps) and name in ps.index else "--"
+
+    def ratio(a, b, name):
+        if not (len(a) and len(b) and name in a.index and name in b.index):
+            return "--"
+        return f"{a.output_throughput[name] / b.output_throughput[name]:.2f}"
+
+    group = None
+    for name in base.sort_values("order").index:
+        x = base.loc[name]
+        g = (re.sub(r"\d+k?$", "", name.split("-")[0]), x.concurrency if name.startswith("ctx") else None)
+        if group is not None and g != group:
+            lines.append(r"\midrule")
+        group = g
+        head = f"{name} & {int(x.concurrency)} & {int(x.input_len):,} / {int(x.output_len):,} & "
+        if not any(len(ps) and name in ps.index for ps in (ag, dp)):
+            lines.append(head + f"{x.output_throughput:,.1f} & " + r"\multicolumn{2}{c}{not run} & " + f"{x.ttft_ms_p50:,.0f} & & & "
+                         + f"{x.tpot_ms_p50:.1f} & & & & & " + r"\\")
+            continue
+        lines.append(head + " & ".join([*(cell(ps, name, "output_throughput", ",.1f") for ps in cols),
+                                        *(cell(ps, name, "ttft_ms_p50", ",.0f") for ps in cols),
+                                        *(cell(ps, name, "tpot_ms_p50", ".1f") for ps in cols),
+                                        ratio(ag, base, name), ratio(dp, base, name), ratio(dp, ag, name)]) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def kimi_passes_table(t, nodes: int) -> str:
     """Kimi K3 inference: the study's passes on the server of that many nodes (throwaway warm-up left out), one row each; power
     and J per token are estimates."""
@@ -1152,10 +1301,16 @@ def kimi_runs_table(t) -> str:
     r = t.get("kimi_runs", pd.DataFrame())
     if r.empty:
         return ""
+    xn = t.get("kimi_xn_runs", pd.DataFrame())  # EP16 (K3-XN-01): one engine per node, so its sequence cap is per engine
+    r = pd.concat([r, xn], ignore_index=True) if len(xn) else r
+    labels = {backend: label for _, backend, label in XN_BACKENDS}
     lines = [r"\begin{tabular}{llllrlll}", r"\toprule", r"Entry & Job & Nodes & Layout & Max seqs & Started & Ended & State \\", r"\midrule"]
-    for x in r.sort_values("start").itertuples():
+    for x in r.sort_values(["start", "job"]).itertuples():
         hosts = str(x.hosts).replace(";", ", ")
-        lines.append(f"\\texttt{{{_esc(x.entry)}}} & {x.job} & {int(x.nodes)} ({hosts}) & TP{int(x.tp)}\\,$\\times$\\,PP{int(x.pp)} & {int(x.max_num_seqs):,} & "
+        dp = int(x.dp) if "dp" in r and pd.notna(x.dp) else 1
+        layout = (f"DP{dp}\\,$\\times$\\,TP{int(x.tp)}, EP{dp * int(x.tp)}, {labels.get(x.all2all, _esc(x.all2all))}" if dp > 1
+                  else f"TP{int(x.tp)}\\,$\\times$\\,PP{int(x.pp)}")
+        lines.append(f"\\texttt{{{_esc(x.entry)}}} & {x.job} & {int(x.nodes)} ({hosts}) & {layout} & {int(x.max_num_seqs):,}{' per engine' if dp > 1 else ''} & "
                      f"{str(x.start).replace('T', ' ')[:16]} & "
                      f"{str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
@@ -1988,6 +2143,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_glm_numbers(runs, t["ep_groups"]))
     out.update(_operations_numbers(t))
     out.update(_kimi_numbers(t))
+    out.update(_kimi_xn_numbers(t))
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
@@ -2210,6 +2366,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_passes.tex").write_text(kimi_passes_table(tables, 2))
     (out / "kimi_passes_four.tex").write_text(kimi_passes_table(tables, 4))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
+    (out / "kimi_xn_passes.tex").write_text(kimi_xn_passes_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
     (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))

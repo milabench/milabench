@@ -1144,21 +1144,31 @@ def energy(t):
 
 def kimi_inference(t):
     """Kimi K3 inference on B200 (vLLM), one series per server (colour and marker): output tokens/s per GPU and time per output token
-    vs concurrency (1k in, 256 out), each server's sequence cap as a line; then time to first token and time per output token vs input
-    length at 1 and 16 concurrent requests (128 out). Measured passes only."""
+    vs concurrency (1k in, 256 out), each pipeline server's sequence cap as a line; then time to first token and time per output token vs
+    input length at 1 and 16 concurrent requests (128 out). The pipeline servers (TP8 x PP2, TP8 x PP4) first, then EP16 on 2 nodes
+    with each all-to-all backend (kimi_xn_*). Measured passes only."""
     p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
     if p.empty:
         return None
+    xp, xr = t.get("kimi_xn_passes", pd.DataFrame()), t.get("kimi_xn_runs", pd.DataFrame())
+    if len(xp) and len(xr):
+        p, runs = pd.concat([p, xp], ignore_index=True), pd.concat([runs, xr], ignore_index=True)
+    xn_label = {"allgather_reducescatter": "all-gather", "deepep_v2": "DeepEP"}
     p = p[~p.throwaway.astype(bool)]
     if not p["pass"].str.fullmatch(r"conc\d+").any():
         return None
     fig, axes = plt.subplots(2, 2, figsize=(TEXT_WIDTH, 4.3))
     (a, b), (c, d) = axes
     servers = []
-    for i, (job, g) in enumerate(sorted(p.groupby(p.job.astype(str)), key=lambda x: (x[1].nodes.iloc[0], x[0]))):
+    for i, (job, g) in enumerate(sorted(p.groupby(p.job.astype(str)), key=lambda x: (x[1].layout.iloc[0].startswith("dp"), x[1].nodes.iloc[0], x[0]))):
         n = int(g.nodes.iloc[0])
         run = runs[runs.job.astype(str) == job].iloc[0] if len(runs) and (runs.job.astype(str) == job).any() else None
-        servers.append((g, SERIES[i], ("o", "s", "D")[i % 3], f"{n} nodes ({n * 8} GPUs)", run))
+        if g.layout.iloc[0].startswith("dp"):  # EP16: one engine per node, the experts over both; no cap line (its cap is per engine)
+            label = f"{n} nodes, EP{n * 8}, {xn_label.get(run.all2all, run.all2all) if run is not None else ''}"
+            run = None
+        else:
+            label = f"{n} nodes, TP8$\\times$PP{n}"
+        servers.append((g, SERIES[i], ("o", "s", "D", "^")[i % 4], label, run))
     conc_ticks = set()
     for g, col, mk, label, run in servers:
         conc = g[g["pass"].str.fullmatch(r"conc\d+")].sort_values("concurrency")
@@ -1187,8 +1197,9 @@ def kimi_inference(t):
     a.legend(handles=runs_legend, loc="upper left", fontsize=6)
     b.set_yscale("log")
     b.set_ylabel("time per output token (ms)")
-    b.legend(handles=runs_legend + [_handle(INK2, "median", False, marker="", ls="-"), _handle(INK2, "p99", False, marker="", ls="--", alpha=0.55)],
-             loc="upper left", fontsize=6, ncol=2)
+    # the servers are named once, top left; with four of them, a second copy here would cross the lines
+    b.legend(handles=[_handle(INK2, "median", False, marker="", ls="-"), _handle(INK2, "p99", False, marker="", ls="--", alpha=0.55)],
+             loc="lower right", fontsize=6)
     ticks = sorted(x for x in conc_ticks if np.log2(x) % 2 == 0)  # 1, 4, 16, ...: 128, 256, 512 side by side do not read
     for ax in (a, b):
         ax.set_xscale("log", base=2)
@@ -1210,8 +1221,8 @@ def kimi_inference(t):
         ax.minorticks_off()
         ax.set_xlabel("input tokens (128 out)")
         ax.set_ylabel(label)
-    if not ctx_all.empty:  # one legend for the bottom row: on the left it would cross the lines
-        d.legend(handles=runs_legend + conc_legend, loc="upper left", fontsize=6)
+    if not ctx_all.empty:  # one legend for the bottom row, line styles only (the servers are named top left)
+        d.legend(handles=conc_legend, loc="upper left", fontsize=6)
     for ax in axes.flat:
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
         style.finish(ax, trim=False)
