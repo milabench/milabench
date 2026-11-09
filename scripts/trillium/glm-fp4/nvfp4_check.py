@@ -4,6 +4,9 @@
                                    tokens each at top-8 (glm5.py get_glm5_spec, dev.yaml model.argv)
     python nvfp4_check.py qwen3    Qwen3 32B (hidden 5120, 64 x 128 query heads, 8 x 128 KV heads, FFN 25600, SwiGLU)
                                    at 4096 and 8192 tokens
+    python nvfp4_check.py moe DIR  the routed experts of each DIR/<model>/config.json (hidden, expert FFN with gate +
+                                   up fused, experts, top-k): te.GroupedLinear over the experts one GPU holds at EP8, at
+                                   128 / 512 / 2048 / 8192 tokens per expert; GEMMs only
 
 Each module as Megatron's TE spec builds it (te.Linear, te.LayerNormLinear with RMSNorm where the norm is fused,
 te.GroupedLinear for the experts), under te.fp8_autocast with the recipe Megatron builds (MXFP8BlockScaling(),
@@ -48,10 +51,10 @@ LAYERS = {
 RECIPES = {"bf16": None, "mxfp8": R.MXFP8BlockScaling(), "nvfp4": R.NVFP4BlockScaling()}
 
 
-def build(kind, n_in, n_out):
+def build(kind, n_in, n_out, experts=EXPERTS):
     kw = dict(bias=False, params_dtype=torch.bfloat16, device="cuda")
     if kind == "grouped":
-        return te.GroupedLinear(EXPERTS, n_in, n_out, **kw)
+        return te.GroupedLinear(experts, n_in, n_out, **kw)
     if kind == "ln_linear":
         return te.LayerNormLinear(n_in, n_out, normalization="RMSNorm", **kw)
     return te.Linear(n_in, n_out, **kw)
@@ -60,7 +63,7 @@ def build(kind, n_in, n_out):
 def call(mod, kind, x, recipe, first):
     with te.fp8_autocast(enabled=recipe is not None, fp8_recipe=recipe):
         if kind == "grouped":
-            return mod(x, [TOK] * EXPERTS, is_first_microbatch=first)
+            return mod(x, mod.splits, is_first_microbatch=first)
         return mod(x, is_first_microbatch=first)
 
 
@@ -86,19 +89,20 @@ def timed(fn, n=10):
     return start.elapsed_time(end) / n
 
 
-def bench(name, kind, n_in, n_out, tokens, results):
-    rows = TOK * EXPERTS if kind == "grouped" else tokens
+def bench(name, kind, n_in, n_out, tokens, results, experts=EXPERTS, per_expert=TOK):
+    rows = per_expert * experts if kind == "grouped" else tokens
     g = torch.Generator(device="cuda").manual_seed(0)
     x0 = torch.randn(rows, n_in, device="cuda", dtype=torch.bfloat16, generator=g)
     dy = torch.randn(rows, n_out, device="cuda", dtype=torch.bfloat16, generator=g) * 1e-2
     ref = None
     for rname, recipe in RECIPES.items():
         torch.manual_seed(0)  # the same weights for every recipe
-        mod = build(kind, n_in, n_out)
+        mod = build(kind, n_in, n_out, experts)
+        mod.splits = [per_expert] * experts
         x = x0.detach().requires_grad_(True)
         y = call(mod, kind, x, recipe, True)
         y.backward(dy)
-        out = (y.detach().float(), next(p for p in mod.parameters() if p.dim() == 2).grad.detach().float())
+        out = (y.detach()[:4096].float(), next(p for p in mod.parameters() if p.dim() == 2).grad.detach().float())
         nan = bool(torch.isnan(out[0]).any() or torch.isnan(out[1]).any())
         if ref is None:
             ref, err = out, (0.0, 0.0)
@@ -121,10 +125,47 @@ def bench(name, kind, n_in, n_out, tokens, results):
             for q in quantizers(mod):
                 print("    ", q, flush=True)
         del mod
+        torch.cuda.empty_cache()
+
+
+def moe(configs):
+    """Routed experts of each model at EP8, swept over the tokens per expert."""
+    import json
+    from pathlib import Path
+
+    results = {}
+    for path in sorted(Path(configs).glob("*/config.json")):
+        c = json.loads(path.read_text())
+        c = c.get("text_config", c)
+        get = lambda *keys: next(c[k] for k in keys if c.get(k) is not None)
+        # Kimi K3's routed experts work in a smaller latent space (routed_expert_hidden_size)
+        hidden = get("routed_expert_hidden_size", "hidden_size")
+        ffn = get("moe_intermediate_size", "intermediate_size")
+        experts = get("n_routed_experts", "num_experts", "num_local_experts")
+        topk = get("num_experts_per_tok", "num_experts_per_token", "experts_per_token")
+        local = experts // 8
+        model = path.parent.name
+        # an EP8 group of ranks with 8192 tokens each: 8 x 8192 x top-k routed tokens over all the experts
+        print(f"model {model}: hidden {hidden}, expert FFN {ffn}, {experts} experts top-{topk}; EP8: {local} experts per "
+              f"GPU, {8 * 8192 * topk / experts:.0f} tokens per expert on average at 8192 tokens per micro-batch", flush=True)
+        for per_expert in (128, 512, 2048, 8192):
+            for name, n_in, n_out in (("fc1", hidden, 2 * ffn), ("fc2", ffn, hidden)):
+                try:
+                    bench(f"{model}.{name}", "grouped", n_in, n_out, per_expert, results, local, per_expert)
+                except Exception as exc:
+                    print(f"{model}.{name} {per_expert} FAILED: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+            if all((f"{model}.{n}", per_expert, r) in results for n in ("fc1", "fc2") for r in RECIPES):
+                t = {r: sum(results[(f"{model}.{n}", per_expert, r)]["step"] for n in ("fc1", "fc2")) for r in RECIPES}
+                print(f"moe {model:16s} {per_expert:5d} tokens/expert  fc1+fc2 step bf16 {t['bf16']:8.3f} mxfp8 {t['mxfp8']:8.3f} "
+                      f"nvfp4 {t['nvfp4']:8.3f} ms: nvfp4 / bf16 {t['bf16'] / t['nvfp4']:5.2f}x, nvfp4 / mxfp8 "
+                      f"{t['mxfp8'] / t['nvfp4']:5.2f}x, mxfp8 / bf16 {t['bf16'] / t['mxfp8']:5.2f}x", flush=True)
 
 
 def main():
     model = sys.argv[1] if len(sys.argv) > 1 else "glm5"
+    if model == "moe":
+        print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), flush=True)
+        return moe(sys.argv[2])
     print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), torch.cuda.get_device_capability(), flush=True)
     print("NVFP4BlockScaling():", RECIPES["nvfp4"], flush=True)
     results = {}

@@ -3,7 +3,7 @@
 # campaign's scripts/trillium/glm/job.sbatch, with the GLM-FP4 base ($G: venv, data, runs, nodemon, caches), core dumps
 # off (ulimit here, --propagate=CORE on its srun steps), wandb disabled. An entry given as lt:ENTRY runs with cuBLASLt's
 # trace log in $G/logs (the operand types of every GEMM; its times are not used). check:MODEL runs nvfp4_check.py MODEL
-# (glm5, qwen3) on one GPU, with the venv's CUDA headers for TE's runtime-compiled kernels (milabench sets them for runs).
+# (glm5, qwen3, moe) on one GPU, with the venv's CUDA headers for TE's runtime-compiled kernels (milabench sets them for runs).
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-glm-fp4-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-glm-fp4-s2 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=1 \
@@ -34,9 +34,11 @@ status_all=0
 SP=$(echo $G/venv/torch/lib/python3.*/site-packages)
 for item in "$@"; do
     if [ "${item#check:}" != "$item" ]; then
+        args=${item#check:}
+        [ "$args" = moe ] && args="moe $G/data/moe-configs"  # the models' config.json, staged from a login node
         srun --export=ALL --overlap --propagate=CORE --ntasks=1 env CUDA_VISIBLE_DEVICES=0 CUDA_HOME=$SP/nvidia/cu13 \
             NVTE_CUDA_INCLUDE_DIR=$SP/nvidia/cu13/include LD_LIBRARY_PATH=$SP/nvidia/cu13/lib:${LD_LIBRARY_PATH:-} \
-            $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py "${item#check:}"
+            $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py $args
         echo "[glm-fp4] $item rc=$?"
         continue
     fi
