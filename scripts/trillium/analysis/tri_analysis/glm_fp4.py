@@ -15,8 +15,10 @@ over steps 3-20, per node.
 Qwen3 32B dense, the same three recipes (Megatron + Transformer Engine, random weights, NVFP4 with its last 4 of 64 layers in BF16), in
 tables of their own (``qw_fp4_*``), so the GLM-5 ones never see them: C-speed at 13 nodes, TP2 x data parallel 52 with CUDA graphs, three
 entries of one job (GLM-FP4-03, 1272011), steps 3-20 as above; and C-loss on 1 node, TP2 x PP2 x data parallel 2, 500 steps from seed 1234,
-one job per run (GLM-FP4-02, 1272019-22). Keyed on the job: all four loss runs record repetition 1, and 1272020 is BF16's second run by its
-entry name only (``-rep2``). Loss: the ``.0.data`` loss events (the last stage's, rank 4). Step times of the loss runs: steps 3-500.
+one job per run, 3 runs per recipe (GLM-FP4-02, 1272019-22; GLM-FP4-04, 1272416-31). Keyed on the job: the repetition numbers do not tell the
+runs apart (GLM-FP4-02's four all record 1, and 1272020 is BF16's second run by its entry name only, ``-rep2``; GLM-FP4-04's record 2 or 3,
+under entry names without it), so ``recipe`` is the precision and ``run`` the entry's own label. Loss: the ``.0.data`` loss events (the
+last stage's, rank 4). Step times of the loss runs: steps 3-500.
 GPU telemetry over the same steps (wall clock, from rank 0's per-rank metrics), all nodes: software power cap share per node, mean power and SM clock over every sample, Xid rows.
 """
 
@@ -35,7 +37,8 @@ from .runs import parse_extras, read_events
 
 JOBS = {"1271210": "GLM-FP4-01"}  # REQUESTS.md; bring-up (1 and 4 nodes) is not read
 # Qwen3 32B dense: C-speed at 13 nodes (one job, three entries) and C-loss on 1 node (one job per run); REQUESTS.md
-QW_JOBS = {"1272011": "GLM-FP4-03", **{j: "GLM-FP4-02" for j in ("1272019", "1272020", "1272021", "1272022")}}
+QW_JOBS = {"1272011": "GLM-FP4-03", **{j: "GLM-FP4-02" for j in ("1272019", "1272020", "1272021", "1272022")},
+           **{j: "GLM-FP4-04" for j in ("1272416", "1272419", "1272423", "1272429", "1272431")}}
 FIRST_STEP, LAST_STEP = 3, 20
 SW_POWER_CAP = 0x4  # nvmlClocksEventReasonSwPowerCap
 
@@ -170,7 +173,8 @@ def _qwen(f: Path, job: str, state: str, root: Path) -> dict[str, list]:
     window_t = _wall_window(f.parent, FIRST_STEP, last) or (extra["rates_t0"] + st.step_s[st.step < FIRST_STEP].sum(), extra["rates_t0"] + st.step_s.sum())
     per, pooled = _gpu_window(root / "nodemon" / f.parent.name, *window_t)
     after50 = losses[losses.step > 50].loss if len(losses) else pd.Series(dtype=float)
-    out = {"request": QW_JOBS[job], "job": job, "job_state": state.split()[0], "entry": row["bench"], "run": label, "run_id": row["run_id"],
+    out = {"request": QW_JOBS[job], "job": job, "job_state": state.split()[0], "entry": row["bench"], "run": label, "recipe": label.split("-")[0],
+           "run_id": row["run_id"],
            "experiment": run.get("experiment"), "precision": row["precision"], "repetition": row.get("repetition"), "seed": extra.get("seed"),
            "started": row["started"], "nodes": row["nodes"], "gpus": row["gpus"], "hosts": row["hosts"], "layout": extra["layout"],
            "tp": par.get("tp"), "pp": par.get("pp"), "dp": par.get("dp_replicate"), "seq_len": row["seq_len"], "seqs": row["global_batch_tokens"] // row["seq_len"],
@@ -186,6 +190,7 @@ def _qwen(f: Path, job: str, state: str, root: Path) -> dict[str, list]:
            "cap_med": per.cap_pct.median() if len(per) else None, "cap_lo": per.cap_pct.min() if len(per) else None,
            "cap_hi": per.cap_pct.max() if len(per) else None, "cap_nodes": len(per), **pooled}
     return {"qw_fp4_runs": [out],
-            "qw_fp4_steps": [{"job": job, "run": label, "step": s, "step_s": v} for s, v in zip(st.step, st.step_s)],
-            "qw_fp4_loss": ([{"job": job, "run": label, "step": int(x.step), "loss": x.loss, "grad_norm": x.grad_norm} for x in losses.itertuples()]
+            "qw_fp4_steps": [{"job": job, "run": label, "recipe": out["recipe"], "step": s, "step_s": v} for s, v in zip(st.step, st.step_s)],
+            "qw_fp4_loss": ([{"job": job, "run": label, "recipe": out["recipe"], "step": int(x.step), "loss": x.loss, "grad_norm": x.grad_norm}
+                             for x in losses.itertuples()]
                             if out["experiment"] == "C-loss" else [])}
