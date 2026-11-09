@@ -36,6 +36,10 @@ HOST = "trillium-gpu"
 # JSON metadata, never the checkpoint files themselves (up to ~9 TB).
 REMOTE = ["runs", "nccl", "nodemon"]
 GLM_FP4_RUNS = [f"glm-fp4.1271210.megatron-glm5-tri-pp13-ep8-n13-gbs256{s}" for s in ("", "-mxfp8", "-nvfp4")]
+# Qwen3 32B dense with BF16, MXFP8 and NVFP4: C-speed at 13 nodes (GLM-FP4-03, one job) and C-loss on 1 node (GLM-FP4-02, one job per run)
+QW_FP4_RUNS = [*[f"glm-fp4.1272011.megatron-qwen3-32b-n13-{r}" for r in ("bf16", "mxfp8", "nvfp4")],
+               *[f"glm-fp4.{job}.megatron-qwen3-32b-loss-{r}-n1" for job, r in (("1272019", "bf16"), ("1272020", "bf16-rep2"),
+                                                                             ("1272021", "mxfp8"), ("1272022", "nvfp4"))]]
 # Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
 # The trailing slash matters: health checks are one directory per job, directly under health/.
 REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
@@ -81,6 +85,10 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # each) and the GPU telemetry of each entry (gpu.tsv only, 23 MB in all). Outside runs/: not campaign runs.
                 *[(f"trillium/new/glm-fp4/runs/{run}/", f"glm-fp4/runs/{run}") for run in GLM_FP4_RUNS],
                 *[(f"trillium/new/glm-fp4/nodemon/{run}/nodes/*.gpu.tsv", f"glm-fp4/nodemon/{run}") for run in GLM_FP4_RUNS],
+                # Qwen3 32B dense with BF16, MXFP8 and NVFP4 (GLM-FP4-03, job 1272011, 13 nodes; GLM-FP4-02, jobs 1272019-22, 1 node each):
+                # the seven run directories (9-16 MB each) and their gpu.tsv (6 MB in all). Outside runs/: not campaign runs.
+                *[(f"trillium/new/glm-fp4/runs/{run}/", f"glm-fp4/runs/{run}") for run in QW_FP4_RUNS],
+                *[(f"trillium/new/glm-fp4/nodemon/{run}/nodes/*.gpu.tsv", f"glm-fp4/nodemon/{run}") for run in QW_FP4_RUNS],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),

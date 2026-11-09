@@ -40,7 +40,7 @@ TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "no
           "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared",
           "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs", "kimi_questions",
           "kimi_train_runs", "kimi_train_steps", "kimi_train_stages", "glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode", "glm_rl_memory",
-          "glm_fp4_runs", "glm_fp4_steps"]
+          "glm_fp4_runs", "glm_fp4_steps", "qw_fp4_runs", "qw_fp4_steps", "qw_fp4_loss"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept per GPU and minute (gpu_monitor: stability)
@@ -247,7 +247,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
                                    UNFINISHED_JOB_STATES))
     # GLM-5.3 GRPO with slime on 32 nodes: its run directory (collect: glm-rl/runs), measured only.
     tables.update(glm_rl.build(raw / CLUSTER / "glm-rl" / "runs", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
-    # GLM-5 C-speed with NVFP4 (GLM-FP4-01): the campaign's parser on its own run directories (collect: glm-fp4/), not runs/.
+    # GLM-5 C-speed with NVFP4 (GLM-FP4-01), and Qwen3 32B C-speed and C-loss (GLM-FP4-02, -03) in tables of their own: the campaign's parser
+    # on their own run directories (collect: glm-fp4/), not runs/.
     tables.update(glm_fp4.build(raw / CLUSTER / "glm-fp4", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()
