@@ -38,5 +38,26 @@ recipe's buffers are freed after its baseline reading).
 
 ## Not run yet
 
-Steps 2-4 of the brief. `main.py` still reports an NVFP4 run as `workload.precision: bf16` (`precision()` reads
-`--fp8-format` only).
+Steps 3-4 of the brief.
+
+## The recipe (`dev.yaml`, `_tri_nvfp4`)
+
+`--fp4-format e2m1` (Megatron's `--fp4-recipe` default, `nvfp4`: TE's `NVFP4BlockScaling` with its defaults),
+`--moe-router-padding-for-quantization` (expert token counts padded to 128), and the last 5 of 78 layers in BF16
+(`--first-last-layers-bf16 --num-layers-at-start-in-bf16 0 --num-layers-at-end-in-bf16 5`): the last stage of pp13, so
+the BF16 layers sit on the stage that had compute to spare in BF16 and the pipeline stays balanced. 5 layers (6.4 %) is
+the low end of NVIDIA's report (fewer than 15 % of the layers, the last ones; its 12B model kept 16 %, and was stable with
+the last four blocks). If NVFP4's loss gap to BF16 is large, a larger N is the first thing to try. Kept as in the
+campaign, not as in the report: Adam's moments in BF16 (precision-aware optimizer). `workload.precision` is `nvfp4`,
+`precision_detail` lists the recipe's parts and the BF16 layers.
+
+## Step 2: one node, the truncated model
+
+`megatron-glm5-fp4-test-n1-{bf16,nvfp4}`: the campaign's B200 smoke model (8 layers: 1 dense + 7 MoE, 64 experts, seq
+4096, batch 32) at PP1 x EP8 on one node, 50 steps with the C-loss settings in small (seed 1234, warm-up 5, lr 3e-4
+cosine); NVFP4 keeps the last layer of 8 in BF16. `-nvfp4-lt`: 3 steps, run as `lt:` for cuBLASLt's trace.
+Data, once, from a login node: `MILABENCH_BASE=$G milabench prepare --config $G/src/benchmarks/megatron/dev.yaml --select
+megatron-glm5-fp4-test-n1-bf16` (GLM-5.3's config and tokenizer, 200,000 FineWeb documents, under `$G/data`). Job:
+`job.sbatch megatron-glm5-fp4-test-n1-bf16 megatron-glm5-fp4-test-n1-nvfp4 lt:megatron-glm5-fp4-test-n1-nvfp4-lt`
+(submit line at its top). The campaign ran this model on 2 nodes only (PP2), so the BF16 step time has no campaign
+reference at one node: that comparison is step 3's, on `megatron-glm5-tri-test-b200-n2-gbs32`.
