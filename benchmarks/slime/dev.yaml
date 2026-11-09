@@ -707,6 +707,21 @@ slime-glm5-l10-grpo-2n-trtllm:
   env: *trtllm_env
   argv: *trtllm_argv
 
+# Which path makes the engine's log-probs differ more from the trainer's with the trtllm kernels (train/tis_abs 0.137
+# against 0.059, README): the MoE back on Triton, or the attention back on FlashMLA (DSA and the short prefills)
+slime-glm5-l10-grpo-2n-trtllm-moe-triton:
+  inherits: slime-glm5-l10-grpo-2n-trtllm
+  argv:
+    --sglang-moe-runner-backend: triton
+
+slime-glm5-l10-grpo-2n-trtllm-attn-flashmla:
+  inherits: slime-glm5-l10-grpo-2n-trtllm
+  env:
+    SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD: "0"
+  argv:
+    --sglang-dsa-prefill-backend: flashmla_sparse
+    --sglang-dsa-decode-backend: flashmla_kv
+
 # 4 nodes, one SGLang engine of 32 GPUs: wide enough that the shared experts' gate_up_proj splits below the 128 block
 # (2048 / 32 = 64; GLM-RL-01's TP64 engines: 32, job 1265179), which the 2-node test's 16 GPUs (128) did not reach.
 slime-glm5-l10-grpo-4n:
