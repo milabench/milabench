@@ -10,7 +10,7 @@
 # slime and Megatron install into their own venv (install group `slime`, as in
 # slime-rocm.yaml) so they cannot move the shared torch venv. The Qwen3.8
 # entries use the shared torch venv (TorchTitan 51b37c2) instead of
-# torchtitan_native.yaml's CUDA nightly install.
+# torchtitan_native.yaml's own install group.
 #
 # ROCm status (2026-10-31): Qwen3.8 native is CUDA only (attn-gym's short conv
 # is a CuTe DSL kernel); the GLM-5 Megatron smokes use tilelang DSA / sparse MLA

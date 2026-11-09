@@ -2,9 +2,8 @@
 # (tt_configs) and native TorchTitan Qwen3.8 (tt_native).
 #
 # torch: TorchTitan has no torch pin and tracks the PyTorch nightly; this commit
-# matches torch 2.15 (release branch cut 2026-10-05, same day). The
-# torchtitan_native install group installs that day's CUDA nightly instead
-# (benchfile.py, TORCH_NIGHTLY).
+# matches torch 2.15 (release branch cut 2026-10-05, same day), so install with
+# --set torch=2.15.0 (the platforms.toml default).
 
 [common]
 dependencies = [
