@@ -45,6 +45,12 @@ NET_FULL_JOB = 1258790
 # Nov 7, 15:08, 48 nodes (also without trig0125 and trig0132): D2 over all 1,128 pairs, twice. The Nov 4 groups, pair for pair;
 # 1258790 (11:25-11:37) is the exception, inferred a temporary state of the fabric.
 NET_D2_AGAIN_JOB = 1259968
+# Nov 9, 15:17, all 52 nodes: D2 over all 1,326 pairs, D3 to 52, D4 in 3 cuts of 26 + 26. D3 from 26 nodes up holds trig0114:
+# slow and erratic (HW-32), not a healthy state, so those steps stay out of the ladder's figure and macros (TriNine* only), as
+# 1258790's 11:25 state does. Its D3 up to 13 nodes (trig0101-0113) is a normal ladder.
+NET_NINE_JOB = 1277250
+NET_NINE_HELD = 26  # D3 steps of NET_NINE_JOB from this many nodes hold trig0114
+NET_LOW_PAIR_GBS = 40.0  # Nov 9: 156 pairs at 24.6-34.6 GB/s, nothing between 34.6 and 44.8; none below 44.8 on Nov 7 at 15:08
 
 # Checkpoint size per parameter, measured on truncated models (Rorqual, Fir): full 12.0, weights 2.0.
 CKPT_FULL_B_PER_PARAM = 12.0

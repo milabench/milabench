@@ -17,7 +17,7 @@ from tt_analysis.figures import _activity, _cpu_drop
 
 from . import style
 from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D2_AGAIN_JOB, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
-                      NODE_NET_GBS, NODES, SUBNET_OF)
+                      NET_NINE_JOB, NODE_NET_GBS, NODES, SUBNET_OF)
 from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
@@ -232,7 +232,7 @@ def machine_status(t):
 
 
 def pair_matrix(t):
-    """Bandwidth of every node pair, nodes ordered by subnet (D2): November 4, and the two November 7 sweeps, on one log scale."""
+    """Bandwidth of every node pair, nodes ordered by subnet (D2): November 4, the two November 7 sweeps and November 9's on all 52, on one log scale."""
     p = t["pairs"]
     if p.empty:
         return None
@@ -242,13 +242,14 @@ def pair_matrix(t):
     else:  # GPUs 0, 2, 4, 6: what the fabric carries; the others are bring-up tests
         panels = [(p[p.job_id.isin(NET_D2_JOBS)], "bw_gbs", "Nov 4, 2 jobs of 25 nodes"),
                   (p[p.job_id == NET_FULL_JOB], "bw_gbs", "Nov 7 11:25, 50 nodes"),
-                  (p[p.job_id == NET_D2_AGAIN_JOB], "bw_gbs", "Nov 7 15:08, 48 nodes, 2 passes")]
+                  (p[p.job_id == NET_D2_AGAIN_JOB], "bw_gbs", "Nov 7 15:08, 48 nodes, 2x"),
+                  (p[p.job_id == NET_NINE_JOB], "bw_gbs", "Nov 9 15:17, 52 nodes")]
         panels = [x for x in panels if len(x[0])]
     bw = pd.concat([d.bw_gbs for d, col, _ in panels if col == "bw_gbs"])
     shared = all(col == "bw_gbs" for _, col, _ in panels)  # one colorbar for all
-    norm = LogNorm(vmin=bw.min(), vmax=bw.max())  # 45, 64, 96 and 189 GB/s all apart
+    norm = LogNorm(vmin=bw.min(), vmax=bw.max())  # 25, 34, 45, 64, 96 and 189 GB/s all apart
     n = len(NODES)
-    fig, axes = plt.subplots(1, len(panels), figsize=(TEXT_WIDTH, 2.45), squeeze=False, layout="constrained")
+    fig, axes = plt.subplots(1, len(panels), figsize=(TEXT_WIDTH, 2.45 if len(panels) < 4 else 2.0), squeeze=False, layout="constrained")
     axes = axes[0]
     groups, edges, centers, starts = _subnets()
     for ax, (d, col, title) in zip(axes, panels):
@@ -279,7 +280,7 @@ def pair_matrix(t):
         cb = fig.colorbar(im, ax=list(axes), fraction=0.02, pad=0.01)
         cb.set_label("GB/s per node, one direction (log scale)", fontsize=7)
         cb.ax.minorticks_off()
-        cb.set_ticks([v for v in (45, 64, 96, 189) if bw.min() <= v <= bw.max()])
+        cb.set_ticks([v for v in (25, 34, 45, 64, 96, 189) if bw.min() <= v <= bw.max()])
         cb.ax.yaxis.set_major_formatter(ScalarFormatter())
         cb.ax.tick_params(labelsize=6)
         cb.outline.set_visible(False)

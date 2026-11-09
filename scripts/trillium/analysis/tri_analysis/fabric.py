@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from .machine import CLUSTER, SUBNET_OF
+from .machine import CLUSTER, NET_LOW_PAIR_GBS, SUBNET_OF
 
 
 def _jsonl(path: Path):
@@ -102,5 +102,6 @@ def parse_collectives(path: Path, synthetic=False) -> list[dict]:
         top = max((p["bw_gbs"] for p in pairs), default=None)
         r["n_pairs"] = len(pairs) or None
         r["slow_pairs"] = sum(p["bw_gbs"] < 0.75 * top for p in pairs) if pairs else None  # D2 on Nov 7: about 189 or 96, nothing between
+        r["low_pairs"] = sum(p["bw_gbs"] < NET_LOW_PAIR_GBS for p in pairs) if pairs else None  # Nov 9: 25-35, or 45 and up
         rows.append({**r, "cluster": CLUSTER, "synthetic": synthetic})
     return rows

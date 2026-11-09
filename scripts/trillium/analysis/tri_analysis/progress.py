@@ -17,11 +17,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from .machine import NET_NINE_HELD, NET_NINE_JOB
 from .select import checkpoints, completed
 from .style import GLM, QWEN
 
 TOP_NOW = 50  # all 52 passed at 16:35 on Nov 6; trig0114 stopped responding at 17:03, trig0138 was drained at 19:31 and stays out after its job; a point above this waits for them
-NODE_OUT = "trig0114 and trig0138"
+NODE_OUT = "trig0114"  # trig0138 back on Nov 9 at 10:06; trig0114 out again from 15:45 (HW-32)
 FIFTY = 50
 # Node counts of a group that are compromises: below the design's scale (DESIGN.md, 10_ag.sh) or holding the slow nodes.
 COMPROMISE = {"Network (D2-D4)": {25}, "Qwen layouts": {39}, "Qwen weak scaling": {25, 39, 43}, "Qwen strong scaling": {39},
@@ -171,9 +172,11 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
     if len(fo) and "model" in fo:
         failed_ops = set(zip(fo.model, fo.content, fo.op, fo["mode"], fo.nodes.astype(int)))
     coll, pairs = t["collectives"], t["pairs"]
-    net = set()
+    net, net_held = set(), set()
     if len(coll):
-        net |= set(zip(coll.experiment, coll.nodes.astype(int)))
+        held = (coll.job_id == NET_NINE_JOB) & (coll.experiment == "D3") & (coll.nodes >= NET_NINE_HELD)  # every set holds trig0114 (HW-32)
+        net |= set(zip(coll[~held].experiment, coll[~held].nodes.astype(int)))
+        net_held |= set(zip(coll[held].experiment, coll[held].nodes.astype(int)))
     if len(pairs):
         net.add(("D2", 25))  # Nov 4: two jobs of 25
         for _, g in pairs.groupby("job_id"):
@@ -182,7 +185,7 @@ def table(t: dict[str, pd.DataFrame], sacct: Path | None = None) -> pd.DataFrame
     rows = []
     for x in plan():
         if x.net:
-            state = "done" if x.net in net or (x.net[1] >= FIFTY and x.net[0] in top) else None
+            state = "done" if x.net in net or (x.net[1] >= FIFTY and x.net[0] in top) else "with slow nodes" if x.net in net_held else None
         elif x.op:
             state = "done" if x.op in ops else "with slow nodes" if x.op in ops_slow else "answered" if x.op in failed_ops else None
         else:

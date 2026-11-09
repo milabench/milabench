@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_AGAIN_JOB, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB)
+from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_AGAIN_JOB, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
+                      NET_LOW_PAIR_GBS, NET_NINE_HELD, NET_NINE_JOB)
 from . import glm_fp4
 from .flux import FROM_BLOCK as FLUX_FROM_BLOCK
 from .kimi import LOG_INTERVAL_S
@@ -241,7 +242,15 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
                                  "SplitSpeed", "SplitSpeedFirst", "SplitBlocksSecond", "PowerLo", "PowerHi", "HotLo", "HotHi", "SmLo", "SmHi",
                                  "SmMin", "BlockFirst", "Above", "AboveRuns", "Below", "Inside", "Compared", "LateFrom", "LateLo",
                                  "LateHi", "TenFour", "TenEight", "TenPct", "FlTenFour", "FlTenEight", "FlTenPct", "PowerFourLo", "PowerFourHi",
-                                 "BlocksMore", "GapFour", "GapEight")]]
+                                 "BlocksMore", "GapFour", "GapEight")],
+          # Network on Nov 9, all 52 nodes (_network_numbers, NET_NINE_JOB): D2 all pairs, its pairs below 40 GB/s and the comparison with
+          # Nov 7 15:08; D4; D3 up to 13 nodes, and from 26 up, where the sets hold trig0114 (kept apart from the ladder's macros)
+          *[f"TriNine{m}" for m in ("Pairs", "Nodes", "Within", "WithinHi", "Across", "AcrossHi", "Low", "LowMin", "LowWithinLo", "LowWithinHi",
+                                    "LowAcrossLo", "LowAcrossHi", "LowNodes", "LowPerNode", "LowDiffs", "LowOdd", "OddMed", "Common", "RatioLo", "RatioHi",
+                                    "RatioMed", "LowCommon", "LowThenLo", "LowThenHi", "Cuts", "CutPairs", "BisectLo", "BisectHi", "BisectMinLo",
+                                    "BisectMinHi", "BisectSlowLo", "BisectSlowHi", "ThirteenLo", "ThirteenHi",
+                                    "AlltoallThirteen", "TwoSixLo", "TwoSixHi", "FiftyTwoLo", "FiftyTwoHi", "ReduceOne", "ReduceTwo", "ScatterOne",
+                                    "ScatterTwo", "AlltoallTwoSix", "AlltoallFiftyTwo", "BigLo", "BigHi")]]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -566,6 +575,69 @@ def _network_numbers(t) -> dict[str, tuple]:
             for coll, tag in (("all_gather", "Gather"), ("reduce_scatter", "Scatter"), ("all_reduce", "Reduce")):
                 if coll in t26:
                     out[f"TriSeven{tag}"] = (t26[coll], ".1f", False)
+    out.update(_nine_numbers(p, c))
+    return out
+
+
+def _nine_numbers(p, c) -> dict[str, tuple]:
+    """Nov 9, all 52 nodes (NET_NINE_JOB): D2's pairs, those below NET_LOW_PAIR_GBS and Nov 7 15:08's value of each; D4; D3 up to 13
+    nodes, and from NET_NINE_HELD up, where every set holds trig0114 (HW-32): kept here, apart from the ladder's macros and figure."""
+    out = {}
+    if len(p) and not p.synthetic.any():
+        f = p[(p.job_id == NET_NINE_JOB) & (p.status == "ok")]
+        if len(f):
+            key = lambda d: [tuple(sorted(k)) for k in zip(d.a, d.b)]
+            f = f.assign(key=key(f))
+            same = f.a.map(bandwidth_group) == f.b.map(bandwidth_group)
+            low = f.bw_gbs < NET_LOW_PAIR_GBS
+            hosts = pd.concat([f.a, f.b]).unique()
+            per_node = pd.concat([f[low].a, f[low].b]).value_counts().reindex(hosts, fill_value=0)
+            lo, hi = int(per_node.min()), int(per_node.max())
+            diffs = sorted({abs(int(a[4:]) - int(b[4:])) for a, b in zip(f[low].a, f[low].b)})
+            odd = f[(f.a == "trig0114") | (f.b == "trig0114")]
+            out.update({"TriNinePairs": (len(f), ",d", False), "TriNineNodes": (len(hosts), "d", False),
+                        "TriNineWithin": (f[same].bw_gbs.median(), ".1f", False), "TriNineWithinHi": (f[same].bw_gbs.max(), ".1f", False),
+                        "TriNineAcross": (f[~same].bw_gbs.median(), ".1f", False), "TriNineAcrossHi": (f[~same].bw_gbs.max(), ".1f", False),
+                        "TriNineLow": (int(low.sum()), "d", False), "TriNineLowMin": (f[low].bw_gbs.min(), ".1f", False),
+                        "TriNineLowWithinLo": (f[low & same].bw_gbs.min(), ".1f", False), "TriNineLowWithinHi": (f[low & same].bw_gbs.max(), ".1f", False),
+                        "TriNineLowAcrossLo": (f[low & ~same].bw_gbs.min(), ".1f", False), "TriNineLowAcrossHi": (f[low & ~same].bw_gbs.max(), ".1f", False),
+                        "TriNineLowNodes": (int((per_node > 0).sum()), "d", False), "TriNineLowPerNode": (str(lo) if lo == hi else f"{lo}--{hi}", "", False),
+                        "TriNineLowDiffs": (", ".join(map(str, diffs[:-1])) + f" or {diffs[-1]}" if len(diffs) > 1 else ", ".join(map(str, diffs)), "", False),
+                        "TriNineLowOdd": (int((odd.bw_gbs < NET_LOW_PAIR_GBS).sum()), "d", False), "TriNineOddMed": (odd.bw_gbs.median(), ".1f", False)})
+            a = p[(p.job_id == NET_D2_AGAIN_JOB) & (p.status == "ok")]  # Nov 7 15:08, two passes: their mean
+            then = a.assign(key=key(a)).groupby("key").bw_gbs.mean()
+            now = f.set_index("key").bw_gbs
+            common = now.index.intersection(then.index)
+            if len(common):
+                was_low = now[common] < NET_LOW_PAIR_GBS
+                r = now[common][~was_low] / then[common][~was_low]
+                out.update({"TriNineCommon": (len(common), ",d", False), "TriNineRatioLo": (r.min(), ".2f", False), "TriNineRatioHi": (r.max(), ".2f", False),
+                            "TriNineRatioMed": (r.median(), ".3f", False), "TriNineLowCommon": (int(was_low.sum()), "d", False),
+                            "TriNineLowThenLo": (then[common][was_low].min(), ".1f", False), "TriNineLowThenHi": (then[common][was_low].max(), ".1f", False)})
+    if len(c) and not c.synthetic.any():
+        d4 = c[(c.job_id == NET_NINE_JOB) & (c.experiment == "D4") & (c.status == "ok")]
+        if len(d4):
+            out.update({"TriNineCuts": (len(d4), "d", False), "TriNineCutPairs": (int(d4.n_pairs.max()), "d", False),
+                        "TriNineBisectLo": (d4.busbw_gbs.min(), ".1f", False), "TriNineBisectHi": (d4.busbw_gbs.max(), ".1f", False),
+                        "TriNineBisectMinLo": (d4.min_pair_gbs.min(), ".1f", False), "TriNineBisectMinHi": (d4.min_pair_gbs.max(), ".1f", False),
+                        "TriNineBisectSlowLo": (int(d4.low_pairs.min()), "d", False), "TriNineBisectSlowHi": (int(d4.low_pairs.max()), "d", False)})
+        s = c[(c.job_id == NET_NINE_JOB) & (c.experiment == "D3") & (c.status == "ok")]
+        three = ["all_gather", "reduce_scatter", "all_reduce"]
+        g, big = s[s.size_bytes == 2**30], s[(s.size_bytes == 4 * 2**30) & s.collective.isin(three)]
+        for n, tag in ((13, "Thirteen"), (NET_NINE_HELD, "TwoSix"), (52, "FiftyTwo")):
+            b = g[(g.nodes == n) & g.collective.isin(three)]
+            if len(b):
+                out[f"TriNine{tag}Lo"], out[f"TriNine{tag}Hi"] = (b.busbw_gbs.min(), ".0f", False), (b.busbw_gbs.max(), ".0f", False)
+            x = g[(g.nodes == n) & (g.collective == "alltoall")]
+            if len(x):
+                out[f"TriNineAlltoall{tag}"] = (x.busbw_gbs.median(), ".1f", False)
+        top = g[g.nodes == 52].set_index(["collective", "repetition"]).busbw_gbs
+        for coll, tag in (("all_reduce", "Reduce"), ("reduce_scatter", "Scatter")):
+            for rep, word in ((1, "One"), (2, "Two")):
+                if (coll, rep) in top.index:
+                    out[f"TriNine{tag}{word}"] = (top[(coll, rep)], ".0f", False)
+        if len(big[big.nodes == 52]):
+            out["TriNineBigLo"], out["TriNineBigHi"] = (big[big.nodes == 52].busbw_gbs.min(), ".0f", False), (big[big.nodes == 52].busbw_gbs.max(), ".0f", False)
     return out
 
 
