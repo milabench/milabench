@@ -4,8 +4,9 @@
 - long monomer distillation: the first N_MONO entries of its cache.json (the dataset reads it in order,
   sample_in_order: true); CACHES/long_head.json is the start of that 15 GB file, cut anywhere;
 - RNA distillation: N_RNA entries drawn uniformly.
-Writes OUT/{pdb,long_monomer,rna}_cache.json (indented: OpenFold3 reads the cache type on its second line) and OUT/keys.txt, the S3 keys these entries read (structure, MSA arrays,
-template caches, template structures, reference molecules).
+Writes OUT/{pdb,long_monomer,rna}_cache.json, indented (OpenFold3 reads the cache type on the second line), and
+OUT/keys.txt, the S3 keys these entries read (structure, MSA arrays, template caches, template structures; reference
+molecules not included).
 Usage: python subset.py CACHES OUT N_PDB N_MONO N_RNA [SEED]"""
 import json
 import random
