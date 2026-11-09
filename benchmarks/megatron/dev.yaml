@@ -1477,3 +1477,62 @@ megatron-qwen3-32b-n1-s4k-mxfp8:
 megatron-qwen3-32b-n1-s4k-nvfp4:
   inherits: _qwen3_32b_s4k
   argv: {<<: *qwen3_nvfp4}
+# Megatron's PyTorch profiler on rank 0 at step 18 of 20 (the trace lands in $G/prof/torch_profile, the working directory
+# being the pack's; glm-fp4/job.sbatch moves it to $G/prof/<run>)
+_qwen3_prof: &qwen3_prof
+  --profile: true
+  --use-pytorch-profiler: true
+  --profile-step-start: 18
+  --profile-step-end: 19
+  --profile-ranks: 0
+  --tensorboard-dir: ../../../prof/tb
+# 1 node, 4096 tokens, PP2, profiled: why NVFP4 is slower than BF16 there; -lt: 3 steps for cuBLASLt's trace
+megatron-qwen3-32b-n1-s4k-prof-bf16:
+  inherits: megatron-qwen3-32b-n1-s4k-bf16
+  argv: {<<: *qwen3_prof}
+megatron-qwen3-32b-n1-s4k-prof-mxfp8:
+  inherits: megatron-qwen3-32b-n1-s4k-mxfp8
+  argv: {<<: *qwen3_prof}
+megatron-qwen3-32b-n1-s4k-prof-nvfp4:
+  inherits: megatron-qwen3-32b-n1-s4k-nvfp4
+  argv: {<<: *qwen3_prof}
+megatron-qwen3-32b-n1-s4k-nvfp4-lt:
+  inherits: megatron-qwen3-32b-n1-s4k-nvfp4
+  argv: {--train-iters: 3}
+# no pipeline: TP2 x data parallel (the optimizer state sharded over 16 at 4 nodes, over 4 at 1), 8 micro-batches per
+# data-parallel rank; -cg: CUDA graphs per layer (Megatron's local implementation). Profiled as above
+_qwen3_32b_tp2:
+  inherits: _qwen3_32b
+  argv:
+    <<: *qwen3_prof
+    --pipeline-model-parallel-size: 1
+_qwen3_cg: &qwen3_cg
+  --cuda-graph-impl: local
+megatron-qwen3-32b-n4-tp2-bf16:
+  inherits: _qwen3_32b_tp2
+  num_machines: 4
+  argv: {--global-batch-size: 128}
+megatron-qwen3-32b-n4-tp2-mxfp8:
+  inherits: megatron-qwen3-32b-n4-tp2-bf16
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-n4-tp2-nvfp4:
+  inherits: megatron-qwen3-32b-n4-tp2-bf16
+  argv: {<<: *qwen3_nvfp4}
+megatron-qwen3-32b-n4-tp2-cg-bf16:
+  inherits: megatron-qwen3-32b-n4-tp2-bf16
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-n4-tp2-cg-mxfp8:
+  inherits: megatron-qwen3-32b-n4-tp2-mxfp8
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-n4-tp2-cg-nvfp4:
+  inherits: megatron-qwen3-32b-n4-tp2-nvfp4
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-n1-tp2-cg-bf16:
+  inherits: _qwen3_32b_tp2
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-n1-tp2-cg-mxfp8:
+  inherits: megatron-qwen3-32b-n1-tp2-cg-bf16
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-n1-tp2-cg-nvfp4:
+  inherits: megatron-qwen3-32b-n1-tp2-cg-bf16
+  argv: {<<: *qwen3_nvfp4}

@@ -30,7 +30,7 @@ echo "[glm-fp4] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST $(git -C $G/src rev-
 run_all bash "$G/src/scripts/trillium/power_check.sh" || exit 4
 system=$G/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
-mkdir -p $G/logs
+mkdir -p $G/logs $G/prof
 status_all=0
 SP=$(echo $G/venv/torch/lib/python3.*/site-packages)
 for item in "$@"; do
@@ -62,6 +62,8 @@ for item in "$@"; do
         milabench run --config "$CONFIG" --system "$system" --select "$entry" --run-name "$run"
     fi
     status=$?
+    # an entry with Megatron's profiler leaves its trace in $G/prof/torch_profile (dev.yaml _qwen3_prof)
+    [ -d $G/prof/torch_profile ] && mv $G/prof/torch_profile $G/prof/$run
     [ $status != 0 ] && status_all=$status && run_all pkill -KILL -f '[m]egatron/main.py' || true
     peak=$(grep -rhoE '"mem_alloc_peak_gib": ?[0-9.]+' "$G/runs/$run" 2>/dev/null | grep -oE '[0-9.]+$' | sort -g | tail -1)
     echo "[glm-fp4] $entry: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)") $(( $(date +%s) - start )) s, peak allocated ${peak:-?} GiB"
