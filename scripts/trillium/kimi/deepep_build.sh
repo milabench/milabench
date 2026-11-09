@@ -29,7 +29,7 @@ echo "[deepep] $(hostname -s) $(date -Is)"
 
 if [ ! -d "$V" ]; then
     echo "[deepep] copying $K/venv/torch"; t=$(date +%s)
-    cp -a "$K/venv/torch" "$V.tmp"
+    rm -rf "$V.tmp"; cp -a "$K/venv/torch" "$V.tmp"
     # the copy's scripts and editable installs still name K3-INF's venv and checkout
     grep -rlI "$K/venv/torch" "$V.tmp/bin" "$V.tmp/pyvenv.cfg" | xargs -r sed -i "s|$K/venv/torch|$V|g"
     sed -i "s|$K/src|$X/src|g" "$V.tmp"/lib/python3.12/site-packages/*.pth
@@ -40,8 +40,10 @@ UV_LINK_MODE=copy UV_CACHE_DIR=$X/uv-cache VIRTUAL_ENV=$V "$HOME/.local/bin/uv" 
 
 echo "[deepep] building $(git -C "$X/deepep-src" log -1 --oneline)"; t=$(date +%s)
 cd "$X/deepep-src"
+log=$X/slurm/deepep-build.$SLURM_JOB_ID.log
 CPATH=$CUDA_HOME/include/cccl TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=32 \
-    "$V/bin/python" -m pip install --no-build-isolation --no-deps --no-cache-dir . 2>&1 | tail -20
+    "$V/bin/python" -m pip install -v --no-build-isolation --no-deps --no-cache-dir . > "$log" 2>&1 \
+    || { echo "[deepep] build failed, $log:"; grep -n -E "error|FAILED" "$log" | head -40; exit 1; }
 echo "[deepep] built in $(( $(date +%s) - t )) s"
 
 cd "$TMPDIR"
