@@ -42,7 +42,7 @@ TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "no
           "kimi_xn_passes", "kimi_xn_accuracy", "kimi_xn_runs", "kimi_xn_questions",
           "kimi_xn4_passes", "kimi_xn4_accuracy", "kimi_xn4_runs", "kimi_xn4_questions",
           "kimi_train_runs", "kimi_train_steps", "kimi_train_stages", "glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode", "glm_rl_memory",
-          "glm_fp4_runs", "glm_fp4_steps", "qw_fp4_runs", "qw_fp4_steps", "qw_fp4_loss", "qw_cp_runs", "qw_cp_steps"]
+          "glm_fp4_runs", "glm_fp4_steps", "qw_fp4_runs", "qw_fp4_steps", "qw_fp4_loss", "qw_cp_runs", "qw_cp_steps", "qw_cp_strag"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept per GPU and minute (gpu_monitor: stability)
@@ -258,7 +258,7 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     # GLM-5 C-speed with NVFP4 (GLM-FP4-01), and Qwen3 32B C-speed and C-loss (GLM-FP4-02, -03) in tables of their own: the campaign's parser
     # on their own run directories (collect: glm-fp4/), not runs/.
     tables.update(glm_fp4.build(raw / CLUSTER / "glm-fp4", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
-    # Qwen3 32B at 32k and 128k with context parallelism (QW-CP-01), with GLM-FP4-03's BF16 entry as its 8k reference, in tables of their own
+    # Qwen3 32B at 32k and 128k with context parallelism (QW-CP-01, -02), with GLM-FP4-03's BF16 entry as its 8k reference, in tables of their own
     # (collect: qw-cp/), not runs/.
     tables.update(glm_fp4.build_cp(raw / CLUSTER / "qw-cp", raw / CLUSTER / "glm-fp4", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
     mon = [m for m in rows["gpu_monitor"] if not m.empty]

@@ -21,13 +21,17 @@ under entry names without it), so ``recipe`` is the precision and ``run`` the en
 last stage's, rank 4). Step times of the loss runs: steps 3-500.
 GPU telemetry over the same steps (wall clock, from rank 0's per-rank metrics), all nodes: software power cap share per node, mean power and SM clock over every sample, Xid rows.
 
-Qwen3 32B at 32k and 128k tokens with context parallelism (QW-CP-01, job 1273505, ``build_cp``), in tables of their own (``qw_cp_*``): three entries
-of one job on GLM-FP4-03's 13 nodes (the CP8 one on 12 of them), read from ``qw-cp/`` (collect: ``qw-cp/runs/<run>/`` and
+Qwen3 32B at 32k and 128k tokens with context parallelism (QW-CP-01, job 1273505, and QW-CP-02, 1273588; ``build_cp``), in tables of their own
+(``qw_cp_*``): QW-CP-01's three entries on GLM-FP4-03's 13 nodes (the CP8 one on 12 of them) and QW-CP-02's one (128k CP4 with selective recompute,
+the same nodes), read from ``qw-cp/`` (collect: ``qw-cp/runs/<run>/`` and
 ``qw-cp/nodemon/<run>/*.{gpu,ib}.tsv``), keyed on the job and the entry, with GLM-FP4-03's BF16 entry (1272011) read again from ``glm-fp4/`` as
 their 8k reference, so the four rows share one statistic: means over steps 3-20 on milabench's timer, as above. Tokens/s per GPU at the mean step;
 MFU from the summary's FLOPs per token (causal attention counted per packed slot) against 2.25 PFLOP/s. Bytes across nodes per node and step: the
 four compute ports' tx counters (``ib.tsv``), each interpolated at rank 0's wall-clock end of step 2 and of the last step that ended before that
-node's monitor stopped (19 or 20), over the steps between.
+node's monitor stopped (19 or 20), over the steps between. Stragglers (``qw_cp_strag``, one row per entry, step and node): how far the node's
+slowest rank's forward plus backward (per-rank metrics, ``fwd_ms + bwd_ms``) is behind the median rank's, and the largest drop of any of its GPUs'
+memory in use within the step (NVML, the local rank 0's 0.5 s ``gpudata`` samples in the per-rank metrics, and milabench's ``.0.data`` for rank 0's
+node: the most any sample falls below the highest one before it), over rank 0's wall-clock step.
 """
 
 from __future__ import annotations
@@ -51,7 +55,8 @@ QW_JOBS = {"1272011": "GLM-FP4-03", **{j: "GLM-FP4-02" for j in ("1272019", "127
 FIRST_STEP, LAST_STEP = 3, 20
 SW_POWER_CAP = 0x4  # nvmlClocksEventReasonSwPowerCap
 # Qwen3 32B with context parallelism (QW-CP-01; REQUESTS.md), and its 8k reference: GLM-FP4-03's BF16 entry, on the same nodes
-CP_JOBS = {"1273505": "QW-CP-01"}
+CP_JOBS = {"1273505": "QW-CP-01", "1273588": "QW-CP-02"}
+SLOW_S = 1.0  # a node this far behind the median rank's forward + backward in a step is slow in that step
 CP_REF = ("1272011", "megatron-qwen3-32b-n13-bf16")
 IB_PORTS = ("mlx5_0", "mlx5_1", "mlx5_4", "mlx5_9")  # the compute ports (mlx5_2, 3: storage)
 
@@ -242,6 +247,38 @@ def _ib_window(nodemon: Path, ends: dict[int, float], first: int, last: int) -> 
     return pd.DataFrame(rows)
 
 
+def _stragglers(run_dir: Path, first: int, last: int) -> list[dict]:
+    """Per step and node: seconds the node's slowest rank's forward + backward is behind the median rank's, and the largest drop of a GPU's memory in
+    use within rank 0's wall-clock step (GiB), from the per-rank metrics' step rows and gpudata samples, and milabench's .data for rank 0's node."""
+    steps, samples, host_of = {}, {}, {}
+    for path in run_dir.glob("metrics.*.jsonl"):
+        host, rank = path.name.rsplit(".", 3)[1], int(path.name.rsplit(".", 2)[1])
+        host_of[rank] = host
+        for line in path.read_text().splitlines():
+            d = json.loads(line)
+            if d.get("kind") == "step" and d.get("task") == "train":
+                steps.setdefault(d["batch_id"], {})[rank] = (d.get("fwd_ms", 0) + d.get("bwd_ms", 0)) / 1000
+            elif "gpudata" in d:
+                samples.setdefault(host, []).append((d["time"], {g: v["memory"][0] / 1024 for g, v in d["gpudata"].items()}))
+    if 0 not in host_of:
+        return []
+    for e in (x for f in run_dir.glob("*.data") if ".nolog." not in f.name for x in read_events(f)):
+        d = e.get("data")
+        if isinstance(d, dict) and "gpudata" in d:
+            samples.setdefault(host_of[0], []).append((d["time"], {g: v["memory"][0] / 1024 for g, v in d["gpudata"].items()}))
+    ends, rows = _step_ends(run_dir), []
+    for step in range(first, last + 1):
+        tot = steps.get(step, {})
+        if len(tot) != len(host_of) or step - 1 not in ends or step not in ends:
+            continue
+        med = float(np.median(list(tot.values())))
+        for host in sorted(set(host_of.values())):
+            w = [m for t, m in sorted(samples.get(host, []), key=lambda x: x[0]) if ends[step - 1] <= t <= ends[step]]
+            drop = max((float((pd.Series([m[g] for m in w]).cummax() - pd.Series([m[g] for m in w])).max()) for g in w[0]), default=None) if w else None
+            rows.append({"step": step, "host": host, "behind_s": max(v for r, v in tot.items() if host_of[r] == host) - med, "drop_gib": drop})
+    return rows
+
+
 def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
     """qw_cp_runs (one row per entry: QW-CP-01's three and the 8k reference) and qw_cp_steps (milabench's step times, every step). Only jobs
     that have ended."""
@@ -251,7 +288,7 @@ def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict
         states = dict(zip(s.JobID, s.State))
     files = [f for f in (data_files(root) if root.is_dir() else []) if f.parent.name.split(".")[1] in CP_JOBS]
     files += [f for f in (data_files(ref_root) if ref_root.is_dir() else []) if f.parent.name == f"glm-fp4.{CP_REF[0]}.{CP_REF[1]}"]
-    runs, steps = [], []
+    runs, steps, strag = [], [], []
     for f in files:
         job = f.parent.name.split(".")[1]
         state = states.get(job, "RUNNING")
@@ -278,7 +315,12 @@ def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict
         ib = _ib_window(nodemon, ends, FIRST_STEP, LAST_STEP)
         losses = {x["step"]: x["loss"] for x in loss if x.get("step") is not None}
         tok = row["global_batch_tokens"] / window.mean() / row["gpus"]
-        label = "8k" if job not in CP_JOBS else f"{row['seq_len'] // 1024}k-cp{par.get('cp')}"
+        label = "8k" if job not in CP_JOBS else f"{row['seq_len'] // 1024}k-cp{par.get('cp')}-{work.get('activation_checkpointing')}"
+        sg = pd.DataFrame(_stragglers(f.parent, FIRST_STEP, LAST_STEP) if job in CP_JOBS else [])
+        slow = sg[sg.behind_s > SLOW_S] if len(sg) else sg
+        ever = set(slow.host) if len(slow) else set()
+        clean = st[st.step.isin(set(sg.step) - set(slow.step))].step_s if len(sg) else pd.Series(dtype=float)
+        strag += [{"job": job, "run": label, **x} for x in sg.to_dict("records")]
         runs.append({"request": CP_JOBS.get(job, "GLM-FP4-03"), "job": job, "job_state": state.split()[0], "entry": row["bench"], "run": label,
                      "run_id": row["run_id"], "experiment": summ.get("run", {}).get("experiment"), "precision": row["precision"],
                      "started": row["started"], "nodes": row["nodes"], "gpus": row["gpus"], "hosts": row["hosts"],
@@ -301,6 +343,14 @@ def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict
                      "ib_nodes": len(ib), "ib_lo": ib.ib_gib.min() if len(ib) else None, "ib_hi": ib.ib_gib.max() if len(ib) else None,
                      "ib_last_lo": ib["last"].min() if len(ib) else None, "ib_last_hi": ib["last"].max() if len(ib) else None,
                      "ib_port_max_gbs": ib.port_max_gbs.max() if len(ib) else None,
-                     **{f"ib_{h}_{e}": getattr(ib[f"ib_{h}"], e)() if f"ib_{h}" in ib else None for h in IB_PORTS for e in ("min", "max")}})
+                     **{f"ib_{h}_{e}": getattr(ib[f"ib_{h}"], e)() if f"ib_{h}" in ib else None for h in IB_PORTS for e in ("min", "max")},
+                     "behind_max": sg.behind_s.max() if len(sg) else None, "slow_steps": slow.step.nunique() if len(sg) else None,
+                     "slow_steps_multi": int((slow.groupby("step").size() > 1).sum()) if len(sg) else None,
+                     "slow_nodes": ";".join(sorted(ever)) if len(sg) else None, "slow_behind_lo": slow.behind_s.min() if len(slow) else None,
+                     "slow_behind_hi": slow.behind_s.max() if len(slow) else None,
+                     "drop_slow_lo": sg[sg.host.isin(ever)].groupby("host").drop_gib.max().min() if ever else None,
+                     "drop_slow_hi": sg[sg.host.isin(ever)].drop_gib.max() if ever else None,
+                     "drop_other_max": sg[~sg.host.isin(ever)].drop_gib.max() if len(sg) else None,
+                     "clean_steps": len(clean), "clean_lo": clean.min() if len(clean) else None, "clean_hi": clean.max() if len(clean) else None})
         steps += [{"job": job, "run": label, "step": s, "step_s": v} for s, v in zip(st.step, st.step_s)]
-    return {"qw_cp_runs": pd.DataFrame(runs), "qw_cp_steps": pd.DataFrame(steps)}
+    return {"qw_cp_runs": pd.DataFrame(runs), "qw_cp_steps": pd.DataFrame(steps), "qw_cp_strag": pd.DataFrame(strag)}
