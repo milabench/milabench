@@ -21,6 +21,8 @@ REPORT_EXPERIMENTS = {"A-Q", "A-G", "B-Q-weak", "B-Q-strong", "B-G-weak", "B-G-s
 SET_ASIDE = {
     "1239932": "capped trig0123 in the job, 26.3 s per step, cancelled: evidence for the cap only",
     "1241330": "cancelled",
+    "1277484": "Qwen long run at 51 nodes, cancelled by the site at 16:26 on Nov 9 after 41 min (other users waiting): not a long run",
+    "1277485": "GLM-5 long run at 50 nodes, cancelled by the site at 16:26 on Nov 9 before it started",
     "1251904": "trig0114 stopped responding at 17:03 on Nov 6, after step 30 of 500, NODE_FAIL: says nothing about the recipe",
     "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
     "1268278": "R on the fixed nodes after trig0150 GPU 2 lost all NVLinks (HW-30, between Nov 8 12:03 and 14:56), 6.13 s per "

@@ -70,6 +70,6 @@ The slow nodes' reruns all moved down, by 0.7--1.0\,\%; two runs a side cannot s
   \end{adjustbox}
 \end{table}
 
-\paragraph{Submission.} The site's \texttt{sbatch} wrapper refuses jobs above 25 nodes, and the administrators asked us to submit with the \texttt{.sbatch} binary. A 1-node job submitted that way took 4.767\,s per step, against 4.742 and 4.784\,s through the wrapper. It changed nothing measurable.
+\paragraph{Submission.} The site's \texttt{sbatch} wrapper refuses jobs above 25 nodes, and the administrators asked us to submit with the \texttt{.sbatch} binary. A 1-node job submitted that way took 4.767\,s per step, against 4.742 and 4.784\,s through the wrapper. It changed nothing measurable. \textbf{Sharing.} On November~9 at 16:26 the site cancelled our Qwen long run on 51 nodes after 41 minutes, and the GLM-5 one queued behind it; the administrators had written that afternoon that other users wanted to run tests. From then on, until the administrators say otherwise, we run jobs above 16 nodes only outside 8:00--18:00 and only when no other user's job is waiting, and cancel ours if one comes to wait behind it. The points at 50 nodes and more wait for such a slot.
 
 \paragraph{Still open.} The administrators' answer on the clock drops, what happened on \texttt{trig0140}, what the drops cost on a normal node, what the administrators changed on \texttt{trig0114}, why it stopped responding, and why collectives slow down in any set holding it since November~9.
