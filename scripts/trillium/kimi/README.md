@@ -608,13 +608,20 @@ engine (4.42x) on both instances. Weights 55 s (prefill, warm), 392-412 s (decod
 optional `deep_ep` module logs an `AssertionError` (DeepEP wants `CUDA_HOME`, unset here), and the bench client's
 `/tokenize` gets a 404 from the proxy; `kv_role='kv_both'` is deprecated (vLLM: use `kv_producer` / `kv_consumer`).
 
-| pass | done / failed | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | colocated EP16, all-gather, 2 nodes (1271244) |
+| pass | done / failed | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | colocated reference, 4 nodes (1271710) |
 |---|---|---|---|---|---|---|
-| warmup | 64 / 0 | 411.5 | | | | 482.3 |
-| conc1 | 60 / 0 | 28.69 | 556 / 591 | 32.80 / 32.91 | 32.79 / 32.96 | 29.70, TTFT 152, TPOT 33.18 |
-| conc64 | 128 / 0 | 1132.17 | 1581 / 7142 | 42.99 / 43.25 | 42.77 / 47.72 | 1056.30, TTFT 1306, TPOT 45.91 |
+| warmup | 64 / 0 | 411.5 | | | | 646.1 |
+| conc1 | 60 / 0 | 28.69 | 556 / 591 | 32.80 / 32.91 | 32.79 / 32.96 | 30.19, TTFT 95 / 123, TPOT 32.88 |
+| conc64 | 128 / 0 | 1132.17 | 1581 / 7142 | 42.99 / 43.25 | 42.77 / 47.72 | 1444.25, TTFT 813 / 1281, TPOT 41.04 |
 
 GSM8K's first 200: 197 / 200 (K3-INF-01: 197): the transferred KV and KDA state decode right. The KV transfer time per
-request is not measured directly (the connector's stats go to the engine's stats log, off in these DP servers): at conc1
-TTFT is 404 ms over the colocated server's, for the prefill instance's run, the transfer and the proxy's two hops
-(derived). Untested: P/D with `deepep_v2`, more than one instance per role, and a colocated reference on 4 nodes.
+request is not measured here: vLLM's stats log is off in these DP servers, but its Prometheus histograms are not, and
+`pd_serve.sh` now samples `vllm:nixl_xfer_time_seconds` (count, sum) every 30 s (checked in 1271710, zero there). At
+conc1 P/D's TTFT is 461 ms over the reference's, for the prefill instance's run, the KV and KDA transfer and the
+proxy's second hop (derived, not measured).
+
+**Its colocated reference, job 1271710** (`kimi-vllm-4n-pd-ep16-colocated-bringup-notune`, coordinator, 2026-11-08):
+the same nodes `trig[0103-0106]`, instances, flags and proxy (`pd_proxy.py --colocated`: each request whole to one
+instance, round-robin), 22:05-; weights 52-55 s (warm), KV 15.47 GiB per GPU, 588,134 tokens per engine as P/D's.
+At conc64 P/D gives 22% less output than its reference (1132 against 1444 tok/s), with a higher TTFT (p50 1.58 against
+0.81 s) and about the same TPOT. Untested: P/D with `deepep_v2`, more than one instance per role.
