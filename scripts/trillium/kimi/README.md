@@ -583,7 +583,7 @@ curl -sSfL -o $SCRATCH/trillium/new/k3-xn/pd/toy_proxy_server.py \
 JOB_PREFIX=nw-k3-xn NODELIST=trig[0103-0106] MILABENCH_BASE=$PWD src/scripts/trillium/kimi/serve.sh kimi-vllm-4n-pd-ep16-bringup-notune 4 1:00:00
 ```
 
-**Bring-up, job 1271433**, `trig[0103-0106]` (prefill 0103-0104, decode 0105-0106), 2026-11-08 21:32:58-22:00 (26:43),
+**Bring-up, job 1271433**, `trig[0103-0106]` (prefill 0103-0104, decode 0105-0106), 2026-11-08 21:32:58-22:00:01 (27:03),
 milabench exit 0, all four nodes "GPUs free". NIXL initialized on the four engines with the KDA state (no assertion), the
 decode workers' "NIXL compatibility check passed" against the prefill's. KV memory 15.47 GiB per GPU, 588,134 tokens per
 engine (4.42x) on both instances. Weights 55 s (prefill, warm), 392-412 s (decode, cold). Harmless: vLLM's probe of the
