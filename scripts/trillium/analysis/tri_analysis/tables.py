@@ -93,6 +93,30 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
               "CtxTok", "CtxRatio", "CtxEightSixteenTok", "CtxEightSixteenRatio", "CtxThirtyTwoSixteenTok", "CtxThirtyTwoSixteenRatio",
               "Gsm", "GsmErr", "Arc", "ArcErr", "Gpqa", "GpqaErr", "Mmlu", "MmluErr")],
           "TriKxnDpAgFour", "TriKxnDpAgTwoFiftySix",
+          # ... and on 4 nodes: prefill and decode on separate nodes against colocated (_kimi_pd_numbers, colocated: Co), and the experts
+          # over all 4 (_kimi_xn_four_numbers) against TP8 x PP4 (Pp) and EP16 with all-gather (Ep)
+          "TriKpdNodes", "TriKpdGpus", "TriKpdInstNodes", "TriKpdLayout", "TriKpdMaxSeqs", "TriKpdWeights", "TriKpdKvGib", "TriKpdKvTok", "TriKpdUp",
+          "TriKpdUpCo", "TriKpdPasses", "TriKpdRequests", "TriKpdFailed", "TriKpdWarmFailed", "TriKpdOneRatio", "TriKpdFourRatio",
+          "TriKpdSixteenRatio", "TriKpdSixtyFourRatio", "TriKpdOneTwentyEightRatio", "TriKpdTwoFiftySixRatio", "TriKpdCtxOneSixteenRatio",
+          "TriKpdCtxEightSixteenRatio", "TriKpdCtxThirtyTwoSixteenRatio", "TriKpdDecodeOneRatio", "TriKpdDecodeSixteenRatio", "TriKpdOneTok",
+          "TriKpdOneTokCo", "TriKpdSixtyFourTok", "TriKpdSixtyFourTokCo", "TriKpdTwoFiftySixTok", "TriKpdTwoFiftySixTokCo", "TriKpdLeadN",
+          "TriKpdOneTtft", "TriKpdOneTtftCo", "TriKpdOneTtftGapLo", "TriKpdOneTtftGapHi", "TriKpdOneRatioLo", "TriKpdOneRatioHi",
+          "TriKpdCtxOneSixteenTpot", "TriKpdCtxOneSixteenTpotCo", "TriKpdCtxEightSixteenTpot", "TriKpdCtxEightSixteenTpotCo",
+          "TriKpdCtxThirtyTwoSixteenTpot", "TriKpdCtxThirtyTwoSixteenTpotCo", "TriKpdCtxThirtyTwoSixteenTtft", "TriKpdCtxThirtyTwoSixteenTtftCo",
+          "TriKpdNotRun", "TriKpdGsm", "TriKpdGsmErr", "TriKpdArc", "TriKpdArcErr", "TriKpdGpqa", "TriKpdGpqaErr", "TriKpdMmlu", "TriKpdMmluErr",
+          "TriKpdGsmCo", "TriKpdGsmErrCo", "TriKpdArcCo", "TriKpdArcErrCo", "TriKpdGpqaCo", "TriKpdGpqaErrCo", "TriKpdMmluCo", "TriKpdMmluErrCo",
+          "TriKpdGpqaN", "TriKpdGpqaRight", "TriKpdGpqaRightCo", "TriKpdGpqaOnlyCo", "TriKpdGpqaOnlyPd", "TriKpdGpqaP",
+          "TriKxnFourNodes", "TriKxnFourGpus", "TriKxnFourLayout", "TriKxnFourMaxSeqs", "TriKxnFourHeld", "TriKxnFourWeights", "TriKxnFourKvGib",
+          "TriKxnFourKvTok", "TriKxnFourUp", "TriKxnFourPasses", "TriKxnFourRequests", "TriKxnFourFailed", "TriKxnFourWarmFailed",
+          "TriKxnFourOneTok", "TriKxnFourFourTok", "TriKxnFourSixteenTok", "TriKxnFourSixtyFourTok", "TriKxnFourOneTwentyEightTok",
+          "TriKxnFourTwoFiftySixTok", "TriKxnFourFiveTwelveTok", "TriKxnFourTopTok", "TriKxnFourCtxTok", "TriKxnFourCtxEightSixteenTok",
+          "TriKxnFourCtxThirtyTwoSixteenTok", "TriKxnFourOneTpot", "TriKxnFourTopTpot", "TriKxnFourOneRatio", "TriKxnFourFourRatio",
+          "TriKxnFourSixteenRatio", "TriKxnFourSixtyFourRatio", "TriKxnFourOneTwentyEightRatio", "TriKxnFourTwoFiftySixRatio",
+          "TriKxnFourFiveTwelveRatio", "TriKxnFourTopRatio", "TriKxnFourCtxRatio", "TriKxnFourCtxEightSixteenRatio",
+          "TriKxnFourCtxThirtyTwoSixteenRatio", "TriKxnFourLeadN", "TriKxnFourCommon", "TriKxnFourNotRun", "TriKxnFourTwoFiftySixTokPp",
+          "TriKxnFourTopTtft", "TriKxnFourTopTtftPp", "TriKxnFourEpOneRatio", "TriKxnFourEpTwoFiftySixRatio", "TriKxnFourEpCtxThirtyTwoSixteenRatio",
+          "TriKxnFourEpLeadN", "TriKxnFourEpCommon", "TriKxnFourGsm", "TriKxnFourGsmErr", "TriKxnFourArc", "TriKxnFourArcErr", "TriKxnFourGpqa",
+          "TriKxnFourGpqaErr", "TriKxnFourMmlu", "TriKxnFourMmluErr", "TriKxnFourAccZMax",
           # New workloads: Kimi K3 pretraining (_kimi_train_numbers): the full-size run, then the 49-layer one (Small)
           "TriKtRuns", "TriKtFailed", "TriKtLayers", "TriKtNodes", "TriKtGpus", "TriKtPp", "TriKtEp", "TriKtMicro", "TriKtSeq", "TriKtTokens",
           "TriKtParams", "TriKtActive", "TriKtStepOne", "TriKtStepTwo", "TriKtSweepFirst", "TriKtSweepSplit", "TriKtSweepHi", "TriKtSweepLo",
@@ -1266,6 +1290,244 @@ def kimi_xn_passes_table(t) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Kimi K3 on 4 nodes (kimi_xn4_*): P/D against colocated (K3-XN-02, TriKpd*), EP32 against the 4-node pipeline (K3-XN-03, TriKxnFour*)
+XN4_PD_PASSES = (("conc1", "One"), ("conc4", "Four"), ("conc16", "Sixteen"), ("conc64", "SixtyFour"), ("conc128", "OneTwentyEight"),
+                 ("conc256", "TwoFiftySix"), ("ctx1k-c16", "CtxOneSixteen"), ("ctx8k-c16", "CtxEightSixteen"),
+                 ("ctx32k-c16", "CtxThirtyTwoSixteen"), ("decodelong-c1", "DecodeOne"), ("decodelong-c16", "DecodeSixteen"))
+XN4_EP_PASSES = (("conc1", "One"), ("conc4", "Four"), ("conc16", "Sixteen"), ("conc64", "SixtyFour"), ("conc128", "OneTwentyEight"),
+                 ("conc256", "TwoFiftySix"), ("conc512", "FiveTwelve"), ("conc1024", "Top"), ("ctx128k-c1", "Ctx"),
+                 ("ctx8k-c16", "CtxEightSixteen"), ("ctx32k-c16", "CtxThirtyTwoSixteen"))
+ACC_TASKS = (("gsm8k", "Gsm"), ("arc_challenge", "Arc"), ("gpqa_diamond", "Gpqa"), ("mmlu_pro", "Mmlu"))
+
+
+def _kimi_xn4_servers(t) -> dict:
+    """The 4-node K3-XN runs, {"pd" | "colocated" | "ep32": (run, measured passes by pass)}: P/D and its colocated reference by role,
+    EP32 by layout (one engine per node)."""
+    p, runs = t.get("kimi_xn4_passes", pd.DataFrame()), t.get("kimi_xn4_runs", pd.DataFrame())
+    out = {}
+    if p.empty or runs.empty:
+        return out
+    roles = runs.role if "role" in runs else pd.Series(index=runs.index, dtype=object)
+    for key, sel in (("pd", roles == "pd"), ("colocated", roles == "colocated"), ("ep32", roles.isna() & runs.layout.str.startswith("dp"))):
+        r = runs[sel]
+        if len(r):
+            run = r.sort_values("job").iloc[-1]
+            out[key] = (run, p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass"))
+    return out
+
+
+def _kimi_four_node_passes(t):
+    """The 4-node TP8 x PP4 server's measured passes, by pass (the run TriKimiFour* reads), or an empty frame."""
+    p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
+    if p.empty or runs.empty or not (runs.nodes == 4).any():
+        return pd.DataFrame()
+    run = runs[runs.nodes == 4].sort_values("job").iloc[-1]
+    return p[(p.job.astype(str) == str(run.job)) & ~p.throwaway.astype(bool)].set_index("pass")
+
+
+def _tok(v) -> tuple:
+    return (v, ".1f" if v < 1000 else ",.0f", False)
+
+
+def _accuracy(acc, job, prefix, suffix="") -> dict[str, tuple]:
+    out = {}
+    if acc.empty:
+        return out
+    a = acc[acc.job.astype(str) == str(job)].set_index("task")
+    for task, tag in ACC_TASKS:
+        if task in a.index:
+            out[f"{prefix}{tag}{suffix}"] = (100 * a.value[task], ".1f", False)
+            out[f"{prefix}{tag}Err{suffix}"] = (100 * a.stderr[task], ".1f", False)
+    return out
+
+
+def _kimi_pd_numbers(t) -> dict[str, tuple]:
+    """Prefill and decode on separate nodes (K3-XN-02), TriKpd*: P/D against its colocated reference (Co), one run each, pass for pass.
+    Ratios: P/D's output tokens/s over colocated's, derived. One-request passes: conc1 and ctx*-c1 (128 or 256 out); decodelong-c1 apart.
+    TTFT gap: P/D's mean less colocated's, derived. GPQA paired on doc_hash, exact McNemar p (two-sided binomial on the discordant pairs)."""
+    s = _kimi_xn4_servers(t)
+    out = {}
+    if not {"pd", "colocated"} <= set(s):
+        return out
+    (run, ps), (co_run, co) = s["pd"], s["colocated"]
+    dp, tp = int(run.dp), int(run.tp)
+    out.update({"TriKpdNodes": (int(run.nodes), "d", False), "TriKpdGpus": (int(run.gpus), "d", False),
+                "TriKpdInstNodes": (int(run.nodes) // int(run.instances), "d", False),
+                "TriKpdLayout": (rf"DP{dp}\,$\times$\,TP{tp}, EP{dp * tp}", "", False), "TriKpdMaxSeqs": (int(run.max_num_seqs), "d", False),
+                "TriKpdWeights": (run.weights_gib, ".1f", False), "TriKpdKvGib": (run.kv_gib, ".1f", False),
+                "TriKpdKvTok": (int(run.kv_cache_tokens), ",d", False), "TriKpdUp": (run.engine_up_min, ".0f", False),
+                "TriKpdUpCo": (co_run.engine_up_min, ".0f", False), "TriKpdPasses": (min(len(ps), len(co)), "d", False),
+                "TriKpdRequests": (int(ps.completed.sum() + co.completed.sum()), ",d", False),
+                "TriKpdFailed": (int(ps.failed.sum() + co.failed.sum()), "d", False)})
+    allp = t.get("kimi_xn4_passes", pd.DataFrame())
+    warm = allp[allp.throwaway.astype(bool) & allp.job.astype(str).isin([str(run.job), str(co_run.job)])]
+    out["TriKpdWarmFailed"] = (int(warm.failed.sum()), "d", False)
+    common = ps.index.intersection(co.index)
+    ratio = ps.output_throughput[common] / co.output_throughput[common]
+    for name, tag in XN4_PD_PASSES:
+        if name in common:
+            out[f"TriKpd{tag}Ratio"] = (ratio[name], ".2f", False)
+    for name, tag in (("conc1", "One"), ("conc64", "SixtyFour"), ("conc256", "TwoFiftySix")):
+        if name in common:
+            out[f"TriKpd{tag}Tok"], out[f"TriKpd{tag}TokCo"] = _tok(ps.output_throughput[name]), _tok(co.output_throughput[name])
+    out["TriKpdLeadN"] = (int((ratio > 1).sum()), "d", False)
+    if "conc1" in common:
+        out.update({"TriKpdOneTtft": (ps.ttft_ms_p50["conc1"], ",.0f", False), "TriKpdOneTtftCo": (co.ttft_ms_p50["conc1"], ",.0f", False)})
+    one = [n for n in common if re.fullmatch(r"conc1|ctx\d+k-c1|decodelong-c1", n)]
+    if one:  # TTFT over every one-request pass; output over those with 128 or 256 out (decodelong-c1's 4,096 out dilute the TTFT)
+        gap = (ps.ttft_ms_mean[one] - co.ttft_ms_mean[one]) / 1000
+        short = [n for n in one if n != "decodelong-c1"]
+        out.update({"TriKpdOneTtftGapLo": (gap.min(), ".2f", False), "TriKpdOneTtftGapHi": (gap.max(), ".2f", False),
+                    "TriKpdOneRatioLo": (ratio[short].min(), ".2f", False), "TriKpdOneRatioHi": (ratio[short].max(), ".2f", False)})
+    for name, tag in (("ctx1k-c16", "CtxOneSixteen"), ("ctx8k-c16", "CtxEightSixteen"), ("ctx32k-c16", "CtxThirtyTwoSixteen")):
+        if name in common:
+            out.update({f"TriKpd{tag}Tpot": (ps.tpot_ms_p50[name], ".1f", False), f"TriKpd{tag}TpotCo": (co.tpot_ms_p50[name], ".1f", False)})
+    if "ctx32k-c16" in common:
+        out.update({"TriKpdCtxThirtyTwoSixteenTtft": (ps.ttft_ms_p50["ctx32k-c16"] / 1000, ".1f", False),
+                    "TriKpdCtxThirtyTwoSixteenTtftCo": (co.ttft_ms_p50["ctx32k-c16"] / 1000, ".1f", False)})
+    base = _kimi_two_node_passes(t)
+    if len(base):
+        ran = set(ps.index) | set(co.index)
+        out["TriKpdNotRun"] = (_and(n for n in base.sort_values("order").index if n not in ran), "", False)
+    acc = t.get("kimi_xn4_accuracy", pd.DataFrame())
+    out.update(_accuracy(acc, run.job, "TriKpd"))
+    out.update(_accuracy(acc, co_run.job, "TriKpd", "Co"))
+    q = t.get("kimi_xn4_questions", pd.DataFrame())
+    if not q.empty:
+        q = q[q.task == "gpqa_diamond"].assign(job=q.job.astype(str))
+        m = q[q.job == str(run.job)].merge(q[q.job == str(co_run.job)], on="doc_hash", suffixes=("_pd", "_co"))
+        if len(m):
+            b, c = int(((m.correct_co == 1) & (m.correct_pd == 0)).sum()), int(((m.correct_pd == 1) & (m.correct_co == 0)).sum())
+            n, k = b + c, min(b, c)
+            p = min(1.0, 2 * sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n) if n else float("nan")
+            out.update({"TriKpdGpqaN": (len(m), "d", False), "TriKpdGpqaRight": (int(m.correct_pd.sum()), "d", False),
+                        "TriKpdGpqaRightCo": (int(m.correct_co.sum()), "d", False), "TriKpdGpqaOnlyCo": (b, "d", False),
+                        "TriKpdGpqaOnlyPd": (c, "d", False), "TriKpdGpqaP": (p, ".3f", False)})
+    return out
+
+
+def _kimi_xn_four_numbers(t) -> dict[str, tuple]:
+    """The experts over 4 nodes (K3-XN-03), TriKxnFour*: EP32 (DP4 x TP8, expert parallelism, a sequence cap per engine) against the 4-node
+    TP8 x PP4 server (TriKimiFour*, Pp) and, where useful, EP16 on 2 nodes with all-gather (K3-XN-01, Ep), one run each, pass for pass.
+    Ratios: EP32's output tokens/s over the other's, derived. AccZMax: the largest |difference| / standard error of the difference over
+    the four tasks, against TP8 x PP4, derived."""
+    s, base = _kimi_xn4_servers(t), _kimi_four_node_passes(t)
+    out = {}
+    if "ep32" not in s:
+        return out
+    run, ps = s["ep32"]
+    dp, tp = int(run.dp), int(run.tp)
+    out.update({"TriKxnFourNodes": (int(run.nodes), "d", False), "TriKxnFourGpus": (int(run.gpus), "d", False),
+                "TriKxnFourLayout": (rf"DP{dp}\,$\times$\,TP{tp}, EP{dp * tp}", "", False), "TriKxnFourMaxSeqs": (int(run.max_num_seqs), "d", False),
+                "TriKxnFourHeld": (dp * int(run.max_num_seqs), "d", False), "TriKxnFourWeights": (run.weights_gib, ".1f", False),
+                "TriKxnFourKvGib": (run.kv_gib, ".1f", False), "TriKxnFourKvTok": (int(run.kv_cache_tokens), ",d", False),
+                "TriKxnFourUp": (run.engine_up_min, ".0f", False), "TriKxnFourPasses": (len(ps), "d", False),
+                "TriKxnFourRequests": (int(ps.completed.sum()), ",d", False), "TriKxnFourFailed": (int(ps.failed.sum()), "d", False)})
+    allp = t.get("kimi_xn4_passes", pd.DataFrame())
+    warm = allp[allp.throwaway.astype(bool) & (allp.job.astype(str) == str(run.job))]
+    out["TriKxnFourWarmFailed"] = (int(warm.failed.sum()), "d", False)
+    for name, tag in XN4_EP_PASSES:
+        if name in ps.index:
+            out[f"TriKxnFour{tag}Tok"] = _tok(ps.output_throughput[name])
+    for name, tag in (("conc1", "One"), ("conc1024", "Top")):
+        if name in ps.index:
+            out[f"TriKxnFour{tag}Tpot"] = (ps.tpot_ms_p50[name], ".1f" if tag == "One" else ".0f", False)
+    if len(base):
+        common = ps.index.intersection(base.index)
+        ratio = ps.output_throughput[common] / base.output_throughput[common]
+        for name, tag in XN4_EP_PASSES:
+            if name in common:
+                out[f"TriKxnFour{tag}Ratio"] = (ratio[name], ".2f", False)
+        out.update({"TriKxnFourLeadN": (int((ratio > 1).sum()), "d", False), "TriKxnFourCommon": (len(common), "d", False),
+                    "TriKxnFourNotRun": (_and(n for n in base.sort_values("order").index if n not in ps.index), "", False)})
+        if "conc256" in base.index:
+            out["TriKxnFourTwoFiftySixTokPp"] = _tok(base.output_throughput["conc256"])
+        if "conc1024" in common:
+            out.update({"TriKxnFourTopTtft": (ps.ttft_ms_p50["conc1024"] / 1000, ".1f", False),
+                        "TriKxnFourTopTtftPp": (base.ttft_ms_p50["conc1024"] / 1000, ".1f", False)})
+    ep16 = _kimi_xn_servers(t).get("Ag")
+    if ep16 is not None:
+        e = ep16[1]
+        common = ps.index.intersection(e.index)
+        ratio = ps.output_throughput[common] / e.output_throughput[common]
+        for name, tag in (("conc1", "One"), ("conc256", "TwoFiftySix"), ("ctx32k-c16", "CtxThirtyTwoSixteen")):
+            if name in common:
+                out[f"TriKxnFourEp{tag}Ratio"] = (ratio[name], ".2f", False)
+        out.update({"TriKxnFourEpLeadN": (int((ratio > 1).sum()), "d", False), "TriKxnFourEpCommon": (len(common), "d", False)})
+    acc = t.get("kimi_xn4_accuracy", pd.DataFrame())
+    out.update(_accuracy(acc, run.job, "TriKxnFour"))
+    runs = t.get("kimi_runs", pd.DataFrame())
+    if not acc.empty and len(runs) and (runs.nodes == 4).any():
+        four = runs[runs.nodes == 4].sort_values("job").iloc[-1]
+        a = acc[acc.job.astype(str) == str(run.job)].set_index("task")
+        b = t.get("kimi_accuracy", pd.DataFrame())
+        b = b[b.job.astype(str) == str(four.job)].set_index("task") if len(b) else b
+        z = [abs(a.value[k] - b.value[k]) / math.hypot(a.stderr[k], b.stderr[k]) for k, _ in ACC_TASKS if k in a.index and k in b.index]
+        if z:
+            out["TriKxnFourAccZMax"] = (max(z), ".2f", False)
+    return out
+
+
+def kimi_pd_passes_table(t) -> str:
+    """Kimi K3 inference on 4 nodes, pass for pass: prefill and decode on separate nodes (P/D) against colocated (K3-XN-02), one run
+    each; output tokens/s and its ratio (derived), TTFT medians and the difference of the means (derived), TPOT medians."""
+    s = _kimi_xn4_servers(t)
+    if not {"pd", "colocated"} <= set(s):
+        return ""
+    ps, co = s["pd"][1], s["colocated"][1]
+    lines = [r"\begin{tabular}{lrr" + "r" * 8 + "}", r"\toprule",
+             r"Pass & Conc. & In / out & \multicolumn{2}{c}{Output tok/s} & Ratio & \multicolumn{2}{c}{TTFT p50, ms} & TTFT mean, ms & "
+             r"\multicolumn{2}{c}{TPOT p50, ms} \\",
+             r"\cmidrule(lr){4-5}\cmidrule(lr){7-8}\cmidrule(lr){10-11}",
+             r" & & tokens & P/D & coloc. & (derived) & P/D & coloc. & P/D $-$ coloc. & P/D & coloc. \\", r"\midrule"]
+    group = None
+    for name in ps.sort_values("order").index:
+        if name not in co.index:
+            continue
+        x, y = ps.loc[name], co.loc[name]
+        g = (re.sub(r"\d+k?$", "", name.split("-")[0]), x.concurrency if name.startswith("ctx") else None)
+        if group is not None and g != group:
+            lines.append(r"\midrule")
+        group = g
+        lines.append(f"{name} & {int(x.concurrency)} & {int(x.input_len):,} / {int(x.output_len):,} & {x.output_throughput:,.1f} & "
+                     f"{y.output_throughput:,.1f} & {x.output_throughput / y.output_throughput:.2f} & {x.ttft_ms_p50:,.0f} & {y.ttft_ms_p50:,.0f} & "
+                     f"{x.ttft_ms_mean - y.ttft_ms_mean:+,.0f} & {x.tpot_ms_p50:.1f} & {y.tpot_ms_p50:.1f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
+def kimi_xn_four_passes_table(t) -> str:
+    """Kimi K3 inference on 4 nodes, pass for pass: TP8 x PP4 (K3-INF-02) against EP32 (K3-XN-03), one run each; output tokens/s, TTFT
+    and TPOT medians, the ratio of output tokens/s (derived), and EP32's against EP16 on 2 nodes with all-gather (K3-XN-01, derived)."""
+    s, base = _kimi_xn4_servers(t), _kimi_four_node_passes(t)
+    if "ep32" not in s or base.empty:
+        return ""
+    ps = s["ep32"][1]
+    ep16 = _kimi_xn_servers(t).get("Ag", (None, pd.DataFrame()))[1]
+    lines = [r"\begin{tabular}{lrr" + "r" * 8 + "}", r"\toprule",
+             r"Pass & Conc. & In / out & \multicolumn{2}{c}{Output tok/s} & \multicolumn{2}{c}{TTFT p50, ms} & \multicolumn{2}{c}{TPOT p50, ms} & "
+             r"\multicolumn{2}{c}{Output ratio (derived)} \\",
+             r"\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}",
+             r" & & tokens & PP4 & EP32 & PP4 & EP32 & PP4 & EP32 & EP32 / PP4 & EP32 / EP16 \\", r"\midrule"]
+    group = None
+    for name in base.sort_values("order").index:
+        x = base.loc[name]
+        g = (re.sub(r"\d+k?$", "", name.split("-")[0]), x.concurrency if name.startswith("ctx") else None)
+        if group is not None and g != group:
+            lines.append(r"\midrule")
+        group = g
+        head = f"{name} & {int(x.concurrency)} & {int(x.input_len):,} / {int(x.output_len):,} & {x.output_throughput:,.1f} & "
+        if name not in ps.index:
+            lines.append(head + r"not run & " + f"{x.ttft_ms_p50:,.0f} & & {x.tpot_ms_p50:.1f} & & & " + r"\\")
+            continue
+        y = ps.loc[name]
+        vs16 = f"{y.output_throughput / ep16.output_throughput[name]:.2f}" if len(ep16) and name in ep16.index else "--"
+        lines.append(head + f"{y.output_throughput:,.1f} & {x.ttft_ms_p50:,.0f} & {y.ttft_ms_p50:,.0f} & {x.tpot_ms_p50:.1f} & {y.tpot_ms_p50:.1f} & "
+                     f"{y.output_throughput / x.output_throughput:.2f} & {vs16} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def kimi_passes_table(t, nodes: int) -> str:
     """Kimi K3 inference: the study's passes on the server of that many nodes (throwaway warm-up left out), one row each; power
     and J per token are estimates."""
@@ -1301,15 +1563,20 @@ def kimi_runs_table(t) -> str:
     r = t.get("kimi_runs", pd.DataFrame())
     if r.empty:
         return ""
-    xn = t.get("kimi_xn_runs", pd.DataFrame())  # EP16 (K3-XN-01): one engine per node, so its sequence cap is per engine
-    r = pd.concat([r, xn], ignore_index=True) if len(xn) else r
+    # EP16 and EP32 (K3-XN-01, -03): one engine per node, so their sequence cap is per engine; P/D and colocated (K3-XN-02): two EP16
+    # instances of 2 nodes each
+    xn = [x for x in (t.get("kimi_xn_runs", pd.DataFrame()), t.get("kimi_xn4_runs", pd.DataFrame())) if len(x)]
+    r = pd.concat([r, *xn], ignore_index=True)
     labels = {backend: label for _, backend, label in XN_BACKENDS}
+    roles = {"pd": "P/D", "colocated": "colocated"}
     lines = [r"\begin{tabular}{llllrlll}", r"\toprule", r"Entry & Job & Nodes & Layout & Max seqs & Started & Ended & State \\", r"\midrule"]
     for x in r.sort_values(["start", "job"]).itertuples():
         hosts = str(x.hosts).replace(";", ", ")
         dp = int(x.dp) if "dp" in r and pd.notna(x.dp) else 1
         layout = (f"DP{dp}\\,$\\times$\\,TP{int(x.tp)}, EP{dp * int(x.tp)}, {labels.get(x.all2all, _esc(x.all2all))}" if dp > 1
                   else f"TP{int(x.tp)}\\,$\\times$\\,PP{int(x.pp)}")
+        if "role" in r and pd.notna(x.role):
+            layout = f"{int(x.instances)}\\,$\\times$\\,({layout}), {roles.get(x.role, _esc(x.role))}"
         lines.append(f"\\texttt{{{_esc(x.entry)}}} & {x.job} & {int(x.nodes)} ({hosts}) & {layout} & {int(x.max_num_seqs):,}{' per engine' if dp > 1 else ''} & "
                      f"{str(x.start).replace('T', ' ')[:16]} & "
                      f"{str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
@@ -2144,6 +2411,8 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_operations_numbers(t))
     out.update(_kimi_numbers(t))
     out.update(_kimi_xn_numbers(t))
+    out.update(_kimi_pd_numbers(t))
+    out.update(_kimi_xn_four_numbers(t))
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
@@ -2367,6 +2636,8 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_passes_four.tex").write_text(kimi_passes_table(tables, 4))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
     (out / "kimi_xn_passes.tex").write_text(kimi_xn_passes_table(tables))
+    (out / "kimi_pd_passes.tex").write_text(kimi_pd_passes_table(tables))
+    (out / "kimi_xn_four_passes.tex").write_text(kimi_xn_four_passes_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
     (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))
