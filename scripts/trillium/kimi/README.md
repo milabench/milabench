@@ -374,6 +374,36 @@ mkdir -p cache/triton; cp -an $K/cache/triton/. cache/triton/
   its own limits on top-k (K3: 16) and experts (896) are not read. vLLM's DeepEP low-latency path takes hidden sizes
   2048-8192 from a list: K3's latent 3,584 is rounded up to 4,096.
 
+### DeepEP (decided 2026-11-08: the driver settings are there)
+
+DeepEP's current main (V2.5, 2026-09-29) renamed the API vLLM 0.32's `deepep_v2` calls (`deep_ep.ElasticBuffer`) and
+needs NCCL >= 2.32.3; `a56d615` (2026-09-16) is the last commit with it, and needs NCCL >= 2.30.4 (vLLM checks the same).
+Its V2 kernels run on NCCL Gin and are compiled at run time (DeepJIT: nvcc and cuobjdump from `CUDA_HOME`); the build
+also compiles V1's legacy kernels against the venv's NVSHMEM 3.4.5. Limits in its code, against K3: top-k <= 32 (16),
+experts <= 2,048 (896), experts per rank <= 256 and dividing evenly (56 at EP16, 28 at EP32), hidden bytes aligned (7,168).
+
+`deepep_build.sh` (1 node; the login-node downloads at its top): `venv/deepep`, a copy of K3-INF's venv (1,164 s for
+16 GB, 185k files), NCCL 2.30.7 and nixl 1.5.2 (`nixl-cu13` and its shim) installed into it, DeepEP built for sm_100 with
+CUDA 13.2 from cvmfs (not its module, which loads NCCL 2.29.7 too). Builds 1270208, 1270384, 1270408 failed on the
+environment: `ccache` writing to the read-only `$HOME`, then `-lcuda` and `-l:libnccl.so.2` not found by cvmfs's ld
+(`LIBRARY_PATH` with the venv's NCCL and CUDA's stub); 1270433 built (46 s), then: `ElasticBuffer` present, run-time
+NCCL 2.30.7 (torch still reports its build's 2.29.7), vLLM's `deep_ep_v2_unavailable_reason()` None, `nixl_agent`
+imports. Its 1-node test stopped on Triton's cache in `$HOME` (`deep_ep.utils.math` is `torch.compile`-d): both scripts
+now keep it node-local. `gdrdrv` was not needed for any of this.
+
+`deepep_test.sh` (DeepEP's `tests/elastic/test_ep.py` across the job's nodes, at K3's shape), job 1270478,
+`trig[0146-0147]`, 3:26, both cases exit 0 with the test's correctness checks: 16 ranks, hidden 3,584, top-16 of 896,
+FP8 dispatch, BF16 combine. Per rank (SO: over the network, SU: within the node):
+
+| tokens per rank | dispatch | combine |
+|---|---|---|
+| 128 | 120 us (8 GB/s SO, 41 GB/s SU) | 88-139 us (12-20 GB/s SO) |
+| 4,096 | 1.15 ms (28 GB/s SO, 142 GB/s SU) | 2.07 ms (29 GB/s SO, 147 GB/s SU) |
+
+28-29 GB/s per GPU over the network at 4,096 tokens: the 4 x 400 Gb/s HCAs give 25 GB/s per GPU for 8 GPUs, so near
+line rate (est.). The job's kernel log has 128 `NVRM: GPU<n> refcntRequestReference_IMPL: Failed to enter state 1` lines,
+with the test's profiler (`profiler_start` / `profiler_stop`); none in the vLLM or build jobs on the same nodes.
+
 ### Part 1: the experts over 2 nodes (EP16)
 
 `kimi-vllm-2n-dp2tp8-ep16` (`config/kimi_study.yaml`): one TP8 engine per node joined by vLLM's data parallelism
