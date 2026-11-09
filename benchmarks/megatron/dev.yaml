@@ -1694,6 +1694,9 @@ megatron-qwen3-32b-cp-t8-128k-p2p-full-fi:
 megatron-qwen3-32b-cp-n1-8k:
   inherits: _qwcp
   argv: {--context-parallel-size: 1, --seq-length: 8192, --max-position-embeddings: 8192, --global-batch-size: 32}
+megatron-qwen3-32b-cp-n1-8k-cg:
+  inherits: megatron-qwen3-32b-cp-n1-8k
+  argv: {<<: *qwen3_cg}
 megatron-qwen3-32b-cp-n1-32k-p2p:
   inherits: _qwcp
 megatron-qwen3-32b-cp-n1-32k-a2a:
