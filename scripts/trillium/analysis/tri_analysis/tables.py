@@ -15,6 +15,7 @@ import pandas as pd
 
 from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMORY_GIB, N_NODES, NET_D2_AGAIN_JOB, NET_D2_ALL_GPUS_JOB, NET_D2_JOBS, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB)
 from . import glm_fp4
+from .flux import FROM_BLOCK as FLUX_FROM_BLOCK
 from .kimi import LOG_INTERVAL_S
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
@@ -228,7 +229,19 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           *[f"TriOf{m}{e}" for m in ("Gap", "GapWorst", "Power", "Util", "CpuMin", "IbBuffers", "GapSmall") for e in ("Lo", "Hi")],
           *[f"TriOf{m}{v}" for m in ("Power", "Util") for v in ("Pub", "Ds", "Cueq")],
           "TriOfSm", "TriOfSmMin", "TriOfCap", "TriOfCapPlain", "TriOfSmMinPlain", "TriOfCapCueq", "TriOfXid", "TriOfCpuMed", "TriOfMemAlloc", "TriOfMemRes", "TriOfNonFinite", "TriOfIbLo", "TriOfIbHi",
-          "TriOfIbTree", "TriOfIbExcess", "TriOfFirstDs", "TriOfFirstLo", "TriOfFirstHi"]
+          "TriOfIbTree", "TriOfIbExcess", "TriOfFirstDs", "TriOfFirstLo", "TriOfFirstHi",
+          # New workloads: FLUX.1 training, MLPerf (_flux_numbers; FLUX-01 at 8 nodes against Florida's 10 published runs, Fl*): setup; time to
+          # train, blocks and samples to the target, steady step, init; the split of the difference (estimates); convergence block by block;
+          # GPU telemetry; the step from 4 to 8 nodes (ten-step intervals, ours and Florida's)
+          *[f"TriFx{m}" for m in ("Nodes", "Gpus", "Gbs", "Lr", "Seed", "Target", "BlockSamples", "Ttt", "TttExact", "Samples", "Blocks", "FirstAcc",
+                                 "LastAcc", "Step", "StepLo", "StepHi", "SpsGpu", "Sps", "Init", "Val", "Tpb", "FlRuns", "FlTtt", "FlTttExact",
+                                 "FlTttLo", "FlTttHi", "FlBlocksLo", "FlBlocksHi", "FlBlocksMean", "FlSamplesLo", "FlSamplesHi", "FlFirstLo",
+                                 "FlFirstHi", "FlStep", "FlStepLo", "FlStepHi", "FlSpsGpu", "StepPct", "FlInitLo", "FlInitHi", "FlInitMed",
+                                 "FlValLo", "FlValHi", "FlTpb", "FlTpbLo", "FlTpbHi", "Diff", "Extrap", "AboveExtrap", "SplitBlocks",
+                                 "SplitSpeed", "SplitSpeedFirst", "SplitBlocksSecond", "PowerLo", "PowerHi", "HotLo", "HotHi", "SmLo", "SmHi",
+                                 "SmMin", "BlockFirst", "Above", "AboveRuns", "Below", "Inside", "Compared", "LateFrom", "LateLo",
+                                 "LateHi", "TenFour", "TenEight", "TenPct", "FlTenFour", "FlTenEight", "FlTenPct", "PowerFourLo", "PowerFourHi",
+                                 "BlocksMore", "GapFour", "GapEight")]]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -2429,6 +2442,107 @@ def of3_speed_table(t) -> str:
     return "\n".join(lines) + "\n"
 
 
+# FLUX.1 training, MLPerf (flux.build): FLUX-01 against Florida's published runs at the same node count
+FLUX_RUN, FLUX_FOUR = "nw-flux-run8.1276503", "nw-flux-real4.1276381"
+
+
+def _flux(t) -> tuple[pd.Series | None, pd.DataFrame, pd.Series | None, pd.DataFrame]:
+    """FLUX-01's row, Florida's runs at its node count (sorted by time to train), the 4-node bring-up's row and Florida's 4-node runs."""
+    r = t.get("flux_runs", pd.DataFrame())
+    if r.empty or not (r.run == FLUX_RUN).any():
+        return None, r, None, r
+    ours = r[(r.run == FLUX_RUN) & (r.job_state == "COMPLETED")]
+    four = r[(r.run == FLUX_FOUR) & (r.job_state == "COMPLETED")]
+    fl = r[r.source == "florida"]
+    ours = ours.iloc[0] if len(ours) else None
+    n = ours.nodes if ours is not None else 8
+    return (ours, fl[fl.nodes == n].sort_values("ttt_min"), four.iloc[0] if len(four) else None, fl[fl.nodes == 4])
+
+
+def _flux_numbers(t) -> dict[str, tuple]:
+    """FLUX.1, TriFx*: time to train, blocks and samples to the target, steady step, init, convergence against Florida's runs block by block,
+    the time-to-train split (estimates: Florida's median time per block extrapolated), GPU telemetry, and the step from 4 to 8 nodes."""
+    x, fl, four, fl4 = _flux(t)
+    out = {}
+    if x is None or x.status != "success" or len(fl) < 3:
+        return out
+    oly = fl.iloc[1:-1]  # MLPerf's score: the olympic mean, best and worst dropped
+    tpb = (fl.ttt_min / fl.blocks).median()  # Florida's time per block, median over the runs
+    extrap = x.blocks * tpb
+    ours_tpb = x.ttt_min / x.blocks
+    diff = x.ttt_min - oly.ttt_min.mean()
+    speed_first = oly.blocks.mean() * (ours_tpb - tpb)
+    fl_step = fl.steady_s.median()
+    for name, v, fmt in (("Nodes", int(x.nodes), "d"), ("Gpus", int(x.gpus), "d"), ("Gbs", int(x.gbs), ",d"), ("Lr", _power10(x.lr), ""),
+                         ("Seed", int(x.seed), "d"), ("Target", x.target, ".3f"), ("BlockSamples", int(x.block_samples), ",d"),
+                         ("Ttt", x.ttt_min, ".1f"), ("TttExact", x.ttt_min, ".2f"), ("Samples", int(x.samples), ",d"), ("Blocks", int(x.blocks), "d"),
+                         ("FirstAcc", x.first_acc, ".3f"), ("LastAcc", x.last_acc, ".4f"),
+                         ("Step", x.steady_s, ".3f"), ("StepLo", x.steady_lo, ".3f"), ("StepHi", x.steady_hi, ".3f"),
+                         ("SpsGpu", x.gbs / x.steady_s / x.gpus, ".1f"), ("Sps", x.gbs / x.steady_s, ",.0f"), ("Init", x.init_s, ".0f"),
+                         ("Val", x.val_s, ".2f"), ("Tpb", ours_tpb, ".3f"),
+                         ("FlRuns", len(fl), "d"), ("FlTtt", oly.ttt_min.mean(), ".1f"), ("FlTttExact", oly.ttt_min.mean(), ".2f"),
+                         ("FlTttLo", fl.ttt_min.min(), ".1f"), ("FlTttHi", fl.ttt_min.max(), ".1f"),
+                         ("FlBlocksLo", int(fl.blocks.min()), "d"), ("FlBlocksHi", int(fl.blocks.max()), "d"), ("FlBlocksMean", oly.blocks.mean(), ".1f"), ("BlocksMore", x.blocks - oly.blocks.mean(), ".1f"),
+                         ("FlSamplesLo", fl.samples.min() / 1e6, ".2f"), ("FlSamplesHi", fl.samples.max() / 1e6, ".2f"),
+                         ("FlFirstLo", fl.first_acc.min(), ".3f"), ("FlFirstHi", fl.first_acc.max(), ".3f"),
+                         ("FlStep", fl_step, ".3f"), ("FlStepLo", fl.steady_s.min(), ".3f"), ("FlStepHi", fl.steady_s.max(), ".3f"),
+                         ("FlSpsGpu", x.gbs / fl_step / x.gpus, ".1f"), ("StepPct", 100 * (x.steady_s / fl_step - 1), ".1f"),
+                         ("FlInitLo", fl.init_s.min(), ".0f"), ("FlInitHi", fl.init_s.max(), ".0f"), ("FlInitMed", fl.init_s.median(), ".0f"),
+                         ("FlValLo", fl.val_s.min(), ".2f"), ("FlValHi", fl.val_s.max(), ".2f"),
+                         ("FlTpb", tpb, ".3f"), ("FlTpbLo", (fl.ttt_min / fl.blocks).min(), ".3f"), ("FlTpbHi", (fl.ttt_min / fl.blocks).max(), ".3f"),
+                         ("Diff", diff, ".1f"), ("Extrap", extrap, ".1f"), ("AboveExtrap", 100 * (x.ttt_min / extrap - 1), ".1f"),
+                         ("SplitBlocks", extrap - oly.ttt_min.mean(), ".1f"), ("SplitSpeed", x.ttt_min - extrap, ".1f"),
+                         ("SplitSpeedFirst", speed_first, ".1f"), ("SplitBlocksSecond", diff - speed_first, ".1f"),
+                         ("PowerLo", x.get("power_lo"), ".0f"), ("PowerHi", x.get("power_hi"), ".0f"), ("HotLo", x.get("hot_lo"), ".0f"),
+                         ("HotHi", x.get("hot_hi"), ".0f"), ("SmLo", x.get("sm_lo"), ",.0f"), ("SmHi", x.get("sm_hi"), ",.0f"), ("SmMin", x.get("sm_min"), ",.0f")):
+        out[f"TriFx{name}"] = (v, fmt, False)
+    b = t["flux_blocks"]
+    ob = b[b.run == FLUX_RUN].set_index("block")
+    fb = b[b.run.isin(set(fl.run))].pivot(index="block", columns="run", values="accuracy")
+    out["TriFxBlockFirst"] = (", ".join(f"{v:.3f}" for v in ob.step_s.iloc[:FLUX_FROM_BLOCK - 1]), "", False)
+    common = [k for k in ob.index if k in fb.index]
+    above = [k for k in common if ob.accuracy[k] > fb.loc[k].max()]
+    below = [k for k in common if ob.accuracy[k] < fb.loc[k].min()]
+    out["TriFxAbove"] = (_and_list([str(k) for k in above]), "", False) if above else ("none", "", False)
+    out["TriFxAboveRuns"] = (_and_list([str(int(fb.loc[k].notna().sum())) for k in above]), "", False) if above else ("", "", False)
+    out["TriFxBelow"] = (_and_list([str(k) for k in below]), "", False) if below else ("none", "", False)
+    out["TriFxInside"] = (len(common) - len(above) - len(below), "d", False)
+    out["TriFxCompared"] = (len(common), "d", False)
+    if above:
+        late = ob.accuracy.loc[above[0]:int(ob.index.max()) - 1]  # from the first block above all of Florida's to the one before the target
+        out["TriFxLateFrom"], out["TriFxLateLo"], out["TriFxLateHi"] = (above[0], "d", False), (late.min(), ".3f", False), (late.max(), ".3f", False)
+    if four is not None and len(fl4):
+        fl8_ten, fl4_ten = fl.ten_s.median(), fl4.ten_s.median()
+        for name, v, fmt in (("TenFour", four.ten_s, ".3f"), ("TenEight", x.ten_s, ".3f"), ("TenPct", 100 * (x.ten_s / four.ten_s - 1), ".1f"),
+                             ("FlTenFour", fl4_ten, ".3f"), ("FlTenEight", fl8_ten, ".3f"), ("FlTenPct", 100 * (fl8_ten / fl4_ten - 1), ".1f"),
+                             ("GapFour", 100 * (four.ten_s / fl4_ten - 1), ".1f"), ("GapEight", 100 * (x.ten_s / fl8_ten - 1), ".1f"),
+                             ("PowerFourLo", four.get("power_lo"), ".0f"), ("PowerFourHi", four.get("power_hi"), ".0f")):
+            out[f"TriFx{name}"] = (v, fmt, False)
+    return out
+
+
+
+def flux_runs_table(t) -> str:
+    """FLUX-01 against Florida's runs at the same node count, one row per run (Florida's by time to train), and Florida's score."""
+    x, fl, _, _ = _flux(t)
+    if x is None or fl.empty:
+        return ""
+
+    def row(label, y):
+        return (f"{label} & {int(y.seed)} & {y.ttt_min:.2f} & {int(y.blocks)} & {y.samples / 1e6:.2f} & {y.first_acc:.3f} & {y.last_acc:.4f} & "
+                f"{y.steady_s:.4f} & {y.gbs / y.steady_s / y.gpus:.1f} & {y.init_s:.0f} " + r"\\")
+
+    lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
+             r"Run & Seed & Time to & Blocks & Samples & First & Final & Steady & Samples/s & Init \\",
+             r" & & train, min & & to target, M & eval & eval & step, s & per GPU & s \\", r"\midrule",
+             row(f"Ours, FLUX-01 ({int(x.nodes)} nodes)", x), r"\midrule"]
+    lines += [row(f"Florida, {y.run.split('/')[1].replace('_', ' ')}", y) for y in fl.itertuples()]
+    oly = fl.iloc[1:-1]
+    lines += [r"\midrule", f"Florida, score (olympic mean) & & {oly.ttt_min.mean():.2f} & {oly.blocks.mean():.2f} & & & & & & " + r"\\",
+              r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def qw_fp4_speed_table(t) -> str:
     """Qwen3 32B C-speed at 13 nodes by recipe, one job (GLM-FP4-03): steps 3-20 on milabench's timer, speed-ups, peak allocated memory, and the
     GPU telemetry over the same steps (all nodes)."""
@@ -2761,6 +2875,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_qw_fp4_numbers(t))
     out.update(_qw_cp_numbers(t))
     out.update(_of3_numbers(t))
+    out.update(_flux_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -2990,6 +3105,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "qw_fp4_loss.tex").write_text(qw_fp4_loss_table(tables))
     (out / "qw_cp_speed.tex").write_text(qw_cp_speed_table(tables))
     (out / "of3_speed.tex").write_text(of3_speed_table(tables))
+    (out / "flux_runs.tex").write_text(flux_runs_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):

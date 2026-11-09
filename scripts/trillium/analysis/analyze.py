@@ -119,6 +119,9 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # gpu, ib and cpu tables (up to 36 MB a run at 13 nodes; the monitor sits inside the run directory). Outside runs/: not campaign runs.
                 *[(f"trillium/new/of3/runs/{run}/{name}", f"of3/runs/{run}") for run in OF3_RUNS for name in ("steps-r*.jsonl", "runner.yml")],
                 *[(f"trillium/new/of3/runs/{run}/nodemon/nodes/*.{kind}.tsv", f"of3/nodemon/{run}") for run in OF3_RUNS for kind in ("gpu", "ib", "cpu")],
+                # FLUX.1 training, MLPerf (FLUX-01, job 1276503, 8 nodes; the 4-node real-data bring-up 1276381): MLPerf log, compliance output and
+                # nvidia-smi telemetry (4.1 MB and 0.4 MB). Florida's published logs are not on Trillium: data/raw/trillium/flux/florida/README.
+                *[(f"trillium/new/flux/runs/{run}/", f"flux/runs/{run}") for run in ("nw-flux-run8.1276503", "nw-flux-real4.1276381")],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),

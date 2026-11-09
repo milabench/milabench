@@ -1393,6 +1393,41 @@ def qw_fp4_loss(t):
     return fig
 
 
+def flux(t):
+    """FLUX.1 training (FLUX-01) against Florida's runs at the same node count: the evaluation loss at each block (every 262,144 samples) until
+    the target. Left: every block; right: the last blocks, where the runs reach the target. Florida's runs end where they reach it."""
+    r, b = t.get("flux_runs", pd.DataFrame()), t.get("flux_blocks", pd.DataFrame())
+    if r.empty or b.empty:
+        return None
+    ours = r[(r.source == "ours") & (r.job_state == "COMPLETED") & (r.status == "success")]
+    if ours.empty:
+        return None
+    x = ours.iloc[0]
+    fl = r[(r.source == "florida") & (r.nodes == x.nodes)]
+    target = x.target
+    fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6))
+    for ax, zoom in zip(axes, (False, True)):
+        for i, run in enumerate(fl.run):
+            c = b[b.run == run]
+            ax.plot(c.samples / 1e6, c.accuracy, color=MUTED, lw=0.7, alpha=0.8, label=f"Florida, {len(fl)} runs" if i == 0 else None)
+            ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=2.5, color=MUTED)
+        c = b[b.run == x.run]
+        ax.plot(c.samples / 1e6, c.accuracy, color=SERIES[0], lw=1.1, label=f"ours, FLUX-01 (seed {int(x.seed)})")
+        ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=3, color=SERIES[0])
+        ax.axhline(target, color=CRITICAL, lw=0.7, ls="--")
+        ax.annotate(f"target {target}", (0.02, target), xycoords=("axes fraction", "data"), ha="left", va="bottom", fontsize=6, color=CRITICAL)
+        ax.set_xlabel("samples (millions)" + (", last blocks" if zoom else ""))
+        if zoom:
+            ax.set_xlim(8.0, c.samples.max() / 1e6 + 0.2)
+            ax.set_ylim(target - 0.002, target + 0.010)
+        else:
+            ax.set_ylabel("evaluation loss (MLPerf eval_accuracy)")
+            ax.legend(loc="upper right", fontsize=6, frameon=False)
+        style.finish(ax, trim=False)
+    fig.tight_layout()
+    return fig
+
+
 FIGURES = {
     "machine_status": machine_status,
     "health_gpus": health_gpus,
@@ -1419,6 +1454,7 @@ FIGURES = {
     "kimi_training": kimi_training,
     "glm_rl": glm_rl,
     "qw_fp4_loss": qw_fp4_loss,
+    "flux": flux,
 }
 
 
