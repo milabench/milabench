@@ -1037,3 +1037,48 @@ JOB_PREFIX=nw-k3-xn NODELIST=<4 nodes> MILABENCH_BASE=$PWD src/scripts/trillium/
   CONFIG=$PWD/src/scripts/trillium/kimi/stall.yaml VLLM_LOG_STATS_INTERVAL=1 TRITON_PRINT_AUTOTUNING=1
 python3 -I src/scripts/trillium/kimi/stall_gaps.py runs/kimi-vllm-4n-tp8pp4-stall.<job> 1
 ```
+
+`stall_nodes.py NODEMON_DIR FROM TO` prints every node's metrics second by second over a window (GPU utilization, power,
+lowest SM clock and clock event reasons, GPM SM activity, InfiniBand GB/s, CPU), to set beside a stall.
+
+**Job 1278355**, `trig[0115-0118]` (PP0 `trig0115`, PP1 `trig0117`, PP2 `trig0118`, PP3 `trig0116`), 2026-11-09
+18:00:53-18:50:10 (49:17), `1a92add0`, COMPLETED, milabench exit 0 after 2934 s, all four nodes "GPUs free", none
+drained; nodemon closed cleanly on all four. Weights 488-888 s (cold), autotune as K3-INF-02, engine ready at 18:43:30.
+
+| pass | duration s | stalls s (`stall_gaps.py`, over 1 s) | output tok/s (derived: requests x 256 / duration) |
+|---|---|---|---|
+| warmup | 22.5 | 18.77 | |
+| conc64-1 | 23.3 | 7.94 | 1406 |
+| conc64-2 | 14.8 | none | 2214 |
+| conc128-1 | 22.2 | none | 2952 |
+| conc128-2 | 22.7 | none | 2887 |
+| conc256-1 | 52.2 | 8.49 + 8.51 | 2511 |
+| conc256-2 | 37.1 | none | 3533 |
+
+The stalls reproduce, the same size as K3-INF-02's (conc256 8.51 + 8.46 there), in the first pass of each pair only;
+conc128 did not stall after two conc64 passes. Without the stall conc64 on 4 nodes gives 2214 tok/s against 2 nodes'
+2003 (K3-INF-01): K3-INF-02's conc64 "halving" (1112) was its 14.2-s stall (one run each, other nodes).
+
+What lines up with each stall:
+- The engine (one line per batch): each stall is one batch, 7,947 ms (1 context request of 16 tokens + 11 decodes),
+  8,486 and 8,509 ms (17 context requests, 16,352 and 16,336 tokens, + 32 and 48 decodes), 18,769 ms in the warm-up
+  (12 + 1), against 0.66 s for every other batch of 16k tokens. A batch of the same composition ran in 0.66 s two
+  batches before each conc256 stall (iterations 9866, 9870): the token and request counts alone do not set it off.
+- The nodes (nodemon, 1 s): at each stall's start all 32 GPUs go idle (util 0, idle power, 2.1 kW per node) for 1.5-4
+  s. Then the stages wake one after the other in pipeline order, PP0, PP1, PP2, PP3, 2 s apart (4-5 s in the warm-up):
+  conc64-1 at 18:44:46, :48, :50, work again at :52; conc256-1 at 18:47:52, :54, :56, :58 and 18:48:02, :04, :06, :08. From
+  its turn on, a stage's 8 GPUs show 100% utilization at idle power with 1-4% SM activity (99% on PP0 in conc256-1),
+  waiting, until the stall ends; the last stage stays idle until then. The CPU of a stage goes from 0.2-0.4% to 5-10% at
+  its turn (`trig0116`). No InfiniBand traffic in the stalls; SM clocks at 1965 MHz, no clock event reason but the power
+  cap bit (0x4) that busy GPUs show; host memory flat, no OOM kill; no kernel log line during the passes (`dmesg`: only
+  `knvlinkSendInbandData` at 18:05 and at the teardown).
+- The logs: nothing in any stall window. No JIT-monitor line (its last, Triton `layer_norm_gated_fwd_kernel`, at
+  18:44:36, 7 s before conc64-1's stall), no Triton autotune line (`TRITON_PRINT_AUTOTUNING=1`), no warning. vLLM does
+  not torch.compile this model (compilation mode NONE).
+
+Inferred, not shown: a host-side cost that each pipeline stage pays in turn, about 2 s of CPU work with its GPUs idle
+before it runs the batch, the next stage starting only once it receives the batch, so the stall is about PP x 2 s (PP4
+7.9-8.5 s, PP2 4.4-4.6 s in K3-INF-01), paid once and not again in the repeated passes. Ruled out for these stalls: GPU
+compute, clocks and power (idle GPUs, no throttle), the fabric (no IB traffic, no link event), host memory, and the JITs
+vLLM's monitor watches. The host work itself is not determined: no log names it. Candidates, not checked: a JIT or
+lazily built object the monitor does not watch (kernel loading, CUDA graph or kernel-plan builds).
