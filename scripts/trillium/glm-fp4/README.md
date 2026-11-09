@@ -180,7 +180,9 @@ Full depth, 20 steps (rank 0's step rows, steps 3-20; jobs 1270575 and 1270744, 
 | 1 node 4096, peak stage 0 / 1 | 84.3 / 70.6 GiB | 102.9 / 91.4 | 87.0 / 75.3 | |
 
 NVFP4 over MXFP8 per step: 1.03x (1 node), 1.05x (4 nodes) at 8192 tokens, 1.10x without the BF16 layers, 0.77x at 4096:
-far below the layers' GEMM ratio (1.41x at 8192, `nvfp4_check.py qwen3`). GPU telemetry over the training window (8 GPUs
+below the GEMM ratio at the shapes each GPU runs: TP2 halves the GEMMs' width, so a GPU's 8192-token GEMMs do the work of
+the full-width 4096-token ones, 1.31x NVFP4 over MXFP8 per layer (`nvfp4_check.py qwen3`; 1.41x at full width, TP1); its
+4096-token GEMMs are half that again, not measured. GPU telemetry over the training window (8 GPUs
 of the 1-node runs, nodemon `gpu.tsv` and `gpm.tsv`): busy 82.5 % BF16, 75.1 % MXFP8, 75.3 % NVFP4, 64.7 % NVFP4 at
 4096; tensor-pipe activity 38.6 / 25.5 / 16.0 % (8.7 % NVFP4 at 4096). The GPUs wait more as the GEMMs get faster: TP2
 halves each GPU's GEMMs, NVFP4 issues the most kernels per GEMM (quantization, Hadamard transform), and with PP2 the
