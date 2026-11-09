@@ -246,6 +246,7 @@ if [[ -f "${TELEMETRY_SCRIPT:-}"  ]]; then
 fi
 # Trillium: GPU power, clocks, use and clock event (throttle) reasons on every node, every second, for the whole job
 ( srun --overlap --ntasks-per-node=1 bash -c 'nvidia-smi --query-gpu=timestamp,index,power.draw,clocks.sm,utilization.gpu,temperature.gpu,memory.used,clocks_event_reasons.active,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown --format=csv -lms 1000 > "$0/gpu-$(hostname -s).csv"' "${LOGDIR}" ) &
+telemetry=$!
 
 #Set GPU clocks for MaxQ and MinEDP run
 if [[ "${SET_MAXQ_CLK}" == "1" ]] || [[ "${SET_MINEDP_CLK}" == "1" ]]; then
@@ -316,3 +317,5 @@ mllogger.event(key=mllog.constants.CACHE_CLEAR, value=True)"
 
     echo "EXPERIMENT_STOP $(date +%s)"
 done
+# Trillium: stop this script's telemetry step (gap.sbatch runs several of these scripts in one job)
+pkill -TERM -P "$telemetry" || true  # its srun; the subshell then exits
