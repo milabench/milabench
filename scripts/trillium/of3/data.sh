@@ -1,13 +1,14 @@
 #!/bin/bash
-# OF3 training-data subset, under 10 GB (OF3_BRIEF.md "Space and downloads"): N_PDB PDB entries (DRAW uniform or
-# weighted, subset.py), the first 800 long distillation monomers, 400 RNA distillation monomers, with the files they read
+# OF3 training-data subset (OF3_BRIEF.md "Space and downloads"): N_PDB PDB entries (DRAW uniform or weighted,
+# subset.py), the first N_MONO long distillation monomers (read in order: monomers.py), 400 RNA distillation monomers, with the files they read
 # and all reference molecules, from the public bucket s3://openfold3-data into $D/s3 (same layout as the bucket); the
 # subset's caches and key list in $D/NAME. With OLD (an earlier subset's directory), the files only OLD read are deleted
 # from $D/s3 afterwards. Rerunning resumes.
-# Step 1: data.sh subset weighted 150. Step 2: data.sh subset-u uniform 700 subset.
-# Run on a data-transfer node: ssh tri-dm2 bash $SCRATCH/trillium/new/of3/src/scripts/trillium/of3/data.sh NAME DRAW N_PDB [OLD]
+# Step 1: data.sh subset weighted 150 800. Step 2: data.sh subset-u uniform 700 800 subset. OF3-01: data.sh subset-u2
+# uniform 700 4400 subset-u.
+# Run on a data-transfer node: ssh tri-dm2 bash $SCRATCH/trillium/new/of3/src/scripts/trillium/of3/data.sh NAME DRAW N_PDB N_MONO [OLD]
 set -euo pipefail
-NAME=$1 DRAW=$2 N_PDB=$3 OLD=${4:-}
+NAME=$1 DRAW=$2 N_PDB=$3 N_MONO=$4 OLD=${5:-}
 O=$SCRATCH/trillium/new/of3
 D=$O/data
 S=$O/src/scripts/trillium/of3
@@ -17,7 +18,7 @@ cd "$D/caches"
 if [ ! -s "$D/$NAME/keys.txt" ]; then
     curl -sS -C - -o rna_cache.json $B/rna_distillation_set/training_cache_RNA_monomer.json
     curl -sS -r 0-16777215 -o long_head.json $B/monomer_distillation_sets_v2/long_monomers/cache.json
-    "$O/venv/bin/python" -I "$S/subset.py" "$D/caches" "$D/$NAME" "$N_PDB" 800 400 0 "$DRAW"
+    "$O/venv/bin/python" -I "$S/subset.py" "$D/caches" "$D/$NAME" "$N_PDB" "$N_MONO" 400 0 "$DRAW"
 fi
 for p in pdb_training_set/preprocessed_pdb_data/standard/reference_mols monomer_distillation_sets_v2/shared/reference_mols \
         rna_distillation_set/reference_mols; do

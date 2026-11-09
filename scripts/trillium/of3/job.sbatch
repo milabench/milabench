@@ -46,7 +46,7 @@ for variant in "$@"; do
     $PY "$S/merge.py" "$S/initial_training.yml" "$S/variants.yml" "$name" "$O/data" "$run" "$NODES" "$STEPS" > "$run/runner.yml" || exit 1
     run_nodes $PY -m benchmate.nodemon --out "$run/nodemon" --bench "of3-$variant" 2> "$run/nodemon.log" &
     monitor=$!
-    echo "[of3] === $variant ($run)"
+    echo "[of3] === $variant ($run) $(date +%T)"
     start=$(date +%s)
     mkdir -p "$run/nccl" "$run/samples"
     timing=0

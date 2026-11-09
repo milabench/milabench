@@ -163,7 +163,7 @@ What the mix changes:
 - Data loader: the giant assemblies are what the loader finds hard. On the step-1 subset the 4-node job (1273810,
   trig[0101-0104]) had no first step after 9 min: 30 ranks waited in NCCL (GPUs at 100 % use, 255 W) for ranks 16 and
   23 (trig0103), whose workers were in OpenFold3's MSA processing of PDB samples (`create_main`, `calculate_profile`,
-  `vstack_pad_msa_arrays`, py-spy) for over 7 min; cancelled. The DataLoader hands batches out in order, so one slow
+  `vstack_pad_msa_arrays`, py-spy; that output was not saved) for over 7 min; cancelled. The DataLoader hands batches out in order, so one slow
   sample holds its rank, and DDP holds every rank. On the uniform subset, per sample (`samples/`, 2,303 at 4 nodes):
   median 2.5 s, p99 18 s, max 23 s (2 nodes: p99 50 s, max 59 s); the workers are busy 3-4 % of the time. The full
   mix has twice the uniform subset's share of 100-chain entries; how often its slowest samples outlast the
@@ -193,8 +193,8 @@ per node.
 profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes, per traced step:
 - About 190,000 kernels, median 2.9 us, 67 % under 10 us; 1.06 s of CPU time in launch calls.
 - Kernel time 4.2-4.6 s: elementwise 37 %, copies, casts, cat and indexing 18 %, layer norm 13 %, FP32 SIMT GEMMs 13 %,
-  BF16 GEMMs 8 %, softmax 6 %, reductions 2-3 %, NCCL 0.5-2 %. Memory-bound small kernels, not GEMMs: hence 600 W and
-  1,965 MHz, unlike the LLM workloads.
+  BF16 GEMMs 8 %, softmax 6 %, reductions 2-3 %, NCCL 0.5-2 %. Small, mostly memory-bound kernels rather than GEMMs;
+  that this is why the GPUs draw 600 W at 1,965 MHz, unlike the LLM workloads, is inferred, not measured.
 - By module (kernels inside a module's annotated range, forward and the recomputed forward of the backward;
   approximate): triangle attention 33-38 %, diffusion module 23-27 %, the rest of the pairformer 18 %, triangle
   multiplication 10-11 %, MSA module 3 %, template module 2 %.
@@ -204,9 +204,10 @@ profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes
   0.22 s at 1, 2 and 4 nodes: InfiniBand adds nothing visible over NVLink. The per-GPU loss with nodes (6 and 9 % for
   published) is the wait for the slowest of more samples (est.: the period grows while the sync stays flat).
 - The GPU's idle time (16 % by nodemon in the timing run): in the traced steps, 0.34 s of gaps under 10 us between
-  kernels, 1.8-1.9 s of 10-100 us gaps, 0.1 s of 0.1-1 ms, 0.14-0.43 s over 1 ms. The CPU issues one small kernel
-  after another and the GPU waits for the launches; the long gaps are the gradient sync's copies and Python loop and
-  the `.item()` syncs; the all-reduce and the data loader are minor. With cuEquivariance (2 nodes) kernel time falls
+  kernels, 1.8-1.9 s of 10-100 us gaps, 0.1 s of 0.1-1 ms, 0.14-0.43 s over 1 ms (`prof.py` bins gaps by length
+  only). Inferred: the CPU issues one small kernel after another and the GPU waits for the launches, and the gaps over
+  1 ms are the gradient sync's copies and Python loop and the `.item()` syncs; measured: the all-reduce (18 ms) and
+  the data loader's gap (0.11 s) are minor. With cuEquivariance (2 nodes) kernel time falls
   from 5.07 to 2.98 s per traced step, and GPU use from 83 to 65-68 %: the step gains only 18-21 %.
 - DeepSpeed's attention (1 node): its kernels take 0.79 s, elementwise falls from 1.73 to 0.76 s.
 
@@ -256,6 +257,19 @@ runs start and end: trig0145 (1273590 at 05:37; 1273594 at 05:40, 05:42, 05:51),
 06:16, 06:18, 06:20, 06:23). The same line is in 51 other new-workload jobs (flux, glm-fp4, glm-rl, k3-inf, k3-xn,
 k3-xn2) on 32 nodes, trig0145 (1262531, 1262691, 1263799, 1269990, 1270053, 1271416, 1271975, 1272006, 1272079),
 trig0151 (1264182, 1272079) and trig0152 (1264182) included. Training ran normally.
+
+### Monomers for OF3-01 (13 nodes, 40 steps)
+
+The long-monomer set is read in order (`sample_in_order: true`), and OpenFold3's ordered slice
+(`_get_ordered_subset` in `stochastic_sampler_dataset.py`) wraps back to entry 0 once only: past 2 N monomer draws an
+index runs off the set and `monomer.py` raises IndexError (an upstream limit). With 800 monomers, all four OF3-01
+runs would have failed at step 32 (review of 2026-11-09). `monomers.py RANKS STEPS N` reproduces the sampler's global
+list (seed 42) and counts the draws a run reaches, the 32 samples each rank prefetches included; it predicts every
+monomer the 1-, 2- and 4-node runs logged (381, 306 and 611, none different). At 104 ranks, 40 steps reach 3,605
+draws; with a 20 % margin the OF3-01 subset has 4,400 monomers (`data.sh subset-u2 uniform 700 4400 subset-u`; variant
+`uniform` now reads `subset-u2`, whose first 800 monomers, PDB and RNA entries are those of `subset-u`, so the step-2
+runs read the same samples from it). Runs that reach more than 2 N monomer draws fail; longer runs need more
+monomers, or `sample_in_order: false` (a compromise).
 
 ## Not tested yet
 
