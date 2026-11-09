@@ -32,9 +32,10 @@ of pp13-ep8 (8192 tokens; 32 local experts, 2048 tokens each). Measured:
 - error against BF16 (random data, the same weights): output 3.8 % MXFP8, 14.6 % NVFP4; weight gradient 3.8 % / 16.7 %;
   no NaN.
 
-Not measured by the check: `q_up` and the dense fc1 (LayerNormLinear: TE's RMSNorm compiles at run time and found no
-CUDA headers; milabench sets them, the standalone check did not), and memory (its "kept" column is wrong: the previous
-recipe's buffers are freed after its baseline reading).
+`q_up` and the dense fc1 (LayerNormLinear) failed there: TE's RMSNorm compiles at run time and found no CUDA headers,
+which milabench sets for runs and the standalone check did not; `job.sbatch check:glm5` sets them (job 1270151: all 12
+modules, MoE layer 24.54 / 17.95 / 15.70 ms, NVFP4 1.14x MXFP8). Its memory column was wrong (the previous recipe's
+buffers were freed after its baseline reading) and is gone.
 
 ## Not run yet
 
@@ -61,3 +62,39 @@ megatron-glm5-fp4-test-n1-bf16` (GLM-5.3's config and tokenizer, 200,000 FineWeb
 `job.sbatch megatron-glm5-fp4-test-n1-bf16 megatron-glm5-fp4-test-n1-nvfp4 lt:megatron-glm5-fp4-test-n1-nvfp4-lt`
 (submit line at its top). The campaign ran this model on 2 nodes only (PP2), so the BF16 step time has no campaign
 reference at one node: that comparison is step 3's, on `megatron-glm5-tri-test-b200-n2-gbs32`.
+
+Measured (jobs 1270151 and 1270295, trig0145; rank 0's step rows, step time over steps 6-50; peak allocated over the 8
+ranks; `-mxfp8` is the campaign's recipe on the same model, added for its memory):
+
+| | BF16 | MXFP8 | NVFP4 |
+|---|---|---|---|
+| loss step 1 / 6 / 21 / 50 | 13.16 / 22.43 / 9.16 / 7.894 | 13.16 / 21.72 / 12.79 / 7.899 | 13.16 / 24.57 / 12.60 / 7.912 |
+| loss, mean of steps 41-50 | 7.919 | 7.941 | 7.972 |
+| NaN, max grad norm | none, 184 | none, 171 | none, 197 |
+| step time median (sd) | 3.227 s (0.33) | 2.958 s (0.20) | 2.916 s (0.08) |
+| peak allocated, mean (max) of 8 ranks | 43.98 (46.24) GiB | 59.22 (59.22) GiB | 48.06 (49.66) GiB |
+
+The loss goes down in all three; NVFP4 runs further from BF16 between steps 6 and 25 and ends 0.053 above it over steps
+41-50, MXFP8 0.022 (one run each: no repeat to read the gaps against). Memory over BF16 per quantized parameter
+(3.88 B per rank in MXFP8, 3.38 B in NVFP4 without the BF16 layer): MXFP8 4.2 bytes (the campaign's pp13-ep8: 4.2-5.8),
+NVFP4 1.3 bytes (its two copies: 1.125). Scaled to pp13-ep8 (8.43 B per rank in the middle stages), an estimate: NVFP4
+about 100 GiB at the largest rank, against 90.0 BF16 and 132.3 MXFP8 measured (job 1242058).
+
+Which GEMMs ran in E2M1 (`-nvfp4-lt`, job 1270295, rank 0, 3 steps, cuBLASLt trace): 6,960 calls in E2M1 with E4M3 scales
+per 16 values, 85.6 % of the traced FLOPs: the attention projections, the indexer's `wq_b` and `wk`, the dense MLP of
+layer 1 and the expert GEMMs (their token counts all multiples of 128: the padding); 1,104 in BF16 (14.4 %) at the same
+attention and expert shapes, the BF16 last layer (`o_proj`: 336 E2M1, 24 BF16), and a few BF16-only shapes; the router
+in FP32. The output layer and the plugin's einsums go through torch's cuBLAS path, which this trace does not show.
+
+## Qwen3 32B's GEMMs (`nvfp4_check.py qwen3`, job 1270151)
+
+The same modules for a Qwen3 32B layer (te.LayerNormLinear for QKV 5120 -> 10240 and gate+up 5120 -> 51200, te.Linear
+for O 8192 -> 5120 and down 25600 -> 5120), forward + dgrad + wgrad per call, weights cached (in parentheses: quantized
+again in every call), ms, BF16 / MXFP8 / NVFP4:
+
+| tokens | QKV | O | gate+up | down | layer | speed-up MXFP8 / NVFP4 |
+|---|---|---|---|---|---|---|
+| 4096 | 1.02 / 0.68 / 0.58 | 0.71 / 0.43 / 0.47 | 4.69 / 2.96 / 2.20 | 2.13 / 1.59 / 1.07 | 8.55 / 5.66 / 4.32 (9.04 / 6.16 / 4.96) | 1.51x / 1.98x (1.47x / 1.82x) |
+| 8192 | 2.24 / 1.40 / 1.15 | 1.32 / 0.88 / 0.70 | 9.78 / 5.56 / 3.97 | 4.58 / 2.81 / 1.72 | 17.91 / 10.64 / 7.54 (17.91 / 11.25 / 8.02) | 1.68x / 2.37x (1.59x / 2.23x) |
+
+One run of 10 calls each after 3 warm-up calls: no repeat.
