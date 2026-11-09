@@ -28,7 +28,9 @@ LOCAL=/dev/shm/$USER
 run_all() { srun --export=ALL --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
 run_all mkdir -p "$LOCAL/tmp"
 trap 'run_all rm -rf "$LOCAL"' EXIT
-export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton
+# Megatron's import chain loads flashinfer, which writes its cache under $HOME (read only on the compute nodes)
+export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton TILELANG_CACHE_DIR=$LOCAL/tilelang FLASHINFER_WORKSPACE_BASE=$LOCAL \
+    SGLANG_JIT_CACHE_DIR=$LOCAL/sglang-jit
 echo "[qw-cp] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST $SRC $(git -C $SRC rev-parse --short HEAD) ulimit -c $(ulimit -c)"
 run_all bash "$SRC/scripts/trillium/power_check.sh" || exit 4
 system=$Q/slurm/system.$SLURM_JOB_ID.yaml
