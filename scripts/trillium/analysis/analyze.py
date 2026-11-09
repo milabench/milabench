@@ -35,6 +35,7 @@ HOST = "trillium-gpu"
 # Directories under $SCRATCH/trillium copied into data/raw/trillium/. Checkpoints: only their
 # JSON metadata, never the checkpoint files themselves (up to ~9 TB).
 REMOTE = ["runs", "nccl", "nodemon"]
+GLM_FP4_RUNS = [f"glm-fp4.1271210.megatron-glm5-tri-pp13-ep8-n13-gbs256{s}" for s in ("", "-mxfp8", "-nvfp4")]
 # Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
 # The trailing slash matters: health checks are one directory per job, directly under health/.
 REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
@@ -76,6 +77,10 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 *[(f"trillium/new/glm-rl/slurm/{log}", "glm-rl/slurm") for log in ("nw-glm-rl-glm5-1266065.out",
                                                                                    "nw-glm-rl-glm5-r3-1267147.out",
                                                                                    "nw-glm-rl-glm5-disagg-1267151.out")],
+                # GLM-5 C-speed with BF16, MXFP8 and NVFP4 at 13 nodes (GLM-FP4-01, job 1271210): its three run directories (49-71 MB
+                # each) and the GPU telemetry of each entry (gpu.tsv only, 23 MB in all). Outside runs/: not campaign runs.
+                *[(f"trillium/new/glm-fp4/runs/{run}/", f"glm-fp4/runs/{run}") for run in GLM_FP4_RUNS],
+                *[(f"trillium/new/glm-fp4/nodemon/{run}/nodes/*.gpu.tsv", f"glm-fp4/nodemon/{run}") for run in GLM_FP4_RUNS],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),
