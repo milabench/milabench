@@ -1856,3 +1856,9 @@ megatron-qwen3-32b-cp-t8-n3of4:
   num_machines: 3
   placement: {nodes: leaf, group_nodes: 3}
   argv: {--global-batch-size: 24}
+# the 128k loss run's settings for 12 steps (learning rate 3e-4, warm-up 5): its steps took 24.2 s from step 5, against
+# 25.1-25.2 s for megatron-qwen3-32b-cp-n1-128k-p2p-full (1e-6) on trig0121 and trig0145
+megatron-qwen3-32b-cp-n1-128k-lr3e-4:
+  inherits: megatron-qwen3-32b-cp-n1-128k-loss
+  max_duration: 900
+  argv: {--train-iters: 12}
