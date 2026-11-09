@@ -544,10 +544,38 @@ kimi-vllm-2n-tp8pp2-dummy:
 # group's tokens, partial GEMMs, reduce-scatter). The shared experts only with deepep_v2 (or deep_gemm_mega_moe): 107.41
 # GiB, KV 26.47 GiB (job 1270725); DeepEP does not start without it (KV 5.0 GiB, job 1270544). On both backends, so that
 # they compare with the same layout (coordinator, 2026-11-08); with allgather_reducescatter it shards layer 0 only.
+#
+# The study's passes that the KV memory holds without queueing: per engine about 150 requests of 1,280 tokens with
+# allgather_reducescatter and 267 with deepep_v2 (est., from vLLM's 4.23x and 7.55x max-model-len, jobs 1271244,
+# 1271240). Dropped: conc512 and conc1024 (256 and 512 per engine), ctx64k-c16 (8 x 65.6k tokens per engine against
+# 562,563) and ctx128k-c16 (8 x 131k against 562,563 and 1,004,792). A second throwaway warm-up shaped like conc64:
+# its later requests mix prefill and decode in one batch, so DeepEP JIT-compiles the kernels of those batch sizes before
+# the measured passes (the first conc64 of job 1271240 stalled 20 s, its repeat did not)
 kimi-vllm-2n-dp2tp8-ep16:
   inherits: kimi-vllm-2n-tp8pp2
   env:
     VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT: "1"
+  client:
+    passes:
+      - *warmup
+      - {name: warmup-mixed, argv: {--max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,   argv: {--max-concurrency: 1,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc4,   argv: {--max-concurrency: 4,   --num-prompts: 60,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc16,  argv: {--max-concurrency: 16,  --num-prompts: 64,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc128, argv: {--max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc256, argv: {--max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c1,  argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 131072, --random-output-len: 128}}
+      - {name: ctx1k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c16,  argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 4,  --random-input-len: 1024, --random-output-len: 4096}}
+      - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 32, --random-input-len: 1024, --random-output-len: 4096}}
+      - *eval
   server:
     multinode: dp
     dp_local: 1

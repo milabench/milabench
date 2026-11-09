@@ -437,11 +437,46 @@ NVSHMEM): they assert `num_topk <= 11` in dispatch and combine (`kNumMaxTopK = 1
 and take hidden sizes from a list without 3,584; vLLM would also need a batched-format expert kernel (Marlin, not
 TRTLLM). Not runnable for K3's top-16: not tried.
 
-conc1 is the same on both backends. Inferred, not profiled: DeepEP's test measured about 120 us per dispatch and 90-140 us
-per combine at 128 tokens per rank; over 92 MoE layers that is about 24 ms per decode step, close to the 31.5 against
-9.1 ms. conc64 has a 23.8 s p99 TTFT (a stall, cause not determined; this layout logs no engine throughput lines), and
+conc1 is the same on both backends. Estimated from DeepEP's test (about 120 us per dispatch and 90-140 us per combine at
+128 tokens per rank, over 92 MoE layers): about 24 ms of all-to-all per decode step; the profile below measured 19.8 ms. conc64 has a 23.8 s p99 TTFT (a stall, cause not determined; this layout logs no engine throughput lines), and
 DeepEP and the sharded shared experts change together here: their shares are not separable, since DeepEP without the
 sharding does not start.
+
+**Both backends, sharded shared experts, `-diag` bring-ups, 2026-11-08 21:05-21:32** (the bring-up's passes, then a conc1
+and a conc64 pass under vLLM's torch profiler, 10 iterations after 20, per-kernel time per rank;
+`profile_summary.py` sums a trace by kind, divided by its steps). DeepEP job 1271240 on `trig[0101-0102]`, all-gather job
+1271244 on `trig[0103-0104]`, same time, different node pairs. Both COMPLETED, nodes "GPUs free".
+
+| | all-gather (1271244) | DeepEP (1271240) |
+|---|---|---|
+| weights / KV per GPU | 127.13 / 14.79 GiB | 107.41 / 26.47 GiB |
+| KV per engine | 562,563 tokens, 4.23x | 1,004,792 tokens, 7.55x |
+| conc1 tok/s, TPOT p50 | 29.70, 33.18 ms | 30.99, 31.51 ms |
+| conc64 tok/s, TTFT p50 / p99, ITL p50 | 1056.30, 1306 / 6450 ms, 45.24 ms | 665.77, 2093 / 23070 ms, 45.76 ms |
+| conc64 again (`conc64-profile`) | 1072.07, 1423 / 4189 ms, 43.08 ms | 961.98, 2053 / 2724 ms, 45.85 ms |
+| GSM8K first 200 | 197 (K3-INF-01: 197) | 196 |
+
+Kernel time per decode step, rank 0, profiled (the profiler slows conc1 to 25.43 tok/s on all-gather):
+
+| ms per step | all-gather conc1 | all-gather conc64 | DeepEP conc1 | DeepEP conc64 |
+|---|---|---|---|---|
+| all-to-all between the nodes | 13.6 (all-gather 9.6, reduce-scatter 4.0) | 20.0 (14.1, 6.0) | 19.8 (dispatch 10.0, combine 9.7) | 23.8 (10.7, 13.1) |
+| dense GEMMs | 10.0 | 12.1 | 7.0 | 9.8 |
+| MoE expert GEMMs | 6.7 | 6.9 | 1.6 | 7.1 |
+| TP collectives in the node | 1.4 | 2.0 | 6.6 | 3.7 |
+| routing, attention, other | 6.4 | 6.6 | 6.0 | 7.1 |
+| sum | 38.1 | 47.7 | 40.9 | 51.5 |
+
+Measured, not estimated: the all-to-all is 36-48% of a decode step on both backends (one rank; the profiler's own
+overhead included), DeepEP's dispatch and combine cost more than NCCL's all-gather and reduce-scatter at these batch sizes,
+and the sharded shared experts move time from dense GEMMs to the node's TP collectives. (b): the conc64 drop is two
+things. A one-time stall: the first conc64 on DeepEP waits ~20 s more for prefill, its repeat does not (p99 TTFT 2.7 s),
+in both DeepEP runs (1270725, 1271240); inferred, not logged: DeepEP JIT-compiling its kernels for batch sizes the warm-up
+never made (vLLM rounds the size up to a power of 2 and DeepEP compiles one kernel per size, `deepep_v2.py`; the warm-up's
+64 equal requests never mix prefill and decode). The study entries now run a second warm-up shaped like conc64. Then a
+steady 10% (962 against 1072 tok/s on the repeat), in prefill: TTFT p50 2.05 against 1.42 s, decode ITL about the same.
+vLLM's `--enable-logging-iteration-details` logged nothing here (it needs the engine's stats logging, off in these DP
+servers; no throughput lines either).
 
 ### Part 1: the experts over 2 nodes (EP16)
 
