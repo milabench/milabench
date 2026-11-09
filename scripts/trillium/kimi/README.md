@@ -569,6 +569,30 @@ compare like for like with K3-INF-01. ctx64k-c16 (16 x 65.6k) is at capacity.
 `deep_gemm_mega_moe` only, the shared experts (`KimiMLP`: all-gather of the TP group's tokens, partial GEMMs,
 reduce-scatter): about 21 GiB per GPU back for the KV cache with DeepEP, 1.2 with `allgather_reducescatter` (est.).
 
+### Part 1 on 4 nodes: EP32
+
+`kimi-vllm-4n-dp4tp8-ep32`: EP16's server over 4 nodes, DP4 x TP8, 28 experts per GPU (all-gather all-to-all, shared
+experts whole as on EP16's all-gather server). `-bringup-notune`: warm-up, conc1, conc64, conc1024 (256 per engine), GSM8K.
+
+**Bring-up, job 1271715**, `trig[0101-0102,0107-0108]`, 2026-11-08 22:05:40-22:39:39 (33:59), milabench exit 0, all four
+nodes "GPUs free". Weights 85.01 GiB per GPU (EP16 all-gather: 127.13), KV 56.25 GiB, "2,138,945 tokens, 16.07x" per
+engine, four engines (K3-INF-02's one engine: 97.98x). Loads 43-81 s (warm), 512-549 s (`trig0107-0108`, cold); engine
+init 157-194 s (DP0, DP1: 626-663 s, waiting for the cold nodes); CUDA graphs 57 s, 8.24 GiB.
+
+| pass | done / failed | output tok/s | TTFT p50 / p99 ms | TPOT p50 ms | ITL p50 ms | K3-INF-02 bring-up, TP8 x PP4, autotuned (1264956) |
+|---|---|---|---|---|---|---|
+| warmup | 64 / 0 | 736.9 | | | | |
+| conc1 | 60 / 0 | 19.08 | 226 / 526 | 51.65 | 51.64 | 109.0, TPOT 8.87 |
+| conc64 | 128 / 0 | 994.40 | 1808 / 1856 | 59.21 | 56.78 | 1012.2, TPOT 22.7 |
+| conc1024 | 953 / 1095 | 49.02 | 17184 / 23962 | 1077.7 | 975.6 | 3865.3 |
+
+conc1024 failed: at 22:39:04 a worker of DP3 (`trig0108`, GPU 0) hit "CUDA error: an illegal memory access", reported
+at a later stream sync, so the kernel is not known; its engine died and the remaining requests failed; GSM8K did not run.
+No Xid in the job's kernel log. Before that the pass ran at about 1 s per decode step. Not determined; inferred, not
+measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
+during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
+nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
+
 ### Part 3: prefill and decode on separate nodes
 
 vLLM 0.32's `NixlConnector` moves Mamba-type state with the attention KV (`kv_connector/v1/nixl/base_worker.py`), and
@@ -622,6 +646,7 @@ proxy's second hop (derived, not measured).
 
 **Its colocated reference, job 1271710** (`kimi-vllm-4n-pd-ep16-colocated-bringup-notune`, coordinator, 2026-11-08):
 the same nodes `trig[0103-0106]`, instances, flags and proxy (`pd_proxy.py --colocated`: each request whole to one
-instance, round-robin), 22:05-; weights 52-55 s (warm), KV 15.47 GiB per GPU, 588,134 tokens per engine as P/D's.
+instance, round-robin), 22:05:10-22:25:04 (19:54), milabench exit 0, all four nodes "GPUs free"; weights 52-55 s
+(warm), KV 15.47 GiB per GPU, 588,134 tokens per engine as P/D's; GSM8K's first 200: 197 / 200.
 At conc64 P/D gives 22% less output than its reference (1132 against 1444 tok/s), with a higher TTFT (p50 1.58 against
 0.81 s) and about the same TPOT. Untested: P/D with `deepep_v2`, more than one instance per role.
