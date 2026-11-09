@@ -350,19 +350,35 @@ which was 4-5 % slower than 3e-4 at 128k on one node (two same-node pairs, above
 | power cap, mean power, SM clock median (lowest) | 86.3-88.7 %, 887-908 W, 1,432-1,455 (1,110) MHz | 90.2-92.6 %, 921-938 W, 1,455-1,485 (1,275) | 94.1-97.1 %, 943-962 W, 1,425-1,455 (1,095) |
 | loss at step 20 | 9.081 | 9.100 | 9.081 |
 
-The uneven steps (from every rank's step rows and the node monitor):
-- In 17 of the 18 steps 3-20 the 8 ranks of one node (one data-parallel replica, a CP4 x TP2 group), at a few steps of 2-5
-  nodes, run their forward plus backward 1.1-4.5 s longer than the median rank (5.46 s forward, 15.5 s backward), and the
-  step is longer by about as much over about 22.5 s. The node moves: trig0147 at steps 3-7, trig0140 at 8-12, then
-  trig0139 and trig0143. Steps 11, 13 and 18 have none (22.49-22.77 s). Not an alternation, though it can look like one.
-- Not lining up with it: the straggling node's mean power and median SM clock in its slow steps are within 1-2 % of the
-  other nodes' (all at the cap); its ranks' peak reserved memory grows in 0-5 of them per step (the run's highest reached
-  171.7 GiB at step 2, 171.9 at step 19); the InfiniBand bytes are the same on every node and port. CP4 x DP13 with full
-  recompute (91.5 GiB) and CP8 x DP6 selective (112.6 GiB) have no straggler in any step.
-- Left: memory, 162.0 GiB allocated and up to 171.9 reserved of 178, where the same layout at 4 nodes had the allocator
-  mapping memory every step (its profile: 9.4 s in `cuMemCreate`). A stall on one rank delays its CP group and the other
-  replicas wait at the gradient reduce. A reading only: the step rows do not record allocator calls and this run has no
-  profile.
+The uneven steps (from every rank's step rows and the local-rank-0 monitor's 0.5 s GPU samples on each node):
+- Which: in 15 of the 18 steps 3-20 at least one node is more than 1 s behind the median rank in forward plus backward
+  (5.46 s forward, 15.5 s backward), by 1.0-4.5 s, and the step is longer by about as much over about 22.5 s; in 9 of them
+  (steps 3, 7, 9, 10, 12, 14, 16, 17, 19) more than one node (all five at step 14). Steps 11, 13 and 18 have none
+  (22.49-22.77 s). Five nodes are ever slow: trig0147 (steps 3-7, 12, 14), trig0140 (7-10, 12, 14), trig0141 (9, 10, 14,
+  17; 3.9 and 3.4 s at 9 and 17), trig0139 (3, 14-16, 19, 20) and trig0143 (14, 16, 17, 19); the eight others never.
+- Where on the node: one GPU pair, one CP rank with its two TP ranks (GPUs 2-3; GPUs 0-1 on trig0143), is late in its
+  forward by that amount; the node's other six GPUs, its other three CP ranks, wait for it in their backward by the same
+  amount (+0.9-4.6 s), so per node most of the excess shows in backward.
+- What lines up with it: memory in use (NVML) on that GPU. On the five nodes that are ever slow, GPU 2 (GPU 0 on
+  trig0143) drops 5-17 GiB below the GPU's 178-179 GiB of 179 and comes back, for 10-37 s at a time, 3-13 times per node
+  over steps 3-20; the eight nodes never slow show no drop above 2 GiB, and neither QW-CP-01 128k entry shows any. On
+  trig0143, GPU 0 stays at 178-179 GiB through step 13 and dips to 170-172 GiB within every step from step 14, the step it
+  first lags. Not one to one with steps: most slow node-steps have a drop in that step or one running into it, but a few
+  do not (trig0147 at step 12, trig0143 at steps 14 and 19), and drops also come in steps where the node keeps up.
+- What does not: the slow node's mean power and median SM clock in its slow steps are within 1-2 % of the other nodes'
+  (all at the cap); the InfiniBand bytes are the same on every node and port; the data loader waits at most 3 ms per step;
+  Python's garbage collection (checked in the results review). `mem_reserved_peak_gib` in the step rows is a running
+  maximum (it never falls on any of the 104 ranks), so it cannot show memory released and taken again.
+- So the stragglers line up with memory being released and mapped again at the limit, on one GPU per slow node (162.0
+  GiB allocated, up to 171.9 reserved, 178-179 in use of 179). The mechanism, the caching allocator freeing and remapping
+  memory under pressure as the 4-node profile showed (9.4 s in `cuMemCreate` per step), is the inference: there is no
+  record of allocator calls and no profile of this run.
+- QW-CP-01 for comparison: CP4 x DP13 with full recompute stays within 0.44 s of the median rank in every step; in
+  CP8 x DP6 selective no node is 1 s behind, but one CP8 pair (trig0137 and trig0139) runs 0.56-0.91 s behind in 9 of the
+  18 steps (two other pairs 0.41-0.92 s in 4 steps each).
+- The steps without a stall (11, 13, 18: 22.49-22.77 s) are 4.7-5.9 % below CP8 x DP6's median. So the tie at 12-13 nodes
+  depends on CP4 x DP13 sitting at the memory limit; with headroom, CP4 in the node at selective recompute might be faster
+  (inferred, one run).
 
 ## Not run, untested
 
