@@ -844,9 +844,9 @@ run's step-to-step spread:
   Onset: the first decode line at one running request under 7.5 tokens/s from a rank of the engine that logs the
   rollout's last decode line (engines take the nodes 8 at a time in IP order), in minutes from the rollout's start
   (its perf line less `perf/rollout_time`). The rollout time follows when the last request's engine enters the slow mode
-  (5-10 min in both runs), so the rollout comparison is confounded. The kernels' gain shows in the decode rates of both modes and
-  in the median request, +13-15 %, if the cap does not change the decode speed (likely: at most 4 requests run per rank,
-  under the 32; untested). Step 0's rollout (926 against 1,210 s) is a single value each.
+  (5-10 min in both runs), so the rollout comparison is confounded. The kernels' gain shows in the decode rates of both
+  modes and in the median request, +13-15 %, if the cap does not change the decode speed (likely: at most 4 requests run
+  per rank, under the 32; untested). Step 0's rollout (926 against 1,210 s) is a single value each.
 - Nodes: trig0122 replaced trig0115. The engines take the nodes in IP order, so engines 1 and 2 got other nodes than in
   GLM-RL-03, and those are the engines that ended rollouts 1 and 2 of GLM-RL-06. Effect not known.
 - Log-probs: `tis_abs` 1.5 times GLM-RL-03's (0.111-0.125 against 0.073-0.081), the TIS clip fraction 2.6 times; at 10
