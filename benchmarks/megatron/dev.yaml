@@ -1536,3 +1536,42 @@ megatron-qwen3-32b-n1-tp2-cg-mxfp8:
 megatron-qwen3-32b-n1-tp2-cg-nvfp4:
   inherits: megatron-qwen3-32b-n1-tp2-cg-bf16
   argv: {<<: *qwen3_nvfp4, --tensorboard-dir: ../../../prof/n1-tp2-cg-nvfp4/tb}
+# -tpo: TP2's sequence-parallel all-gather / reduce-scatter overlapped with the GEMMs (TE userbuffers,
+# --tp-comm-overlap), on the 4-node TP2 x DP16 layout with CUDA graphs
+megatron-qwen3-32b-n4-tp2-cg-tpo-bf16:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-bf16
+  argv: {--tp-comm-overlap: true, --tensorboard-dir: ../../../prof/n4-tp2-cg-tpo-bf16/tb}
+megatron-qwen3-32b-n4-tp2-cg-tpo-mxfp8:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-mxfp8
+  argv: {--tp-comm-overlap: true, --tensorboard-dir: ../../../prof/n4-tp2-cg-tpo-mxfp8/tb}
+megatron-qwen3-32b-n4-tp2-cg-tpo-nvfp4:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-nvfp4
+  argv: {--tp-comm-overlap: true, --tensorboard-dir: ../../../prof/n4-tp2-cg-tpo-nvfp4/tb}
+
+# Qwen3 32B C-loss: 500 steps with the C-loss settings (seed 1234, lr 3e-4, warm-up 50, cosine to 3e-5), 1 node, TP2 x PP2
+# x data parallel 2 without CUDA graphs (MXFP8 runs out of memory on one node with them), 32 x 8192 tokens per step:
+# 128,000 slots of 1024 tokens, about 4 documents each with a stride of 4: 600,000 FineWeb documents staged
+_qwen3_loss_n1:
+  inherits: _qwen3_32b
+  # BF16 took 8.04 s per step: 67 min for 500 steps, 90 min with startup and margin
+  max_duration: 5400
+  data:
+    samples: 600000
+    doc_stride: 4
+  argv:
+    <<: *tri_loss
+megatron-qwen3-32b-loss-bf16-n1:
+  inherits: _qwen3_loss_n1
+megatron-qwen3-32b-loss-bf16-rep2-n1:
+  inherits: _qwen3_loss_n1
+megatron-qwen3-32b-loss-mxfp8-n1:
+  inherits: _qwen3_loss_n1
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-loss-nvfp4-n1:
+  inherits: _qwen3_loss_n1
+  argv: {<<: *qwen3_nvfp4}
+# 20 steps of the NVFP4 one: the 600,000 documents read with the stride, data_loading in the summary
+megatron-qwen3-32b-loss-check-n1:
+  inherits: megatron-qwen3-32b-loss-nvfp4-n1
+  max_duration: 1200
+  argv: {--train-iters: 20, --lr-warmup-iters: 5}

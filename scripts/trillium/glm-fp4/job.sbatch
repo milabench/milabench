@@ -8,26 +8,29 @@
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-glm-fp4-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-glm-fp4-s2 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=1 \
-#     --exclusive --gpus-per-node=b200:8 --time=00:45:00 --nodelist=... --output=$G/slurm/%x-%j.out job.sbatch ENTRY...
+#     --exclusive --gpus-per-node=b200:8 --time=00:45:00 --nodelist=... --output=$G/slurm/%x-%j.out job.sbatch [src:DIR] ENTRY...
 ulimit -c 0
 set -uo pipefail
 unset PYTHONPATH PIP_CONFIG_FILE
 # the srun steps milabench starts on the other nodes (benchmarks/megatron SrunOneNode) get this job's environment
 export SLURM_EXPORT_ENV=ALL
 G=$SCRATCH/trillium/new/glm-fp4
-export MILABENCH_BASE=$G MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1 PATH=$G/src/.venv/bin:$PATH
+# src:DIR as the first item: run that milabench checkout (with its own .venv) instead of $G/src
+SRC=$G/src
+if [ "${1#src:}" != "${1:-}" ]; then SRC=${1#src:}; shift; fi
+export MILABENCH_BASE=$G MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1 PATH=$SRC/.venv/bin:$PATH
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_HOME=$G/cache
 export WANDB_MODE=disabled TORCHINDUCTOR_COMPILE_THREADS=2
 export TT_CAMPAIGN=trillium-new-$(date +%m%d) TT_EXPERIMENT=GLM-FP4-bringup TT_REPETITION=1 TT_FAMILY=slurm
-CONFIG=$G/src/benchmarks/megatron/dev.yaml
+CONFIG=$SRC/benchmarks/megatron/dev.yaml
 LOCAL=/dev/shm/$USER
 run_all() { srun --export=ALL --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
 run_all mkdir -p "$LOCAL/tmp"
 trap 'run_all rm -rf "$LOCAL"' EXIT
 export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton TILELANG_CACHE_DIR=$LOCAL/tilelang FLASHINFER_WORKSPACE_BASE=$LOCAL \
     SGLANG_JIT_CACHE_DIR=$LOCAL/sglang-jit
-echo "[glm-fp4] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST $(git -C $G/src rev-parse --short HEAD) ulimit -c $(ulimit -c)"
-run_all bash "$G/src/scripts/trillium/power_check.sh" || exit 4
+echo "[glm-fp4] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST $SRC $(git -C $SRC rev-parse --short HEAD) ulimit -c $(ulimit -c)"
+run_all bash "$SRC/scripts/trillium/power_check.sh" || exit 4
 system=$G/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
 mkdir -p $G/logs $G/prof
@@ -44,7 +47,7 @@ for item in "$@"; do
         [ "${args%%:*}" = moe ] && args="moe $G/data/moe-configs $(echo ${args#moe} | tr ':' ' ')"
         srun --export=ALL --overlap --propagate=CORE --ntasks=1 env CUDA_VISIBLE_DEVICES=0 CUDA_HOME=$SP/nvidia/cu13 \
             NVTE_CUDA_INCLUDE_DIR=$SP/nvidia/cu13/include LD_LIBRARY_PATH=$SP/nvidia/cu13/lib:${LD_LIBRARY_PATH:-} \
-            $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py $args
+            $G/venv/torch/bin/python $SRC/scripts/trillium/glm-fp4/nvfp4_check.py $args
         echo "[glm-fp4] $item rc=$?"
         continue
     fi
