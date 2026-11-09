@@ -614,7 +614,7 @@ kimi-vllm-2n-dp2tp8-ep16-bringup-diag:
   server:
     argv: &ep16_diag_argv
       --enable-logging-iteration-details: true
-      --profiler-config: '{"profiler": "torch", "torch_profiler_dir": "${dirs.runs}/profile-${name}", "delay_iterations": 20, "max_iterations": 10, "ignore_frontend": true, "torch_profiler_with_stack": false}'
+      --profiler-config: '{"profiler": "torch", "torch_profiler_dir": "${...dirs.runs}/profile-${...name}", "delay_iterations": 20, "max_iterations": 10, "ignore_frontend": true, "torch_profiler_with_stack": false}'
 
 kimi-vllm-2n-dp2tp8-ep16-deepep-bringup-diag:
   inherits: kimi-vllm-2n-dp2tp8-ep16-deepep-bringup-notune
