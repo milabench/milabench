@@ -139,7 +139,20 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriFpFourEndNv", "TriFpFourCapNv",
           "TriFpFourNvBf", "TriFpFourNvMx", "TriFpFourMxBf", "TriFpFourNvBfPct", "TriFpFourMxBfPct", "TriFpFourNvMxDiff", "TriFpFourNvMxDiffMed",
           "TriFpFourMemMxNv", "TriFpFourMemNvBf", "TriFpFourCapOtherBfLo", "TriFpFourCapOtherBfHi", "TriFpFourCapOtherMx", "TriFpFourCapOtherNv",
-          "TriFpFourMxBfSpeed", "TriFpFourCampBf", "TriFpFourCampMx", "TriFpFourCampMxBf"]
+          "TriFpFourMxBfSpeed", "TriFpFourCampBf", "TriFpFourCampMx", "TriFpFourCampMxBf",
+          # New workloads: Qwen3 32B dense with NVFP4 (_qw_fp4_numbers): C-speed at 13 nodes (GLM-FP4-03): setup, per recipe (Bf, Mx, Nv),
+          # speed-ups, power; C-loss on 1 node (GLM-FP4-02, TriQwFpFourL*, Loss*, Gap*): setup, per run (Bf, Rep: BF16's same-seed repeat, Mx, Nv)
+          "TriQwFpFourNodes", "TriQwFpFourGpus", "TriQwFpFourTp", "TriQwFpFourDp", "TriQwFpFourSeqs", "TriQwFpFourSeqLen", "TriQwFpFourLayers",
+          "TriQwFpFourBfLast", "TriQwFpFourSteps", "TriQwFpFourFrom", "TriQwFpFourMeasured",
+          *[f"TriQwFpFour{m}{r}" for r in ("Bf", "Mx", "Nv") for m in ("Step", "Med", "Sd", "Tok", "Mem", "CapMed", "CapLo", "CapHi", "Power", "Sm")],
+          "TriQwFpFourSpNvBf", "TriQwFpFourSpNvMx", "TriQwFpFourSpMxBf", "TriQwFpFourSmBfNvPct", "TriQwFpFourXid",
+          "TriQwFpFourLNodes", "TriQwFpFourLTp", "TriQwFpFourLPp", "TriQwFpFourLDp", "TriQwFpFourLSeqs", "TriQwFpFourLSteps", "TriQwFpFourLLr",
+          "TriQwFpFourLMinLr", "TriQwFpFourLWarm", "TriQwFpFourLSeed",
+          *[f"TriQwFpFour{m}{r}" for r in ("Bf", "Rep", "Mx", "Nv") for m in ("LossHundred", "LossTwoFifty", "LossEnd", "LStep", "LMem")],
+          *[f"TriQwFpFour{m}{r}" for r in ("Rep", "Mx", "Nv") for m in ("Gap", "GapEarly")],
+          "TriQwFpFourGapFrom", "TriQwFpFourGapTo", "TriQwFpFourGapEarlyFrom", "TriQwFpFourGapEarlyTo", "TriQwFpFourLossDiffFrom",
+          "TriQwFpFourGnDiffFrom", "TriQwFpFourTenBf", "TriQwFpFourTenRep", "TriQwFpFourLMaxLo", "TriQwFpFourLMaxHi", "TriQwFpFourLNonFinite",
+          "TriQwFpFourLEndLo", "TriQwFpFourLEndHi"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -1483,6 +1496,144 @@ def _glm_fp4_numbers(t) -> dict[str, tuple]:
     return out
 
 
+QW_LOSS_RUNS = (("bf16", "Bf", "BF16"), ("bf16-rep2", "Rep", "BF16, same-seed repeat"), ("mxfp8", "Mx", "MXFP8"), ("nvfp4", "Nv", "NVFP4"))
+QW_GAP, QW_GAP_EARLY = 10, (91, 100)  # the gap to BF16: mean over the last 10 steps, and over steps 91-100
+
+
+def _power10(x: float) -> str:
+    """3e-4 -> $3\\times10^{-4}$, 1e-6 -> $10^{-6}$."""
+    e = math.floor(math.log10(x))
+    m = x / 10 ** e
+    m = round(m, 6)
+    return f"$10^{{{e}}}$" if m == 1 else f"${m:g}\\times10^{{{e}}}$"
+
+
+def _qw_fp4(t) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Qwen3 32B with NVFP4 (glm_fp4.py, qw_fp4_*): the completed C-speed entries by precision, the completed C-loss runs by run label (job
+    is the key: the BF16 repeat differs from BF16 by its entry name only), and the loss per step, a column per run label."""
+    r = t.get("qw_fp4_runs", pd.DataFrame())
+    if r.empty:
+        return r, r, r
+    done = r[r.job_state == "COMPLETED"]
+    speed, loss = done[done.experiment == "C-speed"], done[done.experiment == "C-loss"]
+    if speed.precision.duplicated().any() or loss.run.duplicated().any():
+        raise SystemExit("[report] qw_fp4_runs: two completed entries with the same recipe or run label")
+    l = t.get("qw_fp4_loss", pd.DataFrame())
+    curves = l[l.job.astype(str).isin(set(loss.job.astype(str)))].pivot(index="step", columns="run", values="loss") if len(l) and len(loss) else pd.DataFrame()
+    return speed.set_index("precision"), loss.set_index("run"), curves
+
+
+def _qw_fp4_numbers(t) -> dict[str, tuple]:
+    """Qwen3 32B with NVFP4, TriQwFpFour*: C-speed at 13 nodes (GLM-FP4-03) on milabench's timer, steps 3-20, the GPU telemetry over the same
+    steps; C-loss on 1 node (GLM-FP4-02): loss at a few steps, the gap to BF16 over the last 10 steps and over steps 91-100, the same-seed
+    repeat's first differences."""
+    m, lo, curves = _qw_fp4(t)
+    out = {}
+    if {"bf16", "mxfp8", "nvfp4"} <= set(m.index):
+        nv = m.loc["nvfp4"]
+        for key, macro, fmt in (("nodes", "Nodes", "d"), ("gpus", "Gpus", "d"), ("tp", "Tp", "d"), ("dp", "Dp", "d"), ("seqs", "Seqs", "d"),
+                                ("seq_len", "SeqLen", ",d"), ("n_layers", "Layers", "d"), ("bf16_layers_last", "BfLast", "d"),
+                                ("steps_logged", "Steps", "d"), ("measured", "Measured", "d")):
+            out[f"TriQwFpFour{macro}"] = (int(nv[key]), fmt, False)
+        out["TriQwFpFourFrom"] = (glm_fp4.FIRST_STEP, "d", False)
+        for rec, name, _ in FP4_RECIPES:
+            x = m.loc[rec]
+            for col, macro, fmt in (("step_mean", "Step", ".2f"), ("step_median", "Med", ".2f"), ("step_sd", "Sd", ".3f"), ("tok_s_gpu", "Tok", ",.0f"),
+                                    ("mem_alloc_gib", "Mem", ".1f"), ("cap_med", "CapMed", ".1f"), ("cap_lo", "CapLo", ".1f"), ("cap_hi", "CapHi", ".1f"),
+                                    ("power_w", "Power", ".0f"), ("sm_mhz", "Sm", ",.0f")):
+                out[f"TriQwFpFour{macro}{name}"] = (x[col], fmt, False)
+        s = m.step_mean
+        out["TriQwFpFourSpNvBf"] = (s.bf16 / s.nvfp4, ".2f", False)
+        out["TriQwFpFourSpNvMx"] = (s.mxfp8 / s.nvfp4, ".2f", False)
+        out["TriQwFpFourSpMxBf"] = (s.bf16 / s.mxfp8, ".2f", False)
+        out["TriQwFpFourSmBfNvPct"] = (100 * (1 - m.sm_mhz.bf16 / m.sm_mhz.nvfp4), ".0f", False)
+        out["TriQwFpFourXid"] = (int(m.xid_rows.sum()), "d", False)
+    if {"bf16", "bf16-rep2", "mxfp8", "nvfp4"} <= set(lo.index) and len(curves):
+        b = lo.loc["bf16"]
+        for key, macro, fmt in (("nodes", "LNodes", "d"), ("tp", "LTp", "d"), ("pp", "LPp", "d"), ("dp", "LDp", "d"), ("seqs", "LSeqs", "d"),
+                                ("steps_logged", "LSteps", "d"), ("lr_warmup", "LWarm", "d"), ("seed", "LSeed", "d")):
+            out[f"TriQwFpFour{macro}"] = (int(b[key]), fmt, False)
+        if lo.lr.nunique() == 1 and lo.min_lr.nunique() == 1 and set(lo.lr_schedule) == {"cosine"}:  # the same schedule in every run
+            out["TriQwFpFourLLr"] = (_power10(b.lr), "", False)
+            out["TriQwFpFourLMinLr"] = (_power10(b.min_lr), "", False)
+        last = int(curves.index.max())
+        for run, name, _ in QW_LOSS_RUNS:
+            x = lo.loc[run]
+            for step, macro in ((100, "LossHundred"), (250, "LossTwoFifty"), (last, "LossEnd")):
+                out[f"TriQwFpFour{macro}{name}"] = (curves.loc[step, run], ".3f", False)
+            out[f"TriQwFpFourLStep{name}"] = (x.step_mean, ".2f", False)
+            out[f"TriQwFpFourLMem{name}"] = (x.mem_alloc_gib, ".1f", False)
+        gap = curves.sub(curves.bf16, axis=0)
+        for run, name, _ in QW_LOSS_RUNS[1:]:
+            out[f"TriQwFpFourGap{name}"] = (gap.loc[last - QW_GAP + 1:last, run].mean(), "+.3f", False)
+            out[f"TriQwFpFourGapEarly{name}"] = (gap.loc[QW_GAP_EARLY[0]:QW_GAP_EARLY[1], run].mean(), "+.2f", False)
+        out["TriQwFpFourGapFrom"], out["TriQwFpFourGapTo"] = (last - QW_GAP + 1, "d", False), (last, "d", False)
+        out["TriQwFpFourGapEarlyFrom"], out["TriQwFpFourGapEarlyTo"] = (QW_GAP_EARLY[0], "d", False), (QW_GAP_EARLY[1], "d", False)
+        diff = curves.index[curves.bf16 != curves["bf16-rep2"]]  # bit-equal until here
+        if len(diff):
+            out["TriQwFpFourLossDiffFrom"] = (int(diff.min()), "d", False)
+        lt = t["qw_fp4_loss"]
+        gn = lt[lt.job.astype(str).isin({str(lo.job.bf16), str(lo.job["bf16-rep2"])})].pivot(index="step", columns="run", values="grad_norm")
+        gdiff = gn.index[gn.bf16 != gn["bf16-rep2"]]
+        if len(gdiff):
+            out["TriQwFpFourGnDiffFrom"] = (int(gdiff.min()), "d", False)
+        if 10 in curves.index:
+            out["TriQwFpFourTenBf"] = (curves.loc[10, "bf16"], ".2f", False)
+            out["TriQwFpFourTenRep"] = (curves.loc[10, "bf16-rep2"], ".2f", False)
+        out["TriQwFpFourLMaxLo"] = (lo.loss_max_after50.min(), ".2f", False)
+        out["TriQwFpFourLMaxHi"] = (lo.loss_max_after50.max(), ".2f", False)
+        out["TriQwFpFourLNonFinite"] = (int(lo.loss_nonfinite.sum()), "d", False)
+        out["TriQwFpFourLEndLo"] = (curves.loc[last].min(), ".2f", False)
+        out["TriQwFpFourLEndHi"] = (curves.loc[last].max(), ".2f", False)
+    return out
+
+
+def qw_fp4_speed_table(t) -> str:
+    """Qwen3 32B C-speed at 13 nodes by recipe, one job (GLM-FP4-03): steps 3-20 on milabench's timer, speed-ups, peak allocated memory, and the
+    GPU telemetry over the same steps (all nodes)."""
+    m, _, _ = _qw_fp4(t)
+    if not {"bf16", "mxfp8"} <= set(m.index):
+        return ""
+    lines = [r"\begin{tabular}{lrrrrrrrrrr}", r"\toprule",
+             r"Recipe & Mean step & Median & SD & Speed-up & Speed-up & Tokens/s & Peak alloc. & At power cap, \% & Mean GPU & Mean SM \\",
+             r" & s & s & s & vs BF16 & vs MXFP8 & per GPU & GiB & median node (range) & power, W & clock, MHz \\", r"\midrule"]
+    for rec, _, label in FP4_RECIPES:
+        if rec not in m.index:
+            continue
+        x = m.loc[rec]
+        if x.bf16_layers_last:
+            label += f" (last {int(x.bf16_layers_last)} layers BF16)"
+        lines.append(f"{label} & {x.step_mean:.2f} & {x.step_median:.2f} & {x.step_sd:.3f} & {m.step_mean.bf16 / x.step_mean:.2f} & "
+                     f"{m.step_mean.mxfp8 / x.step_mean:.2f} & {x.tok_s_gpu:,.0f} & {x.mem_alloc_gib:.1f} & {x.cap_med:.1f} ({x.cap_lo:.1f}--{x.cap_hi:.1f}) & "
+                     f"{x.power_w:.0f} & {x.sm_mhz:,.0f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
+def qw_fp4_loss_table(t) -> str:
+    """Qwen3 32B C-loss on 1 node, one job per run (GLM-FP4-02): job (the key), node, mean step (steps 3-500), peak allocated memory, loss at steps 100, 250 and the
+    last, and the gap to BF16 over steps 91-100 and the last 10."""
+    _, lo, curves = _qw_fp4(t)
+    if "bf16" not in lo.index or curves.empty:
+        return ""
+    last = int(curves.index.max())
+    gap = curves.sub(curves.bf16, axis=0)
+    lines = [r"\begin{tabular}{lllrrrrrrr}", r"\toprule",
+             rf"Run & Job & Node & Mean step & Peak alloc. & \multicolumn{{3}}{{c}}{{Loss at step}} & \multicolumn{{2}}{{c}}{{Minus BF16, steps}} \\",
+             rf" & & & s & GiB & 100 & 250 & {last} & {QW_GAP_EARLY[0]}--{QW_GAP_EARLY[1]} & {last - QW_GAP + 1}--{last} \\", r"\midrule"]
+    for run, _, label in QW_LOSS_RUNS:
+        if run not in lo.index or run not in curves:
+            continue
+        x = lo.loc[run]
+        g = ("", "") if run == "bf16" else (f"{gap.loc[QW_GAP_EARLY[0]:QW_GAP_EARLY[1], run].mean():+.2f}", f"{gap.loc[last - QW_GAP + 1:last, run].mean():+.3f}")
+        if x.bf16_layers_last:
+            label += f" (last {int(x.bf16_layers_last)} layers BF16)"
+        lines.append(f"{label} & {x.job} & \\texttt{{{x.hosts}}} & {x.step_mean:.2f} & {x.mem_alloc_gib:.1f} & {curves.loc[100, run]:.3f} & {curves.loc[250, run]:.3f} & "
+                     f"{curves.loc[last, run]:.3f} & {g[0]} & {g[1]} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def glm_fp4_runs_table(t) -> str:
     """GLM-5 C-speed at 13 nodes by recipe, one job (GLM-FP4-01): steps 3-20 on milabench's timer, peak allocated memory, loss at step 20,
     and the last stage's node's share of GPU samples at the software power cap."""
@@ -1760,6 +1911,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
+    out.update(_qw_fp4_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -1981,6 +2133,8 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
     (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))
+    (out / "qw_fp4_speed.tex").write_text(qw_fp4_speed_table(tables))
+    (out / "qw_fp4_loss.tex").write_text(qw_fp4_loss_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):

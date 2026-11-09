@@ -18,7 +18,7 @@ from tt_analysis.figures import _activity, _cpu_drop
 from . import style
 from .machine import (GLM_COPY_NODES, GLM_SEQS_PER_COPY, GLM_STRONG_SEQS, GPU_MEMORY_GIB, GPUS_PER_NODE, NET_D2_JOBS, NET_D2_AGAIN_JOB, NET_D3_INSIDE_JOB, NET_D3_JOB, NET_FULL_JOB,
                       NODE_NET_GBS, NODES, SUBNET_OF)
-from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK2, LIGHT, MUTED, QWEN,
+from .style import (BLUE, COLLECTIVE_COLOR, COLLECTIVE_MARKER, CRITICAL, GLM, INK, INK2, LIGHT, MUTED, QWEN,
                     RECIPE_COLOR, SCALE_COLOR, SEQUENTIAL, SERIES, TEXT_WIDTH, TOKENS_COLOR, WORKLOAD_COLOR,
                     WORKLOAD_LABEL, marker_kw)
 from .select import (CAPPED_NODES, REF_NODES, SLOW_NODES, checkpoints, completed, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
@@ -1331,6 +1331,46 @@ def glm_rl(t):
     return fig
 
 
+def qw_fp4_loss(t):
+    """Qwen3 32B C-loss on 1 node (GLM-FP4-02): the loss per step of each run, and each run minus BF16 (10-step mean), with BF16's same-seed repeat
+    as the noise. One job per run, keyed on the job: the repeat differs from BF16 by its entry name only."""
+    r, l = t.get("qw_fp4_runs", pd.DataFrame()), t.get("qw_fp4_loss", pd.DataFrame())
+    if r.empty or l.empty:
+        return None
+    done = r[(r.job_state == "COMPLETED") & (r.experiment == "C-loss")]
+    curves = l[l.job.astype(str).isin(set(done.job.astype(str)))].pivot(index="step", columns="run", values="loss")
+    if "bf16" not in curves:
+        return None
+    look = {"bf16": (INK, "-", "BF16"), "bf16-rep2": (MUTED, (0, (3, 1.5)), "BF16, same-seed repeat"),
+            "mxfp8": (RECIPE_COLOR["mxfp8"], "-", "MXFP8"), "nvfp4": (SERIES[6], "-", "NVFP4")}
+    runs = [k for k in look if k in curves]
+    last = int(curves.index.max())
+    fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6))
+    for run in runs:
+        color, ls, label = look[run]
+        a.plot(curves.index, curves[run], color=color, ls=ls, lw=0.8, label=label)
+        if run != "bf16":
+            gap = (curves[run] - curves.bf16).rolling(10, center=True, min_periods=5).mean()
+            end = (curves[run] - curves.bf16).loc[last - 9:last].mean()
+            b.plot(gap.index, gap, color=color, ls=ls, lw=1.0, label=f"{label}: {end:+.2f}")
+    top = curves.loc[1:].max().max()
+    a.set_ylim(4.8, 9.0)  # the warm-up spikes run off the axis
+    a.annotate(f"warm-up spikes off the axis (up to {top:.0f})", (0.98, 0.97), xycoords="axes fraction", ha="right", va="top", fontsize=6, color=INK2)
+    a.set_xlabel("step")
+    a.set_ylabel("training loss")
+    a.legend(loc="lower left", fontsize=6, frameon=False)
+    b.axhline(0, color=INK2, lw=0.6)
+    b.set_ylim(-0.6, 0.8)
+    b.set_xlabel(f"step (legend: mean of steps {last - 9}-{last})")
+    b.set_ylabel("loss minus BF16 loss\n(10-step mean)")
+    b.legend(loc="lower right", fontsize=6, frameon=False)
+    for ax in (a, b):
+        ax.set_xlim(0, last)
+        style.finish(ax, trim=False)
+    fig.tight_layout()
+    return fig
+
+
 FIGURES = {
     "machine_status": machine_status,
     "health_gpus": health_gpus,
@@ -1356,6 +1396,7 @@ FIGURES = {
     "kimi_inference": kimi_inference,
     "kimi_training": kimi_training,
     "glm_rl": glm_rl,
+    "qw_fp4_loss": qw_fp4_loss,
 }
 
 
