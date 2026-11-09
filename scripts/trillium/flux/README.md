@@ -112,9 +112,32 @@ Job 1272079 (trig0145, trig0151, completed, 9:57; GBS 512, LR 2e-4, 1,600 warm-u
   at 2 nodes (+4.4%), 791 samples/s, 49.5 per GPU. The mock set holds 9,728 samples, so an epoch ends and Lightning
   validates every 19 steps (15 evaluations in 300 steps; intervals that hold one take 0.86-0.90 s, and MLPerf's
   `train_step_time` per 19-step block reads 0.71-0.74 s). Florida's real data evaluates every 512 steps.
-- Memory: peak `memory.used` 174.3-175.7 GiB of 179.1 per GPU (nvidia-smi every 5 s).
+- Memory: peak `memory.used` 170.2-171.6 GiB (174,320-175,704 MiB) of 179.1 per GPU (nvidia-smi every 5 s).
 - Startup: job start to `init_start` 52 s (Florida's prolog 9 s, container and imports 31 s); `init_start` to
   `run_start` 287 s (`warmup_time` 286.8, Florida's median 186-189: +100 s, cause not determined; the Triton and
   inductor caches start empty in each job's /tmp).
 - GPUs while busy (utilization >= 90%): 685-830 W mean per GPU, 968-985 W peak, SM clock median 1,770-1,897 MHz.
 - Compliance checker: fails only on the quality target, as expected for 300 steps. NCCL's transport is not logged.
+
+## Step 3 (2026-11-09): 4 nodes, Florida's 4-node setup, synthetic data
+
+    scripts/trillium/flux/submit.sh synth4 4 0:25:00 USE_SYNTHETIC_DATA=1 VERIFY_MOUNTS=0 MAX_STEPS=300 \
+        EXTRA_ARGS=+data.num_train_samples=1048576 NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET \
+        -- --nodelist=trig0145,trig0147,trig0148,trig0151
+
+Job 1272764 (trig0145, 0147, 0148, 0151, one bandwidth group; completed, 10:10). As Florida's n4 logs: GBS 1,024
+(MBS 32), LR 1.85e-4, no warm-up (`config_DGXB200_scale.sh`). Differs from Florida: the mock set is enlarged from NVIDIA's
+10,000 samples to 1,048,576 (the mock data module's `num_train_samples`), so evaluation comes at step 256 as with their
+real data (every 262,144 samples) instead of every 9 steps.
+- Step time 0.652 s, MLPerf's `train_step_time` for the first 256-step block, against Florida's 0.617 (+5.6%); 1,571
+  samples/s, 49.1 per GPU (Florida 51.9). Ten-step intervals between `train_loss` events: median 0.653 (28, 0.645-0.661).
+- Memory: peak `memory.used` 164.6-166.6 GiB (168,544-170,566 MiB) of 179.1 per GPU.
+- GPUs while busy: 654-840 W mean per GPU, peak 977-1,076 W (one 5 s sample above 1,000 W, trig0147), SM clock median
+  1,762-1,950 MHz.
+- NCCL 2.28.3; inter-node through the image's net plugin ("NCCL RDMA Plugin v10", IB verbs) on `mlx5_0`, `1`, `4`, `9`
+  with GPUDirect RDMA, 208 channel connections on each NIC, PXN for the GPUs without one; NVLS within the node; SHARP
+  collnet plugin loaded (whether CollNet is used is not logged). The 2-node job did not log NCCL.
+- Startup: job start to `init_start` 56 s (prolog and checks 26 s, container and imports 30 s); `init_start` to
+  `run_start` 316 s (Florida 186-189), by rank 0's log: distributed init and model build 84 s (2 nodes: 89), data and
+  samplers 44 (15; the larger mock set may account for part), training warm-up step 0 104 (97), step 1 59 (61),
+  validation warm-up 21 + 3 (21 + 3). Florida's logs have no breakdown.
