@@ -8,6 +8,8 @@ set -euo pipefail
 F=${SCRATCH:?}/trillium/new/flux
 export APPTAINER_CACHEDIR=$F/apptainer/cache APPTAINER_TMPDIR=$F/apptainer/tmp
 CODE=$F/florida/University-of-Florida/benchmarks/flux1/implementations/b200_nemo
+# the login environment points pip at Compute Canada's wheelhouse and sets PYTHONPATH: neither belongs in the image
+unset PIP_CONFIG_FILE PYTHONPATH
 # --fakeroot: no /etc/subuid entry here, so Apptainer uses a root-mapped user namespace with the fakeroot wrapper
 exec nice -n 19 apptainer build --fakeroot --build-arg BASE="$F/images/pytorch-25.09-py3.sif" --build-arg CODE="$CODE" \
     "$F/images/flux.sif" "$(dirname "$(readlink -f "$0")")/flux.def"

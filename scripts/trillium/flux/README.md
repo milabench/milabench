@@ -32,6 +32,41 @@ GPU telemetry per job, `slurm/` job output.
         apptainer pull $F/images/pytorch-25.09-py3.sif docker://nvcr.io/nvidia/pytorch:25.09-py3
     nohup bash $F/src/scripts/trillium/flux/build.sh > $F/logs/build.log 2>&1 &
 
+## Florida's results, recomputed from their MLPerf logs
+
+`results/hpg.dgxb200x8.n<N>/flux1/result_{0..9}.txt` (MLLOG lines only: no NCCL or system output), 10 runs each, all
+`success`, 2025-10-03 to 05. Time to train is `run_start` to `run_stop`, the score the olympic mean (drop best and worst).
+Step time: `tracked_stats.train_step_time` (each 262,144-sample block between evaluations), median over the runs.
+Init (`init_start` to `run_start`, untimed: CUDA graph and warm-up steps) 182-251 s, median 186-189 s at every size.
+
+| nodes | GBS | LR, warm-up | TTT min (olympic; min-max) | samples to 0.586 | step s | samples/s | per GPU |
+|---|---|---|---|---|---|---|---|
+| 2 | 512 | 2e-4, 1,600 | 173.4 (170.5-178.4) | 8.13-8.39 M | 0.620 | 825 | 51.6 |
+| 4 | 1,024 | 1.85e-4, 0 | 93.5 (90.3-98.6) | 8.65-9.44 M | 0.617 | 1,661 | 51.9 |
+| 8 | 2,048 | 1.85e-4, 0 | 60.1 (56.1-63.1) | 10.5-11.8 M | 0.630 | 3,249 | 50.8 |
+| 9 | 2,304 | 1.85e-4, 0 | 54.5 (52.3-56.1) | 11.0-11.8 M | 0.630 | 3,656 | 50.8 |
+| 16 | 4,096 | 1.85e-4, 0 | 47.7 (47.0-49.1) | 17.0-17.8 M | 0.650 | 6,302 | 49.2 |
+
+MBS 32 per GPU everywhere, MXFP8, DDP with the distributed optimizer, full-iteration CUDA graphs; evaluations every
+262,144 samples on 29,696, 4% of the time to train. Their network settings (configs, not logs): `NCCL_NVLS_ENABLE=1`,
+`NCCL_GRAPH_REGISTER=0`, `NCCL_LOCAL_REGISTER=0` (NVIDIA's `config_common.sh`); `NCCL_IB_HCA` 8 HCAs,
+`NCCL_SOCKET_IFNAME=bridge-1145`, UCX (`config_hpg.sh`); their own NCCL v2.28.3-1 bound from the host. System JSON:
+InfiniBand, driver 570.148.08 with CUDA 13.0 forward compatibility (580.82.07), 1,000 W air-cooled B200.
+
+## Data (sizes measured from the bucket; nothing downloaded yet)
+
+MLCommons R2 (`mlc-r2-downloader.sh`: wget per file, `--continue`, md5 check), public:
+
+| set | files | bytes | samples |
+|---|---|---|---|
+| `cc12m_preprocessed` | 4,764 (4,762 arrow of 500 MB) | 2.381 TB | 1,099,776 |
+| `coco_preprocessed` (validation) | 131 | 64.3 GB | 29,696 |
+| `empty_encodings` | 2 | 2.1 MB | |
+
+Conversion (`to_webdataset.py`, then `energon_prepare.py`) writes 10,000-sample tars of the same bytes: 230 files and
+2,450,225,588,745 bytes (`expected-mounts.csv`, which the job's mount check compares). Peak 4.9 TB with both copies;
+2.45 TB once the raw sets are deleted. Probe from tri-dm1 (256 MiB, to /dev/null): 30 MB/s per stream, 92 MB/s with 4.
+
 ## Status
 
 Step 1 (feasibility) in progress. Untested: the image build, every job.
