@@ -1306,3 +1306,152 @@ megatron-glm5-fp4-test-n1-nvfp4-lt:
   inherits: megatron-glm5-fp4-test-n1-nvfp4
   # warm-up below the decay steps (Megatron asserts it, job 1270151)
   argv: {--train-iters: 3, --lr-warmup-iters: 1}
+# Step 3: 4 nodes, the real stages of pp13-ep8: 24 layers (3 dense + 21 MoE), 256 experts, EP8, seq 8192, PP4 split
+# 7 / 6 / 6 / 5 (pp13's first stage, two middle ones and its last), 256 sequences (32 micro-batches per data-parallel
+# rank, as pp13-ep8), 8 steps: per-stage memory and step time next to the campaign's 13-node numbers. NVFP4: the BF16
+# tail is the last stage, as in pp13
+_fp4_glm5_n4:
+  inherits: _tri_glm5
+  num_machines: 4
+  max_duration: 1200
+  model:
+    argv:
+      --num-layers: 24
+      --moe-layer-freq: "[0]*3+[1]*21"
+  argv:
+    --pipeline-model-parallel-size: 4
+    --decoder-first-pipeline-num-layers: 7
+    --decoder-last-pipeline-num-layers: 5
+    --train-iters: 8
+megatron-glm5-fp4-n4-bf16:
+  inherits: _fp4_glm5_n4
+megatron-glm5-fp4-n4-mxfp8:
+  inherits: _fp4_glm5_n4
+  argv: {<<: *tri_mxfp8}
+megatron-glm5-fp4-n4-nvfp4:
+  inherits: _fp4_glm5_n4
+  argv: {<<: *tri_nvfp4}
+
+# --- Qwen3 32B dense (GLM-FP4's second model; QW-CP reuses the entry with context parallelism): Megatron's own TE layer
+# spec (model.spec default), random weights, FineWeb packed as the GLM entries (8 documents per sample), tokenized
+# with Qwen3's tokenizer. 64 layers, hidden 5120, FFN 25600 (SwiGLU), 64 query and 8 KV heads of 128, QK-norm (RMSNorm
+# per head), RoPE base 1e6, untied embeddings, vocab 151,936. Layout TP2 (sequence parallel) x PP2 (32 / 32 layers) x
+# data parallel, no recompute: one copy is 4 GPUs. Optimizer as the GLM-5 runs (FP32 master weights, BF16 gradients
+# and Adam moments). 8192 tokens per micro-batch, 16 micro-batches per data-parallel rank. NVFP4 keeps the last 4 of 64
+# layers in BF16 (6 %, as GLM-5's 5 of 78) ---
+_qwen3_32b:
+  inherits: _megatron_glm5
+  tags: [trillium, full, dense, qwen3]
+  url: https://huggingface.co/Qwen/Qwen3-32B
+  num_machines: 1
+  max_duration: 1800
+  frozen:
+    preset: none
+  placement:
+    nodes: as-is
+    gpus_per_node: 8
+    a2a_timing: false
+  data:
+    samples: 200000
+  model:
+    hf: Qwen/Qwen3-32B
+    hf_path: "{milabench_data}/megatron/qwen3-32b"
+    spec: default
+    argv:
+      --moe-layer-freq: null
+      --num-experts: null
+      --moe-shared-expert-intermediate-size: null
+      --moe-router-topk: null
+      --moe-grouped-gemm: null
+      --moe-permute-fusion: null
+      --moe-ffn-hidden-size: null
+      --moe-router-score-function: null
+      --moe-router-pre-softmax: null
+      --moe-router-enable-expert-bias: null
+      --moe-router-bias-update-rate: null
+      --moe-router-load-balancing-type: null
+      --moe-router-topk-scaling-factor: null
+      --moe-aux-loss-coeff: null
+      --moe-router-dtype: null
+      --moe-token-dispatcher-type: null
+      --multi-latent-attention: null
+      --q-lora-rank: null
+      --kv-lora-rank: null
+      --qk-head-dim: null
+      --v-head-dim: null
+      --qk-pos-emb-head-dim: null
+      --enable-experimental: null
+      --num-layers: 64
+      --hidden-size: 5120
+      --ffn-hidden-size: 25600
+      --num-attention-heads: 64
+      --group-query-attention: true
+      --num-query-groups: 8
+      --kv-channels: 128
+      --rotary-base: 1000000
+      --norm-epsilon: 1.0e-6
+  argv:
+    <<: *full_argv
+    --vocab-size: 151936
+    --tensor-model-parallel-size: 2
+    --sequence-parallel: true
+    --pipeline-model-parallel-size: 2
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+    --expert-model-parallel-size: 1
+    --recompute-granularity: null
+    --recompute-method: null
+    --recompute-num-layers: null
+    --global-batch-size: 32
+    --train-iters: 20
+    --log-interval: 5
+    --distributed-timeout-minutes: 30
+_qwen3_nvfp4: &qwen3_nvfp4
+  --fp4-format: e2m1
+  --first-last-layers-bf16: true
+  --num-layers-at-start-in-bf16: 0
+  --num-layers-at-end-in-bf16: 4
+_qwen3_mxfp8: &qwen3_mxfp8
+  --fp8-format: e4m3
+  --fp8-recipe: mxfp8
+# 1 node, 8 layers (4 per stage), 50 steps with the C-loss settings in small: the loss goes down, the label is right,
+# and the memory per layer (BF16 tail: the last layer of 8)
+_qwen3_test_n1:
+  inherits: _qwen3_32b
+  model:
+    argv:
+      --num-layers: 8
+  argv:
+    <<: *tri_loss
+    --train-iters: 50
+    --lr-warmup-iters: 5
+megatron-qwen3-32b-test-n1-bf16:
+  inherits: _qwen3_test_n1
+megatron-qwen3-32b-test-n1-mxfp8:
+  inherits: _qwen3_test_n1
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-test-n1-nvfp4:
+  inherits: _qwen3_test_n1
+  argv: {<<: *qwen3_nvfp4, --num-layers-at-end-in-bf16: 1}
+# full depth, speed: 1 node (data parallel 2, 32 sequences) and 4 nodes (data parallel 8, 128 sequences), 20 steps
+megatron-qwen3-32b-n1-bf16:
+  inherits: _qwen3_32b
+megatron-qwen3-32b-n1-mxfp8:
+  inherits: _qwen3_32b
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-n1-nvfp4:
+  inherits: _qwen3_32b
+  argv: {<<: *qwen3_nvfp4}
+_qwen3_32b_n4:
+  inherits: _qwen3_32b
+  num_machines: 4
+  argv:
+    --global-batch-size: 128
+megatron-qwen3-32b-n4-bf16:
+  inherits: _qwen3_32b_n4
+megatron-qwen3-32b-n4-mxfp8:
+  inherits: _qwen3_32b_n4
+  argv: {<<: *qwen3_mxfp8}
+megatron-qwen3-32b-n4-nvfp4:
+  inherits: _qwen3_32b_n4
+  argv: {<<: *qwen3_nvfp4}
