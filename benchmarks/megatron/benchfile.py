@@ -42,11 +42,12 @@ class SrunOneNode(SrunCommand):
     ``milabench slurm srun`` forwards its arguments to Slurm's srun, but its own parser rejects the node-count flags
     and only ``-x`` gets a node count: with ``-w`` alone the step spans the whole job (default node count) and also
     starts the worker on the main node (rank 4 and rank 0 on the same GPU: "Duplicate GPU detected").
-    So call srun directly, with what ``milabench slurm srun`` would exec (``--overlap``)."""
+    So call srun directly, with what ``milabench slurm srun`` would exec (``--overlap --propagate=CORE``: the batch
+    script's ``ulimit -c 0`` reaches the worker nodes only if srun propagates it)."""
 
     def _argv(self, **kwargs):
         host = self.resolve_nodelist()
-        return ["srun", "--overlap", "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", "-w", host, "--"]
+        return ["srun", "--overlap", "--propagate=CORE", "--nodes=1", "--ntasks=1", "--ntasks-per-node=1", "-w", host, "--"]
 
 
 class PlacedTorchrunSrun(ForeachSrun):
