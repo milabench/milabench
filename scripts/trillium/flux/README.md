@@ -17,7 +17,9 @@ GPU telemetry per job, `slurm/` job output.
   on every srun; settings as arguments and configs sourced in the job, for `.sbatch --export=NONE`; `RUNSUB_DIR` is
   `impl/`; `PYTHONPATH` unset; `nvidia-smi` telemetry on every node).
 - `config_trillium.sh`: replaces their `config_hpg.sh` (their HCA and socket names do not exist here).
-- `submit.sh NAME NODES TIME [NAME=value ...] [-- sbatch args]`: one job `nw-flux-NAME`.
+- `submit.sh NAME NODES TIME [NAME=value ...] [-- sbatch args]`: one job `nw-flux-NAME` (`SCRIPT=convert.sbatch`: the
+  data conversion instead of `flux.sub`).
+- `data.sh download|check-download|check-conversion|cleanup`, `convert.sbatch`: the data (below).
 
 ## Setup (once, on tri-dm1)
 
@@ -58,7 +60,7 @@ MBS 32 per GPU everywhere, MXFP8, DDP with the distributed optimizer, full-itera
 `NCCL_SOCKET_IFNAME=bridge-1145`, UCX (`config_hpg.sh`); their own NCCL v2.28.3-1 bound from the host. System JSON:
 InfiniBand, driver 570.148.08 with CUDA 13.0 forward compatibility (580.82.07), 1,000 W air-cooled B200.
 
-## Data (sizes measured from the bucket; nothing downloaded yet)
+## Data
 
 MLCommons R2 (`mlc-r2-downloader.sh`: wget per file, `--continue`, md5 check), public:
 
@@ -71,6 +73,21 @@ MLCommons R2 (`mlc-r2-downloader.sh`: wget per file, `--continue`, md5 check), p
 Conversion (`to_webdataset.py`, then `energon_prepare.py`) writes 10,000-sample tars of the same bytes: 230 files and
 2,450,225,588,745 bytes (`expected-mounts.csv`, which the job's mount check compares). Peak 4.9 TB with both copies;
 2.45 TB once the raw sets are deleted. Probe from tri-dm1 (256 MiB, to /dev/null): 30 MB/s per stream, 92 MB/s with 4.
+
+Steps (NVIDIA's `download.sub`, each where it can run; the converter, energon and the check import torch, so the image
+runs with `nccl/lib` bound, as in `flux.sub`):
+
+1. tri-dm1: `data.sh download` (started 2026-11-08 23:02, 4 streams, 86 MB/s), then `data.sh check-download`: per set
+   the files present against the downloader's md5 list, every size against the bucket's (HEAD), and the downloader's
+   own `md5sum -c` passed for the 3 sets; writes `data/download-checked`.
+2. One compute node: `SCRIPT=convert.sbatch submit.sh convert-val 1 0:30:00 SET=val` converts the validation set
+   (3 shards, one per worker) and times a 21.7 GB shard; the training set is 110 such shards, so its time is about
+   ceil(110 / WORKERS) shards plus `energon_prepare.py`. Then `SET=train WORKERS=<from the subset>` in one 1-hour job if
+   that fits, else a request row. It ends with `data.sh check-conversion`: every file of `expected-mounts.csv` by size
+   (230 files, 2,450,225,588,745 bytes) and energon's metadata read back (train 110 shards, 1,099,776 samples; val 3,
+   29,696); writes `data/conversion-checked`.
+3. Login node: `data.sh cleanup` deletes `data/cc12m_preprocessed` and `data/coco_preprocessed` only if both marker
+   files exist, with `diskusage_report` before and after.
 
 ## Status (step 1, 2026-11-08)
 
