@@ -1332,37 +1332,43 @@ def glm_rl(t):
 
 
 def qw_fp4_loss(t):
-    """Qwen3 32B C-loss on 1 node (GLM-FP4-02): the loss per step of each run, and each run minus BF16 (10-step mean), with BF16's same-seed repeat
-    as the noise. One job per run, keyed on the job: the repeat differs from BF16 by its entry name only."""
+    """Qwen3 32B C-loss on 1 node, 3 runs per recipe from one seed (GLM-FP4-02, -04), one job per run, keyed on the job. Left: each recipe's
+    mean loss per step, with the band from its lowest to its highest run. Right: each run's loss minus the mean of the BF16 runs (10-step
+    mean), the BF16 runs included, so their spread shows the noise; the windows 91-100 and 101-110 shaded (read from the data, post hoc)."""
     r, l = t.get("qw_fp4_runs", pd.DataFrame()), t.get("qw_fp4_loss", pd.DataFrame())
     if r.empty or l.empty:
         return None
-    done = r[(r.job_state == "COMPLETED") & (r.experiment == "C-loss")]
-    curves = l[l.job.astype(str).isin(set(done.job.astype(str)))].pivot(index="step", columns="run", values="loss")
-    if "bf16" not in curves:
+    done = r[(r.job_state == "COMPLETED") & (r.experiment == "C-loss")].assign(job=lambda d: d.job.astype(str))
+    recipe = dict(zip(done.job, done.recipe))
+    curves = l.assign(job=l.job.astype(str)).pipe(lambda d: d[d.job.isin(set(recipe))]).pivot(index="step", columns="job", values="loss")
+    jobs = {rec: sorted(j for j in curves if recipe[j] == rec) for rec in ("bf16", "mxfp8", "nvfp4")}
+    if not all(jobs.values()):
         return None
-    look = {"bf16": (INK, "-", "BF16"), "bf16-rep2": (MUTED, (0, (3, 1.5)), "BF16, same-seed repeat"),
-            "mxfp8": (RECIPE_COLOR["mxfp8"], "-", "MXFP8"), "nvfp4": (SERIES[6], "-", "NVFP4")}
-    runs = [k for k in look if k in curves]
+    look = {"bf16": (INK, "BF16"), "mxfp8": (RECIPE_COLOR["mxfp8"], "MXFP8"), "nvfp4": (SERIES[6], "NVFP4")}
     last = int(curves.index.max())
+    bf_mean = curves[jobs["bf16"]].mean(axis=1)
     fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6))
-    for run in runs:
-        color, ls, label = look[run]
-        a.plot(curves.index, curves[run], color=color, ls=ls, lw=0.8, label=label)
-        if run != "bf16":
-            gap = (curves[run] - curves.bf16).rolling(10, center=True, min_periods=5).mean()
-            end = (curves[run] - curves.bf16).loc[last - 9:last].mean()
-            b.plot(gap.index, gap, color=color, ls=ls, lw=1.0, label=f"{label}: {end:+.2f}")
+    for lo_, hi_ in ((91, 100), (101, 110)):
+        b.axvspan(lo_ - 0.5, hi_ + 0.5, facecolor=LIGHT, alpha=0.5, edgecolor="white", lw=0.6)
+    b.annotate("91-100, 101-110", (105, 0.97), xycoords=("data", "axes fraction"), ha="left", va="top", fontsize=6, color=INK2)
+    for rec, js in jobs.items():
+        color, label = look[rec]
+        c = curves[js]
+        a.fill_between(c.index, c.min(axis=1), c.max(axis=1), color=color, alpha=0.2, lw=0)
+        a.plot(c.index, c.mean(axis=1), color=color, lw=0.8, label=f"{label}, mean of {len(js)} runs")
+        for i, j in enumerate(js):
+            gap = (c[j] - bf_mean).rolling(10, center=True, min_periods=5).mean()
+            b.plot(gap.index, gap, color=color, lw=0.7, alpha=0.9, label=f"{label} ({len(js)} runs)" if i == 0 else None)
     top = curves.loc[1:].max().max()
     a.set_ylim(4.8, 9.0)  # the warm-up spikes run off the axis
     a.annotate(f"warm-up spikes off the axis (up to {top:.0f})", (0.98, 0.97), xycoords="axes fraction", ha="right", va="top", fontsize=6, color=INK2)
-    a.set_xlabel("step")
+    a.set_xlabel("step (band: lowest to highest run)")
     a.set_ylabel("training loss")
     a.legend(loc="lower left", fontsize=6, frameon=False)
     b.axhline(0, color=INK2, lw=0.6)
     b.set_ylim(-0.6, 0.8)
-    b.set_xlabel(f"step (legend: mean of steps {last - 9}-{last})")
-    b.set_ylabel("loss minus BF16 loss\n(10-step mean)")
+    b.set_xlabel("step")
+    b.set_ylabel("loss minus BF16 mean\n(10-step mean, per run)")
     b.legend(loc="lower right", fontsize=6, frameon=False)
     for ax in (a, b):
         ax.set_xlim(0, last)

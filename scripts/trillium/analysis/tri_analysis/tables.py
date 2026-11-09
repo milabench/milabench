@@ -141,17 +141,22 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriFpFourMemMxNv", "TriFpFourMemNvBf", "TriFpFourCapOtherBfLo", "TriFpFourCapOtherBfHi", "TriFpFourCapOtherMx", "TriFpFourCapOtherNv",
           "TriFpFourMxBfSpeed", "TriFpFourCampBf", "TriFpFourCampMx", "TriFpFourCampMxBf",
           # New workloads: Qwen3 32B dense with NVFP4 (_qw_fp4_numbers): C-speed at 13 nodes (GLM-FP4-03): setup, per recipe (Bf, Mx, Nv),
-          # speed-ups, power; C-loss on 1 node (GLM-FP4-02, TriQwFpFourL*, Loss*, Gap*): setup, per run (Bf, Rep: BF16's same-seed repeat, Mx, Nv)
+          # speed-ups, power; C-loss on 1 node, 3 runs per recipe (GLM-FP4-02, -04; TriQwFpFourL*, Win*, Sep*): setup, per recipe the step time
+          # and the window means (mean of the runs, Lo/Hi: lowest and highest run), where the quantized runs sit above all BF16 runs, chance
           "TriQwFpFourNodes", "TriQwFpFourGpus", "TriQwFpFourTp", "TriQwFpFourDp", "TriQwFpFourSeqs", "TriQwFpFourSeqLen", "TriQwFpFourLayers",
           "TriQwFpFourBfLast", "TriQwFpFourSteps", "TriQwFpFourFrom", "TriQwFpFourMeasured",
           *[f"TriQwFpFour{m}{r}" for r in ("Bf", "Mx", "Nv") for m in ("Step", "Med", "Sd", "Tok", "Mem", "CapMed", "CapLo", "CapHi", "Power", "Sm")],
           "TriQwFpFourSpNvBf", "TriQwFpFourSpNvMx", "TriQwFpFourSpMxBf", "TriQwFpFourSmBfNvPct", "TriQwFpFourXid",
           "TriQwFpFourLNodes", "TriQwFpFourLTp", "TriQwFpFourLPp", "TriQwFpFourLDp", "TriQwFpFourLSeqs", "TriQwFpFourLSteps", "TriQwFpFourLLr",
-          "TriQwFpFourLMinLr", "TriQwFpFourLWarm", "TriQwFpFourLSeed",
-          *[f"TriQwFpFour{m}{r}" for r in ("Bf", "Rep", "Mx", "Nv") for m in ("LossHundred", "LossTwoFifty", "LossEnd", "LStep", "LMem")],
-          *[f"TriQwFpFour{m}{r}" for r in ("Rep", "Mx", "Nv") for m in ("Gap", "GapEarly")],
-          "TriQwFpFourGapFrom", "TriQwFpFourGapTo", "TriQwFpFourGapEarlyFrom", "TriQwFpFourGapEarlyTo", "TriQwFpFourLossDiffFrom",
-          "TriQwFpFourGnDiffFrom", "TriQwFpFourTenBf", "TriQwFpFourTenRep", "TriQwFpFourLMaxLo", "TriQwFpFourLMaxHi", "TriQwFpFourLNonFinite",
+          "TriQwFpFourLMinLr", "TriQwFpFourLWarm", "TriQwFpFourLSeed", "TriQwFpFourLRuns", "TriQwFpFourLJobs",
+          *[f"TriQwFpFour{m}{r}" for r in ("Bf", "Mx", "Nv") for m in ("LStep", "LStepLo", "LStepHi", "LMem", "WinEarly", "WinEarlyLo", "WinEarlyHi",
+                                                                      "WinEnd", "WinEndLo", "WinEndHi")],
+          "TriQwFpFourLSpMxBf", "TriQwFpFourLSpNvBf", "TriQwFpFourLSpNvMx",
+          *[f"TriQwFpFourWin{w}{e}" for w in ("Early", "Mid", "Late", "End") for e in ("From", "To")],
+          "TriQwFpFourEarlyMargin", "TriQwFpFourSepWinBoth", "TriQwFpFourSepWinMx", "TriQwFpFourCut", "TriQwFpFourSepSteps", "TriQwFpFourSepLast",
+          "TriQwFpFourSepRunFrom", "TriQwFpFourSepRunTo", "TriQwFpFourSepMxSteps", "TriQwFpFourSepMxIn", "TriQwFpFourSepMxLast",
+          "TriQwFpFourSepNvSteps", "TriQwFpFourSepNvChance", "TriQwFpFourOddsOne", "TriQwFpFourOddsAll", "TriQwFpFourNewBf", "TriQwFpFourNewQLo",
+          "TriQwFpFourNewOdds", "TriQwFpFourLossDiffFrom", "TriQwFpFourGnDiffFrom", "TriQwFpFourLMaxLo", "TriQwFpFourLMaxHi", "TriQwFpFourLNonFinite",
           "TriQwFpFourLEndLo", "TriQwFpFourLEndHi"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
@@ -1496,8 +1501,11 @@ def _glm_fp4_numbers(t) -> dict[str, tuple]:
     return out
 
 
-QW_LOSS_RUNS = (("bf16", "Bf", "BF16"), ("bf16-rep2", "Rep", "BF16, same-seed repeat"), ("mxfp8", "Mx", "MXFP8"), ("nvfp4", "Nv", "NVFP4"))
-QW_GAP, QW_GAP_EARLY = 10, (91, 100)  # the gap to BF16: mean over the last 10 steps, and over steps 91-100
+# Qwen3 32B C-loss windows, mean loss over the steps: 401-500 and 491-500 are GLM-FP4-02's; 91-100 was chosen after GLM-FP4-02's four runs
+# showed an early gap, 241-250 after all nine runs. None was set before the runs it is used on.
+QW_WINDOWS = (("Early", 91, 100), ("Mid", 241, 250), ("Late", 401, 500), ("End", 491, 500))
+# Where the quantized runs' window means sit above all BF16 runs': windows read from the data after all nine runs (post hoc)
+QW_SEP_WINDOWS = ((1, 50), (51, 110), (91, 100), (101, 110))
 
 
 def _power10(x: float) -> str:
@@ -1508,25 +1516,39 @@ def _power10(x: float) -> str:
     return f"$10^{{{e}}}$" if m == 1 else f"${m:g}\\times10^{{{e}}}$"
 
 
+def _and_list(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def _qw_fp4(t) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Qwen3 32B with NVFP4 (glm_fp4.py, qw_fp4_*): the completed C-speed entries by precision, the completed C-loss runs by run label (job
-    is the key: the BF16 repeat differs from BF16 by its entry name only), and the loss per step, a column per run label."""
+    """Qwen3 32B with NVFP4 (glm_fp4.py, qw_fp4_*): the completed C-speed entries by precision, the completed C-loss runs by job (the key: the
+    runs' repetition numbers do not tell them apart; ``recipe`` is the precision), and the loss per step, a column per job."""
     r = t.get("qw_fp4_runs", pd.DataFrame())
     if r.empty:
         return r, r, r
-    done = r[r.job_state == "COMPLETED"]
-    speed, loss = done[done.experiment == "C-speed"], done[done.experiment == "C-loss"]
-    if speed.precision.duplicated().any() or loss.run.duplicated().any():
-        raise SystemExit("[report] qw_fp4_runs: two completed entries with the same recipe or run label")
+    done = r[r.job_state == "COMPLETED"].assign(job=lambda d: d.job.astype(str))
+    speed, loss = done[done.experiment == "C-speed"], done[done.experiment == "C-loss"].sort_values("job")
+    if speed.precision.duplicated().any() or loss.job.duplicated().any():
+        raise SystemExit("[report] qw_fp4_runs: two completed C-speed entries with the same recipe, or two C-loss rows for one job")
     l = t.get("qw_fp4_loss", pd.DataFrame())
-    curves = l[l.job.astype(str).isin(set(loss.job.astype(str)))].pivot(index="step", columns="run", values="loss") if len(l) and len(loss) else pd.DataFrame()
-    return speed.set_index("precision"), loss.set_index("run"), curves
+    curves = (l.assign(job=l.job.astype(str)).pipe(lambda d: d[d.job.isin(set(loss.job))]).pivot(index="step", columns="job", values="loss")
+              if len(l) and len(loss) else pd.DataFrame())
+    return speed.set_index("precision"), loss.set_index("job"), curves
+
+
+def _qw_windows(lo: pd.DataFrame, curves: pd.DataFrame) -> dict[tuple[int, int], dict[str, pd.Series]]:
+    """Per window (first, last step), per recipe: each run's mean loss over the window, indexed by job."""
+    out = {}
+    for a, b in {(a, b) for _, a, b in QW_WINDOWS} | set(QW_SEP_WINDOWS):
+        means = curves.loc[a:b].mean()
+        out[(a, b)] = {rec: means[lo.index[lo.recipe == rec]] for rec, _, _ in FP4_RECIPES}
+    return out
 
 
 def _qw_fp4_numbers(t) -> dict[str, tuple]:
     """Qwen3 32B with NVFP4, TriQwFpFour*: C-speed at 13 nodes (GLM-FP4-03) on milabench's timer, steps 3-20, the GPU telemetry over the same
-    steps; C-loss on 1 node (GLM-FP4-02): loss at a few steps, the gap to BF16 over the last 10 steps and over steps 91-100, the same-seed
-    repeat's first differences."""
+    steps; C-loss on 1 node, 3 runs per recipe (GLM-FP4-02, -04): window means per recipe (mean, lowest and highest run), where the quantized
+    runs sit above all BF16 runs (window means, and step by step), the step times, and where runs of one recipe first differ."""
     m, lo, curves = _qw_fp4(t)
     out = {}
     if {"bf16", "mxfp8", "nvfp4"} <= set(m.index):
@@ -1548,38 +1570,95 @@ def _qw_fp4_numbers(t) -> dict[str, tuple]:
         out["TriQwFpFourSpMxBf"] = (s.bf16 / s.mxfp8, ".2f", False)
         out["TriQwFpFourSmBfNvPct"] = (100 * (1 - m.sm_mhz.bf16 / m.sm_mhz.nvfp4), ".0f", False)
         out["TriQwFpFourXid"] = (int(m.xid_rows.sum()), "d", False)
-    if {"bf16", "bf16-rep2", "mxfp8", "nvfp4"} <= set(lo.index) and len(curves):
-        b = lo.loc["bf16"]
+    if len(curves) and {"bf16", "mxfp8", "nvfp4"} <= set(lo.recipe):
         for key, macro, fmt in (("nodes", "LNodes", "d"), ("tp", "LTp", "d"), ("pp", "LPp", "d"), ("dp", "LDp", "d"), ("seqs", "LSeqs", "d"),
                                 ("steps_logged", "LSteps", "d"), ("lr_warmup", "LWarm", "d"), ("seed", "LSeed", "d")):
-            out[f"TriQwFpFour{macro}"] = (int(b[key]), fmt, False)
-        if lo.lr.nunique() == 1 and lo.min_lr.nunique() == 1 and set(lo.lr_schedule) == {"cosine"}:  # the same schedule in every run
-            out["TriQwFpFourLLr"] = (_power10(b.lr), "", False)
-            out["TriQwFpFourLMinLr"] = (_power10(b.min_lr), "", False)
+            if lo[key].nunique() == 1:  # the same setup in every run
+                out[f"TriQwFpFour{macro}"] = (int(lo[key].iloc[0]), fmt, False)
+        if lo.lr.nunique() == 1 and lo.min_lr.nunique() == 1 and set(lo.lr_schedule) == {"cosine"}:
+            out["TriQwFpFourLLr"] = (_power10(lo.lr.iloc[0]), "", False)
+            out["TriQwFpFourLMinLr"] = (_power10(lo.min_lr.iloc[0]), "", False)
+        counts = lo.recipe.value_counts()
+        if counts.nunique() == 1:
+            out["TriQwFpFourLRuns"] = (int(counts.iloc[0]), "d", False)
+        out["TriQwFpFourLJobs"] = (len(lo), "d", False)
+        step = {}
+        for rec, name, _ in FP4_RECIPES:
+            x = lo[lo.recipe == rec]
+            step[rec] = x.step_mean.mean()
+            out[f"TriQwFpFourLStep{name}"] = (step[rec], ".2f", False)
+            out[f"TriQwFpFourLStepLo{name}"] = (x.step_mean.min(), ".2f", False)
+            out[f"TriQwFpFourLStepHi{name}"] = (x.step_mean.max(), ".2f", False)
+            out[f"TriQwFpFourLMem{name}"] = (x.mem_alloc_gib.max(), ".1f", False)
+        out["TriQwFpFourLSpMxBf"] = (step["bf16"] / step["mxfp8"], ".2f", False)
+        out["TriQwFpFourLSpNvBf"] = (step["bf16"] / step["nvfp4"], ".2f", False)
+        out["TriQwFpFourLSpNvMx"] = (step["mxfp8"] / step["nvfp4"], ".2f", False)
+        win = _qw_windows(lo, curves)
+        for w, a, b in QW_WINDOWS:
+            out[f"TriQwFpFourWin{w}From"], out[f"TriQwFpFourWin{w}To"] = (a, "d", False), (b, "d", False)
+            if w not in ("Early", "End"):
+                continue
+            for rec, name, _ in FP4_RECIPES:
+                v = win[(a, b)][rec]
+                out[f"TriQwFpFourWin{w}{name}"] = (v.mean(), ".3f", False)
+                out[f"TriQwFpFourWin{w}Lo{name}"] = (v.min(), ".3f", False)
+                out[f"TriQwFpFourWin{w}Hi{name}"] = (v.max(), ".3f", False)
+        _, a, b = QW_WINDOWS[0]
+        e = win[(a, b)]
+        out["TriQwFpFourEarlyMargin"] = (min(e["mxfp8"].min(), e["nvfp4"].min()) - e["bf16"].max(), ".3f", False)
+        # Window means: where every run of a recipe sits above every BF16 run (post hoc windows)
+        above = {rec: [(a, b) for a, b in QW_SEP_WINDOWS if win[(a, b)][rec].min() > win[(a, b)]["bf16"].max()] for rec in ("mxfp8", "nvfp4")}
+        both = [w for w in QW_SEP_WINDOWS if w in above["mxfp8"] and w in above["nvfp4"]]
+        mx_only = [w for w in above["mxfp8"] if w not in both]
+        if both:
+            out["TriQwFpFourSepWinBoth"] = (_and_list([f"{a}-{b}" for a, b in both]), "", False)
+            out["TriQwFpFourCut"] = (max(b for _, b in both), "d", False)
+        if mx_only:
+            out["TriQwFpFourSepWinMx"] = (_and_list([f"{a}-{b}" for a, b in mx_only]), "", False)
+        # Step by step: every quantized run above every BF16 run; each recipe alone; what chance gives under exchangeable runs
+        jobs = {rec: list(lo.index[lo.recipe == rec]) for rec, _, _ in FP4_RECIPES}
+        bf_max = curves[jobs["bf16"]].max(axis=1)
+        sep = {"all": curves[jobs["mxfp8"] + jobs["nvfp4"]].min(axis=1) > bf_max,
+               "Mx": curves[jobs["mxfp8"]].min(axis=1) > bf_max, "Nv": curves[jobs["nvfp4"]].min(axis=1) > bf_max}
+        steps_all = sep["all"][sep["all"]].index
+        out["TriQwFpFourSepSteps"] = (len(steps_all), "d", False)
+        if len(steps_all):
+            out["TriQwFpFourSepLast"] = (int(steps_all.max()), "d", False)
+            run_id = (sep["all"] != sep["all"].shift()).cumsum()[sep["all"]]  # consecutive stretches
+            longest = run_id.value_counts().idxmax()
+            stretch = run_id[run_id == longest].index
+            out["TriQwFpFourSepRunFrom"], out["TriQwFpFourSepRunTo"] = (int(stretch.min()), "d", False), (int(stretch.max()), "d", False)
+        s = sep["Mx"][sep["Mx"]].index
+        out["TriQwFpFourSepMxSteps"] = (len(s), "d", False)
+        if len(s):
+            out["TriQwFpFourSepMxLast"] = (int(s.max()), "d", False)
+            if both:
+                out["TriQwFpFourSepMxIn"] = (int((s <= max(b for _, b in both)).sum()), "d", False)  # of them, up to the cutoff
+        out["TriQwFpFourSepNvSteps"] = (int(sep["Nv"].sum()), "d", False)
+        n_bf, n_q = len(jobs["bf16"]), len(jobs["mxfp8"])
+        out["TriQwFpFourOddsOne"] = (math.comb(n_bf + n_q, n_bf), "d", False)  # one recipe's runs all above BF16's: 1 in this many orderings
+        out["TriQwFpFourOddsAll"] = (math.comb(len(lo), n_bf), "d", False)  # every quantized run above every BF16 run
+        out["TriQwFpFourSepNvChance"] = (len(curves) / math.comb(n_bf + len(jobs["nvfp4"]), n_bf), ".0f", False)
+        # The five GLM-FP4-04 runs alone, over the early window: is the new BF16 run below every new quantized run?
+        new = lo[lo.request == "GLM-FP4-04"]
+        nb, nq = e["bf16"][e["bf16"].index.isin(new.index)], pd.concat([e["mxfp8"], e["nvfp4"]])
+        nq = nq[nq.index.isin(new.index)]
+        if len(nb) == 1 and len(nq):
+            out["TriQwFpFourNewBf"] = (nb.iloc[0], ".3f", False)
+            out["TriQwFpFourNewQLo"] = (nq.min(), ".3f", False)
+            out["TriQwFpFourNewOdds"] = (len(nb) + len(nq), "d", False)  # one BF16 run lowest of the five: 1 in 5
+        # Runs of one recipe, from one seed: first step where their loss, and their gradient norm, differ (the earliest over the recipes)
+        lt = t["qw_fp4_loss"].assign(job=lambda d: d.job.astype(str))
+        gn = lt[lt.job.isin(set(lo.index))].pivot(index="step", columns="job", values="grad_norm")
+        for frame, macro in ((curves, "LossDiffFrom"), (gn, "GnDiffFrom")):
+            firsts = []
+            for js in jobs.values():
+                d = frame.index[frame[js].nunique(axis=1) > 1]
+                if len(d):
+                    firsts.append(int(d.min()))
+            if firsts:
+                out[f"TriQwFpFour{macro}"] = (min(firsts), "d", False)
         last = int(curves.index.max())
-        for run, name, _ in QW_LOSS_RUNS:
-            x = lo.loc[run]
-            for step, macro in ((100, "LossHundred"), (250, "LossTwoFifty"), (last, "LossEnd")):
-                out[f"TriQwFpFour{macro}{name}"] = (curves.loc[step, run], ".3f", False)
-            out[f"TriQwFpFourLStep{name}"] = (x.step_mean, ".2f", False)
-            out[f"TriQwFpFourLMem{name}"] = (x.mem_alloc_gib, ".1f", False)
-        gap = curves.sub(curves.bf16, axis=0)
-        for run, name, _ in QW_LOSS_RUNS[1:]:
-            out[f"TriQwFpFourGap{name}"] = (gap.loc[last - QW_GAP + 1:last, run].mean(), "+.3f", False)
-            out[f"TriQwFpFourGapEarly{name}"] = (gap.loc[QW_GAP_EARLY[0]:QW_GAP_EARLY[1], run].mean(), "+.2f", False)
-        out["TriQwFpFourGapFrom"], out["TriQwFpFourGapTo"] = (last - QW_GAP + 1, "d", False), (last, "d", False)
-        out["TriQwFpFourGapEarlyFrom"], out["TriQwFpFourGapEarlyTo"] = (QW_GAP_EARLY[0], "d", False), (QW_GAP_EARLY[1], "d", False)
-        diff = curves.index[curves.bf16 != curves["bf16-rep2"]]  # bit-equal until here
-        if len(diff):
-            out["TriQwFpFourLossDiffFrom"] = (int(diff.min()), "d", False)
-        lt = t["qw_fp4_loss"]
-        gn = lt[lt.job.astype(str).isin({str(lo.job.bf16), str(lo.job["bf16-rep2"])})].pivot(index="step", columns="run", values="grad_norm")
-        gdiff = gn.index[gn.bf16 != gn["bf16-rep2"]]
-        if len(gdiff):
-            out["TriQwFpFourGnDiffFrom"] = (int(gdiff.min()), "d", False)
-        if 10 in curves.index:
-            out["TriQwFpFourTenBf"] = (curves.loc[10, "bf16"], ".2f", False)
-            out["TriQwFpFourTenRep"] = (curves.loc[10, "bf16-rep2"], ".2f", False)
         out["TriQwFpFourLMaxLo"] = (lo.loss_max_after50.min(), ".2f", False)
         out["TriQwFpFourLMaxHi"] = (lo.loss_max_after50.max(), ".2f", False)
         out["TriQwFpFourLNonFinite"] = (int(lo.loss_nonfinite.sum()), "d", False)
@@ -1611,26 +1690,27 @@ def qw_fp4_speed_table(t) -> str:
 
 
 def qw_fp4_loss_table(t) -> str:
-    """Qwen3 32B C-loss on 1 node, one job per run (GLM-FP4-02): job (the key), node, mean step (steps 3-500), peak allocated memory, loss at steps 100, 250 and the
-    last, and the gap to BF16 over steps 91-100 and the last 10."""
+    """Qwen3 32B C-loss on 1 node, one job per run, 3 runs per recipe (GLM-FP4-02, -04), a column per recipe: the jobs and their nodes, mean step
+    (steps 3-500, milabench's timer), peak allocated memory, and the mean loss over each window, as the mean of the runs [lowest--highest run]."""
     _, lo, curves = _qw_fp4(t)
-    if "bf16" not in lo.index or curves.empty:
+    if curves.empty or not {"bf16", "mxfp8", "nvfp4"} <= set(lo.recipe):
         return ""
-    last = int(curves.index.max())
-    gap = curves.sub(curves.bf16, axis=0)
-    lines = [r"\begin{tabular}{lllrrrrrrr}", r"\toprule",
-             rf"Run & Job & Node & Mean step & Peak alloc. & \multicolumn{{3}}{{c}}{{Loss at step}} & \multicolumn{{2}}{{c}}{{Minus BF16, steps}} \\",
-             rf" & & & s & GiB & 100 & 250 & {last} & {QW_GAP_EARLY[0]}--{QW_GAP_EARLY[1]} & {last - QW_GAP + 1}--{last} \\", r"\midrule"]
-    for run, _, label in QW_LOSS_RUNS:
-        if run not in lo.index or run not in curves:
-            continue
-        x = lo.loc[run]
-        g = ("", "") if run == "bf16" else (f"{gap.loc[QW_GAP_EARLY[0]:QW_GAP_EARLY[1], run].mean():+.2f}", f"{gap.loc[last - QW_GAP + 1:last, run].mean():+.3f}")
-        if x.bf16_layers_last:
-            label += f" (last {int(x.bf16_layers_last)} layers BF16)"
-        lines.append(f"{label} & {x.job} & \\texttt{{{x.hosts}}} & {x.step_mean:.2f} & {x.mem_alloc_gib:.1f} & {curves.loc[100, run]:.3f} & {curves.loc[250, run]:.3f} & "
-                     f"{curves.loc[last, run]:.3f} & {g[0]} & {g[1]} " + r"\\")
-    lines += [r"\bottomrule", r"\end{tabular}"]
+    win = _qw_windows(lo, curves)
+    cols = []
+    for rec, _, label in FP4_RECIPES:
+        x = lo[lo.recipe == rec]
+        if x.bf16_layers_last.max():
+            label += f" (last {int(x.bf16_layers_last.max())} layers BF16)"
+        mem = x.mem_alloc_gib
+        cols.append({"label": label, "jobs": ", ".join(x.index), "nodes": ", ".join(rf"\texttt{{{h}}}" for h in x.hosts),
+                     "step": f"{x.step_mean.mean():.3f} [{x.step_mean.min():.3f}--{x.step_mean.max():.3f}]",
+                     "mem": f"{mem.max():.1f}" if mem.nunique() == 1 else f"{mem.min():.1f}--{mem.max():.1f}",
+                     **{w: f"{v.mean():.3f} [{v.min():.3f}--{v.max():.3f}]" for (w, a, b) in QW_WINDOWS for v in [win[(a, b)][rec]]}})
+    row = lambda name, key: f"{name} & " + " & ".join(c[key] for c in cols) + r" \\"
+    lines = [r"\begin{tabular}{lccc}", r"\toprule", " & " + " & ".join(c["label"] for c in cols) + r" \\", r"\midrule",
+             row("Jobs", "jobs"), row("Nodes", "nodes"), row("Mean step, s", "step"), row("Peak alloc., GiB", "mem"), r"\midrule",
+             r"\multicolumn{4}{l}{Mean loss over steps} \\", *[row(f"\\quad {a}--{b}", w) for w, a, b in QW_WINDOWS],
+             r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
 
