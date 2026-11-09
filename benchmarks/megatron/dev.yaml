@@ -1575,3 +1575,26 @@ megatron-qwen3-32b-loss-check-n1:
   inherits: megatron-qwen3-32b-loss-nvfp4-n1
   max_duration: 1200
   argv: {--train-iters: 20, --lr-warmup-iters: 5}
+# Qwen3 32B speed at 13 nodes: the 4-node speed layout (TP2 x data parallel, CUDA graphs, no TP comm overlap: NVFP4 cannot
+# use it in this Megatron), data parallel 52, 8 micro-batches per data-parallel rank: 416 x 8192 tokens per step,
+# 20 steps, without the profiler
+_qwen3_n13: &qwen3_n13
+  --global-batch-size: 416
+  --profile: null
+  --use-pytorch-profiler: null
+  --profile-step-start: null
+  --profile-step-end: null
+  --profile-ranks: null
+  --tensorboard-dir: null
+megatron-qwen3-32b-n13-bf16:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-bf16
+  num_machines: 13
+  argv: {<<: *qwen3_n13}
+megatron-qwen3-32b-n13-mxfp8:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-mxfp8
+  num_machines: 13
+  argv: {<<: *qwen3_n13}
+megatron-qwen3-32b-n13-nvfp4:
+  inherits: megatron-qwen3-32b-n4-tp2-cg-nvfp4
+  num_machines: 13
+  argv: {<<: *qwen3_n13}

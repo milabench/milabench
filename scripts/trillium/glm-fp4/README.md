@@ -243,6 +243,12 @@ are cuBLASLt's block-scaled FP4 kernels); no re-quantization of the weights per 
 `is_first_microbatch` on the first micro-batch of each step; quantization kernels 0.28 s per step). Each GPU's work per
 kernel is small there (TP2 halves the GEMMs, 4096 tokens), and NVFP4's extra kernels per GEMM make the host the limit.
 
+TP comm overlap (`--tp-comm-overlap`, TE userbuffers; `-tpo` entries, job 1271416, the 4-node TP2 x DP16 layout with
+CUDA graphs): BF16 6.948 s (2.3 % faster than without it), MXFP8 5.328 s (0.8 %); NVFP4 stops at its first forward,
+`KeyError: 'UB for qkv_fprop with use_fp8=True is not registered.'`: Megatron registers quantized userbuffers only for
+`--fp8-format` (`initialize.py` `_initialize_tp_communicators`), TE asks for them under NVFP4. The speed layout is CUDA
+graphs without it, for all three recipes.
+
 ## Proposed rows
 
 GLM-FP4-01, GLM-5 C-speed at 13 nodes: `scripts/trillium/glm-fp4/job.sbatch exp:C-speed
@@ -255,9 +261,19 @@ BF16 46-51 s per step (48.61 s, sd 1.02), MXFP8 about 46 s (45.97), NVFP4 about 
 MXFP8's); peak allocated BF16 about 90, MXFP8 132.3, NVFP4 about 100 GiB (est.). Cancel: no first step 30 min into an
 entry (Megatron's timeout), steps above 60 s after step 3 (a capped or throttled node: nodemon), NaN loss.
 
-Qwen3 32B loss, 1 node per run (TP2 x PP2 x data parallel 2, 32 x 8192 tokens per step, 500 steps, the C-loss settings:
-seed 1234, lr 3e-4, warm-up 50, cosine to 3e-5): BF16 and a BF16 repeat about 68 min each, MXFP8 about 45 min, NVFP4
-about 44 min (from the 20-step runs). Needs entries and about 600,000 FineWeb documents in `$G/data` (stride 4 as C-loss),
-not yet done.
+Qwen3 32B C-loss, four 1-node jobs (they can run at once): `job.sbatch exp:C-loss megatron-qwen3-32b-loss-bf16-n1`, then
+`-loss-bf16-rep2-n1`, `-loss-mxfp8-n1`, `-loss-nvfp4-n1`. TP2 x PP2 x data parallel 2 without CUDA graphs (MXFP8 does not
+fit one node with them), 32 x 8192 tokens per step, 500 steps, seed 1234, lr 3e-4, warm-up 50, cosine to 3e-5, 600,000
+FineWeb documents at stride 4 (`stage-loss-data.sh`). Times from the 20-step speed runs: BF16 and its repeat 67 min of
+steps each (8.04 s), `--time=01:40:00`; MXFP8 44 min (5.26 s) and NVFP4 43 min (5.12 s), `--time=01:10:00` (max_duration
+5,400 s). First lines: `[glm-fp4] job=...`, `=== megatron-qwen3-32b-loss-...`, Megatron's arguments, the first step
+about 1 min in (28 s in the speed runs); loss at step 1 about 12.95 (the 8-layer test: 12.95, then 7.7 by step 50). Peak
+allocated: BF16 115, MXFP8 129, NVFP4 112 GiB (the speed runs). Cancel: no first step 15 min into a run, NaN loss, steps
+above 1.5x those times.
 
-Qwen3 32B: held until the user decides whether Qwen3 keeps FP4 (the layout test above is in).
+Qwen3 32B C-speed at 13 nodes, one job: `job.sbatch exp:C-speed megatron-qwen3-32b-n13-bf16 megatron-qwen3-32b-n13-mxfp8
+megatron-qwen3-32b-n13-nvfp4`, `--time=00:45:00`. TP2 x data parallel 52, CUDA graphs, 416 x 8192 tokens per step, 20
+steps. First lines per entry: Megatron's arguments, `Creating 128 CUDA graphs`, `built 128 cuda graph(s) in` about 48 s,
+the first step at about 85 s; then (est. from 4 nodes, the larger data-parallel reduce added) BF16 7.1-7.8 s, MXFP8
+5.4-5.9 s, NVFP4 4.5-4.9 s per step; peaks below the 4-node ones (the optimizer state over 52), at most about 151 GiB
+(MXFP8). Cancel: no first step 15 min into an entry, steps above 2x those, NaN.
