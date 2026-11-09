@@ -57,7 +57,7 @@ print(f"  rank 0: step {st.median(r['step_s'] for r in kept[0]):.3f} s, gap {st.
 if kept[0][0].get("sync_s") is not None:
     sync_min = [min(v[i]["sync_s"] for v in kept.values()) for i in range(len(kept[0]))]
     sync_mean = [st.mean(v[i]["sync_s"] for v in kept.values()) for i in range(len(kept[0]))]
-    print(f"  gradient sync: fastest rank (the all-reduces) {st.median(sync_min):.3f} s median,"
+  XX
           f" {sum(sync_min) / sum(period):.1%} of the time; mean over ranks (with waiting for the slowest)"
           f" {st.median(sync_mean):.3f} s, {sum(sync_mean) / sum(period):.1%}")
 if "recycles" in kept[0][0]:
