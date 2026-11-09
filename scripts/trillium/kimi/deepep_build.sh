@@ -41,8 +41,11 @@ UV_LINK_MODE=copy UV_CACHE_DIR=$X/uv-cache VIRTUAL_ENV=$V "$HOME/.local/bin/uv" 
 echo "[deepep] building $(git -C "$X/deepep-src" log -1 --oneline)"; t=$(date +%s)
 cd "$X/deepep-src"
 log=$X/slurm/deepep-build.$SLURM_JOB_ID.log
-# CCACHE_DISABLE: the user environment compiles through ccache, whose cache is in the read-only $HOME (job 1270384)
+# CCACHE_DISABLE: the user environment compiles through ccache, whose cache is in the read-only $HOME (job 1270384).
+# LIBRARY_PATH: setup.py links -l:libnccl.so.2 with no -L, and cvmfs's ld does not search the driver's -lcuda: the venv's
+# NCCL and CUDA's stub libcuda (job 1270408); the driver's libcuda.so.1 loads at run time
 CCACHE_DISABLE=1 CPATH=$CUDA_HOME/include/cccl TORCH_CUDA_ARCH_LIST=10.0 MAX_JOBS=32 \
+    LIBRARY_PATH=$V/lib/python3.12/site-packages/nvidia/nccl/lib:$CUDA_HOME/lib64/stubs \
     "$V/bin/python" -m pip install -v --no-build-isolation --no-deps --no-cache-dir . > "$log" 2>&1 \
     || { echo "[deepep] build failed, $log:"; grep -n -E "error|FAILED" "$log" | head -40; exit 1; }
 echo "[deepep] built in $(( $(date +%s) - t )) s"
