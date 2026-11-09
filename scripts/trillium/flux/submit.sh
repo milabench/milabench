@@ -3,10 +3,12 @@
 # partition; the node count picks Florida's config as their flux_training_scale.sh does (README.md):
 #   scripts/trillium/flux/submit.sh NAME NODES TIME [NAME=value ...] [-- sbatch args, e.g. --nodelist=trig0145]
 # NAME=value: exported in the job before the config, e.g. MAX_STEPS=300, USE_SYNTHETIC_DATA=1, NEXP=1 (the default).
-# SCRIPT=convert.sbatch submits the data conversion instead of flux.sub.
+# SCRIPT=convert.sbatch submits the data conversion instead of flux.sub. SRC=<checkout> runs another checkout than
+# $F/src (the rows run from $F/src; tests from e.g. $F/src-dev).
 # The job runs $SCRATCH/trillium/new/flux/src as it is: pull origin/trillium-new there first.
 set -euo pipefail
 F=${SCRATCH:?}/trillium/new/flux
+S=${SRC:-$F/src}
 name=nw-flux-$1 nodes=$2 time=$3
 shift 3
 args=()
@@ -18,4 +20,4 @@ mkdir -p "$F/slurm"
 /opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable --job-name="$name" --account=rrg-bengioy-ad \
     --partition=compute_b200_full_node --gpus-per-node=b200:8 --reservation=b200-friendly-users --qos=bump \
     --nodes="$nodes" --time="$time" --output="$F/slurm/%x-%j.out" --exclude=trig0125,trig0132,trig0150 \
-    "$@" "$F/src/scripts/trillium/flux/${SCRIPT:-flux.sub}" "${args[@]}"
+    "$@" "$S/scripts/trillium/flux/${SCRIPT:-flux.sub}" "SRC=$S" "${args[@]}"

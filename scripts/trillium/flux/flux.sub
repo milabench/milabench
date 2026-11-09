@@ -43,7 +43,7 @@ elif [ "$DGXNNODES" -eq 9 ]; then
 else
     source ${IMPL}/config_DGXB200_scale.sh
 fi
-source ${F}/src/scripts/trillium/flux/config_trillium.sh
+source ${SRC:-$F/src}/scripts/trillium/flux/config_trillium.sh
 # Trillium: RUN_MINUTES=<n> replaces the config's cap on the training step (WALLTIME_RUNANDTIME, srun --time; 200 min
 # at 2 nodes, which our 5-7% slower steps may reach); a guard, not a training parameter
 export WALLTIME_RUNANDTIME=${RUN_MINUTES:-$WALLTIME_RUNANDTIME}
@@ -244,8 +244,8 @@ if [[ -f "${TELEMETRY_SCRIPT:-}"  ]]; then
     ( srun -N1 --overlap bash ${TELEMETRY_SCRIPT} ) &
     EXTRA_ASSETS="${EXTRA_ASSETS} --asset ${TELEMETRY_FNAME}"
 fi
-# Trillium: GPU power, clocks and use on every node, every 5 s, for the whole job (FLUX_BRIEF.md: nvidia-smi from the job)
-( srun --overlap --ntasks-per-node=1 bash -c 'nvidia-smi --query-gpu=timestamp,index,power.draw,clocks.sm,utilization.gpu,temperature.gpu,memory.used --format=csv -l 5 > "$0/gpu-$(hostname -s).csv"' "${LOGDIR}" ) &
+# Trillium: GPU power, clocks, use and clock event (throttle) reasons on every node, every second, for the whole job
+( srun --overlap --ntasks-per-node=1 bash -c 'nvidia-smi --query-gpu=timestamp,index,power.draw,clocks.sm,utilization.gpu,temperature.gpu,memory.used,clocks_event_reasons.active,clocks_event_reasons.sw_power_cap,clocks_event_reasons.hw_slowdown,clocks_event_reasons.sw_thermal_slowdown,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.hw_power_brake_slowdown --format=csv -lms 1000 > "$0/gpu-$(hostname -s).csv"' "${LOGDIR}" ) &
 
 #Set GPU clocks for MaxQ and MinEDP run
 if [[ "${SET_MAXQ_CLK}" == "1" ]] || [[ "${SET_MINEDP_CLK}" == "1" ]]; then
