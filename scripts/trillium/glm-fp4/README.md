@@ -351,7 +351,7 @@ step (the envelope of all 6 quantized runs against all 3 BF16): above on 25 of 5
 100-107; within 91-100 at steps 91, 92, 98 and 100; the envelopes overlap from step 108 on. On 10-step means: above in
 steps 1-10, 91-100 and 101-110 only. By recipe: MXFP8 alone is above all BF16 runs on 78 steps, in stretches through
 step 107 (1-34 with gaps, 59-68, 83-93, 96-107), on 10-step means in 1-40, 61-70, 81-110 and 121-130; NVFP4 alone only at
-100-107 (10-step means: 1-10, 91-110). So up to about step 110 MXFP8 trails BF16 in all 3 runs, NVFP4 mostly sits in
+100-107 (10-step means: 1-10, 91-110). So over most of the first 110 steps MXFP8 trails BF16 in all 3 runs, NVFP4 mostly sits in
 BF16's range, and after that no recipe separates from BF16. In every recipe the same-seed runs first differ at step 3.
 
 Step times: 3-run spreads 1.6 % (BF16), 0.4 % (MXFP8), 0.6 % (NVFP4). At this 1-node layout (TP2 x PP2, no CUDA graphs)
@@ -359,7 +359,7 @@ MXFP8 is 1.49x BF16, NVFP4 1.55x BF16 and 1.04x MXFP8: the 13-node 1.20x NVFP4 o
 graphs, GLM-FP4-03) does not hold here, as measured before at 1 node with PP2 (1.03x; the host-bound launches and the
 BF16 last stage, above).
 
-What 3 runs rank: the step times (spreads under 2 %), and MXFP8 above BF16 early in training (to about step 110). What
+What 3 runs rank: the step times (spreads under 2 %), and MXFP8 above BF16 over most of the first 110 steps. What
 they cannot: the loss at step 500, or NVFP4 against BF16 at any point after step 110.
 
 ## GLM-FP4-03: Qwen3 32B C-speed at 13 nodes (job 1272011, 2026-11-08 22:54-23:09, COMPLETED)
