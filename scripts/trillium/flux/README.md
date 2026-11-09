@@ -82,15 +82,15 @@ runs with `nccl/lib` bound, as in `flux.sub`):
 1. tri-dm1: `data.sh download` (started 2026-11-08 23:02, 4 streams, 86 MB/s), then `data.sh check-download`: per set
    the files present against the downloader's md5 list, every size against the bucket's (HEAD), and the downloader's
    own `md5sum -c` passed for the 3 sets; writes `data/download-checked`.
-2. One compute node: `SCRIPT=convert.sbatch submit.sh convert-val 1 0:30:00 SET=val` converts the validation set
-   (3 shards, one per worker) and times a 21.7 GB shard; the training set is 110 such shards, so its time is about
-   ceil(110 / WORKERS) shards plus `energon_prepare.py`. Then `SET=train WORKERS=<from the subset>` in one 1-hour job if
-   that fits, else a request row; `--time` with a margin, since the subset does not time `energon_prepare.py`. If the
-   job is killed during `energon_prepare.py` or the check, run its last lines by hand rather than resubmitting
-   (`SET=train` always reconverts; `energon_prepare.py` skips if `.nv-meta/dataset.yaml` exists). It ends with
-   `data.sh check-conversion`: every file of `expected-mounts.csv` by size
-   (230 files, 2,450,225,588,745 bytes) and energon's metadata read back (train 110 shards, 1,099,776 samples; val 3,
-   29,696); writes `data/conversion-checked`.
+2. One compute node, `convert.sbatch` (`SCRIPT=convert.sbatch submit.sh NAME 1 TIME SET=...`): `SET=time` converts
+   the first 4, then 16 training shards on as many workers with NVIDIA's `process_shard` (the converter has no shard
+   limit) into `data/timing`, deleted after, to choose WORKERS; `SET=train WORKERS=<n>` converts the training set (started
+   while the downloader still verified md5, coordinator 2026-11-09); `SET=val` converts the validation set, then
+   `energon_prepare.py` (it indexes both sets and skips once `.nv-meta/dataset.yaml` exists, so it comes last), the two
+   empty encodings, and `data.sh check-conversion`: every file of `expected-mounts.csv` by size (230 files,
+   2,450,225,588,745 bytes) and energon's metadata read back (train 110 shards, 1,099,776 samples; val 3, 29,696); writes
+   `data/conversion-checked`. Each job first removes that marker. If a job is killed during `energon_prepare.py` or the
+   check, run its last lines by hand rather than resubmitting.
 3. Login node: `data.sh cleanup` deletes `data/cc12m_preprocessed` and `data/coco_preprocessed` only if both marker
    files exist, with `diskusage_report` before and after.
 
