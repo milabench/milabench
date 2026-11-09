@@ -1623,6 +1623,15 @@ _qwcp_128k: &qwcp_128k
   --seq-length: 131072
   --max-position-embeddings: 131072
   --global-batch-size: 2
+_qwcp_64k: &qwcp_64k
+  --seq-length: 65536
+  --max-position-embeddings: 65536
+  --global-batch-size: 4
+# selective: Megatron's dense MLP (its layernorm included) recomputed; the default module, core_attn, saves nothing with
+# TE's fused attention
+_qwcp_sel: &qwcp_sel
+  --recompute-granularity: selective
+  --recompute-modules: [mlp]
 _qwcp_full: &qwcp_full
   --recompute-granularity: full
   --recompute-method: uniform
@@ -1648,9 +1657,10 @@ megatron-qwen3-32b-cp-t8-32k-p2p-thd:
 megatron-qwen3-32b-cp-t8-32k-a2a:
   inherits: _qwcp_t8
   argv: {--cp-comm-type: a2a}
+# TE 2.18 names it all_gather (Megatron's help says allgather, which TE refuses: job 1272968)
 megatron-qwen3-32b-cp-t8-32k-allgather:
   inherits: _qwcp_t8
-  argv: {--cp-comm-type: allgather}
+  argv: {--cp-comm-type: all_gather}
 # hierarchical: a2a inside pairs of GPUs, p2p between the pairs
 megatron-qwen3-32b-cp-t8-32k-a2ap2p:
   inherits: _qwcp_t8
@@ -1673,3 +1683,48 @@ megatron-qwen3-32b-cp-t8-32k-a2a-cg:
 megatron-qwen3-32b-cp-t8-128k-p2p-full-fi:
   inherits: _qwcp_t8
   argv: {<<: [*qwcp_128k, *qwcp_full], --cuda-graph-impl: full_iteration, --no-check-for-nan-in-loss-and-grad: true}
+# full depth, one node, 20 steps. Activation memory measured on 8 layers (job 1272968): about 0.84 GiB per layer and 4.6 GiB
+# of logits per 8k tokens on a CP rank (TP2), on about 84 GiB of weights, gradients and optimizer state (the 8k runs): no
+# recompute fits 32k (est. 142 GiB), not 64k (est. 200); selective (MLP) fits 64k (est. 140), not 128k (est. 190); full
+# fits 128k (est. 120). The -none / -sel entries one step short of fitting are there to measure it
+megatron-qwen3-32b-cp-n1-8k:
+  inherits: _qwcp
+  argv: {--context-parallel-size: 1, --seq-length: 8192, --max-position-embeddings: 8192, --global-batch-size: 32}
+megatron-qwen3-32b-cp-n1-32k-p2p:
+  inherits: _qwcp
+megatron-qwen3-32b-cp-n1-32k-a2a:
+  inherits: _qwcp
+  argv: {--cp-comm-type: a2a}
+megatron-qwen3-32b-cp-n1-32k-p2p-cg:
+  inherits: _qwcp
+  argv: {<<: *qwen3_cg}
+# TP1 x CP8: 32.8 B parameters per GPU, about 153 GiB before activations
+megatron-qwen3-32b-cp-n1-32k-tp1cp8-full:
+  inherits: _qwcp
+  argv: {<<: *qwcp_full, --tensor-model-parallel-size: 1, --sequence-parallel: null, --context-parallel-size: 8}
+megatron-qwen3-32b-cp-n1-64k-p2p-none:
+  inherits: _qwcp
+  argv: {<<: *qwcp_64k}
+megatron-qwen3-32b-cp-n1-64k-p2p-sel:
+  inherits: _qwcp
+  argv: {<<: [*qwcp_64k, *qwcp_sel]}
+# per-layer CUDA graphs with selective recompute (Megatron allows them with full recompute only as full_iteration graphs,
+# which stop at step 2 with CP: megatron-qwen3-32b-cp-t8-128k-p2p-full-fi, job 1272968)
+megatron-qwen3-32b-cp-n1-64k-p2p-sel-cg:
+  inherits: megatron-qwen3-32b-cp-n1-64k-p2p-sel
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-cp-n1-128k-p2p-sel:
+  inherits: _qwcp
+  argv: {<<: [*qwcp_128k, *qwcp_sel]}
+megatron-qwen3-32b-cp-n1-128k-p2p-full:
+  inherits: _qwcp
+  argv: {<<: [*qwcp_128k, *qwcp_full]}
+megatron-qwen3-32b-cp-n1-128k-a2a-full:
+  inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
+  argv: {--cp-comm-type: a2a}
+# 128k, 50 steps with the C-loss settings in small (seed 1234, lr 3e-4, warm-up 5, cosine to 3e-5): the loss goes down,
+# no NaN; its step times are the 128k p2p speed point too. 2 x 128k tokens per step, 100 slots of about 190 documents
+megatron-qwen3-32b-cp-n1-128k-loss:
+  inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
+  max_duration: 2700
+  argv: {<<: *tri_loss, --train-iters: 50, --lr-warmup-iters: 5}
