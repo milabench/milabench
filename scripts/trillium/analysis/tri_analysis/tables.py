@@ -191,7 +191,15 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriQwFpFourSepRunFrom", "TriQwFpFourSepRunTo", "TriQwFpFourSepMxSteps", "TriQwFpFourSepMxIn", "TriQwFpFourSepMxLast",
           "TriQwFpFourSepNvSteps", "TriQwFpFourSepNvChance", "TriQwFpFourOddsOne", "TriQwFpFourOddsAll", "TriQwFpFourNewBf", "TriQwFpFourNewQLo",
           "TriQwFpFourNewOdds", "TriQwFpFourLossDiffFrom", "TriQwFpFourGnDiffFrom", "TriQwFpFourLMaxLo", "TriQwFpFourLMaxHi", "TriQwFpFourLNonFinite",
-          "TriQwFpFourLEndLo", "TriQwFpFourLEndHi"]
+          "TriQwFpFourLEndLo", "TriQwFpFourLEndHi",
+          # New workloads: Qwen3 32B at 32k and 128k with context parallelism (_qw_cp_numbers; QW-CP-01 and its 8k reference, GLM-FP4-03's BF16
+          # entry): setup, per entry (Ref: 8k, ThirtyTwo: 32k CP4, CpFour: 128k CP4, CpEight: 128k CP8 on 12 nodes) the step (mean, median, SD),
+          # tokens/s per GPU and against 8k, MFU, peak memory, bytes across nodes, power; CP8 against CP4; ranges over the three CP entries
+          "TriQwCpTp", "TriQwCpLayers", "TriQwCpSteps", "TriQwCpFrom", "TriQwCpLr", "TriQwCpTokGpu",
+          *[f"TriQwCp{m}{e}" for e in ("Ref", "ThirtyTwo", "CpFour", "CpEight") for m in ("Step", "Tok", "Mfu", "Mem", "IbLo", "IbHi")],
+          *[f"TriQwCp{m}{e}" for e in ("ThirtyTwo", "CpFour", "CpEight") for m in ("Nodes", "Split", "Dp", "Seqs", "Med", "Sd", "Ratio")],
+          "TriQwCpCapLoRef", "TriQwCpCapHiRef", "TriQwCpEightShorter", "TriQwCpCapLo", "TriQwCpCapHi", "TriQwCpPowerLo", "TriQwCpPowerHi",
+          "TriQwCpSmLo", "TriQwCpSmHi", "TriQwCpPortZero", "TriQwCpPortOne", "TriQwCpPortFour", "TriQwCpPortNine", "TriQwCpPortBusy"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -2089,6 +2097,94 @@ def _qw_fp4_numbers(t) -> dict[str, tuple]:
     return out
 
 
+QW_CP_ENTRIES = (("8k", "Ref"), ("32k-cp4", "ThirtyTwo"), ("128k-cp4", "CpFour"), ("128k-cp8", "CpEight"))
+
+
+def _qw_cp(t) -> pd.DataFrame:
+    """Qwen3 32B with context parallelism (glm_fp4.build_cp, qw_cp_runs): the completed entries by run label (8k, 32k-cp4, 128k-cp4, 128k-cp8)."""
+    r = t.get("qw_cp_runs", pd.DataFrame())
+    if r.empty:
+        return r
+    done = r[r.job_state == "COMPLETED"]
+    if done.run.duplicated().any():
+        raise SystemExit("[report] qw_cp_runs: two completed entries with the same label")
+    return done.set_index("run")
+
+
+def _range(lo, hi, fmt) -> str:
+    a, b = format(lo, fmt), format(hi, fmt)
+    return a if a == b else f"{a}-{b}"
+
+
+def _qw_cp_numbers(t) -> dict[str, tuple]:
+    """Qwen3 32B at 32k and 128k with context parallelism, TriQwCp*: QW-CP-01's three entries and the 8k reference (GLM-FP4-03's BF16 entry, the
+    same run as TriQwFpFour*Bf), means over steps 3-20 on milabench's timer, tokens/s per GPU at the mean step, MFU with the summary's FLOPs per
+    token; bytes across nodes per node and step; GPU telemetry over the same steps (per node: cap share, mean power, median SM clock)."""
+    m = _qw_cp(t)
+    out = {}
+    if m.empty or "8k" not in m.index:
+        return out
+    fp4, _, _ = _qw_fp4(t)
+    if "bf16" in fp4.index and abs(fp4.step_mean.bf16 - m.step_mean["8k"]) > 1e-9:
+        raise SystemExit("[report] qw_cp_runs: the 8k reference's mean step differs from the Qwen3 NVFP4 block's BF16 one")
+    ref = m.loc["8k"]
+    for key, macro, fmt in (("tp", "Tp", "d"), ("n_layers", "Layers", "d"), ("steps_logged", "Steps", "d"), ("first", "From", "d"),
+                            ("measured", "Measured", "d"), ("tokens_per_gpu", "TokGpu", ",d")):
+        out[f"TriQwCp{macro}"] = (int(ref[key]), fmt, False)
+    if m.lr.nunique() == 1 and set(m.lr_schedule) == {"constant"}:
+        out["TriQwCpLr"] = (_power10(m.lr.iloc[0]), "", False)
+    for run, name in QW_CP_ENTRIES:
+        if run not in m.index:
+            continue
+        x = m.loc[run]
+        for col, macro, fmt in (("nodes", "Nodes", "d"), ("gpus", "Gpus", "d"), ("cp", "Split", "d"), ("dp", "Dp", "d"), ("seqs", "Seqs", "d")):
+            out[f"TriQwCp{macro}{name}"] = (int(x[col]), fmt, False)
+        for col, macro, fmt in (("step_mean", "Step", ".2f"), ("step_median", "Med", ".3f"), ("step_sd", "Sd", ".3f"), ("tok_s_gpu", "Tok", ",.0f"),
+                                ("mfu_pct", "Mfu", ".1f"), ("mem_alloc_gib", "Mem", ".1f"), ("step1_s", "First", ".0f"), ("ib_lo", "IbLo", ".1f"),
+                                ("ib_hi", "IbHi", ".1f"), ("cap_med", "CapMed", ".1f"), ("cap_lo", "CapLo", ".1f"), ("cap_hi", "CapHi", ".1f"),
+                                ("power_lo", "PowerLo", ".0f"), ("power_hi", "PowerHi", ".0f"), ("sm_med_lo", "SmLo", ",.0f"), ("sm_med_hi", "SmHi", ",.0f")):
+            out[f"TriQwCp{macro}{name}"] = (x[col], fmt, False)
+        if run != "8k":
+            out[f"TriQwCpRatio{name}"] = (x.tok_s_gpu / ref.tok_s_gpu, ".3f", False)
+    if {"128k-cp4", "128k-cp8"} <= set(m.index):
+        out["TriQwCpEightShorter"] = (100 * (1 - m.step_mean["128k-cp8"] / m.step_mean["128k-cp4"]), ".1f", False)
+        e = m.loc["128k-cp8"]
+        for port, name in (("mlx5_0", "Zero"), ("mlx5_1", "One"), ("mlx5_4", "Four"), ("mlx5_9", "Nine")):
+            out[f"TriQwCpPort{name}"] = (_range(e[f"ib_{port}_min"], e[f"ib_{port}_max"], ".0f"), "", False)
+        out["TriQwCpPortBusy"] = (e.ib_port_max_gbs, ".1f", False)
+    cp = m.drop(index="8k")
+    if len(cp):
+        for col, agg, macro, fmt in (("cap_lo", "min", "CapLo", ".0f"), ("cap_hi", "max", "CapHi", ".0f"), ("power_lo", "min", "PowerLo", ".0f"),
+                                     ("power_hi", "max", "PowerHi", ".0f"), ("sm_med_lo", "min", "SmLo", ",.0f"), ("sm_med_hi", "max", "SmHi", ",.0f")):
+            out[f"TriQwCp{macro}"] = (getattr(cp[col], agg)(), fmt, False)
+    out["TriQwCpXid"] = (int(m.xid_rows.sum()), "d", False)
+    return out
+
+
+def qw_cp_speed_table(t) -> str:
+    """Qwen3 32B at 8k (the reference), 32k and 128k tokens, BF16, one row per entry: layout, means over steps 3-20 on milabench's timer, tokens/s
+    per GPU and against 8k, MFU, peak allocated memory, bytes across nodes per node and step (range over the nodes, and the steps), power cap."""
+    m = _qw_cp(t)
+    if m.empty or "8k" not in m.index:
+        return ""
+    ref = m.loc["8k"]
+    lines = [r"\begin{tabular}{lrllrrrrrrr}", r"\toprule",
+             r"Context & Nodes & Layout & Recompute & Mean step & Tokens/s & vs 8k & MFU & Peak alloc. & Across nodes, GiB & At power cap, \% \\",
+             r" & & & & s & per GPU & & \% & GiB & per node and step & median node (range) \\", r"\midrule"]
+    for run, _ in QW_CP_ENTRIES:
+        if run not in m.index:
+            continue
+        x = m.loc[run]
+        context = f"{int(x.seq_len) // 1024}k" + (", slots" if x.doc_masking else "")
+        layout = f"TP{int(x.tp)}" + (rf" $\times$ CP{int(x.cp)}" if x.cp > 1 else "") + rf" $\times$ DP{int(x.dp)}"
+        recompute = x.recompute + (f" ({x.recompute_modules.upper()})" if isinstance(x.recompute_modules, str) else "") + (", graphs" if x.cuda_graphs else "")
+        ib = f"{x.ib_lo:.1f}--{x.ib_hi:.1f} ({int(x.first)}--{int(x.ib_last_lo)})" if pd.notna(x.ib_lo) else ""
+        lines.append(f"{context} & {int(x.nodes)} & {layout} & {recompute} & {x.step_mean:.2f} & {x.tok_s_gpu:,.0f} & {x.tok_s_gpu / ref.tok_s_gpu:.3f} & "
+                     f"{x.mfu_pct:.1f} & {x.mem_alloc_gib:.1f} & {ib} & {x.cap_med:.1f} ({x.cap_lo:.1f}--{x.cap_hi:.1f}) " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def qw_fp4_speed_table(t) -> str:
     """Qwen3 32B C-speed at 13 nodes by recipe, one job (GLM-FP4-03): steps 3-20 on milabench's timer, speed-ups, peak allocated memory, and the
     GPU telemetry over the same steps (all nodes)."""
@@ -2417,6 +2513,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
     out.update(_qw_fp4_numbers(t))
+    out.update(_qw_cp_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -2643,6 +2740,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))
     (out / "qw_fp4_speed.tex").write_text(qw_fp4_speed_table(tables))
     (out / "qw_fp4_loss.tex").write_text(qw_fp4_loss_table(tables))
+    (out / "qw_cp_speed.tex").write_text(qw_cp_speed_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):
