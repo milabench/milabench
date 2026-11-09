@@ -810,6 +810,56 @@ of memory` in the engines' MoE autotune at engine start, before `FlashInfer auto
 `FLASHINFER_NO_DOWNLOAD is set` line; fewer than 4 `Engine startup timings` at 30 min; step 0's `train/tis_abs` above
 0.5 (a broken sync).
 
+### GLM-RL-06 (job 1275601): B200's default kernels, requests capped
+
+`slime-glm5-grpo-trtllm-mrr2048` at 5ac435e2, trig[0101-0113,0116-0124,0126-0131,0133-0136] (GLM-RL-03's nodes with
+trig0122 for trig0115), 11:23:19-12:55:12 (1:31:53), exit 0, milabench PASS, no drain, GPUs free after 0 s, NVRM 0
+on all 32 nodes. Steps 1-2 are the comparison (step 0 is warm-up); one run each, so a difference counts only beyond each
+run's step-to-step spread:
+
+| per step | GLM-RL-06, steps 0 / 1 / 2 | GLM-RL-03 (1266065), steps 0 / 1 / 2 |
+|---|---|---|
+| rollout | 926.2 / 1,086.1 / 1,025.5 s | 1,209.7 / 1,047.3 / 1,111.0 s |
+| longest request (`e2e_latency` max), its rate | 916.2 / 1,070.3 / 1,017.9 s; 8.85 / 7.54 / 7.99 tokens/s | 1,202.4 / 1,040.0 / 1,107.5 s; 6.77 / 7.82 / 7.37 tokens/s |
+| decode, median per request | 10.61 / 10.82 / 10.98 tokens/s | 9.11 / 9.56 / 9.53 tokens/s |
+| rollout tokens/s per GPU (`perf/tokens_per_gpu_per_sec`) | 6.82 / 5.18 / 5.30 | 4.90 / 5.72 / 4.46 |
+| response mean, truncated | 1,580 / 1,407 / 1,358, 6.1 / 5.7 / 6.0 % | 1,483 / 1,496 / 1,239, 5.4 / 7.0 / 4.6 % |
+| training (tokens/s) | 677.5 / 225.5 / 209.1 s (2,616 / 7,099 / 7,410) | 634.1 / 215.2 / 202.7 s (2,640 / 7,881 / 7,046) |
+| sync | 35.7 / 33.6 / 34.1 s | 33.7 / 34.7 / 32.8 s |
+| trainer offload + onload | 24.1 + 11.2 / 21.8 + 12.3 / 11.0 + 12.3 s | 18.1 + 11.4 / 16.5 + 12.0 / 11.4 + 14.8 s |
+| step | 1,663.4 / 1,388.1 / 1,300.6 s | 1,897.6 / 1,338.3 / 1,384.1 s |
+| `train/tis_abs` | 0.118 / 0.125 / 0.111 | 0.079 / 0.081 / 0.073 |
+| TIS clip fraction | 0.042 / 0.045 / 0.039 | 0.016 / 0.017 / 0.015 |
+| reward | 0.752 / 0.735 / 0.750 | 0.736 / 0.735 / 0.767 |
+
+- Beyond the spread: the per-request decode, 10.8-11.0 against 9.5-9.6 tokens/s (+13-15 %), and the log-probs. Within
+  it: the rollout (1,025-1,086 against 1,047-1,111 s), training, sync, the step.
+- The rollout's split. It ends with its longest request (8,192 tokens, the cap, in every rollout of both runs: the
+  rollout is 4-16 s longer than it). At one sequence per DP-attention rank the decode lines show the two rates GLM-RL-03
+  showed, both higher: about 12 against 9-10 tokens/s, and about 7 against 6 (the slower engine-wide mode, GLM-RL-03,
+  not explained). The longest request averages 7.5-8.0 tokens/s in steps 1-2 against 7.4-7.8: it spends most of the
+  tail in the slow mode in both runs (inferred from its average), so the faster kernels show in the median request and
+  not in the rollout time. Step 0's rollout (926 against 1,210 s) is a single value each.
+- Log-probs: `tis_abs` 1.5 times GLM-RL-03's (0.111-0.125 against 0.073-0.081), the TIS clip fraction 2.6 times; at 10
+  layers 2.3 and 12-14 times. The 10-layer attribution (job 1274922, above) puts the whole increase on the attention
+  path (DSA trtllm and the dense-MHA prefill together, not separable; one run each).
+- The cap: SGLang logs `max_running_requests=32` per rank (GLM-RL-03: 2048); the decode lines never show more than 4
+  running requests per rank (GLM-RL-03: 5) and at most 2 queued (GLM-RL-03: 2), in the lines Ray prints: the cap was not
+  reached.
+- Startup: engines up 5.7-8.3 min after the start (GLM-RL-03: 7.0-7.3); the MoE autotune 11:27:19-11:31:26 over the
+  4 engines, no out-of-memory, 42.5-43.3 GiB free after it in the lines Ray shows (43.9-44.4 after the KV pool;
+  GLM-RL-03 36.1-36.5); decode graphs 13.5-13.7 s (GLM-RL-03: 94-95 s); first sync done 17.8 min after the start (16.8).
+  The decode graphs: at 10 layers they take 92 s on the fallback, 84 s with only the MoE on Triton, 15 s on all
+  trtllm, 2 s with only the attention on FlashMLA (1274466, 1274922, 1274501): the Triton MoE's capture is most of the
+  95 s, the trtllm attention most of the 13.5 s. Why each takes that long is not measured (Triton compiles per batch
+  size into a cache that every job starts empty: likely, not checked).
+- Memory. GPU: the first node (milabench, nvml) at most 144.2 GiB (GLM-RL-03: 150.9; the cap's smaller request buffers).
+  No continuous record exists for the other 31 nodes: slime's `Memory-Usage` snapshots (trainer side, at offload and
+  sync, Ray-deduplicated, 25 of 32 node addresses) reach 69.8 GiB used; the engines' own lines give only the free memory
+  after the autotune above. Host: slime's snapshots up to 1,001.5 GiB (the last stage's nodes; GLM-RL-03 991.6-997.7).
+- Xid / ECC: no such line in the job log; NVRM inband lines 0 on every node at the start and the end; no drain
+  (`sinfo -R` at 12:59). The nodes' kernel messages were not read (no job on them after 12:55).
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
