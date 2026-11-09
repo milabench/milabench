@@ -627,7 +627,16 @@ GPU 0), again exactly 953 done and 1095 failed.
 **SW-25 (`scripts/trillium/ISSUES.md`), the EP32 conc1024 crash:** three crashes (jobs 1271715, 1271958, 1272182), two
 all-to-all backends, three node sets, always a TP0 worker, always exactly 953 requests done and 1,095 failed, none under
 `CUDA_LAUNCH_BLOCKING=1` (job 1272035). The kernel cannot be named. Inferred, not determined: a timing-dependent fault on
-a path both backends share. The node check of `trig0108` (job 1271974) found nothing. The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
+a path both backends share. The node check of `trig0108` (job 1271974) found nothing.
+
+**With at most 128 sequences per engine it passes.** `kimi-vllm-4n-dp4tp8-ep32-seqs128` (`--max-num-seqs 128`, a
+configuration option, not a fix), job 1272263, `trig[0101-0103,0107]`, 2026-11-08 23:51:17-2026-11-09 00:01:17 (10:00),
+all four nodes "GPUs free"; the `dmesg` watcher (fixed) had nothing to read. KV 60.22 GiB per GPU, 2,290,115 tokens per
+engine. conc1024 (512 in flight, the rest queued): 2048 done, 0 failed, 4167.15 output tok/s, TTFT p50 / p99 27.6 / 43.2 s,
+TPOT p50 93.3 ms, ITL p50 70.8 ms; conc64 after it: 128 done, 1052.22 tok/s, TPOT p50 53.9 ms. So the 256-per-engine
+batch is implicated (SW-25 still not explained). K3-INF-02's bring-up gave 3865 tok/s at conc1024, autotuned, one engine
+of 1024 sequences; this run had no autotune. `kimi-vllm-4n-dp4tp8-ep32-s128` is EP32's study entry at this setting:
+K3-XN-01's passes plus conc512 and conc1024 (not run). The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
 lines): `srun --jobid` from the login node without `-N` took one node; fixed in the watcher (`$X2/dmesg_watch.sh`), so
 `trig0106`'s log is lost. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384

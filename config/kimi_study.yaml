@@ -724,6 +724,38 @@ kimi-vllm-4n-dp4tp8-ep32-conc1024:
       - *warmup
       - &ep32_conc1024 {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
 
+# EP32's study (draft row, coordinator 2026-11-09): all-gather, at most 128 sequences per engine, 512 in flight (K3-INF-02's
+# one engine took 1024): at this setting job 1272263 ran conc1024 with none failed, where 256 per engine crashed three
+# times (SW-25). K3-XN-01's passes plus conc512 and conc1024; FlashInfer's autotune on
+kimi-vllm-4n-dp4tp8-ep32-s128:
+  inherits: kimi-vllm-4n-dp4tp8-ep32
+  client:
+    passes:
+      - *warmup
+      - {name: warmup-mixed, argv: {--max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc4,    argv: {--max-concurrency: 4,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc16,   argv: {--max-concurrency: 16,   --num-prompts: 64,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc128,  argv: {--max-concurrency: 128,  --num-prompts: 256,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc256,  argv: {--max-concurrency: 256,  --num-prompts: 512,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: ctx64k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 65536,  --random-output-len: 128}}
+      - {name: ctx128k-c1,  argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 131072, --random-output-len: 128}}
+      - {name: ctx1k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 1024,   --random-output-len: 128}}
+      - {name: ctx8k-c16,   argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 8192,   --random-output-len: 128}}
+      - {name: ctx32k-c16,  argv: {--max-concurrency: 16, --num-prompts: 64, --random-input-len: 32768,  --random-output-len: 128}}
+      - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 4,  --random-input-len: 1024, --random-output-len: 4096}}
+      - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 32, --random-input-len: 1024, --random-output-len: 4096}}
+      - *eval
+  server:
+    argv:
+      --max-num-seqs: 128
+
 # the conc1024 crash with at most 128 sequences per engine (coordinator, 2026-11-08): if it passes, the 256-per-engine
 # batch is implicated; a configuration option, not a fix. conc1024 then queues at 512 in flight; conc64 after it as a check
 kimi-vllm-4n-dp4tp8-ep32-seqs128:
