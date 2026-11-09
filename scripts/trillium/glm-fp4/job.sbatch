@@ -11,6 +11,8 @@
 ulimit -c 0
 set -uo pipefail
 unset PYTHONPATH PIP_CONFIG_FILE
+# the srun steps milabench starts on the other nodes (benchmarks/megatron SrunOneNode) get this job's environment
+export SLURM_EXPORT_ENV=ALL
 G=$SCRATCH/trillium/new/glm-fp4
 export MILABENCH_BASE=$G MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1 PATH=$G/src/.venv/bin:$PATH
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_HOME=$G/cache
