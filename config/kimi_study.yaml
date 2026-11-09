@@ -542,8 +542,9 @@ kimi-vllm-2n-tp8pp2-dummy:
 # VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT: under sequence parallelism vLLM holds the shared experts and layer 0's dense MLP
 # whole on every GPU (weights 128.31 GiB per GPU, KV 13.61 GiB, job 1270053); this TP-shards them (all-gather of the TP
 # group's tokens, partial GEMMs, reduce-scatter). The shared experts only with deepep_v2 (or deep_gemm_mega_moe): 107.41
-# GiB, KV 26.47 GiB (job 1270725); DeepEP does not start without it (KV 5.0 GiB, job 1270544). On both backends, so that
-# they compare with the same layout (coordinator, 2026-11-08); with allgather_reducescatter it shards layer 0 only.
+# GiB, KV 26.47 GiB (job 1270725); DeepEP does not start without it (KV 5.0 GiB, job 1270544). Set on both backends
+# (coordinator, 2026-11-08), but with allgather_reducescatter vLLM shards layer 0's dense MLP only: the shared experts
+# stay whole there (127.13 GiB, KV 4.23x against DeepEP's 107.41 GiB, 7.55x).
 #
 # The study's passes that the KV memory holds without queueing: per engine about 150 requests of 1,280 tokens with
 # allgather_reducescatter and 267 with deepep_v2 (est., from vLLM's 4.23x and 7.55x max-model-len, jobs 1271244,

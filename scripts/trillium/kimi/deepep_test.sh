@@ -9,7 +9,7 @@
 #SBATCH --job-name=nw-k3-xn-deepep-test
 #SBATCH --account=rrg-bengioy-ad --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump
 #SBATCH --gpus-per-node=b200:8 --ntasks-per-node=1 --exclusive --mem=0 --time=0:20:00
-#SBATCH --exclude=trig0125,trig0132,trig0150
+#SBATCH --exclude=trig0114,trig0125,trig0132,trig0138,trig0146,trig0150
 #SBATCH --output=/scratch/%u/trillium/new/k3-xn/slurm/%x.%j.out
 set -uo pipefail
 ulimit -c 0

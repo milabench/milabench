@@ -17,10 +17,11 @@ mkdir -p "$B/slurm"
 for kv in "$@"; do export "${kv?}"; done
 export MILABENCH_BASE=$B ENTRY
 # the real sbatch: the site filter refuses above 25 nodes, the admins asked us to use this (2026-11-05).
-# trig0125, trig0132 (2026-11-07) and trig0150 (2026-11-08 15:10) never: one GPU without NVLink each
+# never: trig0125, trig0132 (2026-11-07), trig0150 (2026-11-08 15:10), one GPU without NVLink each; trig0114 (PSU),
+# trig0138 (ECC), trig0146 (ECC, 2026-11-08 20:40)
 /opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable \
     --job-name="${JOB_PREFIX:-nw-k3inf}-$ENTRY" --account=rrg-bengioy-ad --partition=compute_b200_full_node \
     --reservation=b200-friendly-users --qos=bump --gpus-per-node=b200:8 --ntasks-per-node=1 --exclusive --mem=0 \
     --nodes="$NODES" --time="$TIME" --signal=B:USR1@300 ${NODELIST:+--nodelist="$NODELIST"} \
-    --exclude=trig0125,trig0132,trig0150 \
+    --exclude=trig0114,trig0125,trig0132,trig0138,trig0146,trig0150 \
     --output="$B/slurm/%x.%j.out" --export=ALL "$B/src/scripts/trillium/kimi/job.sh"

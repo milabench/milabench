@@ -349,8 +349,11 @@ git clone -b trillium-new https://github.com/milabench/milabench.git src
 unset PYTHONPATH PIP_CONFIG_FILE; export PATH=$HOME/.local/bin:$PATH UV_CACHE_DIR=$X/uv-cache UV_LINK_MODE=copy
 uv venv --python-preference only-managed --python 3.12 --seed src/.venv
 VIRTUAL_ENV=$X/src/.venv uv pip install -e ./src "huggingface_hub[hf_xet]" nvidia-ml-py
-ln -s $K/venv venv; ln -s $K/data data; ln -s $(readlink $K/cache/flashinfer/cubins) cache/flashinfer/cubins
-# Triton's cache seeded with K3-INF's: 16 ranks on 2 nodes compiling the same kernel into an empty cache on VAST raced
+mkdir -p venv data; ln -s $K/venv/torch venv/torch; ln -s $(readlink $K/cache/flashinfer/cubins) cache/flashinfer/cubins
+# the checkpoint linked, the eval datasets copied: the datasets library writes lock files into its cache (review 2)
+ln -s $K/data/hub data/hub; cp -a $K/data/datasets $K/data/modules data/
+# Triton's cache seeded with K3-INF's (job.sh copies it to each node at the job's start and keeps nothing back, since
+# review 2): 16 ranks on 2 nodes compiling the same kernel into an empty cache on VAST raced
 # (FileNotFoundError on the kernel's .json, Inductor error on ranks 9, 10, 13 on trig0146, job 1269990); every kernel that run
 # compiled has the same hash in K3-INF's cache
 mkdir -p cache/triton; cp -an $K/cache/triton/. cache/triton/
@@ -420,8 +423,8 @@ with the test's profiler (`profiler_start` / `profiler_stop`); none in the vLLM 
 - Job 1270544, `trig[0146-0147]`, 20:10-20:25, FAILED at start: weights 128.31 GiB, CUDA graphs 6.41 GiB (all-gather
   backend: 3.09), KV memory 5.0 GiB (13.61), "max_num_seqs (512) exceeds available Mamba cache blocks (250)". Weights
   60 s on trig0146 (warm), 447 s on trig0147: a cold load with the EP filter (TP8 x PP2: 669-676 s).
-- Job 1270725, `-deepep-shard-bringup-notune` (`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1`; since then the setting of every
-  EP16 entry, both backends, and this one is `-deepep-bringup-notune`), `trig[0146-0147]`, 20:27-20:52,
+- Job 1270725, `-deepep-shard-bringup-notune` (`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1`; since then set in every EP16
+  entry, and this one is `-deepep-bringup-notune`), `trig[0146-0147]`, 20:27-20:52,
   COMPLETED, both nodes "GPUs free". **trig0146 drained during the run (ECC):** `health.chk.gpu.ecc.error` from 20:40:32;
   GPU 2 (3A:00.0) 109 corrected DRAM errors, none uncorrected, the other GPUs none (one read through the job, 20:43).
   Weights 107.41 GiB (-20.9, the estimate), KV 26.47 GiB, "1,004,792 tokens, 7.55x" per engine (all-gather: 517,438,
@@ -447,7 +450,7 @@ conc1 is the same on both backends. Estimated from DeepEP's test (about 120 us p
 DeepEP and the sharded shared experts change together here: their shares are not separable, since DeepEP without the
 sharding does not start.
 
-**Both backends, sharded shared experts, `-diag` bring-ups, 2026-11-08 21:05-21:32** (the bring-up's passes, then a conc1
+**Both backends, `-diag` bring-ups, 2026-11-08 21:05-21:32** (the bring-up's passes, then a conc1
 and a conc64 pass under vLLM's torch profiler, 10 iterations after 20, per-kernel time per rank;
 `profile_summary.py` sums a trace by kind, divided by its steps). DeepEP job 1271240 on `trig[0101-0102]`, all-gather job
 1271244 on `trig[0103-0104]`, same time, different node pairs. Both COMPLETED, nodes "GPUs free".
@@ -460,6 +463,14 @@ and a conc64 pass under vLLM's torch profiler, 10 iterations after 20, per-kerne
 | conc64 tok/s, TTFT p50 / p99, ITL p50 | 1056.30, 1306 / 6450 ms, 45.24 ms | 665.77, 2093 / 23070 ms, 45.76 ms |
 | conc64 again (`conc64-profile`) | 1072.07, 1423 / 4189 ms, 43.08 ms | 961.98, 2053 / 2724 ms, 45.85 ms |
 | GSM8K first 200 | 197 (K3-INF-01: 197) | 196 |
+
+**The two entries differ in more than the all-to-all.** `VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1` is set in every EP16
+entry, but vLLM shards the shared experts only under `deepep_v2` (or `deep_gemm_mega_moe`,
+`can_shard_sequence_parallel_shared_expert`, `vllm/models/kimi_k3/nvidia/model.py:159`): with `allgather_reducescatter`
+it shards layer 0's dense MLP only, and the shared experts stay whole on every GPU. So the all-gather server holds 127.13
+GiB of weights per GPU against DeepEP's 107.41, and 4.23x max-model-len of KV per engine against 7.55x. And the
+all-gather server runs K3-INF's venv (NCCL 2.29.7), the DeepEP one `venv/deepep` (NCCL 2.30.7). Both differences stand
+in every comparison of the two backends here, K3-XN-01's included.
 
 Kernel time per decode step, rank 0, profiled (the profiler slows conc1 to 25.43 tok/s on all-gather):
 
@@ -474,11 +485,13 @@ Kernel time per decode step, rank 0, profiled (the profiler slows conc1 to 25.43
 
 Measured, not estimated: the all-to-all is 36-48% of a decode step on both backends (one rank; the profiler's own
 overhead included), DeepEP's dispatch and combine cost more than NCCL's all-gather and reduce-scatter at these batch sizes,
-and the sharded shared experts move time from dense GEMMs to the node's TP collectives. (b): the conc64 drop is two
+and DeepEP's sharded shared experts move time from dense GEMMs to the node's TP collectives. (b): the conc64 drop is two
 things. A one-time stall: the first conc64 on DeepEP waits ~20 s more for prefill, its repeat does not (p99 TTFT 2.7 s),
 in both DeepEP runs (1270725, 1271240); inferred, not logged: DeepEP JIT-compiling its kernels for batch sizes the warm-up
 never made (vLLM rounds the size up to a power of 2 and DeepEP compiles one kernel per size, `deepep_v2.py`; the warm-up's
-64 equal requests never mix prefill and decode). The study entries now run a second warm-up shaped like conc64. Then a
+64 equal requests never mix prefill and decode). The study entries now run a second warm-up shaped like conc64. DeepEP's JIT cache is node-local and deleted after each
+job (`job.sh`), so every job compiles again, and a batch size that neither warm-up made can still stall one pass's p99
+TTFT once. Then a
 steady 10% (962 against 1072 tok/s on the repeat), in prefill: TTFT p50 2.05 against 1.42 s, decode ITL about the same.
 vLLM's `--enable-logging-iteration-details` logged nothing here (it needs the engine's stats logging, off in these DP
 servers; no throughput lines either).
@@ -575,8 +588,8 @@ layers: one region per layer, TP may differ between the sides. Conditions, from 
 
 Since then: `nixl` 1.5.2 in `venv/deepep` (`deepep_build.sh`). `kimi-vllm-4n-pd-ep16-bringup-notune`: `pd_serve.sh`
 (`server.command`, run by milabench on the main node with the entry's vLLM flags; `num_machines: 1`) starts a prefill
-instance on the job's nodes 0-1 and a decode instance on nodes 2-3, each EP16 (DP2 x TP8, sharded shared experts,
-all-gather all-to-all), with `--kv-transfer-config` NixlConnector (`kv_both`), `VLLM_SSM_CONV_STATE_LAYOUT=DS` and each
+instance on the job's nodes 0-1 and a decode instance on nodes 2-3, each EP16 (DP2 x TP8, all-gather all-to-all, so the
+shared experts whole on every GPU: see below), with `--kv-transfer-config` NixlConnector (`kv_both`), `VLLM_SSM_CONV_STATE_LAYOUT=DS` and each
 node's `VLLM_NIXL_SIDE_CHANNEL_HOST`, and `pd_proxy.py`: vLLM v0.32.0's NIXL toy proxy
 (`tests/v1/kv_connector/nixl_integration/toy_proxy_server.py`, downloaded to `$X/pd/`, unchanged) plus `/v1/models` for
 milabench's readiness check. The proxy sends each request to the prefill instance with `max_tokens=1`, then to the decode

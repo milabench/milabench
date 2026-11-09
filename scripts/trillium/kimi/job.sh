@@ -7,14 +7,18 @@ ulimit -c 0  # the compute nodes allow core dumps (a K3 crash left 681 GB of the
 # it to the other nodes' tasks (PropagateResourceLimits=NONE)
 : "${MILABENCH_BASE:?}" "${ENTRY:?}"
 SRC=$MILABENCH_BASE/src
-export PATH=$SRC/.venv/bin:$PATH MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1
+# PYTHONDONTWRITEBYTECODE: K3-XN runs K3-INF's venv, whose files stay as they are (12 .pyc files written, review 2)
+export PATH=$SRC/.venv/bin:$PATH MILABENCH_GPU_ARCH=cuda PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 # compute nodes: no internet, $HOME read-only
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_HOME=$MILABENCH_BASE/cache
-# node-local files in RAM (/tmp holds 2 GB): TMPDIR and FlashInfer's workspace, removed at the end. Triton's kernels in a
-# cache that persists across jobs: a kernel compiled during a measured pass stalls it (9.8 s, job 1262824)
+# node-local files in RAM (/tmp holds 2 GB): TMPDIR, FlashInfer's workspace and Triton's kernels, removed at the end.
+# Triton's cache starts as a copy of $MILABENCH_BASE/cache/triton on each node: a kernel compiled during a measured pass
+# stalls it (9.8 s, job 1262824), and 16 ranks of 2 nodes compiling into one cache on VAST raced (job 1269990). Kernels
+# compiled in a job are not kept: the warm-ups compile them before the measured passes
 LOCAL=/dev/shm/$USER/k3inf
-srun --overlap --propagate=CORE --ntasks-per-node=1 mkdir -p "$LOCAL/tmp"
-export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$MILABENCH_BASE/cache/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
+srun --overlap --propagate=CORE --ntasks-per-node=1 bash -c 'mkdir -p "$1/tmp" "$1/triton" && cp -a "$2/." "$1/triton/"' \
+    _ "$LOCAL" "$MILABENCH_BASE/cache/triton"
+export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
 # DeepEP's JIT kernels (K3-XN): node-local, not in the read-only $HOME it defaults to, nor in one cache shared by 2 nodes
 # (Triton's raced there, job 1269990)
 export EP_JIT_CACHE_DIR=$LOCAL/deepep-jit
