@@ -306,10 +306,12 @@ which was 4-5 % slower than 3e-4 at 128k on one node (two same-node pairs, above
   | 128k CP4 x DP, full | 24.999-25.239 | 25.844 | 25.953 | 26.269 (+1.2 % over 4) |
   | 128k CP8 x DP, selective | | 23.130 (DP1) | 23.236 (DP2) | 23.894 (DP6, +2.8 % over 4) |
 
-- CP across nodes at scale: spreading 128k over 8 GPUs lowers memory enough for selective recompute, and CP8 x DP6 with
-  selective on 12 nodes takes a 9.0 % shorter step than CP4 x DP13 with full recompute on 13 (1,371 against 1,247 tokens/s
-  per GPU; 10.5 % on 2 and 4 nodes). It is the recompute that differs: with the same (full) recompute, CP across nodes was
-  5.8 % slower on 2 nodes (CP8 27.35 against CP4 x DP2 25.84 s). CP4 x DP13 with selective recompute was not run (below).
+- CP across nodes at scale, 128k: at the same (selective) recompute, CP8 x DP6 on 12 nodes and CP4 x DP13 on 13 (QW-CP-02,
+  below) take 23.894 and 23.434 s by the median, 23.892 and 23.968 s by the mean: within 1.9 % / 0.3 %, one run each. What
+  CP8 buys at this scale is memory headroom (112.6 against 162.0 GiB peak allocated) and steadier steps, not speed. With
+  full recompute, CP4 x DP13 takes 26.269 s (CP8 x DP6 selective's step is 9.0 % shorter). On 2 and 4 nodes CP4 with selective
+  recompute did not fit (2 nodes, out of memory in step 2) or the allocator remapped memory every step (4 nodes, 34.37 s),
+  so there CP across nodes was what allowed selective recompute (a 10.5 % shorter step than CP4 x DP with full).
   Across nodes per node and step, measured on every node / counted: 128k CP4 x DP13 120.8-121.1 / 119.7 GiB (steps 3-19:
   the node monitor stopped before step 20 ended; the gradient reduce-scatter and parameter all-gather over the 52 ranks of
   the data-parallel x CP group, as rings); CP8 x DP6 461.8-462.1 / 455.5 (steps 3-19; 336 of K/V, each CP8 group on a pair
@@ -330,22 +332,41 @@ which was 4-5 % slower than 3e-4 at 128k on one node (two same-node pairs, above
 - Estimated before the run: 32k 10.7-11.0 s, 128k CP4 25.9-26.5 s, CP8 23.2-24.0 s; peaks 125.9, 91-97 and about 116 GiB.
   Measured 10.913, 26.269, 23.894 s; 125.9, 91.5, 112.6 GiB.
 
-## QW-CP-02 (proposed, not run): 128k CP4 x DP13 with selective recompute
+## QW-CP-02: 128k CP4 x DP13 with selective recompute (job 1273588, 2026-11-09 05:34:58-05:45:24, COMPLETED)
 
-`megatron-qwen3-32b-cp-n13-128k-sel`: QW-CP-01's `-n13-128k` (TP2 x CP4 x DP13, 26 x 128k per step, 2 micro-batches per
-data-parallel rank, 20 steps, 1e-6) with the selective recompute (MLP) of its CP8 x DP6 entry. It settles whether CP in
-the node beats CP across nodes at the same recompute at 13 nodes. Estimates: peak 158-161 GiB allocated (the 4-node
-CP4 x DP4 selective's 165.9, less the optimizer state that DP13 shards over 52 instead of 16: 7.6 against 2.3 GiB per GPU);
-if it fits without the allocator remapping memory, 22-23 s per step (CP4 x DP13 full, 26.27 s, times CP8's selective / full
-ratio on 2 nodes, 0.846), so about 1,430-1,490 tokens/s per GPU against CP8 x DP6's 1,371. Two other outcomes answer it
-too: out of memory in step 1 or 2 (the run fails by itself), or 31-35 s steps at about 700 W as at 4 nodes (the remapping).
+`job.sbatch exp:C-speed megatron-qwen3-32b-cp-n13-128k-sel` at 79030647 on QW-CP-01's 13 nodes: QW-CP-01's `-n13-128k`
+(TP2 x CP4 x DP13, 26 x 128k per step, 2 micro-batches per data-parallel rank, 1e-6, 20 steps) with selective recompute
+(MLP), one run. It fits: no out of memory. Recomputed from the raw files (rank 0's step rows, steps 3-20; bytes over steps
+3-19, the node monitor stopping before step 20 ended):
+
+| | CP4 x DP13, selective (this) | CP8 x DP6, selective, 12 nodes (QW-CP-01) | CP4 x DP13, full (QW-CP-01) |
+|---|---|---|---|
+| step median / mean (min-max) | 23.434 / 23.968 s (22.486-26.245) | 23.894 / 23.892 s (23.395-24.323) | 26.269 / 26.283 s (26.205-26.441) |
+| tokens/s per GPU, median / mean | 1,398 / 1,367 | 1,371 / 1,371 | 1,247 / 1,247 |
+| MFU, median / mean | 37.6 / 36.7 % | 36.8 / 36.8 % | 33.5 / 33.5 % |
+| peak allocated / reserved | 162.0 / 171.9 GiB | 112.6 / 121.6 | 91.5 / 98.7 |
+| first step | 63.1 s | 52.3 s | 51.4 s |
+| across nodes per node and step, measured / counted | 121.0-121.1 / 119.7 GiB | 461.8-462.1 / 455.5 | 120.8-121.1 / 119.7 |
+| power cap, mean power, SM clock median (lowest) | 86.3-88.7 %, 887-908 W, 1,432-1,455 (1,110) MHz | 90.2-92.6 %, 921-938 W, 1,455-1,485 (1,275) | 94.1-97.1 %, 943-962 W, 1,425-1,455 (1,095) |
+| loss at step 20 | 9.081 | 9.100 | 9.081 |
+
+The uneven steps (from every rank's step rows and the node monitor):
+- In 17 of the 18 steps 3-20 the 8 ranks of one node (one data-parallel replica, a CP4 x TP2 group), at a few steps of 2-5
+  nodes, run their forward plus backward 1.1-4.5 s longer than the median rank (5.46 s forward, 15.5 s backward), and the
+  step is longer by about as much over about 22.5 s. The node moves: trig0147 at steps 3-7, trig0140 at 8-12, then
+  trig0139 and trig0143. Steps 11, 13 and 18 have none (22.49-22.77 s). Not an alternation, though it can look like one.
+- Not lining up with it: the straggling node's mean power and median SM clock in its slow steps are within 1-2 % of the
+  other nodes' (all at the cap); its ranks' peak reserved memory grows in 0-5 of them per step (the run's highest reached
+  171.7 GiB at step 2, 171.9 at step 19); the InfiniBand bytes are the same on every node and port. CP4 x DP13 with full
+  recompute (91.5 GiB) and CP8 x DP6 selective (112.6 GiB) have no straggler in any step.
+- Left: memory, 162.0 GiB allocated and up to 171.9 reserved of 178, where the same layout at 4 nodes had the allocator
+  mapping memory every step (its profile: 9.4 s in `cuMemCreate`). A stall on one rank delays its CP group and the other
+  replicas wait at the gradient reduce. A reading only: the step rows do not record allocator calls and this run has no
+  profile.
 
 ## Not run, untested
 
 - CP across more than 2 nodes per group at scale (CP16 x DP); a profile at 12-13 nodes; MXFP8 at 13 nodes.
-- 128k CP4 x DP13 with selective recompute (`megatron-qwen3-32b-cp-n13-128k-sel`, proposed as QW-CP-02): the same recompute
-  as CP8 x DP6. At 4 nodes CP4 x DP4 selective fit at 165.9 GiB but the allocator remapped memory every step (34.37 s); at
-  DP13 the optimizer's share per GPU is 1/52 against 1/16, so it may fit about 5-8 GiB lower (est.).
 - `--overlap-grad-reduce` (the data-parallel reduce runs at the end of the step in every entry) and the TP comm overlap.
 - The all_gather and a2a+p2p implementations at full depth on one node; a2a+p2p with selective recompute or CUDA graphs.
 - MXFP8 across nodes; NVFP4 with CP.
