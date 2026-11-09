@@ -1572,6 +1572,37 @@ def kimi_passes_table(t, nodes: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+KIMI_TASKS = (("gsm8k", "GSM8K"), ("arc_challenge", "ARC-Challenge"), ("gpqa_diamond", "GPQA diamond"), ("mmlu_pro", "MMLU-Pro"))
+
+
+def kimi_mi355x_table(t) -> str:
+    """Kimi K3 inference against MI355X, pass for pass: a template until the MI355X study's numbers are in. B200 is the 2-node
+    TP8 x PP2 server (the run TriKimi* reads); the MI355X and ratio cells are placeholders, not data."""
+    p = _kimi_two_node_passes(t)
+    if p.empty:
+        return ""
+    todo = r"\textit{to come}"
+    lines = [r"\begin{tabular}{lrrrrr}", r"\toprule",
+             r"Pass & Conc. & In / out & B200, ours & MI355X & MI355X / B200 \\",
+             r" & & tokens & \multicolumn{2}{c}{output tok/s per GPU} & \\", r"\midrule"]
+    group = None
+    for name, x in p.sort_values("order").iterrows():
+        g = (re.sub(r"\d+k?$", "", name.split("-")[0]), x.concurrency if name.startswith("ctx") else None)
+        if group is not None and g != group:
+            lines.append(r"\midrule")
+        group = g
+        lines.append(f"{name} & {int(x.concurrency)} & {int(x.input_len):,} / {int(x.output_len):,} & {x.output_throughput_gpu:,.1f} & {todo} & {todo} " + r"\\")
+    acc = t.get("kimi_accuracy", pd.DataFrame())
+    if not acc.empty:
+        a = acc[acc.job.astype(str) == str(p.job.iloc[0])].set_index("task")
+        rows = [f"{label} ({int(a.n[task]):,}) & & & {100 * a.value[task]:.1f} $\\pm$ {100 * a.stderr[task]:.1f} & {todo} & {todo} " + r"\\"
+                for task, label in KIMI_TASKS if task in a.index]
+        if rows:
+            lines += [r"\midrule", r"Accuracy, \% (questions) & & & B200, ours & MI355X & MI355X $-$ B200, points \\", r"\midrule", *rows]
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def kimi_runs_table(t) -> str:
     """Kimi K3 inference runs in the report: entry, job, nodes, layout, the server's sequence cap, start and end, Slurm state."""
     r = t.get("kimi_runs", pd.DataFrame())
@@ -2765,6 +2796,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "checkpoints.tex").write_text(checkpoint_table(tables))
     (out / "kimi_passes.tex").write_text(kimi_passes_table(tables, 2))
     (out / "kimi_passes_four.tex").write_text(kimi_passes_table(tables, 4))
+    (out / "kimi_mi355x.tex").write_text(kimi_mi355x_table(tables))
     (out / "kimi_runs.tex").write_text(kimi_runs_table(tables))
     (out / "kimi_xn_passes.tex").write_text(kimi_xn_passes_table(tables))
     (out / "kimi_pd_passes.tex").write_text(kimi_pd_passes_table(tables))
