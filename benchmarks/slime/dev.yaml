@@ -732,6 +732,13 @@ slime-glm5-l10-grpo-4n:
     --sglang-ep-size: 32
     --sglang-dp-size: 32
 
+# The same with B200's default kernels: at engine start FlashInfer's MoE autotune reaches the token count of the
+# 64-GPU engines of slime-glm5-grpo-trtllm (twice the 2-node test's), with less memory left after the KV pool
+slime-glm5-l10-grpo-4n-trtllm:
+  inherits: slime-glm5-l10-grpo-4n
+  env: *trtllm_env
+  argv: *trtllm_argv
+
 # slime-glm5-l10-grpo-4n with rollout routing replay (the switch of slime-glm5-grpo-r3), before GLM-RL-04: the 32-GPU
 # engine records the routes, the trainer replays them.
 slime-glm5-l10-grpo-4n-r3:
