@@ -17,6 +17,8 @@ FineWeb Arrow cache in GLM-FP4's `data`, as GLM-FP4's own runs do.
 `exp:NAME` sets `run.experiment` for the entries after it. Results per run: `$Q/runs/qw-cp.<job>.<entry>`.
 Step 1 ran `megatron-qwen3-32b-cp-t8-*` (8 layers, about 100 s each, 30 s to fail) and `megatron-qwen3-32b-cp-n1-*` (full
 depth, 20 steps: 4.5-7.5 min each, 10-14 min at 128k; the 128k loss run 22 min), 1 node per job, as in the tables below.
+Step 2 ran `megatron-qwen3-32b-cp-n{1,2,4}-*` at 128k (12 steps, profiled: 7-11 min each), one job per node count;
+Megatron's profiler writes rank 0's trace to `$Q/prof/<name>/torch_profile`.
 
 ## The input
 
@@ -159,6 +161,7 @@ software power cap (0x4); mean power; SM clock median (lowest) over the nodes' s
 | 4, CP16 p2p, CUDA graphs | none | 25.252 s | 1,298 | 34.8 % | 125.9 | 838 / 834 | 96.0 %, 951 W, 1,612 (1,417) |
 | 4, CP4 x DP4 | selective (MLP) | 34.373 s (31.6-35.0) | 953 | 25.6 % | 165.9 | 118 / 114 | 61 %, 714 W, 1,470 (1,185) |
 | 4, CP16 p2p | none | 27.783 s | 1,179 | 31.7 % | 131.6 | 850 / 834 | 82 %, 884 W, 1,620 (1,410) |
+| 4, CP8 x DP2 p2p (job 1273445) | selective (MLP) | 23.236 s | 1,410 | 37.9 % | 116.4 | 448 / 450 | 93 %, 947 W, 1,459 (1,305) |
 
 The 1-node rows are this job's 12-step profiled runs (24.999 s; the 50-step loss run on trig0121: 24.25 s), so the
 multi-node rows compare with them.
@@ -191,6 +194,7 @@ and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU
 | 4, CP16 a2a+p2p, full | 33.27 s | 50.2 % | 17.0 % | 23.5 % (82.7 %) | 4.1 % | 4.8 % | 17.5 % |
 | 4, CP4 x DP4, full | 26.06 s | 65.9 % | 21.4 % | 7.1 % (99.3 %) | 0.0 % | 6.1 % | 0.6 % |
 | 4, CP16 p2p, none, graphs | 27.15 s | 52.1 % | 15.0 % | 56.2 % (85.6 %) | 8.1 % | 11.2 % | 6.7 % |
+| 4, CP8 x DP2 p2p, selective | 23.78 s | 58.6 % | 22.3 % | 40.1 % (94.8 %) | 2.1 % | 5.7 % | 3.8 % |
 
 - Same recompute (full): CP in the node with data parallel across is fastest on 2 and 4 nodes, 25.84 / 25.95 s, 3.4 /
   3.8 % above one node (the gradient reduce-scatter and parameter all-gather at the end of the step: `--overlap-grad-reduce`
@@ -198,7 +202,8 @@ and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU
   36.35 s (+40 %) and CP16 a2a+p2p 32.54 s (+25 %).
 - Each layout's best fitting recompute: CP across nodes needs less. On 2 nodes CP8 with selective recompute, 23.13 s, is
   10.5 % faster than CP4 x DP2 with full (25.84; CP4 x DP2 with selective runs out of memory in step 2) and faster than one
-  node. On 4 nodes CP16 without recompute and with CUDA graphs, 25.25 s, is 2.7 % faster than CP4 x DP4 with full (25.95).
+  node. On 4 nodes CP8 x DP2 with selective recompute, 23.24 s (job 1273445: as CP8 on 2 nodes, 23.13), is the fastest:
+  CP16 without recompute and with CUDA graphs takes 25.25 s, CP4 x DP4 with full 25.95.
   CP4 x DP4 with selective fits (165.9 GiB, the optimizer over 16) but takes 34.37 s: 34 % of its profiled step has no
   kernel while the host spends 9.4 s in `cuMemCreate` (1,439 calls), 2.7 s in `cuMemRelease` and 1.4 s in `cuMemMap`: the
   expandable-segments allocator maps and unmaps memory every step near the limit (no such call in the full-recompute or
@@ -217,6 +222,21 @@ and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU
 - MXFP8 at 128k (1 node): 22.56 against 25.00 s, 1.11x (8k: 1.32x at 13 nodes): its GEMMs take 2.87 s instead of 5.32, and
   attention, BF16 in both, is 74 % of its step. Peak 146.2 GiB.
 
+## The 1-node 128k step: 24.25 s in step 1, 25.0 s in step 2
+
+Not the node: the same entry (`megatron-qwen3-32b-cp-n1-128k-p2p-full`, learning rate 1e-6, 20 steps) took 25.239 s on
+trig0121 (job 1273446) and 25.111 s on trig0145 (job 1273448), 0.5 % apart; step 2's profiled run on trig0145 took 24.999
+s. Step 1's 24.25 s is the 50-step loss run (trig0121), the only one at learning rate 3e-4: its steps fall from 24.82 s at
+step 3 (warm-up) to 24.2-24.3 s from step 5. All runs are power-capped (99-100 % of samples, 976-984 W); the loss run's
+GPUs ran at a median of 1,485 MHz at that power, against 1,432-1,447 MHz at 1e-6: the weights the higher learning rate
+moves change the values computed, and the power each kernel draws (likely, not measured per kernel).
+Checked on one node (`megatron-qwen3-32b-cp-n1-128k-lr3e-4`, the loss settings for 12 steps, job 1273463, trig0145):
+steps 5-12 take 23.859 s at 3e-4 against 25.122 s at 1e-6 on the same node (job 1273448), 5.3 % apart, at the same power
+(978 against 976 W, capped in 99.8 / 99.1 % of samples) with median SM clocks of 1,507 against 1,447 MHz. So the 1-node
+gap is the learning rate, through the power cap; node to node it is 0.5-1.6 % (trig0121 and trig0145). Every speed entry
+here, as the campaign's, runs at a constant 1e-6: at 128k its step times are about 5 % above those of training at 3e-4
+(one comparison).
+
 ## 32k across nodes, and the 13-node row
 
 `megatron-qwen3-32b-cp-n2-32k-cg` (job 1273420, trig[0136-0137], COMPLETED 6:54): the 13-node 32k entry's layout on 2
@@ -224,12 +244,24 @@ nodes, TP2 x CP4 x DP2 with CUDA graphs, 16 x 32k per step (8 micro-batches per 
 3,053 tokens/s per GPU, 40.0 % MFU, peak 125.9 GiB; 3.8 % above one node (10.337 s), estimated about 11.2 s. 108 GiB per
 node and step across nodes (107 counted: gradients only); power cap 94 %, 940 W, SM clock median 1,530 MHz.
 
-At 13 nodes (104 GPUs, 52 TP pairs) CP can only be 1, 2 or 4: CP stays in the node and data parallel crosses, which on 2
-and 4 nodes cost 3.4-3.8 % over one node at 128k (full recompute) and 3.8 % at 32k (graphs). Proposed row:
-`job.sbatch exp:C-speed megatron-qwen3-32b-cp-n13-32k megatron-qwen3-32b-cp-n13-128k`, TP2 x CP4 x DP13, BF16, 20 steps:
-32k with CUDA graphs and no recompute (104 x 32k per step), 128k with full recompute (26 x 128k). Estimates: 32k 10.7-11.0 s
-(2,980-3,060 tokens/s per GPU), 128k 25.9-26.5 s (1,240-1,265), peaks 125.9 and 91-97 GiB, about 20 min for both.
+At 13 nodes (104 GPUs, 52 TP pairs) CP can only be 1, 2 or 4, so CP stays in the node and data parallel crosses, which on
+2 and 4 nodes cost 3.4-3.8 % over one node at 128k (full recompute) and 3.8 % at 32k (graphs). To see whether CP across
+nodes holds up with many CP groups crossing at once and data parallel on top, a third entry runs CP8 on 12 of the 13
+nodes: `placement: {nodes: leaf, group_nodes: 2}` keeps whole pairs of nodes (one CP8 group each) and leaves the last node
+out (an existing option: Slurm has no topology on Trillium, so the main node comes first and the others by name). Checked
+on 3 of 4 nodes (`megatron-qwen3-32b-cp-t8-n3of4`, job 1273445: 24 ranks on trig0140-0142, trig0143 idle, 1.697 s per step).
 
+Proposed row: `job.sbatch exp:C-speed megatron-qwen3-32b-cp-n13-32k megatron-qwen3-32b-cp-n13-128k
+megatron-qwen3-32b-cp-n12-128k-cp8`, BF16, 20 steps, 32,768 tokens per GPU per step:
+
+| entry | layout | recompute | per step | estimate (from 2 and 4 nodes) | peak |
+|---|---|---|---|---|---|
+| `-n13-32k` | TP2 x CP4 x DP13, CUDA graphs | none | 104 x 32k | 10.7-11.0 s, 2,980-3,060 tokens/s per GPU | 125.9 GiB |
+| `-n13-128k` | TP2 x CP4 x DP13 | full | 26 x 128k | 25.9-26.5 s, 1,240-1,265 | 91-97 GiB |
+| `-n12-128k-cp8` | TP2 x CP8 x DP6, 12 nodes | selective (MLP) | 24 x 128k | 23.2-24.0 s, 1,365-1,410 | about 116 GiB |
+
+About 27 min in all (first steps 1-2.5 min in, 128 CUDA graphs built in 60-90 s for 32k). Across nodes per node and step
+(est.): about 108-120 GiB for the CP4 entries (gradients), 450-460 for CP8 (336 of K/V and the gradients).
 ## Not run, untested
 
 - Above 4 nodes; CP across more than 4 nodes; anything but CP4 at 13 nodes (the 52 TP pairs).
