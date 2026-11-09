@@ -20,6 +20,14 @@ runs apart (GLM-FP4-02's four all record 1, and 1272020 is BF16's second run by 
 under entry names without it), so ``recipe`` is the precision and ``run`` the entry's own label. Loss: the ``.0.data`` loss events (the
 last stage's, rank 4). Step times of the loss runs: steps 3-500.
 GPU telemetry over the same steps (wall clock, from rank 0's per-rank metrics), all nodes: software power cap share per node, mean power and SM clock over every sample, Xid rows.
+
+Qwen3 32B at 32k and 128k tokens with context parallelism (QW-CP-01, job 1273505, ``build_cp``), in tables of their own (``qw_cp_*``): three entries
+of one job on GLM-FP4-03's 13 nodes (the CP8 one on 12 of them), read from ``qw-cp/`` (collect: ``qw-cp/runs/<run>/`` and
+``qw-cp/nodemon/<run>/*.{gpu,ib}.tsv``), keyed on the job and the entry, with GLM-FP4-03's BF16 entry (1272011) read again from ``glm-fp4/`` as
+their 8k reference, so the four rows share one statistic: means over steps 3-20 on milabench's timer, as above. Tokens/s per GPU at the mean step;
+MFU from the summary's FLOPs per token (causal attention counted per packed slot) against 2.25 PFLOP/s. Bytes across nodes per node and step: the
+four compute ports' tx counters (``ib.tsv``), each interpolated at rank 0's wall-clock end of step 2 and of the last step that ended before that
+node's monitor stopped (19 or 20), over the steps between.
 """
 
 from __future__ import annotations
@@ -29,10 +37,11 @@ import math
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from tt_analysis.runs import data_files, parse_run
 
-from .machine import CLUSTER, SUBNET_OF
+from .machine import CLUSTER, PEAK_BF16, SUBNET_OF
 from .runs import parse_extras, read_events
 
 JOBS = {"1271210": "GLM-FP4-01"}  # REQUESTS.md; bring-up (1 and 4 nodes) is not read
@@ -41,6 +50,10 @@ QW_JOBS = {"1272011": "GLM-FP4-03", **{j: "GLM-FP4-02" for j in ("1272019", "127
            **{j: "GLM-FP4-04" for j in ("1272416", "1272419", "1272423", "1272429", "1272431")}}
 FIRST_STEP, LAST_STEP = 3, 20
 SW_POWER_CAP = 0x4  # nvmlClocksEventReasonSwPowerCap
+# Qwen3 32B with context parallelism (QW-CP-01; REQUESTS.md), and its 8k reference: GLM-FP4-03's BF16 entry, on the same nodes
+CP_JOBS = {"1273505": "QW-CP-01"}
+CP_REF = ("1272011", "megatron-qwen3-32b-n13-bf16")
+IB_PORTS = ("mlx5_0", "mlx5_1", "mlx5_4", "mlx5_9")  # the compute ports (mlx5_2, 3: storage)
 
 
 def _cap_shares(nodemon: Path, t0: float, t1: float) -> dict[str, float]:
@@ -69,7 +82,8 @@ def _gpu_window(nodemon: Path, t0: float, t1: float) -> tuple[pd.DataFrame, dict
         return pd.DataFrame(), {}
     g = pd.concat(frames, ignore_index=True)
     xid = pd.to_numeric(g.xid, errors="coerce").fillna(0) if "xid" in g else pd.Series(0, index=g.index)
-    per = g.groupby("host").agg(cap_pct=("cap", "mean"), samples=("cap", "size")).assign(cap_pct=lambda d: 100 * d.cap_pct)
+    per = (g.groupby("host").agg(cap_pct=("cap", "mean"), samples=("cap", "size"), power_w=("power_w", "mean"), sm_med=("sm_clock_mhz", "median"))
+           .assign(cap_pct=lambda d: 100 * d.cap_pct))
     return per, {"power_w": g.power_w.mean(), "sm_mhz": g.sm_clock_mhz.mean(), "sm_min": g.sm_clock_mhz.min(), "xid_rows": int((xid != 0).sum())}
 
 
@@ -194,3 +208,99 @@ def _qwen(f: Path, job: str, state: str, root: Path) -> dict[str, list]:
             "qw_fp4_loss": ([{"job": job, "run": label, "recipe": out["recipe"], "step": int(x.step), "loss": x.loss, "grad_norm": x.grad_norm}
                              for x in losses.itertuples()]
                             if out["experiment"] == "C-loss" else [])}
+
+
+def _step_ends(run_dir: Path) -> dict[int, float]:
+    """Rank 0's wall-clock step ends from its per-rank metrics (batch_id is the step)."""
+    rank0 = sorted(run_dir.glob("metrics.*.0.jsonl"))
+    ends = {}
+    for line in rank0[0].read_text().splitlines() if len(rank0) == 1 else []:
+        d = json.loads(line)
+        if d.get("kind") == "step" and d.get("task") == "train":
+            ends[d["batch_id"]] = d["time"]
+    return ends
+
+
+def _ib_window(nodemon: Path, ends: dict[int, float], first: int, last: int) -> pd.DataFrame:
+    """Per host: GiB sent per step on each compute port and in all, from step first to the last step <= last that ended before the node's monitor
+    stopped (each port's tx counter interpolated at the window's ends), the last step used, and the busiest port's mean rate in GB/s."""
+    rows = []
+    for path in sorted(nodemon.glob("*.ib.tsv")) if nodemon.is_dir() else []:
+        ib = pd.read_csv(path, sep="\t", usecols=["time_ms", "hca", "tx_bytes"]).dropna()
+        ib = ib[ib.hca.isin(IB_PORTS)].assign(t=lambda d: d.time_ms / 1000)
+        if ib.empty or first - 1 not in ends:
+            continue
+        stop = ib.groupby("hca").t.max().min()
+        done = [b for b, t in ends.items() if first <= b <= last and t <= stop]
+        if not done:
+            continue
+        end = max(done)
+        t0, t1, n = ends[first - 1], ends[end], end - first + 1
+        sent = {h: float(np.diff(np.interp([t0, t1], x.t, x.tx_bytes.astype(float)))[0]) for h, x in ib.sort_values("t").groupby("hca")}
+        rows.append({"host": path.name.split(".")[0], "last": end, **{f"ib_{h}": v / n / 2**30 for h, v in sent.items()},
+                     "ib_gib": sum(sent.values()) / n / 2**30, "port_max_gbs": max(sent.values()) / (t1 - t0) / 1e9})
+    return pd.DataFrame(rows)
+
+
+def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
+    """qw_cp_runs (one row per entry: QW-CP-01's three and the 8k reference) and qw_cp_steps (milabench's step times, every step). Only jobs
+    that have ended."""
+    states = {}
+    if sacct.exists():
+        s = pd.read_csv(sacct, sep="|", dtype=str)
+        states = dict(zip(s.JobID, s.State))
+    files = [f for f in (data_files(root) if root.is_dir() else []) if f.parent.name.split(".")[1] in CP_JOBS]
+    files += [f for f in (data_files(ref_root) if ref_root.is_dir() else []) if f.parent.name == f"glm-fp4.{CP_REF[0]}.{CP_REF[1]}"]
+    runs, steps = [], []
+    for f in files:
+        job = f.parent.name.split(".")[1]
+        state = states.get(job, "RUNNING")
+        if state.startswith(unfinished):
+            continue  # a job still running is not a failed run: left out until it ends
+        parsed = parse_run(f, CLUSTER, SUBNET_OF)
+        if parsed is None:
+            continue
+        row, _, _, _ = parsed
+        extra, loss, _, batch_ids, elapsed, _ = parse_extras(f, row["run_id"])
+        st = pd.DataFrame({"step": [b + 1 for b in batch_ids], "step_s": elapsed}) if len(batch_ids) == len(elapsed) else pd.DataFrame()
+        if st.empty:
+            continue
+        window = st[st.step.between(FIRST_STEP, LAST_STEP)].step_s
+        summ, argv = _summary(f)
+        par, work = summ.get("parallelism", {}), summ.get("workload", {})
+        command = next((e["data"]["command"] for e in read_events(f) if e.get("event") == "start" and isinstance(e.get("data"), dict)
+                        and isinstance(e["data"].get("command"), list)), [])
+        ends = _step_ends(f.parent)
+        window_t = (ends[FIRST_STEP - 1], ends[LAST_STEP]) if {FIRST_STEP - 1, LAST_STEP} <= set(ends) else (
+            extra["rates_t0"] + st.step_s[st.step < FIRST_STEP].sum(), extra["rates_t0"] + st.step_s.sum())
+        nodemon = (root if job in CP_JOBS else ref_root) / "nodemon" / f.parent.name
+        per, pooled = _gpu_window(nodemon, *window_t)
+        ib = _ib_window(nodemon, ends, FIRST_STEP, LAST_STEP)
+        losses = {x["step"]: x["loss"] for x in loss if x.get("step") is not None}
+        tok = row["global_batch_tokens"] / window.mean() / row["gpus"]
+        label = "8k" if job not in CP_JOBS else f"{row['seq_len'] // 1024}k-cp{par.get('cp')}"
+        runs.append({"request": CP_JOBS.get(job, "GLM-FP4-03"), "job": job, "job_state": state.split()[0], "entry": row["bench"], "run": label,
+                     "run_id": row["run_id"], "experiment": summ.get("run", {}).get("experiment"), "precision": row["precision"],
+                     "started": row["started"], "nodes": row["nodes"], "gpus": row["gpus"], "hosts": row["hosts"],
+                     "tp": par.get("tp"), "cp": par.get("cp"), "dp": par.get("dp_replicate"), "seq_len": row["seq_len"],
+                     "seqs": row["global_batch_tokens"] // row["seq_len"], "global_batch_tokens": row["global_batch_tokens"],
+                     "tokens_per_gpu": row["global_batch_tokens"] // row["gpus"], "n_layers": row["n_layers"], "status": row["status"],
+                     "recompute": work.get("activation_checkpointing"), "recompute_modules": argv.get("--recompute-modules"),
+                     "cuda_graphs": "--cuda-graph-impl" in argv,
+                     "doc_masking": "--dataloader-inter-document-masking" in command, "cp_comm": argv.get("--cp-comm-type"),
+                     "lr": float(argv["--lr"]) if "--lr" in argv else None, "lr_schedule": argv.get("--lr-decay-style"),
+                     "steps_logged": len(st), "first": FIRST_STEP, "measured": len(window), "step_mean": window.mean(),
+                     "step_median": window.median(), "step_sd": window.std(), "step_min": window.min(), "step_max": window.max(),
+                     "step1_s": st.step_s[st.step == 1].sum(), "tok_s_gpu": tok, "flops_per_token": row["flops_per_token"],
+                     "mfu_pct": 100 * row["flops_per_token"] * tok / PEAK_BF16, "mem_alloc_gib": row["mem_alloc_gib"],
+                     "loss_last": losses.get(LAST_STEP),
+                     "cap_med": per.cap_pct.median() if len(per) else None, "cap_lo": per.cap_pct.min() if len(per) else None,
+                     "cap_hi": per.cap_pct.max() if len(per) else None, "cap_nodes": len(per),
+                     "power_lo": per.power_w.min() if len(per) else None, "power_hi": per.power_w.max() if len(per) else None,
+                     "sm_med_lo": per.sm_med.min() if len(per) else None, "sm_med_hi": per.sm_med.max() if len(per) else None, **pooled,
+                     "ib_nodes": len(ib), "ib_lo": ib.ib_gib.min() if len(ib) else None, "ib_hi": ib.ib_gib.max() if len(ib) else None,
+                     "ib_last_lo": ib["last"].min() if len(ib) else None, "ib_last_hi": ib["last"].max() if len(ib) else None,
+                     "ib_port_max_gbs": ib.port_max_gbs.max() if len(ib) else None,
+                     **{f"ib_{h}_{e}": getattr(ib[f"ib_{h}"], e)() if f"ib_{h}" in ib else None for h in IB_PORTS for e in ("min", "max")}})
+        steps += [{"job": job, "run": label, "step": s, "step_s": v} for s, v in zip(st.step, st.step_s)]
+    return {"qw_cp_runs": pd.DataFrame(runs), "qw_cp_steps": pd.DataFrame(steps)}
