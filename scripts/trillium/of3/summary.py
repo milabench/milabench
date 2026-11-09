@@ -87,6 +87,15 @@ msa = [r["msa_shape"][-2] for v in ranks.values() for r in v]
 print(f"  tokens per sample median {st.median(toks)} (min {min(toks)}), atoms median {st.median(atoms)} (max {max(atoms)}),"
       f" MSA rows median {st.median(msa)} (max {max(msa)})")
 t0, t1 = r0[skip]["t"] * 1000, r0[-1]["t"] * 1000
+samples = [json.loads(line) for f in glob.glob(str(run / "samples/*.jsonl")) for line in open(f)]
+if samples:
+    secs = sorted(x["s"] for x in samples)
+    q = lambda p: secs[min(len(secs) - 1, int(p * len(secs)))]
+    workers = len(glob.glob(str(run / "samples/*.jsonl")))
+    inside = [x["s"] for x in samples if t0 <= x["t"] * 1000 <= t1]
+    print(f"  featurization per sample ({len(secs)} samples, {workers} workers): median {q(0.5):.2f} s, p90 {q(0.9):.2f},"
+          f" p99 {q(0.99):.2f}, max {secs[-1]:.1f}; over 60 s: {sum(x > 60 for x in secs)}; workers busy"
+          f" {sum(inside) / (workers * (t1 - t0) / 1000):.0%} of the time over the step window")
 
 
 def window(kind):
