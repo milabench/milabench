@@ -4,7 +4,7 @@
 # - data paths: @S3@ (the bucket's layout) and the subset caches in @SUBSET@; the 3 datasets of the subset only:
 #   short-monomer-distillation (weight 0.005) and disordered-pdb (0.02) left out; no validation set;
 # - no wandb, no checkpoint, no restart; max_steps, devices and num_nodes set by job.sbatch (merge.py);
-# - Lightning's simple profiler (time spent in train_dataloader_next, run_training_batch), no progress bar.
+# - Lightning's simple profiler (time spent in train_dataloader_next, run_training_batch).
 experiment_settings:
   mode: train
   output_dir: null
@@ -28,7 +28,6 @@ pl_trainer_args:
   mpi_plugin: false
   deepspeed_config_path: null
   profiler: simple
-  enable_progress_bar: false
 
 checkpoint_config:
   every_n_epochs: 1

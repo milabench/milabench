@@ -19,12 +19,13 @@ PY=$O/venv/bin/python
 export CUDA_HOME=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/cudacore/13.2.0
 export PATH=$CUDA_HOME/bin:$PATH PYTHONUNBUFFERED=1 WANDB_MODE=disabled
 LOCAL=/dev/shm/$USER-of3
-export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton TORCH_EXTENSIONS_DIR=$O/cache/torch_extensions \
-    XDG_CACHE_HOME=$O/cache OPENFOLD_CACHE=$O/cache/openfold3
+export TRITON_CACHE_DIR=$LOCAL/triton TORCH_EXTENSIONS_DIR=$O/cache/torch_extensions XDG_CACHE_HOME=$O/cache \
+    OPENFOLD_CACHE=$O/cache/openfold3
 NODES=$SLURM_JOB_NUM_NODES
 run_nodes() { srun --export=ALL --overlap --propagate=CORE --nodes=$NODES --ntasks=$NODES --ntasks-per-node=1 --cpus-per-task=1 "$@"; }
 run_nodes mkdir -p "$LOCAL/tmp"
 trap 'run_nodes rm -rf "$LOCAL"' EXIT
+export TMPDIR=$LOCAL/tmp
 STEPS=$1
 shift
 echo "[of3] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST steps=$STEPS $(git -C $O/src rev-parse --short HEAD) ulimit -c $(ulimit -c)"
