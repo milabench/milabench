@@ -742,7 +742,8 @@ kimi-vllm-4n-dp4tp8-ep32-deepep:
     argv:
       --all2all-backend: deepep_v2
 
-# its bring-up: both warm-ups (the conc64-shaped one compiles DeepEP's kernels for mixed batches), conc1, conc64, conc1024
+# its bring-up: both warm-ups (the conc64-shaped one compiles DeepEP's kernels for mixed batches), conc1, conc64, conc1024.
+# conc1 with 8 requests: one took 28.75 s on 4 nodes (job 1272042), 60 would not leave room for the others in the hour
 kimi-vllm-4n-dp4tp8-ep32-deepep-bringup-notune:
   inherits: kimi-vllm-4n-dp4tp8-ep32-deepep
   max_duration: 3420
@@ -750,7 +751,7 @@ kimi-vllm-4n-dp4tp8-ep32-deepep-bringup-notune:
     passes:
       - *warmup
       - {name: warmup-mixed, argv: {--max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 8,    --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
       - *ep32_conc1024
   server:

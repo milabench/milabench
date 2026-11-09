@@ -602,7 +602,7 @@ its own checkout, while K3-XN-01 ran from `k3-xn/src`): "CUDA error: an illegal 
 **With `CUDA_LAUNCH_BLOCKING=1` it does not fail.** `kimi-vllm-4n-dp4tp8-ep32-conc1024-blocking`, job 1272035, the same
 nodes, 22:58:24-23:22:18: conc1024 2048 done, 0 failed, 1404.86 output tok/s, TTFT p50 32.3 s, TPOT p50 604 ms, ITL p50
 121 ms (p99 8.2 s); nodes "GPUs free". So no kernel is named: nothing faults when every launch waits for the one before.
-Its ITL is a eighth of the failing runs' (975 ms before their fault), although blocking only slows a correct run down.
+Its ITL is an eighth of the failing runs' (975 ms before their fault), although blocking only slows a correct run down.
 Inferred, not shown: a race between concurrent launches (K3's model runs the router, the routed down-projection and the
 shared experts on an auxiliary stream; `VLLM_DISABLE_SHARED_EXPERTS_STREAM` turns one of those off), whose bad state makes
 the steps slow, then a kernel read out of bounds; review 3's "routing skew or a race". A `dmesg` watcher (one task per
