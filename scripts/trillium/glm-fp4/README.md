@@ -285,7 +285,7 @@ TP comm overlap (`--tp-comm-overlap`, TE userbuffers; `-tpo` entries, job 127141
 CUDA graphs): BF16 6.948 s (2.3 % faster than without it), MXFP8 5.328 s (0.8 %); NVFP4 stops at its first forward,
 `KeyError: 'UB for qkv_fprop with use_fp8=True is not registered.'`: Megatron registers quantized userbuffers only for
 `--fp8-format` (`initialize.py` `_initialize_tp_communicators`), TE asks for them under NVFP4. The speed layout is CUDA
-graphs without it, for all three recipes.
+graphs without it, for all three recipes: using the overlap for BF16 and MXFP8 only would skew the comparison.
 
 ## Proposed rows
 
