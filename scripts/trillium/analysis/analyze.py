@@ -49,7 +49,12 @@ QW_CP_RUNS = [*[f"qw-cp.1273505.megatron-qwen3-32b-cp-{e}" for e in ("n13-32k", 
               "qw-cp.1273588.megatron-qwen3-32b-cp-n13-128k-sel"]
 # Kimi K3 EP16 over 2 nodes (K3-XN-01): job 1271952 all-gather, 1271953 DeepEP V2; on 4 nodes, prefill and decode on separate nodes
 # (K3-XN-02: 1272790 P/D, 1272791 its colocated reference) and the experts over all 4 (K3-XN-03: 1272792, EP32, 128 sequences per engine)
-K3_XN_RUNS = ["kimi-vllm-2n-dp2tp8-ep16.1271952", "kimi-vllm-2n-dp2tp8-ep16-deepep.1271953",
+# OpenFold3 training on the uniform subset (OF3 step 2: 1273887 on 1 node, 1273885 on 2, 1273884 on 4; OF3-01: 1274059 on 13), keyed on job and
+# variant: published, DeepSpeed attention (1 and 13 nodes), cuEquivariance + TF32. Not the profile runs, nor the step-1 subset's (1273594-1273810).
+OF3_RUNS = [f"of3.{job}.{v}" for job, variants in (("1273887", ("uniform", "uniform,cueq+tf32", "uniform,ds")),
+                                                   ("1273885", ("uniform", "uniform,cueq+tf32")), ("1273884", ("uniform", "uniform,cueq+tf32")),
+                                                   ("1274059", ("uniform", "uniform,cueq+tf32", "uniform,ds"))) for v in variants]
+K3_XN_RUNS = ["kimi-vllm-2n-dp2tp8-ep16.1271952","kimi-vllm-2n-dp2tp8-ep16-deepep.1271953",
               "kimi-vllm-4n-pd-ep16.1272790", "kimi-vllm-4n-pd-ep16-colocated.1272791", "kimi-vllm-4n-dp4tp8-ep32-s128.1272792"]
 # Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
 # The trailing slash matters: health checks are one directory per job, directly under health/.
@@ -108,6 +113,10 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 *[(f"trillium/new/qw-cp/runs/{run}/", f"qw-cp/runs/{run}") for run in QW_CP_RUNS],
                 *[(f"trillium/new/qw-cp/nodemon/{run}/nodes/*.{kind}.tsv", f"qw-cp/nodemon/{run}") for run in QW_CP_RUNS for kind in ("gpu", "ib")],
                 (f"trillium/new/glm-fp4/nodemon/{QW_FP4_RUNS[0]}/nodes/*.ib.tsv", f"glm-fp4/nodemon/{QW_FP4_RUNS[0]}"),
+                # OpenFold3 training (OF3 step 2 and OF3-01): each run's per-rank step files and runner.yml (1.5-3 MB a run), and its node monitor's
+                # gpu, ib and cpu tables (up to 36 MB a run at 13 nodes; the monitor sits inside the run directory). Outside runs/: not campaign runs.
+                *[(f"trillium/new/of3/runs/{run}/{name}", f"of3/runs/{run}") for run in OF3_RUNS for name in ("steps-r*.jsonl", "runner.yml")],
+                *[(f"trillium/new/of3/runs/{run}/nodemon/nodes/*.{kind}.tsv", f"of3/nodemon/{run}") for run in OF3_RUNS for kind in ("gpu", "ib", "cpu")],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),
