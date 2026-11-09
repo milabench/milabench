@@ -597,7 +597,16 @@ that the pass ran at about 1 s per decode step.
 `trig[0101-0103,0107]` (no `trig0108`), 2026-11-08 22:45:40-22:56:10, from a second base (`$SCRATCH/trillium/new/k3-xn2`,
 its own checkout, while K3-XN-01 ran from `k3-xn/src`): "CUDA error: an illegal memory access" at 22:55:12 on
 `Worker_DP1_TP0_EP8` (`trig0102`, GPU 0), and again exactly 953 requests done and 1095 failed, TPOT p50 1082 ms, TTFT p50
-17.2 s; all four nodes "GPUs free". The same pass on other GPUs and nodes fails the same way: not `trig0108`. Not determined; inferred, not
+17.2 s; all four nodes "GPUs free". The same pass on other GPUs and nodes fails the same way: not `trig0108`.
+
+**With `CUDA_LAUNCH_BLOCKING=1` it does not fail.** `kimi-vllm-4n-dp4tp8-ep32-conc1024-blocking`, job 1272035, the same
+nodes, 22:58:24-23:22:18: conc1024 2048 done, 0 failed, 1404.86 output tok/s, TTFT p50 32.3 s, TPOT p50 604 ms, ITL p50
+121 ms (p99 8.2 s); nodes "GPUs free". So no kernel is named: nothing faults when every launch waits for the one before.
+Its ITL is a eighth of the failing runs' (975 ms before their fault), although blocking only slows a correct run down.
+Inferred, not shown: a race between concurrent launches (K3's model runs the router, the routed down-projection and the
+shared experts on an auxiliary stream; `VLLM_DISABLE_SHARED_EXPERTS_STREAM` turns one of those off), whose bad state makes
+the steps slow, then a kernel read out of bounds; review 3's "routing skew or a race". A `dmesg` watcher (one task per
+node, on the first CUDA error in the log) was armed; it had nothing to read. Not a configuration limit (review 3). Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
 during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
 nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
