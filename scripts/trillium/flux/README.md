@@ -101,3 +101,41 @@ WORKERS=16; training set 12:53 (job 1273949, while the md5 step ran, which kept 
 `energon_prepare.py` 12:10, check-conversion passed 13:20 (job 1276286): 230 files, 2,450,225,588,745 bytes, 0
 mismatches; train 110 shards, 1,099,776 samples; val 3, 29,696. `.nv-meta`: 5 files, 555 MB. Raw sets deleted 13:21:27;
 `diskusage_report` /scratch 9,138 GiB and 2,005K files before, 6,861 GiB and 2,000K at 13:23 (it lagged 1 min).
+## Step 4 (2026-11-09): 4 nodes, real data, Florida's 4-node config unchanged
+
+    scripts/trillium/flux/submit.sh real4 4 0:30:00 MAX_STEPS=300 -- --nodelist=trig0145,trig0147,trig0148,trig0151
+
+Job 1276381 (completed, 11:01; GBS 1,024, LR 1.85e-4, no warm-up, seed 12291; data/energon, `VERIFY_MOUNTS=1`):
+- Mount check OK on all 4 nodes: 230 files, 2,450,225,588,745 bytes.
+- Step time: first 256-step block (`train_step_time`) 0.665 s against Florida's first block 0.622-0.634 (median
+  0.623, +6.7%; their all-run median 0.617) and synthetic 0.652; steps 30-300 without the evaluation, ten-step intervals
+  between `train_loss` events: median 0.650 s, 1,575 samples/s, 49.2 per GPU (Florida 51.9). Steps 1-20 took 0.78 and
+  0.74 s (data workers starting); afterwards no data-loader stall is visible at 10-step resolution.
+- Evaluation at step 256 (262,144 samples): 0.6928 in 8.9 s; Florida's n4 at the same step 0.690-0.699, 8.6-12.8 s.
+  Training loss 1.80 (step 10), 0.84 (100), 0.70 (250), 0.59 (300).
+- Init 325 s (Florida 186-189; synthetic 316): distributed init and model build 118 s, data module 21, training
+  warm-up step 0 106, step 1 57, validation warm-up 19 + 4. Job start to `init_start` 61 s.
+- Memory: peak `memory.used` 166.9-168.6 GiB of 179.1. GPUs while busy: 668-766 W mean, 988 W peak, SM clock median
+  1,725-1,957 MHz.
+- Errors: none in training. Expected failures: the cache drop (no sudo, Florida's `|| true`), the compliance checker
+  (quality target not reached in 300 steps).
+
+## Proposed rows (full runs to the quality target 0.586, NEXP=1, Florida's config for the node count, real data)
+
+Estimates assume our step time stays 5-7% above Florida's (measured at 2 and 4 nodes). The run's own cap is Florida's
+`WALLTIME_RUNANDTIME` (srun `--time`). One bandwidth group each. Startup to the first step is about 6.5 min.
+
+| row | nodes | `--time` | Florida TTT min (min-max) | ours est. | first eval (Florida) | first-block step: Florida, ours est. | run cap |
+|---|---|---|---|---|---|---|---|
+| 8 | 8 | 1:45:00 | 60.1 (56.1-63.1) | 59-68 | 0.747-0.864 | 0.635-0.665, 0.67-0.71 s | 120 min |
+| 16 | 16 | 1:30:00 | 47.7 (47.0-49.1) | 50-60 | 0.876-1.312 | 0.679-0.707, 0.71-0.76 s | 70 min |
+| 2 | 2 | 3:45:00 | 173.4 (170.5-178.4) | 179-191 | 0.710-0.718 | 0.620-0.633, 0.65-0.68 s | 200 min |
+| 4 | 4 | 2:15:00 | 93.5 (90.3-98.6) | 95-106 | 0.690-0.699 | 0.622-0.634, 0.66-0.68 s | 220 min |
+
+    scripts/trillium/flux/submit.sh run<N> <N> <time> -- --nodelist=<one bandwidth group>
+
+Working looks like: `mountcheck OK ... 230 files` on every node; `init_start` about 1 min after the job starts,
+`run_start` about 5.5 min later; `train_loss` every 10 steps; the first evaluation at 262,144 samples within Florida's
+range; `run_stop` with `status: success`. Cancel: no `train_loss` 12 min after the job starts; first-block
+`train_step_time` above Florida's first-block maximum plus 15% (check the nodes' power in `runs/<job>/gpu-*.csv`); a NaN
+loss; no success by 1.15 times Florida's largest sample count (8: 13.5 M, 16: 20.5 M, 2: 9.6 M, 4: 10.9 M).
