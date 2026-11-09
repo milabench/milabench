@@ -72,6 +72,16 @@ Conversion (`to_webdataset.py`, then `energon_prepare.py`) writes 10,000-sample 
 2,450,225,588,745 bytes (`expected-mounts.csv`, which the job's mount check compares). Peak 4.9 TB with both copies;
 2.45 TB once the raw sets are deleted. Probe from tri-dm1 (256 MiB, to /dev/null): 30 MB/s per stream, 92 MB/s with 4.
 
-## Status
+## Status (step 1, 2026-11-08)
 
-Step 1 (feasibility) in progress. Untested: the image build, every job.
+- Image: `flux.sif` 10.9 GB (base 8.15 GB), built on tri-dm1 in 1 h 10 min (20:43-21:53). Inside: NeMo `2182063e`
+  (25.09-alpha.rc1), Megatron-Core `d3391901` (0.15.0rc5), TE 2.8.0+40c69e75, NCCL 2.28.3 (loaded at run time from
+  `nccl/lib`), cuDNN 9.13.1.26, torch 2.9.0a0 nv25.09, transformers 4.53.3, lightning 2.4.0, energon 7.1.0, datasets 4.1.1.
+- Job 1271975 (trig0145, `USE_SYNTHETIC_DATA=1 MAX_STEPS=300`, 1 node): ranks up, NCCL init; Triton could not write
+  `~/.triton`, torch.compile fell back to eager, rank 5 out of memory. Fixed: `TRITON_HOME` (42a37831).
+- Job 1272006 (same, after the fix; cancelled at 6:26): container start to `init_start` 30 s; compile fine; ranks 3, 5, 6
+  out of memory in the first CUDA-graph warm-up step, 170 GiB allocated of 178. Mock samples have the real shapes
+  (256 text + 256 image tokens). Not determined; likely 1 node x MBS 32 does not fit: the distributed optimizer splits
+  the fp32 state over 8 GPUs instead of 16 (about +9 GB per GPU, estimated), and every Florida and NVIDIA config has at
+  least 16 GPUs. So the smallest faithful test is 2 nodes.
+- Untested: the data steps, real data, more than 1 node, `VERIFY_MOUNTS`, the whole MLPerf run.
