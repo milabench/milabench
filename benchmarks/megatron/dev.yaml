@@ -1270,3 +1270,34 @@ megatron-glm5-tri-test-b200-ckpt-full-load:
   inherits: _tri_test_b200_ckpt
   checkpoint: {content: full, op: load}
   argv: {<<: *tri_ckpt_load}
+# --- GLM-FP4 (scripts/trillium/glm-fp4/README.md): NVFP4 training. TransformerEngine's NVFP4BlockScaling with its
+# defaults (random Hadamard transforms on the weight-gradient inputs, 16x16 weight blocks, stochastic rounding of the
+# gradients), MoE token counts padded for it, and the last layers in BF16: 5 of 78, the last stage of pp13 (NVIDIA's
+# report, arXiv 2509.25149: fewer than 15 %). workload.precision nvfp4 ---
+_tri_nvfp4: &tri_nvfp4
+  --fp4-format: e2m1
+  --moe-router-padding-for-quantization: true
+  --first-last-layers-bf16: true
+  --num-layers-at-start-in-bf16: 0
+  --num-layers-at-end-in-bf16: 5
+# Step 2: the B200 smoke model (8 layers, 1 dense + 7 MoE, 64 experts, seq 4096) on one node, PP1 x EP8 (data parallel
+# 8), batch 32, the C-loss settings in small (50 steps, warm-up 5). BF16 tail: the last layer, 1 of 8
+_fp4_test_n1:
+  inherits: _tri_test_b200
+  num_machines: 1
+  argv:
+    <<: *tri_loss
+    --train-iters: 50
+    --lr-warmup-iters: 5
+    --pipeline-model-parallel-size: 1
+    --decoder-first-pipeline-num-layers: null
+    --decoder-last-pipeline-num-layers: null
+megatron-glm5-fp4-test-n1-bf16:
+  inherits: _fp4_test_n1
+megatron-glm5-fp4-test-n1-nvfp4:
+  inherits: _fp4_test_n1
+  argv: {<<: *tri_nvfp4, --num-layers-at-end-in-bf16: 1}
+# the NVFP4 one for 3 steps, for cuBLASLt's trace (glm-fp4/job.sbatch lt:ENTRY): which GEMMs ran in E2M1
+megatron-glm5-fp4-test-n1-nvfp4-lt:
+  inherits: megatron-glm5-fp4-test-n1-nvfp4
+  argv: {--train-iters: 3}

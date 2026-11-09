@@ -415,10 +415,9 @@ PRECISIONS = {"tensorwise": "fp8-tensorwise", "blockwise": "fp8-blockwise", "mxf
 
 
 def precision(args) -> tuple[str, dict | None]:
-    """(workload.precision, workload.precision_detail): bf16 | fp8-tensorwise | fp8-blockwise | mxfp8, and how it runs."""
-    if not getattr(args, "fp8", None):
+    """(workload.precision, workload.precision_detail): bf16 | fp8-tensorwise | fp8-blockwise | mxfp8 | nvfp4, and how it runs."""
+    if not getattr(args, "fp8", None) and not getattr(args, "fp4", None):
         return "bf16", None
-    recipe = str(getattr(args, "fp8_recipe", None) or "delayed").split(".")[-1]
     try:
         import transformer_engine
 
@@ -426,6 +425,26 @@ def precision(args) -> tuple[str, dict | None]:
     except Exception:
         te = None
     major, minor = torch.cuda.get_device_capability() if torch.cuda.is_available() else (None, None)
+    if getattr(args, "fp4", None):
+        # Megatron builds NVFP4BlockScaling with TE's defaults, which its NVTE_NVFP4_* variables can turn off
+        from transformer_engine.common.recipe import NVFP4BlockScaling
+
+        recipe = NVFP4BlockScaling()
+        bf16 = bool(getattr(args, "first_last_layers_bf16", False))
+        return "nvfp4", {
+            "format": args.fp4, "recipe": str(getattr(args, "fp4_recipe", "nvfp4")).split(".")[-1],
+            "fp4_param_gather": bool(getattr(args, "fp4_param_gather", False)),
+            "rht_wgrad_inputs": not recipe.disable_rht, "weights_2d_16x16": not recipe.disable_2d_quantization,
+            "stochastic_rounding_grads": not recipe.disable_stochastic_rounding,
+            "bf16_layers_first": args.num_layers_at_start_in_bf16 if bf16 else 0,
+            "bf16_layers_last": args.num_layers_at_end_in_bf16 if bf16 else 0,
+            "moe_router_padding_for_quantization": bool(getattr(args, "moe_router_padding_for_quantization", False)),
+            "compute_capability": f"sm_{major}{minor}" if major is not None else None, "transformer_engine": te,
+            "scope": "TransformerEngine linear / grouped GEMMs of the transformer layers outside the BF16 ones; the output "
+                     "layer, router, the GLM-5 plugin's DSA indexer weights_proj, kv_up absorb, indexer and sparse MLA stay bf16 / fp32",
+            "master_weights": "fp32 (bf16 weights, quantized copies per step)",
+        }
+    recipe = str(getattr(args, "fp8_recipe", None) or "delayed").split(".")[-1]
     return PRECISIONS.get(recipe, f"fp8-{recipe}"), {
         "format": args.fp8, "recipe": recipe, "fp8_param_gather": bool(getattr(args, "fp8_param_gather", False)),
         "moe_router_padding_for_quantization": bool(getattr(args, "moe_router_padding_for_quantization", False)),
