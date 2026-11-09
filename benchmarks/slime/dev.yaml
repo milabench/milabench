@@ -627,6 +627,15 @@ slime-glm5-grpo-trtllm:
     --sglang-moe-runner-backend: null
     --sglang-fp8-gemm-runner-backend: null
 
+# GLM-RL-06 (a named compromise): SGLang's MoE autotune at engine start tunes up to max running requests x DP size
+# tokens, 131,072 at the 64-GPU engines, and runs out of memory there, also with the full engine's 36 GiB left after the
+# KV pool (4-node tests 1275077, 1275402). 2048 requests per engine (32 per DP-attention rank; the rollouts use about 4)
+# tune it to 2,048 tokens
+slime-glm5-grpo-trtllm-mrr2048:
+  inherits: slime-glm5-grpo-trtllm
+  argv:
+    --sglang-max-running-requests: 2048
+
 # The real engine at its real width without the trainer: one SGLang engine of 64 GPUs (TP64, EP64, DP attention 64) on
 # 8 nodes, loaded from the FP8 HF checkpoint (slime's --debug-rollout-only: no Megatron model or argument checks, no
 # training, no weight sync), 2 rollouts of GLM-RL-01's share per engine (32 prompts x 8 = 256 samples): measures the

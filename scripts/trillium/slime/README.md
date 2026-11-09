@@ -767,33 +767,48 @@ The attention carries it: with FlashMLA attention and the MoE and FP8 GEMMs on f
 dense-MHA prefill were switched together (both entries' threshold and backends as logged): which of the two, or both,
 is not separable here. One run per configuration; the three values per run agree to 0.001.
 
-The engine-start autotune at the 64-GPU engines' width (`slime-glm5-l10-grpo-4n-trtllm`, job 1275077,
-trig0117-0120, 10:19-10:29, FAILED, stopped with USR1): every engine rank ran out of memory in FlashInfer's MoE
-autotune (SGLang `base_runner.py:397` `_flashinfer_autotune`, a dummy forward through the MoE), at profile 23 of 25 of
-`trtllm_fp8_block_scale_moe` (24 at 2 nodes): `Tried to allocate 12.19 GiB`, 6.8-7.6 GiB free, 170.7-171.6 GiB in
-use; the first node's GPUs at 177.8 GiB (milabench). Free after the KV pool: 28.10-28.52 GiB (2 nodes: 28.10-28.45).
-The review's reading: the autotune's largest bucket is max_running_requests per DP rank x DP size tokens, twice at 4
-nodes (32 ranks) what the 2-node test (16) tuned, the same as the 64-GPU engines'. The full GLM-5.3 engine has 36.1-36.5
-GiB free after its pool (GLM-RL-02), 7.6-8.4 more than here: 14.4-16.0 GiB for this 12.19 GiB allocation if the
-rest of the autotune's use is the same (inferred), and nothing known of the last 2 profiles: borderline. Not posted:
-the next step is the coordinator's (a named compromise, `--sglang-max-running-requests 2048`; or this test again with
-the full width's headroom).
+The engine-start autotune at the 64-GPU engines' width. SGLang tunes FlashInfer's MoE up to max running requests per
+DP-attention rank x DP size tokens (the review: 4,096 x 16 = 65,536 at 2 nodes, 131,072 at 4 nodes and in the 64-GPU
+engines, whose ranks get 2,048 each), on flashinfer's bucket list (`fused_moe/utils.py:195`: 1-256 doubling, then steps
+of 256 to 2,048, 512 to 4,096, doubling above): 24 profiles at 2 nodes, 25 at 4. Three 4-node tests
+(`slime-glm5-l10-grpo-4n-trtllm*`, trig0117-0120, one run each):
 
-### GLM-RL-06 (draft, not posted): GLM-RL-03 with B200's default kernels
+| job, entry | free after the KV pool | MoE autotune | peak per GPU (nvidia-smi, 200 ms) |
+|---|---|---|---|
+| 1275077, `-4n-trtllm` (mem fraction 0.75) | 28.10-28.52 GiB | out of memory after 23 of 25 profiles: `Tried to allocate 12.19 GiB`, 6.8-7.6 GiB free | 177.8 GiB (milabench, first node) |
+| 1275402, `-4n-trtllm-headroom` (0.705: the full engine's 36.1-36.5 GiB, GLM-RL-02) | 36.03-36.45 GiB | out of memory after 23 of 25 profiles: `Tried to allocate 2.06 GiB`, 0.03-0.9 GiB free | 178.3 GiB, every node (0.7 GiB free) |
+| 1275402, `-4n-trtllm-mrr2048` (`--sglang-max-running-requests 2048`: 64 per rank) | 43.85-44.27 GiB | passed, 16 profiles (buckets 1-2,048), 10:54:42-10:56:03 | 139.7 GiB (39.3 GiB free) |
 
-`slime-glm5-grpo-trtllm`, GLM-RL-03's layout on 32 nodes (its nodes if usable), to compare the rollout and the step
-against GLM-RL-03. `--time 2:10:00` = 20 (startup: GLM-RL-03's 16.8 min, the autotune about 0.5 more; 17 more if the
-JIT modules were not found) + step 0 (rollout 22 + training 20 + 1.5) + 2 x 26 + 10 margin = 125.5 min.
+With the full engine's headroom the autotune still runs out of memory, at the same profile: the defaults do not fit
+beside the colocated trainer's share at 131,072 tokens. The cap also leaves 15.8 GiB more after the KV pool (SGLang's
+per-request buffers, sized by max running requests).
 
-Expected lines: as GLM-RL-03, and on each engine the 4 rows above (`Set DSA backends ... prefill=trtllm, decode=trtllm`,
-`Use flashinfer_trtllm as MoE runner backend`, `threshold is manually set to 2048`, `FlashInfer autotune completed.`)
-with no nvcc build of a flashinfer module. Rollouts about GLM-RL-03's 17.5-18.5 min (the 10-layer test cannot say
-whether the kernels change it); training and sync as GLM-RL-03 (203-215 s, 33-35 s); `train/tis_abs` above GLM-RL-03's
-0.073-0.081 (2.3 times at 10 layers). The failure to watch for: `CUDA out of memory` in the engines' MoE autotune at
-engine start, before `FlashInfer autotune completed.` (the 4-node test above); it ends the run (report it; no retry
-with a cap or without the autotune in the same request). Cancel: GLM-RL-03's rules; that out-of-memory or any
-`Scheduler hit an exception`; any `cubin_loader` or `FLASHINFER_NO_DOWNLOAD is set` line; fewer than 4 `Engine startup
-timings` at 30 min; step 0's `train/tis_abs` above 0.5 (a broken sync).
+The capped run (steps 0-2; one run): rollout 176.7, 157.3, 155.3 s (the 4-node fallback, 1265529: 175.0, 172.7, 167.7;
+2 nodes: 1274501 168.1, 154.3, 150.6, 1274466 169.7, 160.3, 148.3), 186-211 tokens/s per GPU, `train/tis_abs` 0.1379,
+0.1376, 0.1374, mean log-prob -10.260, -10.258, -10.272, sync 6.4-10.7 s; PASS in 1,294 s. Prefills: each rank's
+prefill batches hold up to 388 new tokens in the lines Ray shows (6 of them), and with DP attention the MoE takes the
+batch of all 32 ranks, so a prefill step can exceed the largest tuned bucket (2,048). Such a call misses the tuned
+profiles (flashinfer builds the call's buckets from its own token count, `next_power_of_2`, sglang
+`flashinfer_trtllm.py:906`) and runs the kernel's fallback tactic (`autotuner.py:1630-1645`, logged at debug level
+only): inferred, not logged. Decode batches (at most 8 per rank, 256 tokens) are within the tuned buckets.
+
+### GLM-RL-06 (draft, not posted): GLM-RL-03 with B200's default kernels, requests capped
+
+`slime-glm5-grpo-trtllm-mrr2048`, GLM-RL-03's layout on 32 nodes (its nodes if usable), to compare the rollout and the
+step against GLM-RL-03. A compromise: max running requests 2048 (32 per DP-attention rank) so that the MoE autotune fits
+beside the colocated trainer; the rollouts use about 4 per rank. `--time 2:10:00` = 20 (startup: GLM-RL-03's 16.8 min,
+the autotune about 1.5 more; 17 more if the JIT modules were not found) + step 0 (rollout 22 + training 20 + 1.5) + 2 x
+26 + 10 margin = 125.5 min.
+
+Expected lines: as GLM-RL-03, and on each engine `Set DSA backends ... prefill=trtllm, decode=trtllm`, `Use
+flashinfer_trtllm as MoE runner backend`, `threshold is manually set to 2048`, `max_running_requests=32`, `FlashInfer
+autotune completed.`, with no nvcc build of a flashinfer module. Rollouts about GLM-RL-03's 17.5-18.5 min (the 10-layer
+tests cannot say whether the kernels change it); training and sync as GLM-RL-03 (203-215 s, 33-35 s); `train/tis_abs`
+above GLM-RL-03's 0.073-0.081 (2.3 times at 10 layers, from the attention kernels). The failure to watch for: `CUDA out
+of memory` in the engines' MoE autotune at engine start, before `FlashInfer autotune completed.`; it ends the run
+(report it). Cancel: GLM-RL-03's rules; that out-of-memory or any `Scheduler hit an exception`; any `cubin_loader` or
+`FLASHINFER_NO_DOWNLOAD is set` line; fewer than 4 `Engine startup timings` at 30 min; step 0's `train/tis_abs` above
+0.5 (a broken sync).
 
 ### Step 4, prepared entries (not posted)
 
