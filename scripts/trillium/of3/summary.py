@@ -1,5 +1,6 @@
-"""Summary of one OF3 run directory (job.sbatch): from steps-r*.jsonl, the step period (time between successive step
-ends, rank 0, the throughput step time), the step itself and the gap before it (waiting for the batch), samples/s per GPU
+"""Summary of one OF3 run directory (job.sbatch): from steps-r*.jsonl, the throughput step time by wall clock (rank 0's
+step ends: (t of the last step - t of step SKIP + 1) / steps between; traced steps included in a profile run), the
+median step period beside it, the step itself and the gap before it (waiting for the batch), samples/s per GPU
 (batch 1), peak memory over ranks, loss, crop sizes; from nodemon/nodes/*.tsv over the same window, GPU power and SM
 clock, CPU clock of the busy cores and CPU use, InfiniBand bytes sent per node and step. Steps after the first SKIP (default 5) only;
 in a run with a profile (prof/), steps 26-30 are left out of the step statistics (traced, then the trace written). With REF, a run of the same
@@ -41,8 +42,10 @@ kept = {k: [r for r in v if r["step"] in use] for k, v in ranks.items()}
 med = st.median(period)
 print(f"{run.name}: {len(ranks)} ranks, {len(r0)} steps, statistics over steps {skip + 2}-{len(r0)}"
       f"{', without 26-30 (profile)' if traced else ''}")
-print(f"  step period median {med:.3f} s (p10 {st.quantiles(period, n=10)[0]:.3f}, p90 {st.quantiles(period, n=10)[-1]:.3f}),"
-      f" {1 / med:.3f} samples/s per GPU, {len(ranks) / med:.2f} samples/s in all")
+wall = (r0[-1]["t"] - r0[skip]["t"]) / (r0[-1]["step"] - r0[skip]["step"])
+print(f"  wall clock (steps {r0[skip]['step']}-{r0[-1]['step']}{', traced ones included' if traced else ''}): {wall:.3f} s per step,"
+      f" {1 / wall:.4f} samples/s per GPU, {len(ranks) / wall:.2f} samples/s in all; step period median {med:.3f} s"
+      f" (p10 {st.quantiles(period, n=10)[0]:.3f}, p90 {st.quantiles(period, n=10)[-1]:.3f})")
 if len(sys.argv) > 3:
     ref = steps(Path(sys.argv[3]))[0]
     mine, theirs = periods(r0), periods(ref)
