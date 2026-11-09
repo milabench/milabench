@@ -724,6 +724,19 @@ kimi-vllm-4n-dp4tp8-ep32-conc1024:
       - *warmup
       - &ep32_conc1024 {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
 
+# the conc1024 crash with at most 128 sequences per engine (coordinator, 2026-11-08): if it passes, the 256-per-engine
+# batch is implicated; a configuration option, not a fix. conc1024 then queues at 512 in flight; conc64 after it as a check
+kimi-vllm-4n-dp4tp8-ep32-seqs128:
+  inherits: kimi-vllm-4n-dp4tp8-ep32-conc1024
+  client:
+    passes:
+      - *warmup
+      - *ep32_conc1024
+      - {name: conc64, argv: {--max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+  server:
+    argv:
+      --max-num-seqs: 128
+
 # the same with CUDA_LAUNCH_BLOCKING=1, so that the error comes from the kernel that faults, if the crash repeats on other
 # GPUs (a kernel inside a CUDA graph still reports at the graph's launch)
 kimi-vllm-4n-dp4tp8-ep32-conc1024-blocking:
