@@ -539,8 +539,10 @@ kimi-vllm-2n-tp8pp2-dummy:
 # no driver setting): each MoE layer all-gathers the 16 ranks' tokens at the latent 3,584 (MXFP8) and reduce-scatters
 # the outputs; the TRTLLM MXFP4 kernel then runs in its modular form (the monolithic one takes no DP). Without
 # --enable-ep-weight-filter every rank reads every expert: 1.56 TB per node, about 24 min at job 1263799's 1.1 GB/s.
-# Estimates: weights about 104 GiB per GPU (PP2: 96: every GPU now holds all 93 layers' TP8 share and the replicated
-# latent projections), so less KV memory, for all 93 layers but only the engine's own requests.
+# Memory (job 1270053): weights 128.31 GiB per GPU (PP2: 95.7-96.1): every GPU holds all 93 layers' TP8 share, and the
+# latent projections and, under sequence parallelism, the shared and dense MLPs whole (VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT
+# shards them, off by default). KV memory 13.61 GiB (PP2: 51.4-53.5): 517,438 tokens per engine, 3.89 x max-model-len
+# (PP2: 27.09 for its one engine).
 kimi-vllm-2n-dp2tp8-ep16:
   inherits: kimi-vllm-2n-tp8pp2
   server:

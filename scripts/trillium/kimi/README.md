@@ -335,3 +335,106 @@ event, and the power is extrapolated from one node. Adding it to `job.sh`, as th
 `srun --overlap --propagate=CORE --ntasks-per-node=1 $MILABENCH_BASE/venv/torch/bin/python -m benchmate.nodemon --bench $ENTRY`
 (one sampler per host, its lock), and in the clean end a SIGTERM to that step and a wait, before the GPU check. About 8
 lines; `pynvml` is in the venv. Not added yet.
+
+## K3-XN: Kimi-K3 across nodes
+
+Experts spread over the nodes (part 1), DeepEP's needs from the node (part 2), prefill and decode on separate nodes
+(part 3), against K3-INF-01/02. Its own base, `$X=$SCRATCH/trillium/new/k3-xn` (`MILABENCH_BASE`): its checkout `src/`
+and milabench CLI venv `src/.venv`, and links to K3-INF's vLLM venv, checkpoint and FlashInfer cubins, which it reads
+only. Jobs are named `nw-k3-xn-<entry>` (`JOB_PREFIX`).
+
+```bash
+X=$SCRATCH/trillium/new/k3-xn K=$SCRATCH/trillium/new/k3-inf; mkdir -p $X/slurm $X/runs $X/extra $X/cache/{flashinfer,vllm}; cd $X
+git clone -b trillium-new https://github.com/milabench/milabench.git src
+unset PYTHONPATH PIP_CONFIG_FILE; export PATH=$HOME/.local/bin:$PATH UV_CACHE_DIR=$X/uv-cache UV_LINK_MODE=copy
+uv venv --python-preference only-managed --python 3.12 --seed src/.venv
+VIRTUAL_ENV=$X/src/.venv uv pip install -e ./src "huggingface_hub[hf_xet]" nvidia-ml-py
+ln -s $K/venv venv; ln -s $K/data data; ln -s $(readlink $K/cache/flashinfer/cubins) cache/flashinfer/cubins
+# Triton's cache seeded with K3-INF's: 16 ranks on 2 nodes compiling the same kernel into an empty cache on VAST raced
+# (FileNotFoundError on the kernel's .json, Inductor error on ranks 9, 10, 13 on trig0146, job 1269990); every kernel that run
+# compiled has the same hash in K3-INF's cache
+mkdir -p cache/triton; cp -an $K/cache/triton/. cache/triton/
+```
+
+### Part 2: driver check
+
+`/opt/slurm/bin/.sbatch --export=NONE --get-user-env --nodelist=<node> src/scripts/trillium/kimi/driver_check.sh` (1 node,
+5 min, reads only). Job 1269881, `trig0147`, 2026-11-08 18:36, 33 s:
+
+- `/proc/driver/nvidia/params`: `EnableStreamMemOPs: 1`, `RegistryDwords: "PeerMappingOverride=1"` (from
+  `/etc/modprobe.d/nvidia.conf`), what NVSHMEM's IBGDA needs. Driver 595.91.07 (open kernel module).
+- Modules: `nvidia_peermem` loaded; `gdrdrv` not loaded, no `/dev/gdrdrv` (GDRCopy's kernel module). memlock unlimited.
+- HCAs: NCCL uses 4 x 400 Gb/s InfiniBand, `mlx5_0`, `mlx5_1`, `mlx5_4`, `mlx5_9` (adaptive routing on), each `PIX` to
+  one GPU (0, 2, 4, 6); GPUs 1, 3, 5, 7 reach them through the PCIe host bridge (`NODE`).
+- NCCL 2.29.7 in the vLLM venv (torch 2.13.0 built with it). With NVLink and shared memory off, NCCL reports
+  `DMA-BUF is available` and `GPU Direct RDMA Enabled` on all 4 HCAs, for its IB transport and for its GIN GDAKI backend.
+- vLLM 0.32's `deepep_v2` backend needs DeepEP v2 (`ElasticBuffer`) and NCCL >= 2.30.4 at run time
+  (`vllm/utils/import_utils.py`): the venv's 2.29.7 is too old, a software change (pip `nvidia-nccl-cu13`, or the
+  `nccl/2.30.7` and `2.31.2` modules), not a driver one. DeepEP is not installed, and its sources are not on the cluster:
+  its own limits on top-k (K3: 16) and experts (896) are not read. vLLM's DeepEP low-latency path takes hidden sizes
+  2048-8192 from a list: K3's latent 3,584 is rounded up to 4,096.
+
+### Part 1: the experts over 2 nodes (EP16)
+
+`kimi-vllm-2n-dp2tp8-ep16` (`config/kimi_study.yaml`): one TP8 engine per node joined by vLLM's data parallelism
+(`multinode: dp`, `benchmate.server_worker` on the second node, no Ray), `--enable-expert-parallel`: vLLM's
+`FusedMoEParallelConfig.make` sets EP = DP x TP = 16, 56 whole experts of the 896 on each GPU. K3's model takes its
+sequence-parallel MoE path (PP 1, TP > 1, DP > 1, EP: `vllm/models/kimi_k3/nvidia/model.py`): attention and shared
+experts stay TP8 in the node, the latent down-projection runs before the dispatch, so tokens travel at 3,584.
+All-to-all `allgather_reducescatter` (vLLM 0.32's default, NCCL through the EP group's PyNccl; no driver setting):
+each MoE layer all-gathers the 16 ranks' tokens (quantized to MXFP8 first) and reduce-scatters the outputs. DP16 x TP1
+(attention replicated on every GPU) does not fit: about 90 GB of experts plus 114 GB of BF16 weights per GPU (est.).
+`-bringup-notune`: warm-up, conc1, conc64 without FlashInfer's autotune, against `kimi-vllm-2n-tp8pp2-bringup-notune`.
+
+```bash
+cd $SCRATCH/trillium/new/k3-xn && git -C src pull --ff-only
+JOB_PREFIX=nw-k3-xn NODELIST=trig[0145-0146] MILABENCH_BASE=$PWD src/scripts/trillium/kimi/serve.sh kimi-vllm-2n-dp2tp8-ep16-bringup-notune 2 1:00:00
+```
+
+`milabench slurm srun -x <main>` had to be fixed for this (`milabench/cli/slurm/srun.py`): it looked for srun's
+`--nodes` in the whole command line and found `benchmate.server_worker --nodes`, so srun asked for both nodes with one
+excluded (job 1269960, "Only allocated 1 nodes asked for 2"). It now reads only the options before `--`.
+
+**Bring-up, job 1270053**, `trig[0145-0146]`, 2026-11-08 19:03-19:19 (16:19), `92eb7390`, milabench exit 0 after 963 s,
+both nodes "GPUs free", neither drained. vLLM picked `FLASHINFER_TRTLLM_MXFP4_MXFP8` in its modular form
+(`MoEPrepareAndFinalizeNaiveDPEPModular`, `TrtLlmMxfp4ExpertsModular`; K3-INF: the monolithic one), FlashKDA prefill, native
+fused KDA decode, FLASHINFER_MLA; PyNccl for the `dp` and `ep` groups; "EP weight filter: ... loading 56/896 experts".
+Weights 53-54 s, warm: the page cache of these nodes held the checkpoint (190-200 s in job 1269990 minutes before, its
+prefetch done in 4-7 s); a cold load is not measured. 128.31 GiB per GPU: every GPU holds all 93 layers' TP8 share, the
+latent projections and, under sequence parallelism, the shared and dense MLPs whole (`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT`
+shards them; vLLM meant it for decode instances). KV memory 13.61 GiB per GPU (TP8 x PP2: 51.4-53.5), "GPU KV cache size:
+517,438 tokens, Maximum concurrency for 133,120 tokens per request: 3.89x" per engine (TP8 x PP2: 27.09x): about 150
+requests of 1,280 tokens per engine, 300 in all (est.; TP8 x PP2 about 960). Engine init 146 s, CUDA graphs 68 s
+(3.09 GiB), engine ready at 19:08:17, 5.3 min after the job started.
+
+| pass | done / failed | output tok/s | total tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | TP8 x PP2 notune (1263425) |
+|---|---|---|---|---|---|---|---|
+| warmup | 64 / 0 | 485.8 | 8259 | | | | |
+| conc1 | 60 / 0 | 29.95 | 150 | 151 / 366 | 32.88 / 32.98 | 32.87 / 33.19 | 105.22 tok/s, TPOT 9.14, TTFT 102 |
+| conc64 | 128 / 0 | 1093.07 | 5465 | 1264 / 6308 | 45.35 / 64.52 | 42.65 / 45.09 | 1479.77 tok/s, TPOT 28.9, TTFT 2410 / 5987 |
+
+Both without FlashInfer's autotune. One request decodes 3.6 times slower than on TP8 x PP2; at 64 concurrent, 26% less
+output. Not profiled: the share of the all-gather and reduce-scatter (92 MoE layers, 16 ranks over 2 nodes) against the
+replicated shared experts, which every GPU now reads whole, is not known. With equal sizes per rank vLLM calls NCCL's
+all-gather and reduce-scatter (`cuda_communicator.py`). After the passes milabench's loggers raised `Bad file descriptor`
+("1 still alive after end of benchmark", the DP worker); the pass `.data` files are complete.
+
+Not run yet: the autotune (its time on EP shapes), the study's other passes. At 3.89 x max-model-len per engine,
+ctx64k-c16 (16 x 65.6k tokens over two engines of 517k) is at capacity and ctx128k-c16 queues.
+
+### Part 3: prefill and decode on separate nodes (read, not run)
+
+vLLM 0.32's `NixlConnector` moves Mamba-type state with the attention KV (`kv_connector/v1/nixl/base_worker.py`), and
+K3's KDA layers are that type: `KimiK3DeltaAttention` is a `GatedDeltaNetAttention`, `MambaSpec` with `mamba_type`
+GDN_ATTN, a conv state (4,608 x 3 at TP8) and a recurrent state (12 x 128 x 128). NIXL's GDN split
+(`ssm_conv_transfer_utils.py`) cuts the conv state into q, k, v of 1,536 each at TP8, the order KDA splits it in. MLA
+layers: one region per layer, TP may differ between the sides. Conditions, from the code:
+
+- `VLLM_SSM_CONV_STATE_LAYOUT=DS` on both sides (asserted). K3's native fused KDA decode (picked by K3-INF) and FlashKDA
+  prefill take that layout; FlashInfer's fused KDA decode does not, and is not picked.
+- No pipeline parallelism on either side: `NotImplementedError` for Mamba/SSM hybrids with PP > 1. K3-INF-01's TP8 x
+  PP2 cannot be the prefill or the decode instance; each 2-node instance has to be part 1's DP2 x TP8 EP16 (NIXL's
+  side-channel port is offset per DP rank) or TP16.
+- The hybrid KV cache manager on (the default). FlashKDA's prefill checkpoint block is used only in `align` cache mode
+  (prefix caching), off here.
+- `nixl` is not installed in the venv: a download, into a new venv beside K3-INF's.
