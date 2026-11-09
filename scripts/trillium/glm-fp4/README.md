@@ -293,6 +293,37 @@ CUDA graphs): BF16 6.948 s (2.3 % faster than without it), MXFP8 5.328 s (0.8 %)
 `--fp8-format` (`initialize.py` `_initialize_tp_communicators`), TE asks for them under NVFP4. The speed layout is CUDA
 graphs without it, for all three recipes: using the overlap for BF16 and MXFP8 only would skew the comparison.
 
+## GLM-FP4-03: Qwen3 32B C-speed at 13 nodes (job 1272011, 2026-11-08 22:54-23:09, COMPLETED)
+
+`job.sbatch exp:C-speed megatron-qwen3-32b-n13-{bf16,mxfp8,nvfp4}` at 887719c6 on
+trig[0129-0131,0136-0137,0139-0144,0147,0149]: TP2 x data parallel 52, CUDA graphs, 416 x 8192 tokens per step (32,768
+per GPU), 20 steps, all three PASS. Rank 0's per-rank metrics `elapsed`, steps 3-20, sd with n-1; tokens/s per GPU from
+the mean; peaks over all 104 ranks:
+
+| | BF16 | MXFP8 | NVFP4 |
+|---|---|---|---|
+| step time mean (sd), median | 7.154 s (0.034), 7.143 | 5.434 s (0.030), 5.434 | 4.537 s (0.027), 4.537 |
+| tokens/s per GPU | 4,580 | 6,030 | 7,223 |
+| against BF16 / against MXFP8 | | 1.32x | 1.58x / 1.20x |
+| 4 nodes, 1271063 (steps 5-17 medians): tokens/s per GPU | 4,609 | 6,101 | 7,341 |
+| 13 nodes, steps 5-17 median: step, per GPU against 4 nodes | 7.144 s, 0.995x | 5.441 s, 0.987x | 4.539 s, 0.984x |
+| peak allocated / reserved | 125.89 / 130.88 GiB | 148.56 / 159.07 | 130.74 / 141.15 |
+| CUDA graph build; first step | 54.5 s; 86.4 s | 72.7 s; 110.6 s | 52.7 s; 84.5 s |
+| loss at step 20 (lr 1e-6, one run each), NaN | 9.478, none | 9.468, none | 9.451, none |
+
+From 4 to 13 nodes the per-GPU throughput drops 0.5 / 1.3 / 1.6 % (the larger data-parallel reduce), and NVFP4 over
+MXFP8 stays 1.20x (1.20x at 4 nodes). Estimated before the run: BF16 7.1-7.8 s, MXFP8 5.4-5.9 s, NVFP4 4.5-4.9 s, peaks
+as on 4 nodes (MXFP8 about 151 GiB allocated, 166 reserved); measured at the low end of each range, MXFP8's peak
+148.6 / 159.1 GiB: the reduce cost less than estimated.
+
+Power: at this layout the GPUs run near their 1,000 W limit and the software power cap (`clocks_event_reasons` 0x4) is
+on in most samples over steps 3-20, on every node alike (the median of the 13 nodes; all nodes within a few points):
+BF16 88.8 % (88.1-89.4), mean power 896-903 W, lowest SM clock 1,215 MHz; MXFP8 80.0 % (78.1-81.5), 829-836 W, 1,372
+MHz; NVFP4 69.0 % (65.8-73.2), 804-810 W, 1,282 MHz. The 4-node runs of 1271063 were capped as much (steps 5-17: BF16
+90-91 %, MXFP8 82-83 %, NVFP4 65-74 %), so the scaling compares like with like. These are throttled step times, at the
+default power limit: BF16 is capped most, so part of FP4's gain is that it draws less power per step (not separated
+here). Not a hardware fault: all 13 nodes alike, no Xid, ECC or drains.
+
 ## Proposed rows
 
 GLM-FP4-01, GLM-5 C-speed at 13 nodes: `scripts/trillium/glm-fp4/job.sbatch exp:C-speed
