@@ -241,7 +241,9 @@ First jobs (2026-11-08, 2 nodes each; nothing trained yet):
 The flashinfer cubins (`flashinfer-cubin` 0.6.18, FlashInfer's GitHub release, 1.57 GB) and apex (slime's Dockerfile
 builds it from NVIDIA's git) would remove 3 of these workarounds; installing them was refused by the permission
 check (external code) and needs the user's decision. Without them the engine runs Triton FP8 GEMMs and Triton MoE,
-and the trainer TP1 / CP1 only. What the GLM-5.3 entries run instead of B200's defaults:
+and the trainer TP1 / CP1 only. The user chose the cubins only (2026-11-09; installed, Install): the `*-trtllm` entries
+run the first, second and fourth rows at B200's default and the FP8 GEMMs on flashinfer_trtllm (DeepGEMM stays off),
+below "B200's default kernels". What the other GLM-5.3 entries run instead of B200's defaults:
 
 | path | B200 default (SGLang 0.5.21) | here | why |
 |---|---|---|---|
@@ -692,6 +694,82 @@ Ray's stop took 48 s against 7 and 23; the colocated trainers end offloaded (GLM
 belongs in the exit itself (offload or free before stopping), not after it (one in `release_gpus` was written and
 reverted at the review of a8fcf82e).
 
+### B200's default kernels (flashinfer cubins)
+
+`slime-glm5-grpo-trtllm` (32 nodes, GLM-RL-06 below) and `slime-glm5-l10-grpo-2n-trtllm` (its 10-layer test) are
+`slime-glm5-grpo` and `slime-glm5-l10-grpo-2n` without the cubin workarounds: no DSA prefill / decode, MoE or FP8 GEMM
+backend given, `SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD` at SGLang's own value (2048, the model's `index_topk`:
+the yaml cannot unset an inherited variable), and `FLASHINFER_NO_DOWNLOAD=1`. DeepGEMM stays off, the trainer at TP1 /
+CP1. What the engines picked (job 1274132; job 1274501 the same):
+
+| path | kernel | evidence in the log |
+|---|---|---|
+| DSA prefill and decode | trtllm | SGLang's `Set DSA backends for fp8_e4m3 KV Cache: prefill=trtllm, decode=trtllm.`; FlashInfer's autotune `Tuning trtllm_batch_decode_mla` |
+| prefills up to 2,048 tokens (every prompt here) | dense MHA on flashinfer's `trtllm_ragged_attention_deepseek` (trtllm-gen FMHA; sglang `dsa_backend.py:3022`) | the engines' `Dense attention kv len threshold is manually set to 2048 for DSA`; the JIT module `fmha_gen` |
+| MoE | flashinfer_trtllm, FP8 block scale | `Use flashinfer_trtllm as MoE runner backend on sm100`, `TRT-LLM fused MoE cooperative launch SM allocation: 140 SMs used for MoE`, `Tuning flashinfer::trtllm_fp8_block_scale_moe` |
+| FP8 GEMMs | flashinfer's trtllm groupwise GEMM: SGLang's `auto` with DeepGEMM off on Blackwell (`fp8_utils.py:930-946`; Triton where K < 256) | SGLang logs no choice: the job's config dump has `SGLANG_ENABLE_JIT_DEEPGEMM 0` and the server args `fp8_gemm_runner_backend auto`; the JIT module `trtllm_gemm` was built |
+
+No cubin download attempt: no `cubin_loader`, `Fetching`, `Max retries` or `FLASHINFER_NO_DOWNLOAD is set` line, no
+traceback (one `Fetching` match in 1274501 is a rollout sample's text). The weight sync works with them: 4 syncs per
+job, 6.5-7.1 s.
+
+flashinfer has no prebuilt kernels in this venv (`flashinfer-jit-cache` was not part of the decision), so the engines
+compile 5 modules with nvcc on every node at their first use: 17 min (SGLang's scheduler startup 1,106 s against 116 s
+on the fallback, the MoE module 08:40-08:55 alone). `job.sbatch` copies them to every node from
+`$B/cache/flashinfer-jit` (101 MB: job 1274132's first node's `/dev/shm/$USER/glm-rl/.cache/flashinfer`, copied once
+its engines were up), where flashinfer's ninja finds them up to date: job 1274501 compiled no flashinfer module (the
+`.so` files kept 1274132's times) and its engines started in 139 s. After a flashinfer change: delete the directory,
+run a `*-trtllm` job and copy a node's directory back once its engines are up.
+
+Against the fallback kernels on the same nodes (trig0115-0116; 1274132 and 1274501 trtllm, 1274466 fallback), steps 1
+and 2:
+
+| | trtllm, 1274132 | trtllm, 1274501 | fallback, 1274466 |
+|---|---|---|---|
+| rollout | 147.6, 152.5 s | 154.3, 150.6 s | 160.3, 148.3 s |
+| rollout tokens/s per GPU | 437, 420 | 421, 428 | 403, 429 |
+| decode, median per request | 64.6, 67.9 tokens/s | 66.7, 61.2 tokens/s | 61.9, 68.1 tokens/s |
+| longest request | 74.7, 72.2 s | 72.9, 78.8 s | 77.4, 72.2 s |
+| sync | 6.7, 6.8 s | 6.5, 6.5 s | 6.6, 8.3 s |
+| training (tokens/s) | 58.7, 52.3 s (18.3k, 20.5k) | 49.5, 57.0 s (21.9k, 18.9k) | 66.9, 62.9 s (16.2k, 16.9k) |
+| step | 243.9, 243.4 s | 244.4, 234.1 s | 249.4, 240.0 s |
+| engine against trainer log-probs, `train/tis_abs` | 0.137, 0.137 | 0.137, 0.137 | 0.059, 0.059 |
+| TIS clip fraction | 1.6e-3, 1.7e-3 | 1.6e-3, 1.7e-3 | 1.2e-4, 1.3e-4 |
+| GPU peak, first node | 177.1 GiB (engine start) | 177.1 GiB (engine start) | 159.7 GiB (sync) |
+| engine startup (scheduler) | 1,106 s (JIT) | 139 s | 116 s |
+
+- Rollout: no difference beyond the spread at 10 layers (trtllm 147.6-154.3 s, fallback 148.3-160.3 s), and the
+  kernels do not set this rollout: the longest request takes 72-79 s of the 148-160 s (the rest is slime's side of the
+  rollout), and a request decodes at 61-68 tokens/s with either set, a decode step of about 15 ms that is mostly what
+  lies outside the layers (DP-attention gathers, the 154,880-word LM head, sampling, scheduling; inferred). On the
+  78-layer model the layers take most of a 100-113 ms decode step (GLM-RL-02): what the kernels change there is
+  GLM-RL-06's measurement.
+- Training runs none of these kernels, yet took 49.5-58.7 s against 62.9-66.9 s: not analysed.
+- Log-probs: the engine's differ from the trainer's 2.3 times more (0.137 against 0.059 per token), the TIS clip
+  fraction is 12-14 times higher, the same in every step of both trtllm runs; the mean rollout log-prob is unchanged
+  (-10.256, -10.264, -10.276 against -10.257, -10.266, -10.273). The sync is not broken (a wrong expert layout would
+  put the difference above 1): the trtllm kernels follow the BF16 trainer less closely. Which path does it is not
+  determined (a candidate: the MoE kernel computes its own routing). Job 1274501's mean log-probs: -10.260, -10.263,
+  -10.274.
+- GPU memory: FlashInfer's MoE autotune at engine start reaches 177.1 GiB of 179.1 on the first node in both trtllm
+  runs (before the trainer loads); the fallback never passes 159.7. Rollouts and syncs: 155-161 GiB.
+
+### GLM-RL-06 (draft): GLM-RL-03 with B200's default kernels
+
+`slime-glm5-grpo-trtllm`, GLM-RL-03's layout on 32 nodes (its nodes if usable), to compare the rollout and the step
+against GLM-RL-03. `--time 2:10:00` = 20 (startup: GLM-RL-03's 16.8 min, the autotune about 0.5 more; 17 more if the
+JIT modules were not found) + step 0 (rollout 22 + training 20 + 1.5) + 2 x 26 + 10 margin = 125.5 min.
+
+Expected lines: as GLM-RL-03, and on each engine the 4 rows above (`Set DSA backends ... prefill=trtllm, decode=trtllm`,
+`Use flashinfer_trtllm as MoE runner backend`, `threshold is manually set to 2048`, `FlashInfer autotune completed.`)
+with no nvcc build of a flashinfer module. Rollouts about GLM-RL-03's 17.5-18.5 min (the 10-layer test cannot say
+whether the kernels change it); training and sync as GLM-RL-03 (203-215 s, 33-35 s); `train/tis_abs` above GLM-RL-03's
+0.073-0.081 (2.3 times at 10 layers). Engine start: about 177 GiB per GPU if the autotune's peak is as at 10 layers
+(the static 132.4 GiB is the same; the weights take 32.3 of it instead of 10.7); if it runs out of memory there,
+`--sglang-disable-flashinfer-autotune` is the next try. Cancel: GLM-RL-03's rules; any `cubin_loader` or
+`FLASHINFER_NO_DOWNLOAD is set` line; fewer than 4 `Engine startup timings` at 30 min; step 0's `train/tis_abs` above
+0.5 (a broken sync).
+
 ### Step 4, prepared entries (not posted)
 
 GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
@@ -705,4 +783,5 @@ GLM-RL-01 is `slime-glm5-grpo` (posted at de8a4c63). Next, after it:
 ## Untested
 
 - More than 2 nodes, the GLM-5.3 entries, disaggregated rollout across nodes.
-- SGLang's flashinfer MoE kernels on B200 (cubins offline: `scripts/trillium/kimi/kernels.sh` stages FlashInfer's).
+- B200's default kernels (flashinfer cubins) on the full GLM-5.3 (GLM-RL-06), and in the Qwen3-30B-A3B entries (still
+  Triton MoE); tested on the 10-layer GLM-5.3, 2 nodes (above).
