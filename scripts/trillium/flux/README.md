@@ -237,19 +237,29 @@ compliance checker SUCCESS.
 - Steady step: 0.6603 s (median of blocks 4-46, 0.6589-0.6699; blocks 1-3: 0.688, 0.658, 0.716) against Florida's
   0.6303 (0.6294-0.6307), +4.8 %; 3,101 samples/s, 48.5 per GPU (Florida 50.8). Validation 3.28 s median (Florida
   3.2-3.3).
-- The 7.5 min above Florida's 60.08: 4.5 min from the extra blocks, (46 - 42.8 blocks, their mean) x 1.402 min, and
-  3.1 min from slower blocks, 46 x (1.469 - 1.402) min.
+- The 7.5 min above Florida's 60.08 (olympic mean; its 8 runs average 42.875 blocks), extra blocks first: 64.48 - 60.08
+  = 4.4 min for the extra blocks at Florida's time per block, then 67.58 - 64.48 = 3.1 min for our slower blocks. Speed
+  first, pricing the extra blocks at our 1.469 min per block: 2.9 min for the speed, 4.6 for the blocks.
 - Convergence against Florida's 10 runs at the same sample counts: ours lies within their spread at most blocks; below all
-  of them (better) at blocks 4, 6, 8, 9, 25 and 32; above all of them at 38 (equal to their highest), 40, 41 and 45. From
+  of them (better) at blocks 4, 6, 8, 9, 25 and 32; above all of them at 38 (equal to their highest; 10 runs), 40 (10),
+  41 (9) and 45 (4; their runs at 42-44: 5). From
   block 36 ours stays at 0.587-0.590 (0.5897 at block 40) and reaches 0.5851 at block 46; five of Florida's runs end at
-  40-41 blocks, five at 44-45. So not above from early on: late, around the target. What could make it systematic:
-  the seed and data order (ours 28470, theirs 11905-11916 from one series; energon's sample order follows the seed);
+  40-41 blocks, five at 44-45. So not above from early on: late, around the target. Not the data order: energon seeds its
+  shuffle from the data-parallel rank and worker index only (`megatron/energon/worker.py` `worker_seed`,
+  sha1(global_worker_id, seed_offset)), and NeMo's training loader builds its `WorkerConfig` without `seed_offset`
+  (`nemo/collections/multimodal/data/energon/base.py:218`; both read in the image), so at a given node count the order
+  is the same whatever the seed: Florida's 10 runs saw one order, and ours too if our shards hold the same samples in the
+  same order (their sizes match NVIDIA's byte for byte; the content was not compared). The seed (ours 28470, theirs
+  11905-11916) sets the model-side randomness: initialization, the sampled noise and timesteps, the text dropout; their
+  spread of 40-45 blocks is that randomness. What could make ours systematic:
   numerics (NCCL's reduction layout over 4 NICs with PXN against their 8, driver 595 against 570, the date-pinned pip
   set; NeMo, Megatron-Core, TE, NCCL and cuDNN are their versions); not the cache drop, which changes I/O timing only.
   One run cannot tell a systematic shift from seed spread: Florida's own 10 seeds span 40-45 blocks.
 - Power and clocks, per GPU (not per node), over the training window: 912-933 W mean, >= 950 W in 15-31 % of the
   5 s samples, SM clock median 1,650-1,792 MHz (lowest 1,447). nvidia-smi's throttle reasons were not logged, so the
-  share of samples at the software cap is not known. The step time does not follow power: 0.650 s at 4 nodes
-  (897-916 W) and 0.660 at 8 (912-933 W), +1.5 %, as Florida's +2.1 % (0.617 to 0.630) from 4 to 8 nodes.
-- trig0101 and trig0106 were drained by the site's health check for `slurmstepd` high CPU during the job (HW-01, open);
-  the job was not affected (block step times 0.659-0.662 s throughout).
+  share of samples at the software cap is not known. The step time does not follow power: by the same method (median of
+  ten-step intervals between `train_loss` events, evaluations left out), 0.650 s at 4 nodes (897-916 W) and 0.659 at 8
+  (912-933 W), +1.4 %, against Florida's +2.1 % (0.617 to 0.630) from 4 to 8 nodes.
+- trig0101 and trig0106 were drained by the site's health check for `slurmstepd` high CPU during the job (HW-01, open):
+  not affected. During the drains (trig0106 14:22-14:27, trig0101 14:37-14:42) the blocks ran 0.659-0.663 s; the
+  slowest block, 0.670 s, is block 8 at 14:08, before them.
