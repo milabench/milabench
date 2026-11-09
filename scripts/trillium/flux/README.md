@@ -31,6 +31,11 @@ GPU telemetry per job, `slurm/` job output.
     APPTAINER_CACHEDIR=$F/apptainer/cache APPTAINER_TMPDIR=$F/apptainer/tmp \
         apptainer pull $F/images/pytorch-25.09-py3.sif docker://nvcr.io/nvidia/pytorch:25.09-py3
     nohup bash $F/src/scripts/trillium/flux/build.sh > $F/logs/build.log 2>&1 &
+    # the image's own NCCL 2.28.3 to the host, bound and put first on LD_LIBRARY_PATH by flux.sub as Florida does:
+    # the Dockerfile removes the base's libnccl2 and installs 2.28.3 in /usr/local/lib without ldconfig, so
+    # `import torch` fails in the image without it
+    mkdir -p $F/nccl/lib && apptainer exec -B $F/nccl/lib $F/images/flux.sif \
+        cp -a /usr/local/lib/libnccl.so /usr/local/lib/libnccl.so.2 /usr/local/lib/libnccl.so.2.28.3 $F/nccl/lib/
 
 ## Florida's results, recomputed from their MLPerf logs
 
