@@ -715,11 +715,100 @@ TPOT p50 93.3 ms, ITL p50 70.8 ms; conc64 after it: 128 done, 1052.22 tok/s, TPO
 batch is implicated (SW-25 still not explained). K3-INF-02's bring-up gave 3865 tok/s at conc1024, autotuned, one engine
 of 1024 sequences; this run had no autotune. `kimi-vllm-4n-dp4tp8-ep32-s128` is EP32's study entry at this setting:
 K3-XN-01's passes in its order, then conc512 and conc1024 after the eval, so that a recurrence of SW-25 loses only those
-two (not run). It runs FlashInfer's autotune, as K3-XN-01 and K3-INF-02; the s128 pass above (1272263) and every EP32
-run so far ran without it. Not determined; inferred, not
+two (run as K3-XN-03, below). It runs FlashInfer's autotune, as K3-XN-01 and K3-INF-02; the s128 pass above (1272263) and
+every EP32 run before K3-XN-03 ran without it. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
 during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
 nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
+
+### K3-XN-03: the study on EP32 at 128 sequences per engine, 4 nodes
+
+`kimi-vllm-4n-dp4tp8-ep32-s128`, checkout `5b986c1b`, submitted by the experiment coordinator: job 1272792 on
+`trig[0109-0112]`, 2026-11-09 01:30:19-04:39:22 (3:09:03), at the same time as K3-XN-02's two jobs (other nodes);
+milabench exit 0 after 11,324 s, 20 passes and the eval, no failed request; all four nodes "GPUs free"; the `dmesg`
+watcher saw no CUDA error. Weights 85.01 GiB per GPU, loaded in 44 s by two engines and 137-154 s by the other two
+(cold); FlashInfer's autotune 01:36:38-01:45:20 (8.7 min); engines up at 01:45:52, 15.6 min after the start. KV 60.22
+GiB per GPU, 2,290,115 tokens per engine (17.20x), as 1272263; CUDA graphs 28-29 s, 4.5-4.8 GiB. Eval 60.9 min
+(K3-XN-01 all-gather: 42.5). Tables from `kimi_study.py` over 1272792, K3-INF-02's 1265338 and K3-XN-01's 1271952.
+
+| pass | EP32 s128: out tok/s, TTFT p50 / p99 ms, TPOT p50 ms | K3-INF-02, TP8 x PP4, 4 nodes (1265338) | K3-XN-01 all-gather, EP16, 2 nodes (1271952) | EP32 / K3-INF-02 | EP32 / EP16 |
+|---|---|---|---|---|---|
+| warmup | 446.9, 5347 / 5374, 59.6 | 910.6, 2138 / 3372, 37.0 | 491.8, 1607 / 3361, 105.8 |  |  |
+| warmup-mixed | 1004.4, 1820 / 1918, 58.4 |  | 1030.9, 1234 / 4568, 56.6 |  |  |
+| conc1 | 19.4, 292 / 632, 50.5 | 108.8, 86 / 90, 8.9 | 31.0, 150 / 296, 31.8 | 0.18 | 0.63 |
+| conc4 | 75.2, 604 / 1026, 50.9 | 353.0, 237 / 285, 10.5 | 119.6, 356 / 903, 32.0 | 0.21 | 0.63 |
+| conc16 | 296.8, 636 / 1002, 50.9 | 873.0, 683 / 694, 15.7 | 451.2, 492 / 1338, 33.7 | 0.34 | 0.66 |
+| conc64 | 1024.7, 1132 / 2002, 58.0 | 1111.5, 1900 / 2853, 27.2 | 1304.6, 1254 / 1892, 43.9 | 0.92 | 0.79 |
+| conc128 | 1354.8, 1960 / 7040, 86.6 | 2017.6, 3232 / 15947, 31.7 | 2046.3, 1903 / 3213, 53.7 | 0.67 | 0.66 |
+| conc256 | 2864.2, 2994 / 5399, 76.8 | 2482.9, 4951 / 26752, 62.7 | 2839.0, 2035 / 10098, 77.1 | 1.15 | 1.01 |
+| conc512 | 3843.1, 3027 / 10553, 91.7 | 4037.6, 11286 / 22191, 81.9 |  | 0.95 |  |
+| conc1024 | 4993.9, 27825 / 34495, 94.2 | 4292.5, 7789 / 44224, 210.7 |  | 1.16 |  |
+| ctx1k-c1 | 19.0, 291 / 601, 50.5 | 105.4, 86 / 89, 8.9 | 30.5, 150 / 295, 31.8 | 0.18 | 0.62 |
+| ctx8k-c1 | 18.0, 720 / 1068, 50.5 | 82.7, 404 / 407, 9.0 | 27.8, 574 / 717, 31.8 | 0.22 | 0.65 |
+| ctx32k-c1 | 14.7, 2167 / 4279, 50.7 | 58.7, 999 / 1006, 9.3 | 22.3, 1662 / 1694, 32.1 | 0.25 | 0.66 |
+| ctx64k-c1 | 12.6, 3667 / 3691, 50.9 | 46.6, 1536 / 1547, 9.5 | 18.2, 2939 / 2972, 32.3 | 0.27 | 0.70 |
+| ctx128k-c1 | 9.4, 7044 / 7078, 51.3 | 32.0, 2748 / 2758, 9.9 | 12.6, 6002 / 6023, 32.7 | 0.30 | 0.75 |
+| ctx1k-c16 | 285.1, 642 / 993, 50.5 | 767.8, 684 / 697, 15.6 | 418.8, 654 / 1221, 34.5 | 0.37 | 0.68 |
+| ctx8k-c16 | 212.4, 1701 / 5808, 60.5 | 216.9, 3288 / 15759, 29.0 | 260.5, 1682 / 5929, 42.7 | 0.98 | 0.82 |
+| ctx32k-c16 | 126.4, 5008 / 12047, 78.7 | 116.6, 8780 / 15706, 69.2 | 123.9, 4393 / 12123, 94.5 | 1.08 | 1.02 |
+| decodelong-c1 | 19.8, 346 / 887, 50.5 | 111.5, 88 / 88, 8.9 | 31.4, 197 / 437, 31.8 | 0.18 | 0.63 |
+| decodelong-c16 | 314.2, 822 / 994, 50.7 | 985.1, 733 / 742, 16.1 | 485.7, 664 / 1141, 32.8 | 0.32 | 0.65 |
+
+Accuracy (the `eval` pass, as K3-XN-01's): EP32 GSM8K 97.6, ARC-Challenge 98.1, GPQA diamond 84.3, MMLU-Pro 87.2;
+K3-INF-02 98.0, 98.5, 83.8, 86.8: all within 0.5 points (GPQA's stderr: 2.6 points, 198 questions). Not run on EP32:
+ctx64k-c16 and ctx128k-c16 (K3-XN-01's pass list); K3-INF-02 ran them.
+
+On the same 4 nodes EP32 gives more than TP8 x PP4 at conc256 (1.15x), conc1024 (1.16x) and ctx32k-c16 (1.08x), about
+the same at ctx8k-c16 (0.98x), and less at the other passes: one request decodes at 50.5 against 8.9 ms per token
+(conc1 0.18x), conc64 0.92x, conc512 0.95x (one late request, below), conc128 0.67x (two pauses, below). Against EP16
+on 2 nodes, with twice the GPUs, it gives less at every pass but conc256 (1.01x) and ctx32k-c16 (1.02x); conc1 0.63x
+(TPOT 50.5 against 31.8 ms). One run each.
+
+**The autotune** (first EP32 run with it): the decode step is unchanged within the spread of the two runs without it.
+TPOT p50 at conc1 50.53 against 51.65 ms (1271715), at conc64 58.05 against 59.21 (1271715) and 53.9 (1272263), at
+conc1024 94.2 against 93.3 (1272263; ITL p50 71.8 against 70.8). conc1024 gives 20% more output than 1272263 (4,994
+against 4,167 tok/s) with the same TPOT and TTFT p50 (27.8 against 27.6 s), its last requests starting sooner (TTFT p99
+34.5 against 43.2 s); 1272263 ran conc1024 right after the warm-up, this run after the eval and conc512, so the 20% is
+not put down to the autotune.
+
+**conc512 and conc1024 at 128 sequences per engine:** SW-25 did not recur (1,024 and 2,048 done, 0 failed; one run).
+The cap holds at most 512 sequences in the engines (4 x 128): conc512 fills it exactly, conc1024 queues the other
+half. K3-INF-02's one engine holds all 1,024:
+
+| | EP32 conc512 | K3-INF-02 conc512 | EP32 conc1024 | K3-INF-02 conc1024 |
+|---|---|---|---|---|
+| output tok/s | 3843 | 4038 | 4994 | 4292 |
+| TTFT mean, p50 / p99 s | 4.4, 3.0 / 10.6 | 11.5, 11.3 / 22.2 | 23.0, 27.8 / 34.5 | 14.8, 7.8 / 44.2 |
+| TPOT p50 ms | 91.7 | 81.9 | 94.2 | 210.7 |
+| E2E latency p50 / p99 s | 28.5 / 33.9 | 32.2 / 32.9 | 51.8 / 58.5 | 60.8 / 98.4 |
+
+At conc1024 the cap moves the wait from the decode (TPOT 94 against 211 ms) to the queue (TTFT p50 27.8 against 7.8 s)
+and comes out ahead in output (1.16x) and in end-to-end latency (p50 0.85x, p99 0.60x). At conc512 the output is 0.95x
+because of one request: the last (index 1023) waited 20.45 s for its first token (the others at most 10.8 s), then
+decoded alone at 20 tok/s for about 12 s, 18% of the 68.2-s pass; up to the 1,023rd completion the pass ran at
+4.6k-4.8k tok/s (derived, not measured). conc1024 has one such request too (TTFT 47.0 s, the others at most 34.8 s), not
+at the end. Inferred, not shown: the API server sent it to an engine already holding 128 sequences, where it waited
+for that engine's batch to finish, while another engine had a free slot (the DP load balancer works from the engines'
+published counts).
+
+Anomalies, from the raw files:
+- conc128, two pauses: at the end of each prefill wave (3.2-6.4 s and 27.4-30.6 s into the pass, 02:09:02-05 and
+  02:09:26-29) no token comes out for about 3 s with 128 in flight; 3 requests of the first wave and 32 of the second
+  (indices 224-255) wait 6.75-7.04 s for their first token, the others 1.1-2.9 s; in between the decode runs at
+  1,826-1,905 tok/s. Hence TPOT p50 86.6 ms against ITL p50 67.9 (the pauses fall inside requests), and 1,355 tok/s.
+  Nothing in the log in either window but the DP coordinator's "Received stats for out-of-order step" warnings at
+  02:09:22-24 (402 in the job). conc256's prefill waves advance in steps of about 0.93 s with no pause; conc512's first
+  wave has one 3.0-s step (5.61 to 8.57 s). Cause not logged.
+- JIT during passes, logged by vLLM's `jit_monitor`: Triton `layer_norm_gated_fwd_kernel` at 02:02:36 (conc4, DP0);
+  CuTeDSL `FlashPrepareScheduler` and `FlashAttentionForwardCombine` at the start of ctx8k-c16 (03:02:31-33; DP0, DP2,
+  DP3) and of ctx32k-c16 (03:03:50-53, DP1): part of their TTFT p99 (ctx8k-c16's 5.8 s; ctx32k-c16's first 16 requests
+  at 5.8-12 s), as on K3-INF.
+- `JSONDecodeError`: during the run 2 lines came split (warm-up: one request's ITL and a `torchmem` sample; conc1024: a
+  throughput-window sample and a `gpudata` sample) and were dropped. At the end `_parse_report` failed on 24 lines of
+  `<entry>.0.server.nolog.dpworker.data` (the three other nodes' engines: FlashInfer's autotune progress bars, stored as
+  Python repr `{'#unrepresentable': ...}`), as in K3-XN-01. Every pass `.data` file parses; no pass summary lost.
+- Power: `power_w` is the main node's 8 GPUs x 4 (extrapolated), as K3-INF-02's; the other nodes are not sampled (no
+  `benchmate.nodemon`, see K3-XN-02).
 
 ### Part 3: prefill and decode on separate nodes
 
@@ -781,3 +870,108 @@ instance, round-robin), 22:05:10-22:25:04 (19:54), milabench exit 0, all four no
 (warm), KV 15.47 GiB per GPU, 588,134 tokens per engine as P/D's; GSM8K's first 200: 197 / 200.
 At conc64 P/D gives 22% less output than its reference (1132 against 1444 tok/s), with a higher TTFT (p50 1.58 against
 0.81 s) and about the same TPOT. Untested: P/D with `deepep_v2`, more than one instance per role.
+
+### K3-XN-02: prefill and decode on separate nodes against colocated, 4 nodes
+
+`kimi-vllm-4n-pd-ep16` and `kimi-vllm-4n-pd-ep16-colocated`, checkout `5b986c1b`, submitted by the experiment
+coordinator at the same time as K3-XN-03 (other nodes): job 1272790 on `trig[0101-0104]` (prefill `trig0101-0102`, decode
+`trig0103-0104`, proxy on `trig0101`), 2026-11-09 01:30:19-03:45:36 (2:15:17), and job 1272791 on `trig[0105-0108]`
+(instance A `trig0105-0106`, B `trig0107-0108`), 01:30:19-03:44:50 (2:14:31); milabench exit 0 after 8,096 and 8,048
+s, 18 passes and the eval each, no failed request; all eight nodes "GPUs free"; the `dmesg` watcher saw no CUDA error.
+The bring-ups' venv (`venv/deepep`, NCCL 2.30.7), flags, instances and proxy (1271433, 1271710): two EP16 instances (DP2
+x TP8, all-gather, shared experts whole: 127.13 GiB of weights per GPU; KV 15.47 GiB per GPU, 588,134 tokens per engine),
+now with the autotune and both warm-ups. Weights 53-56 s on every node but colocated B's (249-272 s, cold); autotune
+about 10 min; engines up 15.8 and 21.1 min after the start (B's cold load). Eval 42.7 and 39.7 min. P/D against its
+colocated reference only (same venv; K3-XN-01's all-gather ran K3-INF's venv, NCCL 2.29.7).
+
+| pass | P/D: out tok/s, TTFT p50 / p99 ms, TPOT p50 / p99 ms | colocated | P/D / colocated, output | TTFT mean, P/D - colocated (ms) | NIXL transfer, mean ms (requests) |
+|---|---|---|---|---|---|
+| warmup | 417.7, 1549 / 7426, 40.8 / 41.4 | 649.9, 2238 / 3897, 38.6 / 49.5 | 0.64 | +378 | 61.3 (64) |
+| warmup-mixed | 1322.3, 1320 / 2497, 41.1 / 41.5 | 1441.3, 815 / 1361, 40.4 / 44.1 | 0.92 | +480 | 50.3 (128) |
+| conc1 | 29.5, 541 / 541, 31.9 / 32.1 | 31.1, 98 / 102, 31.9 / 32.1 | 0.95 | +442 | 6.3 (60) |
+| conc4 | 123.3, 293 / 748, 30.9 / 31.0 | 126.3, 182 / 470, 30.4 / 33.3 | 0.98 | +149 | 32.6 (60) |
+| conc16 | 447.3, 808 / 1014, 32.5 / 32.6 | 428.1, 413 / 1018, 35.2 / 38.4 | 1.04 | +333 | 34.2 (64) |
+| conc64 | 1343.1, 1212 / 2291, 41.4 / 41.4 | 1437.1, 843 / 1267, 39.6 / 42.6 | 0.93 | +443 | 57.4 (128) |
+| conc128 | 2132.2, 1656 / 3810, 49.7 / 50.1 | 1991.6, 1219 / 1930, 49.5 / 64.3 | 1.07 | +860 | 59.7 (256) |
+| conc256 | 3636.1, 1750 / 6419, 55.3 / 56.0 | 3282.7, 1812 / 10346, 59.9 / 92.0 | 1.11 | -514 | 64.4 (512) |
+| ctx1k-c1 | 27.9, 541 / 553, 31.9 / 32.0 | 30.8, 97 / 99, 31.9 / 32.1 | 0.90 | +444 | 6.2 (60) |
+| ctx8k-c1 | 27.5, 595 / 656, 32.0 / 32.0 | 29.1, 345 / 353, 32.0 / 32.1 | 0.95 | +254 | 12.7 (60) |
+| ctx32k-c1 | 21.3, 1875 / 2814, 32.2 / 32.2 | 23.4, 1262 / 3447, 32.2 / 32.3 | 0.91 | +536 | 47.9 (60) |
+| ctx64k-c1 | 17.0, 3413 / 3452, 32.4 / 32.4 | 18.8, 2677 / 2706, 32.5 / 32.5 | 0.90 | +734 | 90.7 (60) |
+| ctx128k-c1 | 11.5, 6931 / 6954, 32.8 / 32.8 | 12.6, 5979 / 6000, 32.9 / 33.0 | 0.91 | +953 | 177.6 (60) |
+| ctx1k-c16 | 411.9, 769 / 1013, 32.5 / 32.8 | 385.1, 388 / 952, 38.4 / 45.3 | 1.07 | +353 | 34.0 (64) |
+| ctx8k-c16 | 338.0, 1293 / 3253, 33.4 / 33.5 | 294.6, 693 / 4753, 45.9 / 66.8 | 1.15 | +458 | 37.0 (64) |
+| ctx32k-c16 | 155.0, 7686 / 12454, 33.7 / 33.7 | 151.2, 2291 / 9520, 86.3 / 125.1 | 1.02 | +4683 | 68.2 (64) |
+| decodelong-c1 | 31.2, 540 / 541, 31.9 / 32.0 | 31.3, 103 / 120, 31.9 / 32.1 | 1.00 | +433 | 6.2 (4) |
+| decodelong-c16 | 481.2, 739 / 1016, 33.0 / 33.2 | 492.5, 425 / 1001, 32.0 / 32.8 | 0.98 | +330 | 34.5 (32) |
+
+Accuracy (the `eval` pass, GSM8K in full):
+
+| | GSM8K | ARC-Challenge | GPQA diamond | MMLU-Pro (2002) |
+|---|---|---|---|---|
+| P/D | 97.8 | 98.3 | 81.8 | 86.8 |
+| colocated | 97.4 | 98.2 | 85.4 | 86.7 |
+
+GPQA: 162 against 169 of 198, a 3.5-point gap with a stderr of 2.7 and 2.5 points on each side; the others within 0.4
+points. The transferred KV and KDA state decode as well as the colocated runs, on these four sets.
+
+**The NIXL transfer time** (`slurm/pd-nixl.1272790.txt`; per pass, the change of `vllm:nixl_xfer_time_seconds` sum
+over count between the 5-s samples at the pass's start and end, both decode engines; 8 records per request, one per
+decode TP worker): 61.0 ms over the whole run (6,509 requests), 63.1 ms in the eval (4,691). The post time, the decode
+worker's call that starts the read, is 0.35-1.52 ms. One request at a time, it grows with the prompt: 6.2 ms at 1k
+tokens, 12.7 at 8k, 47.9 at 32k, 90.7 at 64k, 177.6 at 128k, about 1.35 ms per 1k tokens beyond 32k. With 4 or more
+1k prompts in flight it is 32.6-64.4 ms, of the order of one decode step (TPOT 31-55 ms) above conc1's 6.3: the decode side
+checks for finished reads once per engine step (inferred; the histogram's "up to one engine step of polling"). The
+prefill side records none (NIXL pulls), nor does the colocated run (zero throughout, as 1271710).
+
+**Where P/D gains and loses** (the same 4 nodes: P/D prefills on 2 and decodes on 2; colocated does both on all 4):
+- It loses on TTFT at one request, every pass: +0.25 to +0.95 s (mean; conc1 0.54 against 0.10 s), so 0.90-0.95x
+  the output (decodelong-c1 1.00x, its 4,096 tokens dilute it). The transfer is 6-178 ms of that gap; the rest (the
+  prefill instance's request, the proxy's two hops, the decode side's scheduling of the pulled request) is not
+  measured. It is not a fixed cost: from 1k to 8k tokens P/D's TTFT p50 grows 54 ms (541 to 595) and colocated's 248
+  ms (97 to 345), so at short prompts P/D's TTFT has a floor near 0.54 s (inferred from these two points).
+- It loses on TTFT with more in flight, up to conc128 (p50 1.4-2.0x), and most with long prompts at 16: ctx32k-c16
+  TTFT p50 7.7 against 2.3 s, one 2-node instance prefilling everything against two.
+- It gains on TPOT and ITL whenever prefills run during the decode, the decode nodes never prefilling: TPOT p50 32.5,
+  33.4, 33.7 ms through ctx1k/8k/32k-c16 (colocated 38.4, 45.9, 86.3), ITL p99 34-39 ms (colocated 238, 331, 617);
+  conc256 TPOT p99 56.0 against 92.0 ms. Output 1.07x at conc128 and ctx1k-c16, 1.11x at conc256, 1.15x at
+  ctx8k-c16, 1.02x at ctx32k-c16; mean end-to-end latency 0.85x at conc256 and 0.82x at ctx8k-c16.
+- About even: conc4 0.98x, conc16 1.04x, decodelong-c16 0.98x; conc64 0.93x.
+- Part of the gain at ctx8k-c16 and ctx32k-c16 is JIT on the colocated side: CuTeDSL `FlashPrepareScheduler` and
+  `FlashAttentionForwardCombine` and Triton `layer_norm_gated_fwd_kernel` compiled at the start of ctx8k-c16 (02:44:35-37,
+  three of its four engines) and ctx32k-c16 (02:45:41-02:46:26, the fourth), as on K3-INF and K3-XN-03; P/D logged
+  none in any pass (both: `FlashAttentionForwardSm100` on the first request, before the warm-up). Inferred: P/D's engines never put a prefill
+  and decodes in one batch, where these kernels are picked.
+
+So P/D trades TTFT for a steady decode; it pays off as an output rate from 128 in flight with 1k prompts and with long
+prompts at 16, not as a latency. The bring-ups' conc64 gap (-22%, no autotune, one warm-up) is -7% here: P/D's conc64
+rose from 1,132 to 1,343 tok/s, the colocated's stayed (1,444, 1,437). One run each.
+
+Anomalies, from the raw files:
+- No stall in either run: outside the warm-up and the first-burst prefills, no throughput window (each pass cut in
+  30) under 10% of the pass's mean output while requests were in flight; P/D's longest gap between two tokens is at
+  most 0.17 s in every pass.
+- P/D warm-up: 17 of its 64 requests (from index 33) waited 7.2-7.4 s for the first token against a median of 1.55
+  s, and no token came out from 4.2 to 6.2 s into the pass: the run's first requests through NIXL; nothing logged
+  (vLLM logs no NIXL handshake at INFO). The bring-up's conc64 TTFT p99 (7.1 s, 1271433) is of the same size.
+- Colocated: gaps between two tokens of 2.9-5.3 s in conc128, conc256, ctx8k-c16 and ctx32k-c16, other requests'
+  prefill chunks in the same engine (and the JIT above); conc256's second half (requests 128-255 by index) waits for
+  the first half's prefill, as on K3-XN-01.
+- `JSONDecodeError`: during the run 4 lines came split in each job (P/D: conc16, conc64, ctx128k-c1, decodelong-c1;
+  colocated: conc64, conc128, ctx64k-c1, ctx32k-c16) and were dropped. Each held a voir telemetry sample (`gpudata` or
+  `torchmem`) and one client record (a request's TTFT or end-to-end latency, a request-rate or a throughput-window
+  sample). At the end `_parse_report` failed on 8 lines of `<entry>.0.server.nolog.data` in each (these entries have no
+  `dpworker` file; `pd_serve.sh`'s output goes to the server's): FlashInfer's autotune progress bars stored as Python
+  repr. Every pass `.data` file parses; no pass summary lost.
+- At the end milabench's warden killed 6 (P/D) and 7 (colocated) worker processes of the main node's instance still on
+  the GPUs, as after the bring-up 1271433; all nodes "GPUs free" after.
+
+**Power: missing.** These entries have `num_machines: 1` (`pd_serve.sh` starts the other nodes), so `kimi_study.py`'s
+`power_w` is the main node's 8 GPUs only, not extrapolated: in P/D a prefill node (`trig0101`), in the colocated run
+instance A's first engine (`trig0105`). The other three nodes' power is not in the run: voir samples only the main
+node, and `job.sh` runs no `benchmate.nodemon` (Node metrics, above), so there is no `nodemon/` folder for 1272790-1272792.
+Whole-system power and energy per token, P/D against colocated, cannot be given from these runs.
+
+Open: where P/D's short-prompt TTFT goes beyond the transfer (vLLM's `vllm:request_queue_time_seconds` and
+`vllm:request_prefill_time_seconds` on both instances, sampled as the NIXL histograms, would split it; not done), EP32
+conc128's two pauses (cause not logged), and `nodemon` in `job.sh` for the power of every node.
