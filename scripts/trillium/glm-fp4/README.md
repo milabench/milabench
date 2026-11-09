@@ -86,6 +86,27 @@ layer 1 and the expert GEMMs (their token counts all multiples of 128: the paddi
 attention and expert shapes, the BF16 last layer (`o_proj`: 336 E2M1, 24 BF16), and a few BF16-only shapes; the router
 in FP32. The output layer and the plugin's einsums go through torch's cuBLAS path, which this trace does not show.
 
+## Step 3: four nodes, pp13-ep8's stages (job 1270436)
+
+`megatron-glm5-fp4-n4-{bf16,mxfp8,nvfp4}`: 24 layers (3 dense + 21 MoE), 256 experts, EP8, seq 8192, PP4 split 7 / 6 /
+6 / 5 (pp13's first stage, two middle ones, its last), 256 sequences (32 micro-batches per data-parallel rank, as
+pp13-ep8), 8 steps; NVFP4's BF16 tail is the last stage (5 layers). trig[0122-0123,0133,0145], 28.5 min. Rank 0's step
+rows (steps 3-8), peak allocated over each stage's 8 ranks:
+
+| | BF16 | MXFP8 | NVFP4 |
+|---|---|---|---|
+| step time median (min-max) | 38.87 s (38.79-39.72) | 36.99 s (36.95-37.35) | 37.06 s (36.95-38.44) |
+| peak allocated, stage 0 / 1 / 2 / 3 (GiB) | 68.3-69.0 / 82.7-83.2 / 82.1-82.7 / 73.5-73.7 | 101.5 / 132.3 / 132.3 / 115.2 | 76.4-76.9 / 92.5-92.9 / 91.9-92.5 / 74.4-74.9 |
+| loss step 1 / 8 | 13.160 / 12.209 | 13.164 / 12.210 | 13.162 / 12.246 |
+
+NVFP4 is as fast as MXFP8 (0.2 % apart), both 4.8 % faster than BF16; at 13 nodes the campaign measured MXFP8 5.4 % faster
+than BF16 (45.97 against 48.61 s, job 1242058). The BF16 step time is the 13-node one scaled by the bubble, (32 + 3) /
+(32 + 12) x 48.61 = 38.7 s. NVFP4 adds 9.7 GiB on a middle stage over BF16 (8.43 B quantized parameters per rank: 1.23
+bytes each), nothing on the last (its layers are the BF16 tail); MXFP8 adds 49.6 GiB, its stage peaks equal to the
+campaign's at 13 nodes. Estimate for pp13-ep8 NVFP4: about 100 GiB at the largest rank (the middle stages hold more
+micro-batches in flight at PP13: +5 to +7 GiB in BF16). Loss at a learning rate of 1e-6 (the speed entries) only shows
+that all three train.
+
 ## Qwen3 32B's GEMMs (`nvfp4_check.py qwen3`, job 1270151)
 
 The same modules for a Qwen3 32B layer (te.LayerNormLinear for QKV 5120 -> 10240 and gate+up 5120 -> 51200, te.Linear
@@ -118,6 +139,7 @@ NVFP4 over BF16 / NVFP4 over MXFP8 (fc1 + fc2 time), by tokens per expert:
 | Qwen3-30B-A3B (2048, 768, 128, 8; 16) | 0.48x / 0.77x | 0.48x / 0.77x | 0.48x / 0.77x | 0.68x / 0.81x | 4096 |
 | gpt-oss-120b (2880, 2880, 128, 4; 16) | 0.38x / 0.65x | 0.38x / 0.65x | 0.74x / 0.76x | 1.52x / 1.12x | 2048 |
 | Kimi K3 (3584 latent, 3072, 896, 16; 112) | NVFP4 fails | | | | 1170 |
+| Kimi K3 at EP16 (56 experts per GPU; job 1270744) | 0.50x / 0.79x | 0.62x / 0.79x | 1.62x / 1.13x | 2.26x / 1.40x | 2341 |
 
 Below a few thousand tokens per expert the times hardly change with the token count (Qwen3-30B-A3B: 2.1 / 3.3 / 4.3 ms
 BF16 / MXFP8 / NVFP4 from 128 to 2048): the GPU waits for the host to issue the per-expert GEMMs and quantization
@@ -125,3 +147,63 @@ kernels, and NVFP4 issues the most. In a training step part of that issue time c
 microbenchmark does not show. Kimi K3 at EP8 (112 experts per GPU): NVFP4 stops in TE's grouped Hadamard transform
 (`group_hadamard_transform.cu:408`, `num_tensors <= kMaxTensorsPerKernel`); BF16 and MXFP8 run (8192 tokens per
 expert: fc1 97.4 / 60.7 ms, fc2 50.0 / 32.5 ms).
+
+## Qwen3 32B dense (`megatron-qwen3-32b-*`, `dev.yaml` `_qwen3_32b`)
+
+Megatron's own TE layer spec (`model.spec: default`), existing options only: GQA (`--group-query-attention
+--num-query-groups 8 --kv-channels 128`), `--qk-layernorm`, SwiGLU, RMSNorm, RoPE 1e6, untied embeddings; Qwen3's
+tokenizer (`Qwen/Qwen3-32B`, config and tokenizer files); random weights; FineWeb packed as the GLM-5 entries. TP2
+(sequence parallel) x PP2 x data parallel, no recompute, 8192 tokens per micro-batch, 16 micro-batches per data-parallel
+rank; NVFP4 keeps the last 4 of 64 layers in BF16. Megatron's packed-sequence batches already go through TP and CP
+(`get_batch`), so QW-CP can add `--context-parallel-size`.
+
+1 node, 8 layers, 50 steps (job 1270443, trig0152): the loss goes down in all three, labels right (`workload.precision`
+bf16 / mxfp8 / nvfp4, `bf16_layers_last: 1`):
+
+| | BF16 | MXFP8 | NVFP4 |
+|---|---|---|---|
+| loss step 1 / 50, mean of 41-50 | 12.95 / 7.680, 7.742 | 12.95 / 7.645, 7.709 | 12.95 / 7.684, 7.739 |
+| step time median | 1.170 s | 0.949 s | 0.960 s |
+| peak allocated stage 0 / 1 | 17.0 / 16.5 GiB | 19.4 / 19.1 GiB | 17.0 / 17.0 GiB |
+
+Full depth, 20 steps (rank 0's step rows, steps 3-20; jobs 1270575 and 1270744, 1 node, trig0152 and trig0121; 1270732,
+4 nodes, trig[0124,0140,0143,0152]):
+
+| | BF16 | MXFP8 | NVFP4 | NVFP4, no BF16 layer |
+|---|---|---|---|---|
+| 1 node, 8192 tokens: step, tokens/s per GPU | 8.044 s, 4,074 | 5.263 s, 6,226 (1.53x) | 5.119 s, 6,401 (1.57x) | 4.796 s, 6,832 (1.68x) |
+| 1 node, peak stage 0 / 1 | 115.0 / 87.8 GiB | 129.4 / 106.2 | 112.2 / 90.0 | 112.2 / 90.4 |
+| 4 nodes, 8192 tokens: step, tokens/s per GPU | 8.359 s, 3,920 | 5.715 s, 5,734 (1.46x) | 5.468 s, 5,994 (1.53x) | |
+| 4 nodes, peak stage 0 / 1 | 97.8 / 70.6 GiB | 106.6 / 83.3 | 95.0 / 72.9 | |
+| 1 node, 4096 tokens: step, tokens/s per GPU | 3.930 s, 4,169 | 3.440 s, 4,763 (1.14x) | 4.459 s, 3,674 (0.88x) | |
+| 1 node 4096, peak stage 0 / 1 | 84.3 / 70.6 GiB | 102.9 / 91.4 | 87.0 / 75.3 | |
+
+NVFP4 over MXFP8 per step: 1.03x (1 node), 1.05x (4 nodes) at 8192 tokens, 1.10x without the BF16 layers, 0.77x at 4096:
+far below the layers' GEMM ratio (1.41x at 8192, `nvfp4_check.py qwen3`). GPU telemetry over the training window (8 GPUs
+of the 1-node runs, nodemon `gpu.tsv` and `gpm.tsv`): busy 82.5 % BF16, 75.1 % MXFP8, 75.3 % NVFP4, 64.7 % NVFP4 at
+4096; tensor-pipe activity 38.6 / 25.5 / 16.0 % (8.7 % NVFP4 at 4096). The GPUs wait more as the GEMMs get faster: TP2
+halves each GPU's GEMMs, NVFP4 issues the most kernels per GEMM (quantization, Hadamard transform), and with PP2 the
+last stage, which holds the BF16 layers and the BF16 output layer, sets the pace (no BF16 layer: 6.3 % faster). The
+GEMM share of a BF16 step is about 60-65 % (estimated: tensor activity 38.6 % at the about 58 % of peak these GEMMs reach;
+32 layers x about 9 ms of a 473 ms micro-batch slot), not the 75-85 % estimated before measuring. Not measured: a
+profile, a layout without PP (TP2 x data parallel fits from 4 nodes, an estimate), CUDA graphs.
+
+## Proposed rows
+
+GLM-FP4-01, GLM-5 C-speed at 13 nodes: `scripts/trillium/glm-fp4/job.sbatch exp:C-speed
+megatron-glm5-tri-pp13-ep8-n13-gbs256 megatron-glm5-tri-pp13-ep8-n13-gbs256-mxfp8
+megatron-glm5-tri-pp13-ep8-n13-gbs256-nvfp4` (BF16 first: it compiles the kernels), 13 nodes, `--time=01:45:00` (the
+campaign's 1242058: 2,062 s for the first entry, 1,559-1,658 s for each next one). Venv and data under
+`$SCRATCH/trillium/new/glm-fp4` (staged), run data in its `runs`. First lines: `[glm-fp4] job=... ulimit -c 0`, `===
+megatron-glm5-tri-pp13-ep8-n13-gbs256`, Megatron's arguments, the first step about 15 min in (918 s in 1242058), then
+BF16 46-51 s per step (48.61 s, sd 1.02), MXFP8 about 46 s (45.97), NVFP4 about 46 s (est.: the 4-node test had it at
+MXFP8's); peak allocated BF16 about 90, MXFP8 132.3, NVFP4 about 100 GiB (est.). Cancel: no first step 30 min into an
+entry (Megatron's timeout), steps above 60 s after step 3 (a capped or throttled node: nodemon), NaN loss.
+
+Qwen3 32B loss, 1 node per run (TP2 x PP2 x data parallel 2, 32 x 8192 tokens per step, 500 steps, the C-loss settings:
+seed 1234, lr 3e-4, warm-up 50, cosine to 3e-5): BF16 and a BF16 repeat about 68 min each, MXFP8 about 45 min, NVFP4
+about 44 min (from the 20-step runs). Needs entries and about 600,000 FineWeb documents in `$G/data` (stride 4 as C-loss),
+not yet done.
+
+Qwen3 32B speed at 13 nodes (26 copies of 4 GPUs, 416 sequences): bf16 / mxfp8 / nvfp4, 20 steps, about 6 min each
+(est.). Entries not yet written: the layout is worth a 4-node test without PP first (above).
