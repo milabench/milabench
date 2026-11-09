@@ -9,3 +9,6 @@ export OMPI_MCA_btl=^openib
 # Trillium binds each task of a step to its CPUs (task/affinity, task/cgroup) and gives a step 1 CPU per task without
 # -c: each rank (main process and its 8 data workers) gets the node's share instead, 96 / 8 = 12 cores
 export SRUN_CPUS_PER_TASK=$((SLURM_CPUS_ON_NODE / DGXNGPU))
+# $HOME is not writable from the jobs: Triton could not create ~/.triton, torch.compile fell back to eager and MBS 32
+# ran out of memory (job 1271975). The node's /tmp instead (bound into the container)
+export TRITON_HOME=/tmp/$USER-flux
