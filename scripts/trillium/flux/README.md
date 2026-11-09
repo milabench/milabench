@@ -263,3 +263,24 @@ compliance checker SUCCESS.
 - trig0101 and trig0106 were drained by the site's health check for `slurmstepd` high CPU during the job (HW-01, open):
   not affected. During the drains (trig0106 14:22-14:27, trig0101 14:37-14:42) the blocks ran 0.659-0.663 s; the
   slowest block, 0.670 s, is block 8 at 14:08, before them.
+
+## Step-time gap against Florida (FLUX_BRIEF.md, last section)
+
+Job 1277931 (`nw-flux-gap1`, trig0145, trig0148, 2026-11-09 17:01-17:31, TIMEOUT): Florida's 2-node config, real data,
+telemetry every second with the clock event reasons, Nsight Systems on rank 0 (`nsys_rank.sh`, 20 s window).
+- Step 0.6548 s (median of ten-step intervals, steps 30-150) against Florida's 0.620 (+5.6 %). Init 282 s.
+- Throttle reasons over steps 30-150 (1 s samples, 16 GPUs): SW power cap active in 88-97 % of samples on every GPU,
+  mean power 922-933 W, SM clock median 1,627-1,751 MHz (lowest 1,462; maximum 1,965); no thermal, HW slowdown or power
+  brake. So the GPUs run at the 1,000 W software cap most of the time; Florida's logs do not say whether theirs did.
+- Profile, rank 0, 17.5 s (about 27 steps): compute kernels 600 ms per step (91.7 % of the time), NCCL kernels 319 ms
+  of which 289 under compute and 30 ms alone (4.6 %), no kernel 24 ms (3.7 %: two gaps of about 4 ms or more per step,
+  14 ms, and 860 shorter ones, 10 ms). NCCL: 43 reduce-scatters and 43 all-gathers per step, 16 channels, protocol
+  RING_LL (unusual for messages this large), 3-4 ms each. Top compute: MXFP8 GEMMs (nvjet), elementwise, MXFP8 casts.
+- The run did not finish: ending the nsys collection (`--duration`) ended rank 0 ("The target application
+  terminated"), and the other ranks waited in NCCL until the time limit (22 min of 2 nodes). `nsys_rank.sh` no longer
+  ends the collection mid-run.
+
+Next (one job, `gap.sbatch`): 200 steps per run, consecutive in one 2-node job: base (NCCL INIT, TUNING, COLL logs),
+`NCCL_PROTO=Simple`, `NCCL_PXN_DISABLE=1`, `CPU_SHARE=0` (Florida's srun as it is), base again; the GPUs' power and
+clock limits and each node's CPU clock every 5 s. Not varied: the power cap (needs root), the driver, the image's
+pip set (one image), `TRITON_HOME` (only where compiled kernels are cached: the same kernels run).
