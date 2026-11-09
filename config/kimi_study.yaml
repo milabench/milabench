@@ -665,6 +665,55 @@ kimi-vllm-4n-pd-ep16-bringup-notune:
   server:
     command: [bash, "${...config_base}/../scripts/trillium/kimi/pd_serve.sh"]
 
+# its colocated reference (coordinator, 2026-11-08): the same two EP16 instances, flags and proxy, but the proxy sends each
+# request whole to one instance, round-robin (pd_proxy.py --colocated), so that only the disaggregation changes
+kimi-vllm-4n-pd-ep16-colocated-bringup-notune:
+  inherits: kimi-vllm-4n-pd-ep16-bringup-notune
+  env:
+    K3XN_PD_MODE: colocated
+
+# the P/D study row's two servers: K3-XN-01's passes (kimi-vllm-2n-dp2tp8-ep16), FlashInfer's autotune on
+kimi-vllm-4n-pd-ep16:
+  inherits: kimi-vllm-2n-dp2tp8-ep16
+  install_group: deepep
+  num_machines: 1
+  server:
+    command: [bash, "${...config_base}/../scripts/trillium/kimi/pd_serve.sh"]
+
+kimi-vllm-4n-pd-ep16-colocated:
+  inherits: kimi-vllm-4n-pd-ep16
+  env:
+    K3XN_PD_MODE: colocated
+
+# K3-XN part 1 on 4 nodes: the experts over 4 nodes, EP32 (DP4 x TP8, one engine per node, 28 experts per GPU), against
+# K3-INF-02 (TP8 x PP4). The same server as EP16 otherwise (all-gather all-to-all, sharded shared experts): half the experts
+# per GPU (84.2 -> 42.1 GiB), so about 42 GiB more for the KV cache (est.)
+kimi-vllm-4n-dp4tp8-ep32:
+  inherits: kimi-vllm-2n-dp2tp8-ep16
+  num_machines: 4
+
+# its bring-up in a 1 h job, without the autotune: the EP16 bring-up's passes and conc1024 (as K3-INF-02's bring-up, job
+# 1264956), 256 sequences per engine
+kimi-vllm-4n-dp4tp8-ep32-bringup-notune:
+  inherits: kimi-vllm-4n-dp4tp8-ep32
+  max_duration: 3420
+  client:
+    passes:
+      - *warmup
+      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+      - name: eval-gsm8k200
+        eval:
+          tasks: [milabench_gsm8k]
+          limit: 200
+          num_concurrent: 128
+          gen_kwargs: {max_gen_toks: 8192, temperature: 0}
+          log_samples: true
+  server:
+    argv:
+      --no-enable-flashinfer-autotune: true
+
 # -----------------------------------------------------------------------------
 # Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
 # -----------------------------------------------------------------------------
