@@ -290,7 +290,8 @@ allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 ov
   sample (7,487 per run): median 2.5-2.6 s, p99 19-34 s, max 32-57 s; the workers busy 3-4 % of the time. Each run
   skipped the same 2 samples (OpenFold3's debug mode replaces a failing sample with a random other one, in the
   worker): monomer MGYP003513374722, whose `alignment.npz` is not a valid zip in the bucket itself (1,835,008 bytes
-  there and here; a fetch gives the same file), and PDB 6x0v chain 1 ("No resolved atoms"). Cost: one failed attempt
+  there and here, same md5: cut short upstream; `check_npz.py` over all 80,004 `.npz` of the subset finds only this
+  one), and PDB 6x0v chain 1 ("No resolved atoms"). Cost: one failed attempt
   plus one more featurization in a worker, inside the prefetch.
 - Gradient sync (profile run, last rank to arrive): 0.221 s, as at 4 nodes (0.219). The 1.473 GB all-reduce kernel:
   18.6 and 18.4 ms (17.9 and 18.2 at 4 nodes); the first count all-reduce holds rank 0's wait for the slowest rank
