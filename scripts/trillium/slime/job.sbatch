@@ -39,6 +39,9 @@ nodes() {
 # (the epilog's kernel messages are the first node's only)
 nvrm() { nodes bash -c "echo \"$P nvrm-inband $1 \$(hostname -s) \$(dmesg | grep -c knvlinkSendInbandData)\""; }
 nodes mkdir -p "$L/tmp"
+# FlashInfer's JIT modules (the *-trtllm entries' MoE, GEMM and FMHA launchers: 17 min of nvcc per node, job 1274132),
+# built once and copied to every node, where flashinfer's ninja finds them up to date
+[ -d "$B/cache/flashinfer-jit" ] && nodes bash -c "mkdir -p $L/.cache && cp -a $B/cache/flashinfer-jit $L/.cache/flashinfer"
 nodes bash -c "echo \"$P \$(hostname -s): ulimit -c \$(ulimit -c)\""
 nvrm start
 # At the end, and on the time limit (submit.sh: SIGUSR1 5 min before it): stop Ray on every node, then wait until no
