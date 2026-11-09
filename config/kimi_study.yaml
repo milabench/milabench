@@ -673,16 +673,21 @@ kimi-vllm-4n-pd-ep16-colocated-bringup-notune:
   env:
     K3XN_PD_MODE: colocated
 
-# the P/D study row's two servers: K3-XN-01's passes (kimi-vllm-2n-dp2tp8-ep16), FlashInfer's autotune on
+# the P/D study row's two servers: K3-XN-01's passes (kimi-vllm-2n-dp2tp8-ep16), FlashInfer's autotune on.
+# max_duration from K3-XN-01's all-gather job (1271952, the same instances): engine up 23.2 min, passes 74.2, eval 42.5,
+# plus P/D's TTFT over the colocated reference, 0.46 s x 364 requests of the c1 passes = 2.8: 142.7 min, x 1.3 = 186 min.
+# The colocated reference has no more to do (two instances share the concurrent passes): the same value
 kimi-vllm-4n-pd-ep16:
   inherits: kimi-vllm-2n-dp2tp8-ep16
   install_group: deepep
   num_machines: 1
+  max_duration: 11400
   server:
     command: [bash, "${...config_base}/../scripts/trillium/kimi/pd_serve.sh"]
 
 kimi-vllm-4n-pd-ep16-colocated:
   inherits: kimi-vllm-4n-pd-ep16
+  max_duration: 11400
   env:
     K3XN_PD_MODE: colocated
 
@@ -726,9 +731,16 @@ kimi-vllm-4n-dp4tp8-ep32-conc1024:
 
 # EP32's study (draft row, coordinator 2026-11-09): all-gather, at most 128 sequences per engine, 512 in flight (K3-INF-02's
 # one engine took 1024): at this setting job 1272263 ran conc1024 with none failed, where 256 per engine crashed three
-# times (SW-25). K3-XN-01's passes plus conc512 and conc1024; FlashInfer's autotune on
+# times (SW-25). K3-XN-01's passes in its order, then conc512 and conc1024 after the eval: a recurrence of SW-25 loses only
+# those two. FlashInfer's autotune on, as K3-XN-01 and K3-INF-02; no EP32 run has used it yet (1271715, 1272263 and the
+# bring-ups ran with --no-enable-flashinfer-autotune).
+# max_duration from K3-XN-01's all-gather job (1271952): engine up 0.6 min to the server's start + 9.2 EP32 cold load
+# (549 s, 1271715) + 13.7 EP16 engine init with the autotune (822 s) = 23.5 min; the c1/c4/c16 passes 57.9 min x 1.62
+# (conc1 31.0 / 19.1 tok/s) = 93.9, warm-ups and conc64-256 2.3 x 1.3 = 3.0, conc512 1.5 (est.) + conc1024 2.1 (126 s,
+# 1272263), gaps 20 x 0.77 = 15.4; eval 42.5 x 1.23 (conc64 TPOT 53.9 / 43.9 ms) = 52.3: 191.7 min, x 1.3 = 249 min
 kimi-vllm-4n-dp4tp8-ep32-s128:
   inherits: kimi-vllm-4n-dp4tp8-ep32
+  max_duration: 15000
   client:
     passes:
       - *warmup
@@ -739,8 +751,6 @@ kimi-vllm-4n-dp4tp8-ep32-s128:
       - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc128,  argv: {--max-concurrency: 128,  --num-prompts: 256,  --random-input-len: 1024, --random-output-len: 256}}
       - {name: conc256,  argv: {--max-concurrency: 256,  --num-prompts: 512,  --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
-      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
       - {name: ctx1k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 1024,   --random-output-len: 128}}
       - {name: ctx8k-c1,    argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 8192,   --random-output-len: 128}}
       - {name: ctx32k-c1,   argv: {--max-concurrency: 1,  --num-prompts: 60, --random-input-len: 32768,  --random-output-len: 128}}
@@ -752,6 +762,8 @@ kimi-vllm-4n-dp4tp8-ep32-s128:
       - {name: decodelong-c1,  argv: {--max-concurrency: 1,  --num-prompts: 4,  --random-input-len: 1024, --random-output-len: 4096}}
       - {name: decodelong-c16, argv: {--max-concurrency: 16, --num-prompts: 32, --random-input-len: 1024, --random-output-len: 4096}}
       - *eval
+      - {name: conc512,  argv: {--max-concurrency: 512,  --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
   server:
     argv:
       --max-num-seqs: 128

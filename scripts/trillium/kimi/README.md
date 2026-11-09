@@ -681,7 +681,9 @@ engine. All four nodes "GPUs free".
 On 4 nodes DeepEP is slower than the all-gather, not faster: conc1 8.88 against 19.08 tok/s (TPOT 110 against 52 ms),
 conc64 369 against 994 tok/s; not profiled. No more DeepEP on 4 nodes (coordinator, 2026-11-08). And conc1024 failed the
 same way: "CUDA error: an illegal memory access" at 23:45:48 on `Worker_DP2_TP0_EP16` (`trig0106`,
-GPU 0), again exactly 953 done and 1095 failed. 
+GPU 0), again exactly 953 done and 1095 failed. The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
+lines): `srun --jobid` from the login node without `-N` took one node; fixed in the watcher (`$X2/dmesg_watch.sh`), so
+`trig0106`'s log is lost. 
 
 **SW-25 (`scripts/trillium/ISSUES.md`), the EP32 conc1024 crash:** three crashes (jobs 1271715, 1271958, 1272182), two
 all-to-all backends, three node sets, always a TP0 worker, always exactly 953 requests done and 1,095 failed, none under
@@ -695,9 +697,9 @@ engine. conc1024 (512 in flight, the rest queued): 2048 done, 0 failed, 4167.15 
 TPOT p50 93.3 ms, ITL p50 70.8 ms; conc64 after it: 128 done, 1052.22 tok/s, TPOT p50 53.9 ms. So the 256-per-engine
 batch is implicated (SW-25 still not explained). K3-INF-02's bring-up gave 3865 tok/s at conc1024, autotuned, one engine
 of 1024 sequences; this run had no autotune. `kimi-vllm-4n-dp4tp8-ep32-s128` is EP32's study entry at this setting:
-K3-XN-01's passes plus conc512 and conc1024 (not run). The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
-lines): `srun --jobid` from the login node without `-N` took one node; fixed in the watcher (`$X2/dmesg_watch.sh`), so
-`trig0106`'s log is lost. Not determined; inferred, not
+K3-XN-01's passes in its order, then conc512 and conc1024 after the eval, so that a recurrence of SW-25 loses only those
+two (not run). It runs FlashInfer's autotune, as K3-XN-01 and K3-INF-02; the s128 pass above (1272263) and every EP32
+run so far ran without it. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
 during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
 nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
