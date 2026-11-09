@@ -551,7 +551,7 @@ compare like for like with K3-INF-01. ctx64k-c16 (16 x 65.6k) is at capacity.
 `deep_gemm_mega_moe` only, the shared experts (`KimiMLP`: all-gather of the TP group's tokens, partial GEMMs,
 reduce-scatter): about 21 GiB per GPU back for the KV cache with DeepEP, 1.2 with `allgather_reducescatter` (est.).
 
-### Part 3: prefill and decode on separate nodes (read, not run)
+### Part 3: prefill and decode on separate nodes
 
 vLLM 0.32's `NixlConnector` moves Mamba-type state with the attention KV (`kv_connector/v1/nixl/base_worker.py`), and
 K3's KDA layers are that type: `KimiK3DeltaAttention` is a `GatedDeltaNetAttention`, `MambaSpec` with `mamba_type`
@@ -567,3 +567,36 @@ layers: one region per layer, TP may differ between the sides. Conditions, from 
 - The hybrid KV cache manager on (the default). FlashKDA's prefill checkpoint block is used only in `align` cache mode
   (prefix caching), off here.
 - `nixl` is not installed in the venv: a download, into a new venv beside K3-INF's.
+
+Since then: `nixl` 1.5.2 in `venv/deepep` (`deepep_build.sh`). `kimi-vllm-4n-pd-ep16-bringup-notune`: `pd_serve.sh`
+(`server.command`, run by milabench on the main node with the entry's vLLM flags; `num_machines: 1`) starts a prefill
+instance on the job's nodes 0-1 and a decode instance on nodes 2-3, each EP16 (DP2 x TP8, sharded shared experts,
+all-gather all-to-all), with `--kv-transfer-config` NixlConnector (`kv_both`), `VLLM_SSM_CONV_STATE_LAYOUT=DS` and each
+node's `VLLM_NIXL_SIDE_CHANNEL_HOST`, and `pd_proxy.py`: vLLM v0.32.0's NIXL toy proxy
+(`tests/v1/kv_connector/nixl_integration/toy_proxy_server.py`, downloaded to `$X/pd/`, unchanged) plus `/v1/models` for
+milabench's readiness check. The proxy sends each request to the prefill instance with `max_tokens=1`, then to the decode
+instance with the returned `kv_transfer_params`.
+
+```bash
+curl -sSfL -o $SCRATCH/trillium/new/k3-xn/pd/toy_proxy_server.py \
+  https://raw.githubusercontent.com/vllm-project/vllm/v0.32.0/tests/v1/kv_connector/nixl_integration/toy_proxy_server.py
+JOB_PREFIX=nw-k3-xn NODELIST=trig[0103-0106] MILABENCH_BASE=$PWD src/scripts/trillium/kimi/serve.sh kimi-vllm-4n-pd-ep16-bringup-notune 4 1:00:00
+```
+
+**Bring-up, job 1271433**, `trig[0103-0106]` (prefill 0103-0104, decode 0105-0106), 2026-11-08 21:32:58-22:00 (26:43),
+milabench exit 0, all four nodes "GPUs free". NIXL initialized on the four engines with the KDA state (no assertion), the
+decode workers' "NIXL compatibility check passed" against the prefill's. KV memory 15.47 GiB per GPU, 588,134 tokens per
+engine (4.42x) on both instances. Weights 55 s (prefill, warm), 392-412 s (decode, cold). Harmless: vLLM's probe of the
+optional `deep_ep` module logs an `AssertionError` (DeepEP wants `CUDA_HOME`, unset here), and the bench client's
+`/tokenize` gets a 404 from the proxy; `kv_role='kv_both'` is deprecated (vLLM: use `kv_producer` / `kv_consumer`).
+
+| pass | done / failed | output tok/s | TTFT p50 / p99 ms | TPOT p50 / p99 ms | ITL p50 / p99 ms | colocated EP16, all-gather, 2 nodes (1271244) |
+|---|---|---|---|---|---|---|
+| warmup | 64 / 0 | 411.5 | | | | 482.3 |
+| conc1 | 60 / 0 | 28.69 | 556 / 591 | 32.80 / 32.91 | 32.79 / 32.96 | 29.70, TTFT 152, TPOT 33.18 |
+| conc64 | 128 / 0 | 1132.17 | 1581 / 7142 | 42.99 / 43.25 | 42.77 / 47.72 | 1056.30, TTFT 1306, TPOT 45.91 |
+
+GSM8K's first 200: 197 / 200 (K3-INF-01: 197): the transferred KV and KDA state decode right. The KV transfer time per
+request is not measured directly (the connector's stats go to the engine's stats log, off in these DP servers): at conc1
+TTFT is 404 ms over the colocated server's, for the prefill instance's run, the transfer and the proxy's two hops
+(derived). Untested: P/D with `deepep_v2`, more than one instance per role, and a colocated reference on 4 nodes.
