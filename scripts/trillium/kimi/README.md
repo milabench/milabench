@@ -758,18 +758,21 @@ Accuracy (the `eval` pass, as K3-XN-01's): EP32 GSM8K 97.6, ARC-Challenge 98.1, 
 K3-INF-02 98.0, 98.5, 83.8, 86.8: all within 0.5 points (GPQA's stderr: 2.6 points, 198 questions). Not run on EP32:
 ctx64k-c16 and ctx128k-c16 (K3-XN-01's pass list); K3-INF-02 ran them.
 
-On the same 4 nodes EP32 gives more than TP8 x PP4 at conc256 (1.15x), conc1024 (1.16x) and ctx32k-c16 (1.08x), about
-the same at ctx8k-c16 (0.98x), and less at the other passes: one request decodes at 50.5 against 8.9 ms per token
+On 4 nodes each, not the same ones (EP32 on `trig[0109-0112]`, K3-INF-02 on `trig[0139-0142]`), EP32 gives more than
+TP8 x PP4 at conc256 (1.15x), conc1024 (1.16x) and ctx32k-c16 (1.08x), about the same at ctx8k-c16 (0.98x), and less
+at the other passes: one request decodes at 50.5 against 8.9 ms per token
 (conc1 0.18x), conc64 0.92x, conc512 0.95x (one late request, below), conc128 0.67x (two pauses, below). Against EP16
-on 2 nodes, with twice the GPUs, it gives less at every pass but conc256 (1.01x) and ctx32k-c16 (1.02x); conc1 0.63x
-(TPOT 50.5 against 31.8 ms). One run each.
+on 2 nodes (`trig[0109-0110]`), with twice the GPUs, it gives less at every pass but conc256 (1.01x) and ctx32k-c16
+(1.02x); conc1 0.63x (TPOT 50.5 against 31.8 ms). One run each. Output and latency only: the power of these runs is the
+main node's x 4 (extrapolated) and the other nodes are not sampled, so no energy per token is compared.
 
-**The autotune** (first EP32 run with it): the decode step is unchanged within the spread of the two runs without it.
-TPOT p50 at conc1 50.53 against 51.65 ms (1271715), at conc64 58.05 against 59.21 (1271715) and 53.9 (1272263), at
-conc1024 94.2 against 93.3 (1272263; ITL p50 71.8 against 70.8). conc1024 gives 20% more output than 1272263 (4,994
-against 4,167 tok/s) with the same TPOT and TTFT p50 (27.8 against 27.6 s), its last requests starting sooner (TTFT p99
-34.5 against 43.2 s); 1272263 ran conc1024 right after the warm-up, this run after the eval and conc512, so the 20% is
-not put down to the autotune.
+**The autotune** (first EP32 run with it): no gain seen, one run each. The only run without it at the same layout and
+cap is 1272263 (`--max-num-seqs 128`): conc64 TPOT p50 58.05 against 53.93 ms (+7.7%), ITL p50 55.12 against 53.77
+(+2.5%); conc1024 TPOT p50 94.2 against 93.3 (+1.0%), ITL p50 71.8 against 70.8 (+1.4%). 1271715 ran
+`--max-num-seqs 512`: conc1 TPOT p50 50.53 against 51.65 ms (-2.2%), conc64 58.05 against 59.21 (-2.0%). conc1024 gives
+20% more output than 1272263 (4,994 against 4,167 tok/s) with about the same TPOT and TTFT p50 (27.8 against 27.6 s),
+its last requests starting sooner (TTFT p99 34.5 against 43.2 s); 1272263 ran conc1024 right after the warm-up, this
+run after the eval and conc512, so the 20% is not put down to the autotune.
 
 **conc512 and conc1024 at 128 sequences per engine:** SW-25 did not recur (1,024 and 2,048 done, 0 failed; one run).
 The cap holds at most 512 sequences in the engines (4 x 128): conc512 fills it exactly, conc1024 queues the other
@@ -782,23 +785,28 @@ half. K3-INF-02's one engine holds all 1,024:
 | TPOT p50 ms | 91.7 | 81.9 | 94.2 | 210.7 |
 | E2E latency p50 / p99 s | 28.5 / 33.9 | 32.2 / 32.9 | 51.8 / 58.5 | 60.8 / 98.4 |
 
-At conc1024 the cap moves the wait from the decode (TPOT 94 against 211 ms) to the queue (TTFT p50 27.8 against 7.8 s)
-and comes out ahead in output (1.16x) and in end-to-end latency (p50 0.85x, p99 0.60x). At conc512 the output is 0.95x
-because of one request: the last (index 1023) waited 20.45 s for its first token (the others at most 10.8 s), then
-decoded alone at 20 tok/s for about 12 s, 18% of the 68.2-s pass; up to the 1,023rd completion the pass ran at
-4.6k-4.8k tok/s (derived, not measured). conc1024 has one such request too (TTFT 47.0 s, the others at most 34.8 s), not
-at the end. Inferred, not shown: the API server sent it to an engine already holding 128 sequences, where it waited
-for that engine's batch to finish, while another engine had a free slot (the DP load balancer works from the engines'
-published counts).
+At conc1024 EP32 comes out ahead in output (1.16x) and in end-to-end latency (p50 0.85x, p99 0.60x), with TPOT 94
+against 211 ms and TTFT p50 27.8 against 7.8 s. Inferred, since the layouts differ (DP4 x TP8 with EP32 against TP8 x
+PP4): the cap moves the wait from the decode to the queue. At conc512 the output is 0.95x because of one request: the
+last (index 1023), dispatched at 04:35:34.5 (+34.9 s), waited 20.45 s for its first token (the others at most 10.8 s),
+then decoded alone at 20 tok/s for 12.5 s (the other 1,023 were done at +55.7 s), 18% of the 68.2-s pass; up to the
+1,023rd completion the pass ran at about 4.7k tok/s (derived, not measured). The DP coordinator's "Received stats for
+out-of-order step" warnings run 04:35:27-34, up to its dispatch; nothing is logged during its wait. conc1024 has two
+such requests: index 1531 (TTFT 47.0 s) and 1533 (46.1 s), dispatched at +32.7 and +33.6 s, the others at most 34.8 s;
+they finish with the last batch (+104.5 of 105.0 s), so they do not lengthen the pass. Inferred, not shown: the API
+server sent each to an engine already holding 128 sequences, where it waited for that engine's batch to finish, while
+another engine had a free slot (the DP load balancer works from the engines' published counts). Power: as above, main
+node x 4; not compared.
 
 Anomalies, from the raw files:
-- conc128, two pauses: at the end of each prefill wave (3.2-6.4 s and 27.4-30.6 s into the pass, 02:09:02-05 and
-  02:09:26-29) no token comes out for about 3 s with 128 in flight; 3 requests of the first wave and 32 of the second
-  (indices 224-255) wait 6.75-7.04 s for their first token, the others 1.1-2.9 s; in between the decode runs at
-  1,826-1,905 tok/s. Hence TPOT p50 86.6 ms against ITL p50 67.9 (the pauses fall inside requests), and 1,355 tok/s.
-  Nothing in the log in either window but the DP coordinator's "Received stats for out-of-order step" warnings at
-  02:09:22-24 (402 in the job). conc256's prefill waves advance in steps of about 0.93 s with no pause; conc512's first
-  wave has one 3.0-s step (5.61 to 8.57 s). Cause not logged.
+- conc128, two pauses: from the per-request token times (`benchmark_results.db`), no request gets a token for 3.88 s
+  (02:09:02.2-06.1, +2.9 to +6.8 s into the pass) and 5.08 s (02:09:25.3-30.4, +26.0 to +31.1 s), each at the end of a
+  prefill wave with 128 in flight; 3 requests of the first wave and 32 of the second (indices 224-255) wait 6.75-7.04 s
+  for their first token, the others 1.1-2.9 s; in between the decode runs at 1,826-1,905 tok/s. Hence TPOT p50 86.6 ms
+  against ITL p50 67.9 (the pauses fall inside requests), and 1,355 tok/s. The log holds nothing in either pause; the
+  only server lines near them are the DP coordinator's "Received stats for out-of-order step" warnings at 02:09:22-24,
+  before the second (402 in the job). The longest such gap elsewhere: conc256 2.47 s (+26.1 to +28.6 s, its second
+  wave), conc512 2.96 s (+5.6 to +8.6 s, its first wave), conc1024 1.04 s. Cause not logged.
 - JIT during passes, logged by vLLM's `jit_monitor`: Triton `layer_norm_gated_fwd_kernel` at 02:02:36 (conc4, DP0);
   CuTeDSL `FlashPrepareScheduler` and `FlashAttentionForwardCombine` at the start of ctx8k-c16 (03:02:31-33; DP0, DP2,
   DP3) and of ctx32k-c16 (03:03:50-53, DP1): part of their TTFT p99 (ctx8k-c16's 5.8 s; ctx32k-c16's first 16 requests
@@ -912,8 +920,10 @@ Accuracy (the `eval` pass, GSM8K in full):
 | P/D | 97.8 | 98.3 | 81.8 | 86.8 |
 | colocated | 97.4 | 98.2 | 85.4 | 86.7 |
 
-GPQA: 162 against 169 of 198, a 3.5-point gap with a stderr of 2.7 and 2.5 points on each side; the others within 0.4
-points. The transferred KV and KDA state decode as well as the colocated runs, on these four sets.
+GPQA: 162 against 169 of 198. Question by question, the colocated run is right where P/D is wrong 9 times, the reverse
+2 times: exact McNemar p = 0.065, not significant at 5%, borderline; one run each. P/D's 162 is also the lowest of the
+runs compared in this README (colocated 169, EP32 167, K3-XN-01 all-gather 173, K3-INF-02 166). The other three sets
+are within 0.4 points.
 
 **The NIXL transfer time** (`slurm/pd-nixl.1272790.txt`; per pass, the change of `vllm:nixl_xfer_time_seconds` sum
 over count between the 5-s samples at the pass's start and end, both decode engines; 8 records per request, one per
@@ -924,7 +934,8 @@ tokens, 12.7 at 8k, 47.9 at 32k, 90.7 at 64k, 177.6 at 128k, about 1.35 ms per 1
 checks for finished reads once per engine step (inferred; the histogram's "up to one engine step of polling"). The
 prefill side records none (NIXL pulls), nor does the colocated run (zero throughout, as 1271710).
 
-**Where P/D gains and loses** (the same 4 nodes: P/D prefills on 2 and decodes on 2; colocated does both on all 4):
+**Where P/D gains and loses** (4 nodes each, not the same ones: P/D on `trig[0101-0104]`, prefilling on 2 and decoding
+on 2; colocated on `trig[0105-0108]`, both on all 4):
 - It loses on TTFT at one request, every pass: +0.25 to +0.95 s (mean; conc1 0.54 against 0.10 s), so 0.90-0.95x
   the output (decodelong-c1 1.00x, its 4,096 tokens dilute it). The transfer is 6-178 ms of that gap; the rest (the
   prefill instance's request, the proxy's two hops, the decode side's scheduling of the pulled request) is not
@@ -934,29 +945,43 @@ prefill side records none (NIXL pulls), nor does the colocated run (zero through
   TTFT p50 7.7 against 2.3 s, one 2-node instance prefilling everything against two.
 - It gains on TPOT and ITL whenever prefills run during the decode, the decode nodes never prefilling: TPOT p50 32.5,
   33.4, 33.7 ms through ctx1k/8k/32k-c16 (colocated 38.4, 45.9, 86.3), ITL p99 34-39 ms (colocated 238, 331, 617);
-  conc256 TPOT p99 56.0 against 92.0 ms. Output 1.07x at conc128 and ctx1k-c16, 1.11x at conc256, 1.15x at
-  ctx8k-c16, 1.02x at ctx32k-c16; mean end-to-end latency 0.85x at conc256 and 0.82x at ctx8k-c16.
+  conc256 TPOT p99 56.0 against 92.0 ms (the ctx8k/32k-c16 figures include the colocated JIT stalls below). Output
+  1.07x at conc128 and ctx1k-c16, 1.11x at conc256; mean end-to-end latency 0.85x at conc256.
+- Most of the ctx8k-c16 gain (1.15x) is the colocated run's JIT: its pass starts at 02:44:33.8, and CuTeDSL
+  `FlashPrepareScheduler` and `FlashAttentionForwardCombine` and Triton `layer_norm_gated_fwd_kernel` compile at
+  02:44:35-37 on three of its four engines; from +1.88 to +4.48 s no request gets a token, and 13 requests stall
+  2.83-2.88 s, on both instances. Without about 2.6-2.9 s the gain is about 1.03-1.04x (estimate, assuming the stall
+  pushes the pass's end back by as much). ctx32k-c16 (1.02x) has a 3.4-s JIT stall on the fourth engine
+  (02:45:41-02:46:26; 3 requests at 3.40-3.43 s). P/D logged no JIT in any pass (both runs:
+  `FlashAttentionForwardSm100` on the first request, before the warm-up), as on K3-INF and K3-XN-03 for the colocated
+  kernels. Inferred: P/D's engines never put a prefill and decodes in one batch, where these kernels are picked.
+- conc128 and conc256 hold no JIT and no warm-up stall on either side (no `jit_monitor` line in their windows). They
+  do hold colocated stalls of another kind, cause not logged: at conc128 two of 3.8-3.9 s, each on 63 requests at a
+  wave's start (+1.9 to +5.8 s and +18.6 to +22.4 s into the pass) while the other requests keep getting tokens; at
+  conc256, in its first burst, 5.2-5.3 s on 113 requests (+1.8 to +7.1 s, no token from any request for 5.18 s) and
+  2.1-2.6 s on 241 (+7.8 to +10.4 s). Nothing is logged in those windows (the DP coordinators' out-of-order warnings
+  fall just before or after them). P/D has no gap over 0.17 s between two tokens of a request in either. For scale,
+  not a comparison (K3-INF's venv, NCCL 2.29.7): K3-XN-01's one EP16 instance at conc128, the colocated per-instance
+  load of conc256, has no gap over 1 s, and 2.8 s at conc256. So P/D's decode is steadier there, measured; how much of
+  the 1.07x and 1.11x the colocated stalls account for is not estimated. ctx1k-c16 (1.07x) holds no JIT and no gap
+  over 0.27 s on either side.
 - About even: conc4 0.98x, conc16 1.04x, decodelong-c16 0.98x; conc64 0.93x.
-- Part of the gain at ctx8k-c16 and ctx32k-c16 is JIT on the colocated side: CuTeDSL `FlashPrepareScheduler` and
-  `FlashAttentionForwardCombine` and Triton `layer_norm_gated_fwd_kernel` compiled at the start of ctx8k-c16 (02:44:35-37,
-  three of its four engines) and ctx32k-c16 (02:45:41-02:46:26, the fourth), as on K3-INF and K3-XN-03; P/D logged
-  none in any pass (both: `FlashAttentionForwardSm100` on the first request, before the warm-up). Inferred: P/D's engines never put a prefill
-  and decodes in one batch, where these kernels are picked.
 
-So P/D trades TTFT for a steady decode; it pays off as an output rate from 128 in flight with 1k prompts and with long
-prompts at 16, not as a latency. The bring-ups' conc64 gap (-22%, no autotune, one warm-up) is -7% here: P/D's conc64
-rose from 1,132 to 1,343 tok/s, the colocated's stayed (1,444, 1,437). One run each.
+So P/D trades TTFT for a steady decode; it gives more output at conc128, conc256 and ctx1k-c16 (1.07x, 1.11x, 1.07x),
+one run each and with the colocated stalls above, not a lower latency. Power is missing for 3 of
+the 4 nodes in both runs (below), so these are output and latency only, no energy per token. The bring-ups' conc64
+gap (-22%, no autotune, one warm-up) is -7% here: P/D's conc64 rose from 1,132 to 1,343 tok/s, the colocated's stayed
+(1,444, 1,437).
 
 Anomalies, from the raw files:
-- No stall in either run: outside the warm-up and the first-burst prefills, no throughput window (each pass cut in
-  30) under 10% of the pass's mean output while requests were in flight; P/D's longest gap between two tokens is at
-  most 0.17 s in every pass.
+- Gaps with no token from any request, from the per-request token times (`benchmark_results.db`), leaving out a
+  single request's own prefill at c1: P/D none over 1 s but the warm-up's (below); colocated conc256's 5.18 s and
+  2.07 s and ctx8k-c16's 2.6 s (above). Gaps between two tokens of one request: P/D at most 0.17 s in every pass;
+  colocated up to 3.9 s in conc128, 5.3 s in conc256, 2.9 s in ctx8k-c16 and 3.4 s in ctx32k-c16 (above).
 - P/D warm-up: 17 of its 64 requests (from index 33) waited 7.2-7.4 s for the first token against a median of 1.55
-  s, and no token came out from 4.2 to 6.2 s into the pass: the run's first requests through NIXL; nothing logged
-  (vLLM logs no NIXL handshake at INFO). The bring-up's conc64 TTFT p99 (7.1 s, 1271433) is of the same size.
-- Colocated: gaps between two tokens of 2.9-5.3 s in conc128, conc256, ctx8k-c16 and ctx32k-c16, other requests'
-  prefill chunks in the same engine (and the JIT above); conc256's second half (requests 128-255 by index) waits for
-  the first half's prefill, as on K3-XN-01.
+  s, and no request got a token for 3.0 s (+4.19 to +7.19 s into the pass): the run's first requests through NIXL;
+  nothing logged (vLLM logs no NIXL handshake at INFO). The bring-up's conc64 TTFT p99 (7.1 s, 1271433) is of the
+  same size.
 - `JSONDecodeError`: during the run 4 lines came split in each job (P/D: conc16, conc64, ctx128k-c1, decodelong-c1;
   colocated: conc64, conc128, ctx64k-c1, ctx32k-c16) and were dropped. Each held a voir telemetry sample (`gpudata` or
   `torchmem`) and one client record (a request's TTFT or end-to-end latency, a request-rate or a throughput-window
@@ -974,4 +999,5 @@ Whole-system power and energy per token, P/D against colocated, cannot be given 
 
 Open: where P/D's short-prompt TTFT goes beyond the transfer (vLLM's `vllm:request_queue_time_seconds` and
 `vllm:request_prefill_time_seconds` on both instances, sampled as the NIXL histograms, would split it; not done), EP32
-conc128's two pauses (cause not logged), and `nodemon` in `job.sh` for the power of every node.
+conc128's two pauses and the colocated conc128/conc256 stalls (causes not logged), and `nodemon` in `job.sh` for the
+power of every node.
