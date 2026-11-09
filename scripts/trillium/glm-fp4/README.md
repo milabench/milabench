@@ -107,6 +107,44 @@ campaign's at 13 nodes. Estimate for pp13-ep8 NVFP4: about 100 GiB at the larges
 micro-batches in flight at PP13: +5 to +7 GiB in BF16). Loss at a learning rate of 1e-6 (the speed entries) only shows
 that all three train.
 
+## GLM-FP4-01: C-speed at 13 nodes (job 1271210, 2026-11-08 21:03-22:21, COMPLETED)
+
+`job.sbatch exp:C-speed megatron-glm5-tri-pp13-ep8-n13-gbs256{,-mxfp8,-nvfp4}` at 57b77658 on
+trig[0129-0131,0136-0137,0139-0144,0147,0149], pp13-ep8, 256 sequences, 20 steps, all three PASS. Timer: rank 0's
+per-rank metrics `elapsed` (CUDA events), steps 3-20 (the `.0.data` rate events use the same timer here); peak allocated
+over all 104 ranks:
+
+| | BF16 | MXFP8 | NVFP4 |
+|---|---|---|---|
+| step time mean (sd), median | 48.59 s (1.06), 48.38 | 45.82 s (0.61), 46.00 | 46.05 s (0.96), 45.65 |
+| the campaign's job 1242058, mean | 48.61 s | 45.97 s | |
+| against BF16 (means) | | 0.943 | 0.948 |
+| steps 3-5 then 18-20 | 47.29 then 50.17 s | 44.93 then 46.41 | 45.02 then 47.02 |
+| peak allocated, largest stage / last stage | 90.03 / 78.9 GiB | 132.34 / 115.2 | 98.64 / 80.0 |
+| loss at step 20 | 9.446 | 9.444 | 9.526 |
+
+NVFP4 equals MXFP8 on GLM-5 at 13 nodes, for this split: +0.23 s by the means, -0.35 s by the medians, within the
+steps' spread. Estimated before the run: 45.7 s, about 1 % faster than MXFP8 (steps 1 and 3); measured 46.05 s. The
+largest-stage peak, 98.6 GiB, is the about 100 GiB estimated from the 4-node test. The BF16 and MXFP8 times repeat the
+campaign's within 0.3 %. Loss at step 20: one run each, 20 steps into training at the speed entries' constant learning
+rate of 1e-6: not a precision comparison.
+
+Recipe as run (`run_start` `precision_detail`, Megatron's argument dump): MXFP8 `fp8` e4m3, recipe mxfp8; NVFP4 `fp4`
+e2m1, recipe nvfp4, Hadamard transforms on the weight-gradient inputs, 16x16 weight blocks, stochastic rounding, 5 BF16
+layers at the end. With `--decoder-last-pipeline-num-layers 5` the last stage (trig0149) runs entirely in BF16.
+
+trig0149 and the BF16 tail: trig0149 is at the software power cap (`clocks_event_reasons` 0x4) in 17 / 8 / 17 % of its
+training-window samples in BF16 / MXFP8 / NVFP4 (the results review, with another window: 22 / 10 / 22 %), on all 8
+GPUs, down to 1,485 MHz; it is the only node capped in MXFP8 and NVFP4 (the others at most 0.9 %), while in BF16 every
+node is (8-13 %). In NVFP4 it is the slowest stage (the review, from the straggler lines: GEMMs 5.2-5.7 s), so the
+all-BF16 last stage probably sets NVFP4's step (medium confidence); the cap costs at most about 0.5 s per step (the
+review's estimate). Not a hardware fault: no Xid, ECC or drains.
+
+The drift: the step time rises through the run in all three entries and in 1242058 (above). Not throttling: the share
+of capped samples falls as the steps grow longer (the review). The all-to-all time grows from step 10 in every stage,
+with expert balancing off (`--moe-aux-loss-coeff 0`, `--moe-router-bias-update-rate 0`): likely a growing load imbalance
+(the review, medium confidence). It is the same in every entry, so it does not bias the comparison.
+
 ## Qwen3 32B's GEMMs (`nvfp4_check.py qwen3`, job 1270151)
 
 The same modules for a Qwen3 32B layer (te.LayerNormLinear for QKV 5120 -> 10240 and gate+up 5120 -> 51200, te.Linear
