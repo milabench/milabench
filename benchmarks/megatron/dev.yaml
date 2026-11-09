@@ -1818,3 +1818,21 @@ megatron-qwen3-32b-cp-n1-128k-p2p-full-prof:
 megatron-qwen3-32b-cp-n1-128k-p2p-full-mxfp8:
   inherits: _qwcp_s2
   argv: {<<: *qwen3_mxfp8, --tensorboard-dir: ../../../prof/n1-128k-p2p-full-mxfp8/tb}
+# --- QW-CP C-speed at 13 nodes (proposed), 32k and 128k ------------------------------------------------------------------
+# 104 GPUs are 52 TP pairs: CP can only be 1, 2 or 4 (CP8 would leave 6.5 data-parallel groups), so CP stays in the node:
+# TP2 x CP4 x DP13, 32,768 tokens per GPU per step: 104 x 32k (8 micro-batches per data-parallel rank) with CUDA graphs,
+# 26 x 128k (2 per data-parallel rank) with full recompute (selective fits at 4 nodes, 165.9 GiB, but the allocator then
+# maps memory every step and the step is 32 % slower: job 1273313). 20 steps
+megatron-qwen3-32b-cp-n13-32k:
+  inherits: _qwcp
+  num_machines: 13
+  argv: {<<: *qwen3_cg, --global-batch-size: 104}
+megatron-qwen3-32b-cp-n13-128k:
+  inherits: _qwcp
+  num_machines: 13
+  argv: {<<: [*qwcp_128k, *qwcp_full], --global-batch-size: 26}
+# the 13-node 32k entry's layout on 2 nodes (DP2): CUDA graphs with CP and data parallel across nodes, and the reduce's cost
+megatron-qwen3-32b-cp-n2-32k-cg:
+  inherits: megatron-qwen3-32b-cp-n13-32k
+  num_machines: 2
+  argv: {--global-batch-size: 16}
