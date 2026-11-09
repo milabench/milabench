@@ -44,6 +44,9 @@ else
     source ${IMPL}/config_DGXB200_scale.sh
 fi
 source ${F}/src/scripts/trillium/flux/config_trillium.sh
+# Trillium: RUN_MINUTES=<n> replaces the config's cap on the training step (WALLTIME_RUNANDTIME, srun --time; 200 min
+# at 2 nodes, which our 5-7% slower steps may reach); a guard, not a training parameter
+export WALLTIME_RUNANDTIME=${RUN_MINUTES:-$WALLTIME_RUNANDTIME}
 # Trillium: the login environment sets PYTHONPATH (CVMFS site-packages); Apptainer would pass it in place of the image's
 unset PYTHONPATH
 

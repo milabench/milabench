@@ -129,7 +129,7 @@ Estimates assume our step time stays 5-7% above Florida's (measured at 2 and 4 n
 |---|---|---|---|---|---|---|---|
 | 8 | 8 | 1:45:00 | 60.1 (56.1-63.1) | 59-68 | 0.747-0.864 | 0.635-0.665, 0.67-0.71 s | 120 min |
 | 16 | 16 | 1:30:00 | 47.7 (47.0-49.1) | 50-60 | 0.876-1.312 | 0.679-0.707, 0.71-0.76 s | 70 min |
-| 2 | 2 | 3:45:00 | 173.4 (170.5-178.4) | 179-191 | 0.710-0.718 | 0.620-0.633, 0.65-0.68 s | 200 min |
+| 2 | 2 | 3:45:00 | 173.4 (170.5-178.4) | 179-191 | 0.710-0.718 | 0.620-0.633, 0.65-0.68 s | 215 min (`RUN_MINUTES=215`) |
 | 4 | 4 | 2:15:00 | 93.5 (90.3-98.6) | 95-106 | 0.690-0.699 | 0.622-0.634, 0.66-0.68 s | 220 min |
 
     scripts/trillium/flux/submit.sh run<N> <N> <time> -- --nodelist=<one bandwidth group>
@@ -138,4 +138,34 @@ Working looks like: `mountcheck OK ... 230 files` on every node; `init_start` ab
 `run_start` about 5.5 min later; `train_loss` every 10 steps; the first evaluation at 262,144 samples within Florida's
 range; `run_stop` with `status: success`. Cancel: no `train_loss` 12 min after the job starts; first-block
 `train_step_time` above Florida's first-block maximum plus 15% (check the nodes' power in `runs/<job>/gpu-*.csv`); a NaN
-loss; no success by 1.15 times Florida's largest sample count (8: 13.5 M, 16: 20.5 M, 2: 9.6 M, 4: 10.9 M).
+loss; no success by 1.15 times Florida's largest sample count (8: 13.5 M, 16: 20.5 M, 4: 10.9 M).
+
+2 nodes, own rules: Florida's 2-node config caps the training step at 200 min (`WALLTIME_RUNANDTIME`), and Florida
+needed 31-32 evaluation blocks (512 steps each) at 5.50-5.58 min per block, so ours takes 5.78-5.97 (est.), 179-191
+min for 31-32 blocks and up to 197 for 33. `RUN_MINUTES=215` raises the cap, which `--time 3:45:00` still holds
+(6.5 min to the first step, 215 min of run, the compliance checker). Cancel: first-block `train_step_time` above
+0.73 s (33 blocks would then need 208 min); no success at the evaluation of block 34 (8,912,896 samples, 1.06 times
+Florida's largest, 8,388,608), which comes by 203 min at the estimated speed and by 214.5 min at the 0.73 s limit,
+so it can fire before the cap. Florida's 1.15 times (37 blocks, 221 min) cannot.
+
+    scripts/trillium/flux/submit.sh run2 2 3:45:00 RUN_MINUTES=215 -- --nodelist=<two nodes of one bandwidth group>
+
+## Differences from Florida's runs, launch and logs
+
+- Each rank gets 12 cores (`SRUN_CPUS_PER_TASK=12`) and Triton's cache is on `/tmp` (`TRITON_HOME`), config_trillium.sh.
+- `RUN_MINUTES` can raise the training step's cap (`WALLTIME_RUNANDTIME`); only the 2-node row uses it (215 min
+  instead of 200), a guard, not a training parameter.
+- The page-cache drop fails here (no sudo; `flux.sub` keeps going as Florida's does), yet the MLPerf log still records
+  `cache_clear: true`, which `flux.sub` logs right after it.
+- The compliance checker runs once per node and they all write the same file (harmless: same input, same output).
+- Every job writes NeMo's logs and outputs under the shared `images/tmpmounts`, so FLUX rows run one at a time.
+
+## Collecting a full run
+
+Time to train moves about 12% with the number of evaluation blocks (262,144 samples each) to the target, so per run
+give: samples to target and blocks; Florida's time at the same block count (below); and the steady step time against
+theirs. Florida, by blocks to target (`run_stop` samples / 262,144), time to train min (runs):
+- 2 nodes: 31 blocks 170.5-172.8 (6); 32: 176.0-178.4 (4)
+- 4 nodes: 33: 90.3-90.4 (3); 34: 93.1-93.2 (4); 35: 95.8 (1); 36: 98.5-98.6 (2)
+- 8 nodes: 40: 56.1 (1); 41: 57.4-57.5 (4); 44: 61.6 (1); 45: 63.0-63.1 (4)
+- 16 nodes: 65: 47.0-47.1 (2); 66: 47.8-47.9 (7); 68: 49.1 (1)
