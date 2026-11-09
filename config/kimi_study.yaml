@@ -715,6 +715,48 @@ kimi-vllm-4n-dp4tp8-ep32-bringup-notune:
     argv:
       --no-enable-flashinfer-autotune: true
 
+# EP32's conc1024 crash (job 1271715: illegal memory access on DP3, trig0108 GPU 0, 22:39:04): the same server, the warm-up
+# and conc1024 only, on 4 other nodes (coordinator: repeatability first)
+kimi-vllm-4n-dp4tp8-ep32-conc1024:
+  inherits: kimi-vllm-4n-dp4tp8-ep32-bringup-notune
+  client:
+    passes:
+      - *warmup
+      - &ep32_conc1024 {name: conc1024, argv: {--max-concurrency: 1024, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 256}}
+
+# the same with CUDA_LAUNCH_BLOCKING=1, so that the error comes from the kernel that faults, if the crash repeats on other
+# GPUs (a kernel inside a CUDA graph still reports at the graph's launch)
+kimi-vllm-4n-dp4tp8-ep32-conc1024-blocking:
+  inherits: kimi-vllm-4n-dp4tp8-ep32-conc1024
+  env:
+    CUDA_LAUNCH_BLOCKING: "1"
+
+# EP32 on deepep_v2 (coordinator): at 4 nodes the all-gather sends every token to all 32 GPUs, DeepEP only to the ranks
+# holding its experts. venv/deepep, CUDA_HOME for DeepEP's JIT, as kimi-vllm-2n-dp2tp8-ep16-deepep
+kimi-vllm-4n-dp4tp8-ep32-deepep:
+  inherits: kimi-vllm-4n-dp4tp8-ep32
+  install_group: deepep
+  env:
+    CUDA_HOME: /cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/cudacore/13.2.0
+  server:
+    argv:
+      --all2all-backend: deepep_v2
+
+# its bring-up: both warm-ups (the conc64-shaped one compiles DeepEP's kernels for mixed batches), conc1, conc64, conc1024
+kimi-vllm-4n-dp4tp8-ep32-deepep-bringup-notune:
+  inherits: kimi-vllm-4n-dp4tp8-ep32-deepep
+  max_duration: 3420
+  client:
+    passes:
+      - *warmup
+      - {name: warmup-mixed, argv: {--max-concurrency: 64, --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc1,    argv: {--max-concurrency: 1,    --num-prompts: 60,   --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64,   argv: {--max-concurrency: 64,   --num-prompts: 128,  --random-input-len: 1024, --random-output-len: 256}}
+      - *ep32_conc1024
+  server:
+    argv:
+      --no-enable-flashinfer-autotune: true
+
 # -----------------------------------------------------------------------------
 # Smokes of the machinery (launcher, passes, eval) on a small model, before spending Kimi time
 # -----------------------------------------------------------------------------
