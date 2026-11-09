@@ -1668,6 +1668,10 @@ megatron-qwen3-32b-cp-t8-32k-a2ap2p:
 megatron-qwen3-32b-cp-t8-32k-tp1cp8:
   inherits: _qwcp_t8
   argv: {--tensor-model-parallel-size: 1, --sequence-parallel: null, --context-parallel-size: 8}
+# no CP (TP2 x data parallel 4, the same 8 sequences per step): CP must give the same loss
+megatron-qwen3-32b-cp-t8-32k-cp1:
+  inherits: _qwcp_t8
+  argv: {--context-parallel-size: 1}
 # 128k without recompute: the activation memory per layer at 128k
 megatron-qwen3-32b-cp-t8-128k-p2p:
   inherits: _qwcp_t8
@@ -1708,6 +1712,9 @@ megatron-qwen3-32b-cp-n1-64k-p2p-none:
 megatron-qwen3-32b-cp-n1-64k-p2p-sel:
   inherits: _qwcp
   argv: {<<: [*qwcp_64k, *qwcp_sel]}
+megatron-qwen3-32b-cp-n1-64k-p2p-full:
+  inherits: _qwcp
+  argv: {<<: [*qwcp_64k, *qwcp_full]}
 # per-layer CUDA graphs with selective recompute (Megatron allows them with full recompute only as full_iteration graphs,
 # which stop at step 2 with CP: megatron-qwen3-32b-cp-t8-128k-p2p-full-fi, job 1272968)
 megatron-qwen3-32b-cp-n1-64k-p2p-sel-cg:
@@ -1719,6 +1726,14 @@ megatron-qwen3-32b-cp-n1-128k-p2p-sel:
 megatron-qwen3-32b-cp-n1-128k-p2p-full:
   inherits: _qwcp
   argv: {<<: [*qwcp_128k, *qwcp_full]}
+# 16 of the 64 layers without recompute: full recompute peaks at 108.6 GiB at 128k (job 1273065), a layer without it
+# adds about 3.2 GiB (est. 160 GiB)
+megatron-qwen3-32b-cp-n1-128k-p2p-b48:
+  inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
+  argv: {--recompute-method: block, --recompute-num-layers: 48}
+megatron-qwen3-32b-cp-n1-128k-tp1cp8-full:
+  inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
+  argv: {--tensor-model-parallel-size: 1, --sequence-parallel: null, --context-parallel-size: 8}
 megatron-qwen3-32b-cp-n1-128k-a2a-full:
   inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
   argv: {--cp-comm-type: a2a}
