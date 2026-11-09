@@ -609,8 +609,8 @@ the steps slow, then a kernel read out of bounds; review 3's "routing skew or a 
 node, on the first CUDA error in the log) was armed; it had nothing to read. Not a configuration limit (review 3).
 
 **EP32 on `deepep_v2`**, `kimi-vllm-4n-dp4tp8-ep32-deepep-bringup-notune`, job 1272182, `trig[0104-0106,0113]`,
-2026-11-08 23:27:53-23:46:31 (18:38), from `k3-xn2`; a first try, job 1272042, was cancelled at conc1, whose 60 requests at
-28.75 s each would not have left time for the rest (now 8). Weights 65.31 GiB per GPU, KV 58.69 GiB, 2,229,948 tokens per
+2026-11-08 23:27:53-23:46:31 (18:38), from `k3-xn2`; a first try, job 1272042, was cancelled at conc1: its 60 requests at
+28.75 s each come to about 29 min (estimated from its first 15), which would not have left time for the rest (now 8). Weights 65.31 GiB per GPU, KV 58.69 GiB, 2,229,948 tokens per
 engine. All four nodes "GPUs free".
 
 | pass | done / failed | output tok/s | TTFT p50 ms | TPOT p50 ms | ITL p50 ms | all-gather EP32 (1271715) |
@@ -619,12 +619,15 @@ engine. All four nodes "GPUs free".
 | conc64 | 128 / 0 | 368.57 | 3728 | 128.94 | 128.83 | 994.40, TPOT 59.21 |
 | conc1024 | 953 / 1095 | 96.71 | | 1895.58 | 1887.49 | 953 / 1095, TPOT 1077.7 |
 
-On 4 nodes DeepEP is slower than the all-gather, not faster (one request decodes at 110 against 52 ms); not profiled. And
-conc1024 failed the same way: "CUDA error: an illegal memory access" at 23:45:48 on `Worker_DP2_TP0_EP16` (`trig0106`,
-GPU 0), again exactly 953 done and 1095 failed. Three runs, two all-to-all backends, three node sets, always a TP0 worker,
-always at the same point of the pass, and not under `CUDA_LAUNCH_BLOCKING=1`, whose slower steps change how requests are
-batched: inferred, a software fault triggered by one batch the pass makes at normal speed, in a part both backends share;
-not determined. The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
+On 4 nodes DeepEP is slower than the all-gather, not faster: conc1 8.88 against 19.08 tok/s (TPOT 110 against 52 ms),
+conc64 369 against 994 tok/s; not profiled. No more DeepEP on 4 nodes (coordinator, 2026-11-08). And conc1024 failed the
+same way: "CUDA error: an illegal memory access" at 23:45:48 on `Worker_DP2_TP0_EP16` (`trig0106`,
+GPU 0), again exactly 953 done and 1095 failed. 
+
+**SW-25 (`scripts/trillium/ISSUES.md`), the EP32 conc1024 crash:** three crashes (jobs 1271715, 1271958, 1272182), two
+all-to-all backends, three node sets, always a TP0 worker, always exactly 953 requests done and 1,095 failed, none under
+`CUDA_LAUNCH_BLOCKING=1` (job 1272035). The kernel cannot be named. Inferred, not determined: a timing-dependent fault on
+a path both backends share. The node check of `trig0108` (job 1271974) found nothing. The `dmesg` watcher read only the batch host, `trig0104` (23:45:56: no Xid, only `knvlinkSendInbandData`
 lines): `srun --jobid` from the login node without `-N` took one node; fixed in the watcher (`$X2/dmesg_watch.sh`), so
 `trig0106`'s log is lost. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
