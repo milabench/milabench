@@ -14,6 +14,8 @@ ulimit -c 0
 X=$SCRATCH/trillium/new/k3-xn
 export CUDA_HOME=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/cudacore/13.2.0
 export PATH=$CUDA_HOME/bin:$PATH EP_JIT_CACHE_DIR=/dev/shm/$USER/deepep-jit
+# deep_ep.utils.math is torch.compile-d: Triton's cache, not in the read-only $HOME (job 1270433)
+export TRITON_CACHE_DIR=/dev/shm/$USER/deepep-jit/triton
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1) MASTER_PORT=8361 WORLD_SIZE=$SLURM_NNODES
 unset PYTHONPATH
 echo "[deepep] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST master=$MASTER_ADDR $(git -C "$X/deepep-src" log -1 --oneline)"

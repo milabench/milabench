@@ -22,6 +22,8 @@ X=$SCRATCH/trillium/new/k3-xn K=$SCRATCH/trillium/new/k3-inf
 V=$X/venv/deepep
 export CUDA_HOME=/cvmfs/soft.computecanada.ca/easybuild/software/2023/x86-64-v3/Core/cudacore/13.2.0
 export PATH=$CUDA_HOME/bin:$PATH TMPDIR=/dev/shm/$USER/deepep-build EP_JIT_CACHE_DIR=/dev/shm/$USER/deepep-jit
+# deep_ep.utils.math is torch.compile-d: Triton's cache, not in the read-only $HOME (job 1270433)
+export TRITON_CACHE_DIR=/dev/shm/$USER/deepep-jit/triton
 mkdir -p "$TMPDIR"
 trap 'rm -rf "$TMPDIR" "$EP_JIT_CACHE_DIR"' EXIT
 unset PYTHONPATH PIP_CONFIG_FILE
