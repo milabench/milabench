@@ -205,7 +205,22 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriQwCpCapLoCpFourSel", "TriQwCpCapHiCpFourSel", "TriQwCpCapLoCpFour", "TriQwCpCapHiCpFour",
           "TriQwCpSlowSteps", "TriQwCpSlowMulti", "TriQwCpSlowNodes", "TriQwCpSlowNodeList", "TriQwCpFastNodes", "TriQwCpBehindLo", "TriQwCpBehindHi",
           "TriQwCpDropLo", "TriQwCpDropHi", "TriQwCpDropOther", "TriQwCpDropOne", "TriQwCpBehindFull", "TriQwCpBehindEight", "TriQwCpCleanSteps",
-          "TriQwCpCleanLo", "TriQwCpCleanHi", "TriQwCpCleanBelowLo", "TriQwCpCleanBelowHi"]
+          "TriQwCpCleanLo", "TriQwCpCleanHi", "TriQwCpCleanBelowLo", "TriQwCpCleanBelowHi",
+          # New workloads: OpenFold3 training (_of3_numbers; OF3 step 2 at 1, 2 and 4 nodes, OF3-01 at 13): setup; per variant (Pub: published,
+          # Ds: DeepSpeed attention, Cueq: cuEquivariance + TF32) and node count the wall-clock step, its median, samples/s per GPU and in all, the
+          # loader's wait, against 1 node and against published; at the top node count, ranges over the variants; telemetry, memory, InfiniBand
+          "TriOfMeasured", "TriOfFrom", "TriOfSteps", "TriOfBatch", "TriOfWorkers", "TriOfCrop", "TriOfParams", "TriOfBuffer",
+          *[f"TriOf{m}{v}{n}" for v, n in (("Pub", "One"), ("Pub", "Two"), ("Pub", "Four"), ("Pub", "Thirteen"), ("Ds", "One"), ("Ds", "Thirteen"),
+                                          ("Cueq", "One"), ("Cueq", "Two"), ("Cueq", "Four"), ("Cueq", "Thirteen"))
+            for m in ("Sps", "Step", "Med", "Total", "Gap")],
+          *[f"TriOfEff{v}{n}" for v, n in (("Pub", "Two"), ("Pub", "Four"), ("Pub", "Thirteen"), ("Ds", "Thirteen"), ("Cueq", "Two"), ("Cueq", "Four"),
+                                          ("Cueq", "Thirteen"))],
+          *[f"TriOfRatio{v}{n}" for v, n in (("Ds", "One"), ("Ds", "Thirteen"), ("Cueq", "One"), ("Cueq", "Two"), ("Cueq", "Four"), ("Cueq", "Thirteen"))],
+          "TriOfTopNodes", "TriOfTopGpus", "TriOfEffLo", "TriOfEffHi", "TriOfLossPub", "TriOfLossLo", "TriOfLossHi",
+          *[f"TriOf{m}{e}" for m in ("Gap", "GapWorst", "Power", "Util", "CpuMin", "IbBuffers", "GapSmall") for e in ("Lo", "Hi")],
+          *[f"TriOf{m}{v}" for m in ("Power", "Util") for v in ("Pub", "Ds", "Cueq")],
+          "TriOfSm", "TriOfSmMin", "TriOfCap", "TriOfCapPlain", "TriOfSmMinPlain", "TriOfCapCueq", "TriOfXid", "TriOfCpuMed", "TriOfMemAlloc", "TriOfMemRes", "TriOfNonFinite", "TriOfIbLo", "TriOfIbHi",
+          "TriOfIbTree", "TriOfIbExcess", "TriOfFirstDs", "TriOfFirstLo", "TriOfFirstHi"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -2250,6 +2265,115 @@ def qw_cp_speed_table(t) -> str:
     return "\n".join(lines) + "\n"
 
 
+# OpenFold3 training (of3.build): the variants and node counts measured, macro suffixes
+OF3_VARIANTS = (("published", "Pub"), ("ds", "Ds"), ("cueq+tf32", "Cueq"))
+OF3_NODES = {1: "One", 2: "Two", 4: "Four", 13: "Thirteen"}
+OF3_POINTS = (("Pub", "One"), ("Pub", "Two"), ("Pub", "Four"), ("Pub", "Thirteen"), ("Ds", "One"), ("Ds", "Thirteen"),
+              ("Cueq", "One"), ("Cueq", "Two"), ("Cueq", "Four"), ("Cueq", "Thirteen"))
+
+
+def _of3(t) -> pd.DataFrame:
+    """OpenFold3's completed runs (of3_runs), indexed by (variant, nodes), with the per-GPU throughput against the same variant on 1 node."""
+    r = t.get("of3_runs", pd.DataFrame())
+    if r.empty:
+        return r
+    done = r[r.job_state == "COMPLETED"]
+    if done.duplicated(["run", "nodes"]).any():
+        raise SystemExit("[report] of3_runs: two completed runs of one variant at one node count")
+    one = done[done.nodes == 1].set_index("run").sps_gpu
+    return done.assign(eff_pct=100 * done.sps_gpu / done.run.map(one)).set_index(["run", "nodes"]).sort_index()
+
+
+def _of3_numbers(t) -> dict[str, tuple]:
+    """OpenFold3 training, TriOf*: per variant and node count, the wall-clock step period over steps 7-40 (rank 0's step ends), samples/s per GPU
+    and in all, against 1 node; the loader's wait, GPU and CPU telemetry, peak memory, InfiniBand bytes against one gradient buffer."""
+    m = _of3(t)
+    out = {}
+    if m.empty:
+        return out
+    x = m.iloc[0]
+    for col, macro, fmt in (("measured", "Measured", "d"), ("first", "From", "d"), ("last", "Steps", "d"), ("batch_per_gpu", "Batch", "d"),
+                            ("workers", "Workers", "d"), ("crop_tokens", "Crop", "d")):
+        out[f"TriOf{macro}"] = (int(x[col]), fmt, False)
+    out["TriOfParams"] = (x.params / 1e6, ".1f", False)
+    out["TriOfBuffer"] = (x.buffer_bytes / 1e9, ".3f", False)
+    names = dict(OF3_VARIANTS)
+    for (run, nodes), y in m.iterrows():
+        v, n = names.get(run), OF3_NODES.get(int(nodes))
+        if (v, n) not in OF3_POINTS:
+            continue
+        for col, macro, fmt in (("sps_gpu", "Sps", ".4f"), ("step_wall", "Step", ".3f"), ("step_median", "Med", ".3f"), ("sps_total", "Total", ".2f"),
+                                ("gap_pct", "Gap", ".1f")):
+            out[f"TriOf{macro}{v}{n}"] = (y[col], fmt, False)
+        if nodes > 1:
+            out[f"TriOfEff{v}{n}"] = (y.eff_pct, ".1f", False)
+        if run != "published" and ("published", nodes) in m.index:
+            out[f"TriOfRatio{v}{n}"] = (y.step_wall / m.step_wall["published", nodes], ".3f", False)
+    top_nodes = int(m.index.get_level_values("nodes").max())
+    top = m.xs(top_nodes, level="nodes")
+    out["TriOfTopNodes"], out["TriOfTopGpus"] = (top_nodes, "d", False), (int(top.gpus.iloc[0]), "d", False)
+    out["TriOfEffLo"], out["TriOfEffHi"] = (top.eff_pct.min(), ".1f", False), (top.eff_pct.max(), ".1f", False)
+    loss = 100 - top.eff_pct
+    if "published" in top.index:
+        out["TriOfLossPub"] = (loss["published"], ".1f", False)
+        others = loss.drop(index="published")
+        if len(others):
+            out["TriOfLossLo"], out["TriOfLossHi"] = (others.min(), ".1f", False), (others.max(), ".1f", False)
+    for col, macro, fmt in (("gap_pct", "Gap", ".1f"), ("gap_worst_pct", "GapWorst", ".1f"), ("power_w", "Power", ".0f"), ("util_pct", "Util", ".0f"),
+                            ("cpu_busy_min", "CpuMin", ",.0f"), ("ib_buffers", "IbBuffers", ".2f")):
+        out[f"TriOf{macro}Lo"], out[f"TriOf{macro}Hi"] = (top[col].min(), fmt, False), (top[col].max(), fmt, False)
+    for run, v in OF3_VARIANTS:
+        if run in top.index:
+            out[f"TriOfPower{v}"] = (top.power_w[run], ".0f", False)
+            out[f"TriOfUtil{v}"] = (top.util_pct[run], ".0f", False)
+    small = m[m.index.get_level_values("nodes") < top_nodes]
+    out["TriOfGapSmallLo"], out["TriOfGapSmallHi"] = (small.gap_pct.min(), ".1f", False), (small.gap_pct.max(), ".1f", False)
+    out["TriOfSm"] = (m.sm_med.median(), ",.0f", False) if m.sm_med.nunique() == 1 else (None, "", False)
+    out["TriOfSmMin"] = (m.sm_min.min(), ",.0f", False)
+    out["TriOfCap"] = (m.cap_pct.max(), ".1f", False)  # the most of any run's GPU samples with the software power cap
+    plain = m[m.index.get_level_values("run") != "cueq+tf32"]
+    out["TriOfCapPlain"] = (plain.cap_pct.max(), ".1f", False)  # published and DeepSpeed's attention
+    out["TriOfSmMinPlain"] = (plain.sm_min.min(), ",.0f", False)
+    if "cueq+tf32" in top.index:
+        out["TriOfCapCueq"] = (top.cap_pct["cueq+tf32"], ".1f", False)
+    out["TriOfXid"] = (int(m.xid_rows.sum()), "d", False)
+    out["TriOfCpuMed"] = (m.cpu_busy_med.median(), ",.0f", False) if m.cpu_busy_med.nunique() == 1 else (None, "", False)
+    out["TriOfMemAlloc"], out["TriOfMemRes"] = (m.mem_alloc_gib.max(), ".1f", False), (m.mem_reserved_gib.max(), ".1f", False)
+    out["TriOfNonFinite"] = (int(m.loss_nonfinite.sum()), "d", False)
+    pub = top.loc["published"] if "published" in top.index else None
+    if pub is not None and pd.notna(pub.ib_lo_gb):
+        out["TriOfIbLo"], out["TriOfIbHi"] = (pub.ib_lo_gb, ".3f", False), (pub.ib_hi_gb, ".3f", False)
+        out["TriOfIbTree"] = (2 * (top_nodes - 1), "d", False)
+        out["TriOfIbExcess"] = (100 * (pub.ib_buffers / (2 * (top_nodes - 1)) - 1), ".1f", False)
+    if "ds" in top.index:
+        out["TriOfFirstDs"] = (top.step1_s["ds"], ".0f", False)
+        rest = m.drop(index=("ds", top_nodes)).step1_s
+        out["TriOfFirstLo"], out["TriOfFirstHi"] = (rest.min(), ".0f", False), (rest.max(), ".0f", False)
+    return out
+
+
+def of3_speed_table(t) -> str:
+    """OpenFold3 training by variant and node count: wall-clock step period over steps 7-40 and its median, samples/s per GPU and in all, against
+    the same variant on 1 node, the loader's wait, mean GPU power."""
+    m = _of3(t)
+    if m.empty:
+        return ""
+    names = {"published": "Published", "ds": "DeepSpeed attention", "cueq+tf32": "cuEquivariance + TF32"}
+    lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
+             r"Variant & Nodes & GPUs & Step & Median & Samples/s & Samples/s & vs 1 node & Loader & Mean GPU \\",
+             r" & & & s & s & per GPU & in all & \% & wait, \% & power, W \\", r"\midrule"]
+    for i, (run, _) in enumerate(OF3_VARIANTS):
+        if run not in m.index.get_level_values("run"):
+            continue
+        if i:
+            lines.append(r"\addlinespace")
+        for nodes, y in m.xs(run, level="run").iterrows():
+            lines.append(f"{names[run]} & {int(nodes)} & {int(y.gpus)} & {y.step_wall:.3f} & {y.step_median:.3f} & {y.sps_gpu:.4f} & {y.sps_total:.2f} & "
+                         f"{y.eff_pct:.1f} & {y.gap_pct:.1f} & {format(y.power_w, '.0f') if pd.notna(y.power_w) else ''} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def qw_fp4_speed_table(t) -> str:
     """Qwen3 32B C-speed at 13 nodes by recipe, one job (GLM-FP4-03): steps 3-20 on milabench's timer, speed-ups, peak allocated memory, and the
     GPU telemetry over the same steps (all nodes)."""
@@ -2579,6 +2703,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_glm_fp4_numbers(t))
     out.update(_qw_fp4_numbers(t))
     out.update(_qw_cp_numbers(t))
+    out.update(_of3_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -2807,6 +2932,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "qw_fp4_speed.tex").write_text(qw_fp4_speed_table(tables))
     (out / "qw_fp4_loss.tex").write_text(qw_fp4_loss_table(tables))
     (out / "qw_cp_speed.tex").write_text(qw_cp_speed_table(tables))
+    (out / "of3_speed.tex").write_text(of3_speed_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):
