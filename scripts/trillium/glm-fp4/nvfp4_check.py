@@ -10,6 +10,7 @@ Run: python nvfp4_check.py (one GPU).
 """
 
 import torch
+import transformer_engine
 import transformer_engine.pytorch as te
 from transformer_engine.common import recipe as R
 
@@ -91,11 +92,21 @@ def bench(name, ref_state, results):
         y.backward(dy)
         y_out = y.detach().float()
         wgrad = next(p for p in mod.parameters() if p.dim() == 2).grad.detach().float()
+        nan = bool(torch.isnan(y_out).any() or torch.isnan(wgrad).any())
+        if rname == "bf16":
+            ref_bytes = y_out.nbytes + wgrad.nbytes  # kept as the reference, not counted below
+            ey = ew = 0.0
+        else:
+            ref = results[(name, "bf16")]
+            ey = ((y_out - ref["y"]).norm() / ref["y"].norm()).item()
+            ew = ((wgrad - ref["wgrad"]).norm() / ref["wgrad"].norm()).item()
+            ref_bytes = 0
+            del y_out, wgrad
         del y, x
         for p in mod.parameters():
             p.grad = None
         torch.cuda.synchronize()
-        kept = torch.cuda.memory_allocated() - m0
+        kept = torch.cuda.memory_allocated() - m0 - ref_bytes
         params = sum(p.numel() for p in mod.parameters() if p.dim() == 2)
         quant = quantizer_summary(mod)
         # steady state: weights already quantized (micro-batches 2..32 of a step)
@@ -117,14 +128,9 @@ def bench(name, ref_state, results):
         torch.cuda.synchronize()
         fwd = ev[0].elapsed_time(ev[1]) / n
         fwdbwd = ev[1].elapsed_time(ev[2]) / n
-        results[(name, rname)] = dict(fwd=fwd, fwdbwd=fwdbwd, kept=kept, params=params, y=y_out, wgrad=wgrad, quant=quant)
-        if rname != "bf16":
-            ref = results[(name, "bf16")]
-            ey = ((y_out - ref["y"]).norm() / ref["y"].norm()).item()
-            ew = ((wgrad - ref["wgrad"]).norm() / ref["wgrad"].norm()).item()
-        else:
-            ey = ew = 0.0
-        nan = bool(torch.isnan(y_out).any() or torch.isnan(wgrad).any())
+        results[(name, rname)] = dict(fwd=fwd, fwdbwd=fwdbwd, kept=kept, params=params, quant=quant)
+        if rname == "bf16":
+            results[(name, rname)].update(y=y_out, wgrad=wgrad)
         print(f"{name:11s} {rname:6s} fwd {fwd:7.3f} ms  fwd+bwd {fwdbwd:7.3f} ms  kept {kept / GIB:6.3f} GiB "
               f"({kept / params:5.3f} B/param of {params / 1e6:7.1f} M)  rel.err y {ey:.4f} wgrad {ew:.4f}  nan {nan}", flush=True)
         del mod
@@ -134,7 +140,7 @@ def bench(name, ref_state, results):
 
 
 def main():
-    print(torch.__version__, te.__version__, torch.cuda.get_device_name(), torch.cuda.get_device_capability(), flush=True)
+    print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), torch.cuda.get_device_capability(), flush=True)
     print("NVFP4BlockScaling():", RECIPES["nvfp4"], flush=True)
     results, ref_state = {}, {}
     for name in MODULES:
