@@ -1,5 +1,7 @@
 """Kimi K3 inference (vLLM on B200): one row per client pass, per eval task and per run, from the run directories
-under ``data/raw/trillium/k3-inf/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/k3-inf/runs/``).
+under ``data/raw/trillium/k3-inf/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/k3-inf/runs/``), and, in tables of
+their own (``kimi_xn_*``), the experts over 2 nodes (K3-XN-01, EP16 = DP2 x TP8 with expert parallelism, one job per all-to-all
+backend) from ``data/raw/trillium/k3-xn/runs/``.
 
 The event parsing (``pass_summary`` and ``eval_summary`` events, the main node's GPU power over each pass's request
 window) is copied from ``scripts/analysis/kimi_study.py`` on branch ``trillium-new`` (``read_events``, ``pass_energy``),
@@ -27,12 +29,21 @@ import pandas as pd
 # The study's entries on B200 (config/kimi_study.yaml). The -bringup, -notune and -dummy entries are tests: not read.
 # The 4-node bring-up is kimi-vllm-4n-tp8pp4-bringup (1264956): not read; the study on 4 nodes is one job, 1265338.
 STUDY_ENTRIES = ("kimi-vllm-2n-tp8pp2", "kimi-vllm-4n-tp8pp4")
-THROWAWAY = {"warmup"}  # run before the measured passes, so that kernels compile outside them
+# K3-XN-01: EP16 on 2 nodes, all-gather / reduce-scatter (1271952) and DeepEP V2 (1271953) all-to-all, keyed on job; the bring-ups,
+# EP32 and P/D entries beside them in k3-xn/runs are not read.
+XN_ENTRIES = ("kimi-vllm-2n-dp2tp8-ep16", "kimi-vllm-2n-dp2tp8-ep16-deepep")
+XN_JOBS = ("1271952", "1271953")
+# run before the measured passes, so that kernels compile outside them; EP16 has a second one (64 requests of 1k in, 256 out)
+THROWAWAY = {"warmup", "warmup-mixed"}
 
 _VLLM_VERSION = re.compile(r"\bversion (\d+\.\d+\.\d+\S*)")
 _MOE_BACKEND = re.compile(r"Using '(\w+)' Mxfp4 MoE backend")
 _KV_TOKENS = re.compile(r"GPU KV cache size: ([\d,]+) tokens")
 _KV_USE = re.compile(r"Running: (\d+) reqs, Waiting: (\d+) reqs, GPU KV cache usage: ([\d.]+)%")
+_WEIGHTS = re.compile(r"Model loading took ([\d.]+) GiB")
+_KV_GIB = re.compile(r"Available KV cache memory: ([\d.]+) GiB")
+_ALL2ALL = re.compile(r"Using (\w+) all2all manager")
+_ENGINE_UP = re.compile(r"INFO (\d\d-\d\d \d\d:\d\d:\d\d) \[core\.py:\d+\] init engine \(.*\) took ([\d.]+) s")
 _THROUGHPUT = re.compile(r"INFO (\d\d-\d\d \d\d:\d\d:\d\d) \[loggers\.py:\d+\] Engine \d+: Avg prompt throughput: ([\d.]+) tokens/s, "
                          r"Avg generation throughput: ([\d.]+) tokens/s, Running: (\d+) reqs")
 LOG_TZ = ZoneInfo("America/Toronto")
@@ -61,8 +72,10 @@ def _pass_power(summary: dict, power: list, nodes: int) -> dict:
 
 
 def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict, list]:
-    """vLLM version, MoE backend, KV cache capacity, and the highest KV use with the server full (max_seqs running); and the
-    zero windows: Unix end time of each logged 10 s interval with requests running and no prompt or output token."""
+    """vLLM version, MoE backend, KV cache capacity (tokens per engine, GiB per GPU), weights per GPU, the all-to-all manager, the
+    time the last engine was up (Unix, end of its "init engine" line), and the highest KV use with the server full (max_seqs
+    running); and the zero windows: Unix end time of each logged 10 s interval with requests running and no prompt or output
+    token."""
     facts = {}
     full, zero = [], set()
     for path in sorted(run_dir.glob(f"{entry}.*server*.data")):
@@ -76,6 +89,15 @@ def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict,
                 facts["moe_backend"] = m[1]
             if "kv_cache_tokens" not in facts and (m := _KV_TOKENS.search(text)):
                 facts["kv_cache_tokens"] = int(m[1].replace(",", ""))
+            if "weights_gib" not in facts and (m := _WEIGHTS.search(text)):
+                facts["weights_gib"] = float(m[1])
+            if "kv_gib" not in facts and (m := _KV_GIB.search(text)):
+                facts["kv_gib"] = float(m[1])
+            if "all2all_manager" not in facts and (m := _ALL2ALL.search(text)):
+                facts["all2all_manager"] = m[1]
+            if m := _ENGINE_UP.search(text):
+                up = datetime.strptime(f"{year}-{m[1]}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOG_TZ).timestamp()
+                facts["engine_ready"] = max(facts.get("engine_ready", up), up)
             if (m := _KV_USE.search(text)) and max_seqs and int(m[1]) == int(max_seqs):
                 full.append(float(m[3]))
             if (m := _THROUGHPUT.search(text)) and int(m[4]) > 0 and float(m[2]) == 0 and float(m[3]) == 0:
@@ -122,10 +144,17 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
             continue
         nodes = int(config.get("num_machines") or 1)
         gpus_per_node = int((config.get("system") or {}).get("gpu", {}).get("count") or 8)
-        server = (config.get("server") or {}).get("argv") or {}
+        server_config = config.get("server") or {}
+        server = server_config.get("argv") or {}
         hosts = [n["name"] for n in (config.get("system") or {}).get("nodes", [])]
-        run.update(nodes=nodes, gpus=nodes * gpus_per_node, hosts=";".join(hosts), tp=gpus_per_node, pp=nodes, layout=f"tp{gpus_per_node}pp{nodes}",
-                   max_num_seqs=server.get("--max-num-seqs"), max_model_len=server.get("--max-model-len"),
+        if server_config.get("multinode") == "dp":  # one engine per node (TP over its GPUs); the experts spread over all of them
+            dp, pp = nodes, 1
+            layout = f"dp{nodes}tp{gpus_per_node}" + (f"ep{nodes * gpus_per_node}" if server.get("--enable-expert-parallel") else "")
+        else:  # one engine, a pipeline stage per node
+            dp, pp = 1, nodes
+            layout = f"tp{gpus_per_node}pp{nodes}"
+        run.update(nodes=nodes, gpus=nodes * gpus_per_node, hosts=";".join(hosts), tp=gpus_per_node, pp=pp, dp=dp, layout=layout,
+                   all2all=server.get("--all2all-backend"), max_num_seqs=server.get("--max-num-seqs"), max_model_len=server.get("--max-model-len"),
                    max_batched_tokens=server.get("--max-num-batched-tokens"))
         settings = {p["name"]: p.get("argv", {}) for p in (config.get("client") or {}).get("passes", []) if "name" in p}
         for s in found:
@@ -134,7 +163,7 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
             row = {"entry": entry, "job": job, "order": list(settings).index(s["name"]) if s["name"] in settings else None,
                    "pass": s.pop("name"), "concurrency": argv.get("--max-concurrency"),
                    "prompts": argv.get("--num-prompts"), "input_len": argv.get("--random-input-len"),
-                   "output_len": argv.get("--random-output-len"), "nodes": nodes, "layout": f"tp{gpus_per_node}pp{nodes}", "gpus": nodes * gpus_per_node,
+                   "output_len": argv.get("--random-output-len"), "nodes": nodes, "layout": layout, "gpus": nodes * gpus_per_node,
                    **{k: v for k, v in s.items()}, **_pass_power(s, power, nodes)}
             row["throwaway"] = row["pass"] in THROWAWAY
             for col in ("output_throughput", "total_throughput"):
@@ -149,8 +178,9 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
     return passes, evals, run, _questions(run_dir, entry, job)
 
 
-def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFrame]:
-    """kimi_passes, kimi_accuracy, kimi_runs, kimi_questions. Only jobs that have ended (the collector's sacct snapshot)."""
+def build(runs_dir: Path, sacct: Path, unfinished: tuple, entries=STUDY_ENTRIES, jobs=None, prefix="kimi") -> dict[str, pd.DataFrame]:
+    """<prefix>_passes, _accuracy, _runs, _questions: the runs of these entries (and, if given, only these jobs). Only jobs that have
+    ended (the collector's sacct snapshot). engine_up_min: from the job's start to the last engine up, measured."""
     states = {}
     if sacct.exists():
         s = pd.read_csv(sacct, sep="|", dtype=str)
@@ -158,13 +188,15 @@ def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFr
     passes, evals, runs, questions = [], [], [], []
     for d in sorted(runs_dir.glob("*.*")) if runs_dir.is_dir() else []:
         entry, _, job = d.name.rpartition(".")
-        if entry not in STUDY_ENTRIES or not job.isdigit():
+        if entry not in entries or not job.isdigit() or (jobs is not None and job not in jobs):
             continue
         state, start, end = states.get(job, ("RUNNING", None, None))
         if state.startswith(unfinished):
             continue  # a job still running is not a failed run: left out until it ends
         p, e, r, q = read_run(d)
         r.update(job_state=state, start=start, end=end)
+        if r.get("engine_ready") and start:
+            r["engine_up_min"] = (r["engine_ready"] - datetime.fromisoformat(start).replace(tzinfo=LOG_TZ).timestamp()) / 60
         passes += p
         evals += e
         runs.append(r)
@@ -172,5 +204,5 @@ def build(runs_dir: Path, sacct: Path, unfinished: tuple) -> dict[str, pd.DataFr
     passes = pd.DataFrame(passes)
     if len(passes):
         passes = passes.sort_values(["job", "order"]).reset_index(drop=True)
-    return {"kimi_passes": passes, "kimi_accuracy": pd.DataFrame(evals), "kimi_runs": pd.DataFrame(runs),
-            "kimi_questions": pd.DataFrame(questions)}
+    return {f"{prefix}_passes": passes, f"{prefix}_accuracy": pd.DataFrame(evals), f"{prefix}_runs": pd.DataFrame(runs),
+            f"{prefix}_questions": pd.DataFrame(questions)}
