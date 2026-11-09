@@ -1746,3 +1746,75 @@ megatron-qwen3-32b-cp-n1-128k-loss:
   inherits: megatron-qwen3-32b-cp-n1-128k-p2p-full
   max_duration: 2700
   argv: {<<: *tri_loss, --train-iters: 50, --lr-warmup-iters: 5}
+# --- QW-CP step 2: 128k across 2 and 4 nodes ----------------------------------------------------------------------------
+# 32,768 tokens per GPU per step as step 1: 4 x 128k sequences on 2 nodes, 8 on 4 (global batch 4 / 8, micro-batch 1).
+# CP across nodes (TP2 x CP8, TP2 x CP16: one micro-batch per step per CP group, 4 / 8 of them) against CP in a node and
+# data parallel across (TP2 x CP4 x DP2 / x DP4: 2 micro-batches per data-parallel rank); p2p against the hierarchical
+# a2a+p2p (Megatron's first level groups consecutive CP ranks: a2a over the 4 CP ranks of a node, p2p across the nodes).
+# 12 steps; Megatron's profiler on rank 0 at step 10 (in the p2p rings rank 0 receives from the last node).
+_qwcp_prof: &qwcp_prof
+  --profile: true
+  --use-pytorch-profiler: true
+  --profile-step-start: 10
+  --profile-step-end: 11
+  --profile-ranks: 0
+# in a merge list the first mapping wins: [*qwcp_sel, *qwcp_none] is selective
+_qwcp_none: &qwcp_none
+  --recompute-granularity: null
+  --recompute-method: null
+  --recompute-num-layers: null
+_qwcp_s2:
+  inherits: _qwcp
+  max_duration: 900
+  argv:
+    <<: [*qwcp_128k, *qwcp_full, *qwcp_prof]
+    --train-iters: 12
+_qwcp_n2:
+  inherits: _qwcp_s2
+  num_machines: 2
+  argv: {--global-batch-size: 4, --context-parallel-size: 8}
+megatron-qwen3-32b-cp-n2-cp8-p2p-full:
+  inherits: _qwcp_n2
+  argv: {--tensorboard-dir: ../../../prof/n2-cp8-p2p-full/tb}
+megatron-qwen3-32b-cp-n2-cp8-a2ap2p-full:
+  inherits: _qwcp_n2
+  argv: {--cp-comm-type: a2a+p2p, --hierarchical-context-parallel-sizes: [4, 2], --tensorboard-dir: ../../../prof/n2-cp8-a2ap2p-full/tb}
+megatron-qwen3-32b-cp-n2-cp4dp2-full:
+  inherits: _qwcp_n2
+  argv: {--context-parallel-size: 4, --tensorboard-dir: ../../../prof/n2-cp4dp2-full/tb}
+megatron-qwen3-32b-cp-n2-cp8-p2p-sel:
+  inherits: _qwcp_n2
+  argv: {<<: [*qwcp_sel, *qwcp_none], --tensorboard-dir: ../../../prof/n2-cp8-p2p-sel/tb}
+megatron-qwen3-32b-cp-n2-cp4dp2-sel:
+  inherits: _qwcp_n2
+  argv: {<<: [*qwcp_sel, *qwcp_none], --context-parallel-size: 4, --tensorboard-dir: ../../../prof/n2-cp4dp2-sel/tb}
+_qwcp_n4:
+  inherits: _qwcp_s2
+  num_machines: 4
+  argv: {--global-batch-size: 8, --context-parallel-size: 16}
+megatron-qwen3-32b-cp-n4-cp16-p2p-full:
+  inherits: _qwcp_n4
+  argv: {--tensorboard-dir: ../../../prof/n4-cp16-p2p-full/tb}
+megatron-qwen3-32b-cp-n4-cp16-a2ap2p-full:
+  inherits: _qwcp_n4
+  argv: {--cp-comm-type: a2a+p2p, --hierarchical-context-parallel-sizes: [4, 4], --tensorboard-dir: ../../../prof/n4-cp16-a2ap2p-full/tb}
+megatron-qwen3-32b-cp-n4-cp4dp4-full:
+  inherits: _qwcp_n4
+  argv: {--context-parallel-size: 4, --tensorboard-dir: ../../../prof/n4-cp4dp4-full/tb}
+megatron-qwen3-32b-cp-n4-cp4dp4-sel:
+  inherits: _qwcp_n4
+  argv: {<<: [*qwcp_sel, *qwcp_none], --context-parallel-size: 4, --tensorboard-dir: ../../../prof/n4-cp4dp4-sel/tb}
+# 8k tokens per CP rank: the 32k CP4 shapes, which need no recompute on one node
+megatron-qwen3-32b-cp-n4-cp16-p2p-none:
+  inherits: _qwcp_n4
+  argv: {<<: *qwcp_none, --tensorboard-dir: ../../../prof/n4-cp16-p2p-none/tb}
+megatron-qwen3-32b-cp-n4-cp16-p2p-none-cg:
+  inherits: _qwcp_n4
+  argv: {<<: [*qwcp_none, *qwen3_cg], --tensorboard-dir: ../../../prof/n4-cp16-p2p-none-cg/tb}
+# one node, the step-1 128k layout profiled, and in MXFP8 (attention stays BF16: only the GEMMs change)
+megatron-qwen3-32b-cp-n1-128k-p2p-full-prof:
+  inherits: _qwcp_s2
+  argv: {--tensorboard-dir: ../../../prof/n1-128k-p2p-full/tb}
+megatron-qwen3-32b-cp-n1-128k-p2p-full-mxfp8:
+  inherits: _qwcp_s2
+  argv: {<<: *qwen3_mxfp8, --tensorboard-dir: ../../../prof/n1-128k-p2p-full-mxfp8/tb}
