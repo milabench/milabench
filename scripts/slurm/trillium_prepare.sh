@@ -94,10 +94,17 @@ export MAX_JOBS=${MAX_JOBS:-16}
 # Saved with the job so it can be committed to the repo.
 # (with or without the arch suffix: constraints.cuda132.torch2150[.x86_64].txt)
 PIN_GLOB="$MILABENCH_SOURCE/.pin/constraints.cuda$CUDA_VERSION.torch${PYTORCH_VERSION//./}*.txt"
+# The pin covers EVERY benchmark of the repo (--select does not apply), so one incompatible
+# benchmark blocks the whole combination.
 if ! compgen -G "$PIN_GLOB" > /dev/null; then
     milabench tools pin --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION $MILABENCH_ARGS
 fi
-cp $PIN_GLOB $OUTPUT_DIRECTORY/meta/ || echo "no pin file matching $PIN_GLOB"
+# `milabench tools pin` exits 0 even when the pin fails: check its output
+if ! compgen -G "$PIN_GLOB" > /dev/null; then
+    echo "error: no pin file for cuda=$CUDA_VERSION torch=$PYTORCH_VERSION, the pin failed (see log.stdout)" >&2
+    exit 1
+fi
+cp $PIN_GLOB $OUTPUT_DIRECTORY/meta/
 
 # A failure here fails the step: the run jobs are cancelled instead of running on a broken env
 milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.prepare.yaml $MILABENCH_ARGS

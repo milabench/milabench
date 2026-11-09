@@ -652,10 +652,12 @@ async def pin_combination(
     from_scratch: bool = False,
     extra_compile_args: list[str] | None = None,
     arch: str = "",
+    include: set[str] | None = None,
 ) -> Path:
     """Pin one (backend, torch, arch) combination.
 
-    Writes one lockfile for every TOML bench, including ``benchmarks/vllm``.
+    Writes one lockfile for every TOML bench, including ``benchmarks/vllm``, or only for the
+    benchmark directories in ``include`` (the benchmarks of the config, see ``MultiPackage.do_pin``).
     ``[vllm.*]`` supplies the exact ``vllm==`` pin and wheel index; if that
     pair has no mapping, the bare ``vllm`` requirement is omitted.
 
@@ -677,6 +679,7 @@ async def pin_combination(
         backend,
         platform_config,
         overrides,
+        include=include,
     )
 
     vllm_mapping = platform_config.resolve_vllm(
@@ -883,6 +886,7 @@ async def pin_all(
     extra_compile_args: list[str] | None = None,
     dry_run: bool = False,
     overrides: dict[str, str] | None = None,
+    include: set[str] | None = None,
 ) -> list[Path]:
     """Pin all discovered or matrix-defined combinations.
 
@@ -898,9 +902,13 @@ async def pin_all(
         dry_run: If True, print discovered combinations without pinning.
         overrides: CLI ``--set`` filters (e.g. ``{"cuda": "130", "torch": "2.10.0"}``).
             Restricts which combinations are pinned; omitted keys stay unconstrained.
+        include: Benchmark directory names to pin (None: every TOML benchmark of benchmarks_dir).
 
     Returns:
         List of generated constraint file paths (empty if dry_run).
+
+    Raises:
+        RuntimeError: if a combination failed to pin (after trying all of them).
     """
     combinations = _get_combinations(platform_config, overrides=overrides)
 
@@ -939,6 +947,7 @@ async def pin_all(
                 pin_dir=pin_dir,
                 from_scratch=from_scratch,
                 extra_compile_args=extra_compile_args,
+                include=include,
             )
             results.append(path)
             print(f"  → {path}")
@@ -956,6 +965,10 @@ async def pin_all(
 
     if len(results) > 1:
         _extract_common_constraints(results, pin_dir)
+
+    # A failed pin must fail the command (scripts chain pin -> install)
+    if errors:
+        raise RuntimeError(f"{len(errors)}/{len(unique_combinations)} combinations failed to pin")
 
     return results
 
