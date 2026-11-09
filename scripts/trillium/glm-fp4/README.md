@@ -126,7 +126,7 @@ over all 104 ranks:
 NVFP4 equals MXFP8 on GLM-5 at 13 nodes, for this split: +0.23 s by the means, -0.35 s by the medians, within the
 steps' spread. Estimated before the run: 45.7 s, about 1 % faster than MXFP8 (steps 1 and 3); measured 46.05 s. The
 largest-stage peak, 98.6 GiB, is the about 100 GiB estimated from the 4-node test. The BF16 and MXFP8 times repeat the
-campaign's within 0.3 %. Loss at step 20: one run each, 20 steps into training at the speed entries' constant learning
+campaign's within 0.4 %. Loss at step 20: one run each, 20 steps into training at the speed entries' constant learning
 rate of 1e-6: not a precision comparison.
 
 Recipe as run (`run_start` `precision_detail`, Megatron's argument dump): MXFP8 `fp8` e4m3, recipe mxfp8; NVFP4 `fp4`
