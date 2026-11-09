@@ -41,3 +41,11 @@ ft1:
       weighted-pdb: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
       long-monomer-distillation: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
       RNA-monomer-distillation: {config: {crop: {token_crop: {token_budget: 640}}, loss: {loss_weights: {bond: 4.0, smooth_lddt: 0.0}}}}
+
+# Step 2's data subset (data.sh subset-u uniform 700 subset): PDB entries drawn uniformly, so that the sampler's
+# weighting reproduces the full set's mix (mix.py); same monomers, other RNA entries
+uniform:
+  dataset_paths:
+    weighted-pdb: {dataset_cache_file: "@DATA@/subset-u/pdb_cache.json"}
+    long-monomer-distillation: {dataset_cache_file: "@DATA@/subset-u/long_monomer_cache.json"}
+    RNA-monomer-distillation: {dataset_cache_file: "@DATA@/subset-u/rna_cache.json"}

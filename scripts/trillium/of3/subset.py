@@ -1,21 +1,26 @@
 """OF3 training-data subset (OF3_BRIEF.md, step 1), from the published dataset caches in CACHES (data.sh fetches them):
-- PDB: N_PDB entries of training_cache_with_templates.json, drawn without replacement with probability proportional to
-  their summed datapoint weights (AF3 SI Algorithm 1 as WeightedPDBDataset computes them, default sample_weights);
+- PDB: N_PDB entries of training_cache_with_templates.json (read from the bucket), drawn uniformly (PDB_DRAW uniform:
+  the sampler, which weights each chain and interface within the subset, then draws from the full set's distribution
+  in expectation; mix.py) or, as in step 1, without replacement with probability proportional to their summed
+  datapoint weights (weighted: AF3 SI Algorithm 1 as WeightedPDBDataset computes them; this over-represents the
+  largest assemblies, mix.py);
 - long monomer distillation: the first N_MONO entries of its cache.json (the dataset reads it in order,
   sample_in_order: true); CACHES/long_head.json is the start of that 15 GB file, cut anywhere;
 - RNA distillation: N_RNA entries drawn uniformly.
 Writes OUT/{pdb,long_monomer,rna}_cache.json, indented (OpenFold3 reads the cache type on the second line), and
 OUT/keys.txt, the S3 keys these entries read (structure, MSA arrays, template caches, template structures; reference
 molecules not included).
-Usage: python subset.py CACHES OUT N_PDB N_MONO N_RNA [SEED]"""
+Usage: python subset.py CACHES OUT N_PDB N_MONO N_RNA SEED PDB_DRAW"""
 import json
 import random
 import sys
+import urllib.request
 from pathlib import Path
 
 caches, out = Path(sys.argv[1]), Path(sys.argv[2])
 n_pdb, n_mono, n_rna = map(int, sys.argv[3:6])
-rng = random.Random(int(sys.argv[6]) if len(sys.argv) > 6 else 0)
+rng = random.Random(int(sys.argv[6]))
+draw = sys.argv[7]
 out.mkdir(parents=True, exist_ok=True)
 P = "pdb_training_set"
 TSA = f"{P}/templates/template_structure_arrays"
@@ -33,7 +38,7 @@ def weighted_sample(items, weights, n):
 
 
 # PDB: weight of an entry = sum over its chains and interfaces of w_type / cluster_size * (3 n_prot + 3 n_nuc + n_lig)
-pdb = json.load(open(caches / "pdb_cache.json"))
+pdb = json.load(urllib.request.urlopen(f"https://openfold3-data.s3.amazonaws.com/{P}/dataset_caches/training_cache_with_templates.json"))
 A = {"PROTEIN": 3.0, "DNA": 3.0, "RNA": 3.0, "LIGAND": 1.0}
 ids, weights = [], []
 for pid, e in pdb["structure_data"].items():
@@ -42,7 +47,7 @@ for pid, e in pdb["structure_data"].items():
              for iid, i in e["interfaces"].items())
     ids.append(pid)
     weights.append(w)
-chosen = weighted_sample(ids, weights, n_pdb)
+chosen = weighted_sample(ids, weights, n_pdb) if draw == "weighted" else rng.sample(sorted(ids), n_pdb)
 pdb["structure_data"] = {pid: pdb["structure_data"][pid] for pid in chosen}
 for pid, e in pdb["structure_data"].items():
     keys.add(f"{P}/preprocessed_pdb_data/standard/structure_files/{pid}/{pid}.npz")

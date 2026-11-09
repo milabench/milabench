@@ -5,7 +5,8 @@ previous step), the recycles drawn, with OF3_SYNC_TIMING=1 the gradient sync (`s
 grad_manager.sync_and_average_grads, from its call with the GPU idle to its end: waiting for the slowest rank, then the
 gradient copies, all-reduces and per-parameter averaging; the GPU is synchronized before it, which costs time, so timing
 runs leave it off), the loss, the sample's size and the peak allocated and reserved GPU memory so far. OpenFold3 only logs to
-wandb, every log_every_n_steps. With OpenFold3's profiler on (variant prof), only each node's local rank 0 traces (a
+wandb, every log_every_n_steps. With OF3_SAMPLELOG (a path with {pid}), each data-loader worker also writes one line
+per sample it featurizes: its id and the seconds __getitem__ took. With OpenFold3's profiler on (variant prof), only each node's local rank 0 traces (a
 trace is about 1.4 GB per rank and 2 steps)."""
 import json
 import os
@@ -14,6 +15,7 @@ from functools import cached_property
 
 import pytorch_lightning as pl
 import torch
+from openfold3.core.data.framework import stochastic_sampler_dataset
 from openfold3.entry_points import experiment_runner
 from openfold3.run_openfold import cli
 
@@ -66,6 +68,20 @@ prop.__set_name__(experiment_runner.TrainingExperimentRunner, "callbacks")
 experiment_runner.TrainingExperimentRunner.callbacks = prop
 build = experiment_runner.ExperimentRunner._build_profiler
 experiment_runner.ExperimentRunner._build_profiler = lambda self: build(self) if os.environ["SLURM_LOCALID"] == "0" else None
+
+getitem = stochastic_sampler_dataset.SamplerDataset.__getitem__
+
+
+def timed_getitem(self, index):
+    start = time.perf_counter()
+    out = getitem(self, index)
+    with open(os.environ["OF3_SAMPLELOG"].format(pid=os.getpid()), "a") as f:
+        f.write(json.dumps({"t": time.time(), "s": time.perf_counter() - start, "pdb_id": out.get("pdb_id")}) + "\n")
+    return out
+
+
+if os.environ.get("OF3_SAMPLELOG"):
+    stochastic_sampler_dataset.SamplerDataset.__getitem__ = timed_getitem
 
 if __name__ == "__main__":
     cli()
