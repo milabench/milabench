@@ -195,11 +195,17 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           # New workloads: Qwen3 32B at 32k and 128k with context parallelism (_qw_cp_numbers; QW-CP-01 and its 8k reference, GLM-FP4-03's BF16
           # entry): setup, per entry (Ref: 8k, ThirtyTwo: 32k CP4, CpFour: 128k CP4, CpEight: 128k CP8 on 12 nodes) the step (mean, median, SD),
           # tokens/s per GPU and against 8k, MFU, peak memory, bytes across nodes, power; CP8 against CP4; ranges over the three CP entries
-          "TriQwCpTp", "TriQwCpLayers", "TriQwCpSteps", "TriQwCpFrom", "TriQwCpLr", "TriQwCpTokGpu",
-          *[f"TriQwCp{m}{e}" for e in ("Ref", "ThirtyTwo", "CpFour", "CpEight") for m in ("Step", "Tok", "Mfu", "Mem", "IbLo", "IbHi")],
-          *[f"TriQwCp{m}{e}" for e in ("ThirtyTwo", "CpFour", "CpEight") for m in ("Nodes", "Split", "Dp", "Seqs", "Med", "Sd", "Ratio")],
+          "TriQwCpTp", "TriQwCpLayers", "TriQwCpSteps", "TriQwCpFrom", "TriQwCpMeasured", "TriQwCpLr", "TriQwCpTokGpu",
+          *[f"TriQwCp{m}{e}" for e in ("Ref", "ThirtyTwo", "CpFour", "CpEight", "CpFourSel") for m in ("Step", "Tok", "Mfu", "Mem", "IbLo", "IbHi")],
+          *[f"TriQwCp{m}{e}" for e in ("ThirtyTwo", "CpFour", "CpEight", "CpFourSel") for m in ("Nodes", "Split", "Dp", "Seqs", "Med", "Sd", "Ratio")],
           "TriQwCpCapLoRef", "TriQwCpCapHiRef", "TriQwCpEightShorter", "TriQwCpCapLo", "TriQwCpCapHi", "TriQwCpPowerLo", "TriQwCpPowerHi",
-          "TriQwCpSmLo", "TriQwCpSmHi", "TriQwCpPortZero", "TriQwCpPortOne", "TriQwCpPortFour", "TriQwCpPortNine", "TriQwCpPortBusy"]
+          "TriQwCpSmLo", "TriQwCpSmHi", "TriQwCpPortZero", "TriQwCpPortOne", "TriQwCpPortFour", "TriQwCpPortNine", "TriQwCpPortBusy",
+          # QW-CP-02 (CpFourSel: 128k CP4 with selective recompute) against CP8 and CP4 with full recompute, its power, stragglers and memory drops
+          "TriQwCpEightShorterMed", "TriQwCpSelShorter", "TriQwCpSelShorterMed", "TriQwCpSelEight", "TriQwCpSelEightMed",
+          "TriQwCpCapLoCpFourSel", "TriQwCpCapHiCpFourSel", "TriQwCpCapLoCpFour", "TriQwCpCapHiCpFour",
+          "TriQwCpSlowSteps", "TriQwCpSlowMulti", "TriQwCpSlowNodes", "TriQwCpSlowNodeList", "TriQwCpFastNodes", "TriQwCpBehindLo", "TriQwCpBehindHi",
+          "TriQwCpDropLo", "TriQwCpDropHi", "TriQwCpDropOther", "TriQwCpDropOne", "TriQwCpBehindFull", "TriQwCpBehindEight", "TriQwCpCleanSteps",
+          "TriQwCpCleanLo", "TriQwCpCleanHi", "TriQwCpCleanBelowLo", "TriQwCpCleanBelowHi"]
 FAILED_SHOWN = 8  # configurations named in the note; the rest are in the ledger
 
 
@@ -2097,7 +2103,8 @@ def _qw_fp4_numbers(t) -> dict[str, tuple]:
     return out
 
 
-QW_CP_ENTRIES = (("8k", "Ref"), ("32k-cp4", "ThirtyTwo"), ("128k-cp4", "CpFour"), ("128k-cp8", "CpEight"))
+QW_CP_ENTRIES = (("8k", "Ref"), ("32k-cp4-none", "ThirtyTwo"), ("128k-cp4-full", "CpFour"), ("128k-cp8-selective", "CpEight"),
+                 ("128k-cp4-selective", "CpFourSel"))
 
 
 def _qw_cp(t) -> pd.DataFrame:
@@ -2146,9 +2153,36 @@ def _qw_cp_numbers(t) -> dict[str, tuple]:
             out[f"TriQwCp{macro}{name}"] = (x[col], fmt, False)
         if run != "8k":
             out[f"TriQwCpRatio{name}"] = (x.tok_s_gpu / ref.tok_s_gpu, ".3f", False)
-    if {"128k-cp4", "128k-cp8"} <= set(m.index):
-        out["TriQwCpEightShorter"] = (100 * (1 - m.step_mean["128k-cp8"] / m.step_mean["128k-cp4"]), ".1f", False)
-        e = m.loc["128k-cp8"]
+    full, eight, sel = "128k-cp4-full", "128k-cp8-selective", "128k-cp4-selective"
+    if {full, eight} <= set(m.index):
+        out["TriQwCpEightShorter"] = (100 * (1 - m.step_mean[eight] / m.step_mean[full]), ".1f", False)
+        out["TriQwCpEightShorterMed"] = (100 * (1 - m.step_median[eight] / m.step_median[full]), ".1f", False)
+        out["TriQwCpBehindFull"] = (m.behind_max[full], ".2f", False)
+        out["TriQwCpBehindEight"] = (m.behind_max[eight], ".2f", False)
+        out["TriQwCpDropOne"] = (max(m.drop_other_max[full], m.drop_other_max[eight]), ".1f", False)
+        out["TriQwCpCapLoCpFour"], out["TriQwCpCapHiCpFour"] = (m.cap_lo[full], ".1f", False), (m.cap_hi[full], ".1f", False)
+    if {full, eight, sel} <= set(m.index):
+        x = m.loc[sel]
+        out["TriQwCpSelShorter"] = (100 * (1 - x.step_mean / m.step_mean[full]), ".1f", False)
+        out["TriQwCpSelShorterMed"] = (100 * (1 - x.step_median / m.step_median[full]), ".1f", False)
+        out["TriQwCpSelEight"] = (100 * abs(x.step_mean / m.step_mean[eight] - 1), ".1f", False)
+        out["TriQwCpSelEightMed"] = (100 * abs(x.step_median / m.step_median[eight] - 1), ".1f", False)
+        for col, macro, fmt in (("cap_lo", "CapLo", ".1f"), ("cap_hi", "CapHi", ".1f"), ("power_lo", "PowerLo", ".0f"), ("power_hi", "PowerHi", ".0f"),
+                                ("sm_med_lo", "SmLo", ",.0f"), ("sm_med_hi", "SmHi", ",.0f")):
+            out[f"TriQwCp{macro}CpFourSel"] = (x[col], fmt, False)
+        nodes = x.slow_nodes.split(";") if isinstance(x.slow_nodes, str) and x.slow_nodes else []
+        out["TriQwCpSlowSteps"], out["TriQwCpSlowMulti"] = (int(x.slow_steps), "d", False), (int(x.slow_steps_multi), "d", False)
+        out["TriQwCpSlowNodes"], out["TriQwCpFastNodes"] = (len(nodes), "d", False), (int(x.cap_nodes) - len(nodes), "d", False)
+        out["TriQwCpSlowNodeList"] = (_and_list([rf"\texttt{{{h}}}" for h in nodes]) if nodes else None, "", False)
+        for col, macro, fmt in (("slow_behind_lo", "BehindLo", ".1f"), ("slow_behind_hi", "BehindHi", ".1f"), ("drop_slow_lo", "DropLo", ".1f"),
+                                ("drop_slow_hi", "DropHi", ".1f"), ("drop_other_max", "DropOther", ".1f"), ("clean_lo", "CleanLo", ".2f"),
+                                ("clean_hi", "CleanHi", ".2f")):
+            out[f"TriQwCp{macro}"] = (x[col], fmt, False)
+        out["TriQwCpCleanSteps"] = (int(x.clean_steps), "d", False)
+        out["TriQwCpCleanBelowLo"] = (100 * (1 - x.clean_hi / m.step_mean[eight]), ".1f", False)
+        out["TriQwCpCleanBelowHi"] = (100 * (1 - x.clean_lo / m.step_mean[eight]), ".1f", False)
+    if eight in m.index:
+        e = m.loc[eight]
         for port, name in (("mlx5_0", "Zero"), ("mlx5_1", "One"), ("mlx5_4", "Four"), ("mlx5_9", "Nine")):
             out[f"TriQwCpPort{name}"] = (_range(e[f"ib_{port}_min"], e[f"ib_{port}_max"], ".0f"), "", False)
         out["TriQwCpPortBusy"] = (e.ib_port_max_gbs, ".1f", False)
@@ -2168,9 +2202,9 @@ def qw_cp_speed_table(t) -> str:
     if m.empty or "8k" not in m.index:
         return ""
     ref = m.loc["8k"]
-    lines = [r"\begin{tabular}{lrllrrrrrrr}", r"\toprule",
-             r"Context & Nodes & Layout & Recompute & Mean step & Tokens/s & vs 8k & MFU & Peak alloc. & Across nodes, GiB & At power cap, \% \\",
-             r" & & & & s & per GPU & & \% & GiB & per node and step & median node (range) \\", r"\midrule"]
+    lines = [r"\begin{tabular}{lrllrrrrrrrr}", r"\toprule",
+             r"Context & Nodes & Layout & Recompute & Mean step & SD & Tokens/s & vs 8k & MFU & Peak alloc. & Across nodes, GiB & At power cap, \% \\",
+             r" & & & & s & s & per GPU & & \% & GiB & per node and step & median node (range) \\", r"\midrule"]
     for run, _ in QW_CP_ENTRIES:
         if run not in m.index:
             continue
@@ -2179,7 +2213,7 @@ def qw_cp_speed_table(t) -> str:
         layout = f"TP{int(x.tp)}" + (rf" $\times$ CP{int(x.cp)}" if x.cp > 1 else "") + rf" $\times$ DP{int(x.dp)}"
         recompute = x.recompute + (f" ({x.recompute_modules.upper()})" if isinstance(x.recompute_modules, str) else "") + (", graphs" if x.cuda_graphs else "")
         ib = f"{x.ib_lo:.1f}--{x.ib_hi:.1f} ({int(x.first)}--{int(x.ib_last_lo)})" if pd.notna(x.ib_lo) else ""
-        lines.append(f"{context} & {int(x.nodes)} & {layout} & {recompute} & {x.step_mean:.2f} & {x.tok_s_gpu:,.0f} & {x.tok_s_gpu / ref.tok_s_gpu:.3f} & "
+        lines.append(f"{context} & {int(x.nodes)} & {layout} & {recompute} & {x.step_mean:.2f} & {x.step_sd:.2f} & {x.tok_s_gpu:,.0f} & {x.tok_s_gpu / ref.tok_s_gpu:.3f} & "
                      f"{x.mfu_pct:.1f} & {x.mem_alloc_gib:.1f} & {ib} & {x.cap_med:.1f} ({x.cap_lo:.1f}--{x.cap_hi:.1f}) " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
