@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # K3-XN: DeepEP's own EP test (tests/elastic/test_ep.py, correctness and bandwidth) across the job's nodes, 8 GPUs each, at
 # K3's shape (hidden 3,584, top-16 of 896 experts), at 128 tokens per rank (decode) and 4,096 (prefill), with the venv
-# deepep_build.sh made. Across nodes it goes over RDMA (NCCL Gin), before vLLM uses it.
+# deepep_build.sh made. Across nodes it goes over RDMA (NCCL Gin), before vLLM uses it. --ignore-local-traffic: the test's
+# bandwidths count only bytes to other nodes (SO) and from other GPUs (SU); without it SO also counts each token's own
+# node (job 1270478), so it is not the network's share (tests/elastic/test_ep.py)
 #
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --nodes=2 --nodelist=<nodes> scripts/trillium/kimi/deepep_test.sh
 #SBATCH --job-name=nw-k3-xn-deepep-test
@@ -23,7 +25,7 @@ for tokens in 128 4096; do
     echo "[deepep] --num-tokens $tokens"
     srun --propagate=CORE --ntasks-per-node=1 bash -c 'set -o pipefail; RANK=$SLURM_NODEID timeout 420 "$1/venv/deepep/bin/python" \
         "$1/deepep-src/tests/elastic/test_ep.py" --num-processes 8 --num-tokens "$2" --hidden 3584 --num-topk 16 \
-        --num-experts 896 --test-first-only 2>&1 | sed "s/^/[$(hostname -s)] /"' _ "$X" "$tokens"
+        --num-experts 896 --test-first-only --ignore-local-traffic 2>&1 | sed "s/^/[$(hostname -s)] /"' _ "$X" "$tokens"
     echo "[deepep] --num-tokens $tokens: exit $?"
 done
 srun --propagate=CORE --ntasks-per-node=1 rm -rf "$EP_JIT_CACHE_DIR"
