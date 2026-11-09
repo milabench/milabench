@@ -1,7 +1,8 @@
 """Kimi K3 inference (vLLM on B200): one row per client pass, per eval task and per run, from the run directories
 under ``data/raw/trillium/k3-inf/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/k3-inf/runs/``), and, in tables of
 their own (``kimi_xn_*``), the experts over 2 nodes (K3-XN-01, EP16 = DP2 x TP8 with expert parallelism, one job per all-to-all
-backend) from ``data/raw/trillium/k3-xn/runs/``.
+backend) from ``data/raw/trillium/k3-xn/runs/``; and on 4 nodes (``kimi_xn4_*``), prefill and decode on separate nodes against
+colocated (K3-XN-02) and the experts over all 4 (K3-XN-03, EP32 = DP4 x TP8), from the same directory.
 
 The event parsing (``pass_summary`` and ``eval_summary`` events, the main node's GPU power over each pass's request
 window) is copied from ``scripts/analysis/kimi_study.py`` on branch ``trillium-new`` (``read_events``, ``pass_energy``),
@@ -33,6 +34,10 @@ STUDY_ENTRIES = ("kimi-vllm-2n-tp8pp2", "kimi-vllm-4n-tp8pp4")
 # EP32 and P/D entries beside them in k3-xn/runs are not read.
 XN_ENTRIES = ("kimi-vllm-2n-dp2tp8-ep16", "kimi-vllm-2n-dp2tp8-ep16-deepep")
 XN_JOBS = ("1271952", "1271953")
+# K3-XN-02: prefill and decode on separate nodes (1272790) and its colocated reference (1272791); K3-XN-03: EP32 at 128 sequences per
+# engine (1272792); keyed on job, in tables of their own (kimi_xn4_*); the bring-ups beside them are not read.
+XN4_ENTRIES = ("kimi-vllm-4n-pd-ep16", "kimi-vllm-4n-pd-ep16-colocated", "kimi-vllm-4n-dp4tp8-ep32-s128")
+XN4_JOBS = ("1272790", "1272791", "1272792")
 # run before the measured passes, so that kernels compile outside them; EP16 has a second one (64 requests of 1k in, 256 out)
 THROWAWAY = {"warmup", "warmup-mixed"}
 
@@ -147,7 +152,17 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
         server_config = config.get("server") or {}
         server = server_config.get("argv") or {}
         hosts = [n["name"] for n in (config.get("system") or {}).get("nodes", [])]
-        if server_config.get("multinode") == "dp":  # one engine per node (TP over its GPUs); the experts spread over all of them
+        # P/D and its colocated reference (K3-XN-02): milabench runs pd_serve.sh on the main node only (num_machines 1); it starts two
+        # EP16 instances (DP2 x TP8) of 2 nodes each on the job's nodes, and a proxy: prefill on the first, decode on the second, or
+        # (K3XN_PD_MODE=colocated) each request whole to one of them. voir samples the main node only, one of 4: no power read.
+        pd_serve = any("pd_serve.sh" in str(a) for a in server_config.get("command") or [])
+        if pd_serve:
+            nodes, instances = len(hosts), 2
+            role = (config.get("env") or {}).get("K3XN_PD_MODE") or "pd"
+            dp, pp, power = nodes // instances, 1, []
+            layout = f"{role}-{instances}x-dp{dp}tp{gpus_per_node}ep{dp * gpus_per_node}"
+            run.update(role=role, instances=instances)
+        elif server_config.get("multinode") == "dp":  # one engine per node (TP over its GPUs); the experts spread over all of them
             dp, pp = nodes, 1
             layout = f"dp{nodes}tp{gpus_per_node}" + (f"ep{nodes * gpus_per_node}" if server.get("--enable-expert-parallel") else "")
         else:  # one engine, a pipeline stage per node

@@ -43,8 +43,10 @@ QW_FP4_RUNS = [*[f"glm-fp4.1272011.megatron-qwen3-32b-n13-{r}" for r in ("bf16",
                                                                              ("1272021", "mxfp8"), ("1272022", "nvfp4"),
                                                                              ("1272416", "bf16"), ("1272419", "mxfp8"), ("1272423", "mxfp8"),
                                                                              ("1272429", "nvfp4"), ("1272431", "nvfp4"))]]
-# Kimi K3 EP16 over 2 nodes (K3-XN-01): job 1271952 all-gather, 1271953 DeepEP V2
-K3_XN_RUNS = ["kimi-vllm-2n-dp2tp8-ep16.1271952", "kimi-vllm-2n-dp2tp8-ep16-deepep.1271953"]
+# Kimi K3 EP16 over 2 nodes (K3-XN-01): job 1271952 all-gather, 1271953 DeepEP V2; on 4 nodes, prefill and decode on separate nodes
+# (K3-XN-02: 1272790 P/D, 1272791 its colocated reference) and the experts over all 4 (K3-XN-03: 1272792, EP32, 128 sequences per engine)
+K3_XN_RUNS = ["kimi-vllm-2n-dp2tp8-ep16.1271952", "kimi-vllm-2n-dp2tp8-ep16-deepep.1271953",
+              "kimi-vllm-4n-pd-ep16.1272790", "kimi-vllm-4n-pd-ep16-colocated.1272791", "kimi-vllm-4n-dp4tp8-ep32-s128.1272792"]
 # Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
 # The trailing slash matters: health checks are one directory per job, directly under health/.
 REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
@@ -72,8 +74,8 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # New workloads: Kimi K3 inference (vLLM), one directory per job; 91 MB on Nov 8. Outside runs/,
                 # so the training build does not read it (tt_analysis.runs.data_files globs runs/*/*.data).
                 ("trillium/new/k3-inf/runs/", "k3-inf/runs"),
-                # Kimi K3 inference with the experts over 2 nodes (K3-XN-01: EP16, all-gather and DeepEP all-to-all), keyed on job: its two run
-                # directories only (67-69 MB each); the bring-ups, EP32 and P/D in k3-xn/runs are not read.
+                # Kimi K3 inference across nodes (K3-XN-01: EP16, all-gather and DeepEP all-to-all; K3-XN-02: P/D and colocated; K3-XN-03:
+                # EP32), keyed on job: those five run directories only (67-99 MB each); the bring-ups in k3-xn/runs are not read.
                 *[(f"trillium/new/k3-xn/runs/{run}/", f"k3-xn/runs/{run}") for run in K3_XN_RUNS],
                 # Kimi K3 pretraining (TorchTitan): run directories (172 MB on Nov 8), and the GPU telemetry of the two
                 # completed 48-node runs only (gpu.tsv, 119 MB; the other nodemon files and jobs are not read).

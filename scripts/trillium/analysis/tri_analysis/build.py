@@ -40,6 +40,7 @@ TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "no
           "run_power", "node_telemetry", "gpu_monitor", "power_limits", "kernel_change", "cap_load", "cap_cleared",
           "all_nodes", "board_parts", "probe_share", "drop_runs", "other_health", "kimi_passes", "kimi_accuracy", "kimi_runs", "kimi_questions",
           "kimi_xn_passes", "kimi_xn_accuracy", "kimi_xn_runs", "kimi_xn_questions",
+          "kimi_xn4_passes", "kimi_xn4_accuracy", "kimi_xn4_runs", "kimi_xn4_questions",
           "kimi_train_runs", "kimi_train_steps", "kimi_train_stages", "glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode", "glm_rl_memory",
           "glm_fp4_runs", "glm_fp4_steps", "qw_fp4_runs", "qw_fp4_steps", "qw_fp4_loss"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
@@ -246,6 +247,9 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     # ... and with the experts over 2 nodes (K3-XN-01, EP16, one job per all-to-all backend), in tables of their own (collect: k3-xn/runs).
     tables.update(kimi.build(raw / CLUSTER / "k3-xn" / "runs", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES,
                              entries=kimi.XN_ENTRIES, jobs=kimi.XN_JOBS, prefix="kimi_xn"))
+    # ... and on 4 nodes: prefill and decode on separate nodes against colocated (K3-XN-02), EP32 (K3-XN-03), in tables of their own.
+    tables.update(kimi.build(raw / CLUSTER / "k3-xn" / "runs", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES,
+                             entries=kimi.XN4_ENTRIES, jobs=kimi.XN4_JOBS, prefix="kimi_xn4"))
     # Kimi K3 pretraining (TorchTitan) at 48 nodes: its own run directories and GPU telemetry (collect: k3-trn/), measured only.
     tables.update(kimi_train.build(raw / CLUSTER / "k3-trn" / "runs", raw / CLUSTER / "k3-trn" / "nodemon", raw / CLUSTER / "sacct.txt",
                                    UNFINISHED_JOB_STATES))
