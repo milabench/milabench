@@ -15,7 +15,9 @@ trace = json.load(open(sys.argv[1]))["traceEvents"]
 steps = sorted((e for e in trace if e.get("name", "").startswith("ProfilerStep") and e.get("cat") == "user_annotation"),
                key=lambda e: e["ts"])
 gpu = sorted((e for e in trace if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")), key=lambda e: e["ts"])
-launch = {e["args"]["correlation"]: e for e in trace if e.get("cat") == "cuda_runtime" and "correlation" in e.get("args", {})}
+# kernel launches: runtime API, and driver API (cuBLAS and NCCL launch through cuLaunchKernelEx)
+launch = {e["args"]["correlation"]: e for e in trace
+          if e.get("cat") in ("cuda_runtime", "cuda_driver") and "correlation" in e.get("args", {})}
 notes = collections.defaultdict(list)
 for e in trace:
     if e.get("cat") == "gpu_user_annotation" and e["name"].startswith("[pl][module]"):
