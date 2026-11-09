@@ -266,7 +266,8 @@ index runs off the set and `monomer.py` raises IndexError (an upstream limit). W
 runs would have failed at step 32 (review of 2026-11-09). `monomers.py RANKS STEPS N` reproduces the sampler's global
 list (seed 42) and counts the draws a run reaches, the 32 samples each rank prefetches included; it predicts every
 monomer the 1-, 2- and 4-node runs logged (381, 306 and 611, none different). At 104 ranks, 40 steps reach 3,605
-draws; with a 20 % margin the OF3-01 subset has 4,400 monomers (`data.sh subset-u2 uniform 700 4400 subset-u`; variant
+draws; with a 20 % margin the OF3-01 subset has 4,330 monomers (`data.sh subset-u2 uniform 700 4330`: 44,805 more
+files, 9.98 GB). At 13 nodes it has no repeated monomer up to 54 steps and no IndexError up to 142. Variant
 `uniform` now reads `subset-u2`, whose first 800 monomers, PDB and RNA entries are those of `subset-u`, so the step-2
 runs read the same samples from it). Runs that reach more than 2 N monomer draws fail; longer runs need more
 monomers, or `sample_in_order: false` (a compromise).

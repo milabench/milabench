@@ -5,7 +5,7 @@
 # subset's caches and key list in $D/NAME. With OLD (an earlier subset's directory), the files only OLD read are deleted
 # from $D/s3 afterwards. Rerunning resumes.
 # Step 1: data.sh subset weighted 150 800. Step 2: data.sh subset-u uniform 700 800 subset. OF3-01: data.sh subset-u2
-# uniform 700 4400 subset-u.
+# uniform 700 4330 (adds 44,805 files, 9.98 GB).
 # Run on a data-transfer node: ssh tri-dm2 bash $SCRATCH/trillium/new/of3/src/scripts/trillium/of3/data.sh NAME DRAW N_PDB N_MONO [OLD]
 set -euo pipefail
 NAME=$1 DRAW=$2 N_PDB=$3 N_MONO=$4 OLD=${5:-}
