@@ -15,6 +15,9 @@ export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 XDG_CACHE_H
 LOCAL=/dev/shm/$USER/k3inf
 srun --overlap --propagate=CORE --ntasks-per-node=1 mkdir -p "$LOCAL/tmp"
 export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$MILABENCH_BASE/cache/triton FLASHINFER_WORKSPACE_BASE=$LOCAL
+# DeepEP's JIT kernels (K3-XN): node-local, not in the read-only $HOME it defaults to, nor in one cache shared by 2 nodes
+# (Triton's raced there, job 1269990)
+export EP_JIT_CACHE_DIR=$LOCAL/deepep-jit
 trap 'srun --overlap --propagate=CORE --ntasks-per-node=1 rm -rf "$LOCAL"' EXIT
 
 run=$ENTRY.$SLURM_JOB_ID
