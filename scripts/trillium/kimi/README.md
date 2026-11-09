@@ -400,8 +400,14 @@ FP8 dispatch, BF16 combine. Per rank (SO: over the network, SU: within the node)
 | 128 | 120 us (8 GB/s SO, 41 GB/s SU) | 88-139 us (12-20 GB/s SO) |
 | 4,096 | 1.15 ms (28 GB/s SO, 142 GB/s SU) | 2.07 ms (29 GB/s SO, 147 GB/s SU) |
 
-28-29 GB/s per GPU over the network at 4,096 tokens: the 4 x 400 Gb/s HCAs give 25 GB/s per GPU for 8 GPUs, so near
-line rate (est.). The job's kernel log has 128 `NVRM: GPU<n> refcntRequestReference_IMPL: Failed to enter state 1` lines,
+What the test's GB/s count (`tests/elastic/test_ep.py`): logical payload bytes per token (FP8 data, scales, top-k
+indices and weights), over the dispatch or combine kernel's time, one direction. SO: tokens times the nodes holding one of
+their experts, the token's own node included unless `--ignore-local-traffic`; SU: tokens received, from this GPU too. With
+top-16 over 2 nodes nearly every token touches both nodes, so job 1270478's 28-29 GB/s SO counts the local half. Job
+1271226 (`trig[0105-0106]`, `--ignore-local-traffic`, now in `deepep_test.sh`): dispatch at 4,096 tokens 14 GB/s SO per GPU,
+124-125 GB/s SU, 1.15 ms (the same kernel time); combine 14-37 GB/s SO, 0.80-2.07 ms by rank; at 128 tokens dispatch 4 GB/s
+SO, 121-125 us, combine 6-10 GB/s SO, 90-141 us. 14 GB/s sent per GPU is about 56% of the 25 GB/s per GPU of 4 x 400 Gb/s
+HCAs for 8 GPUs (est., one direction). The job's kernel log has 128 `NVRM: GPU<n> refcntRequestReference_IMPL: Failed to enter state 1` lines,
 with the test's profiler (`profiler_start` / `profiler_stop`); none in the vLLM or build jobs on the same nodes.
 
 **vLLM on `deepep_v2`, 2 nodes, no autotune.** vLLM picks `DeepEPV2All2AllManager`, `DeepEPV2PrepareAndFinalize`,
@@ -409,7 +415,8 @@ with the test's profiler (`profiler_start` / `profiler_stop`); none in the vLLM 
 - Job 1270544, `trig[0146-0147]`, 20:10-20:25, FAILED at start: weights 128.31 GiB, CUDA graphs 6.41 GiB (all-gather
   backend: 3.09), KV memory 5.0 GiB (13.61), "max_num_seqs (512) exceeds available Mamba cache blocks (250)". Weights
   60 s on trig0146 (warm), 447 s on trig0147: a cold load with the EP filter (TP8 x PP2: 669-676 s).
-- Job 1270725, `-deepep-shard-bringup-notune` (`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1`), `trig[0146-0147]`, 20:27-20:52,
+- Job 1270725, `-deepep-shard-bringup-notune` (`VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT=1`; since then the setting of every
+  EP16 entry, both backends, and this one is `-deepep-bringup-notune`), `trig[0146-0147]`, 20:27-20:52,
   COMPLETED, both nodes "GPUs free". **trig0146 drained during the run (ECC):** `health.chk.gpu.ecc.error` from 20:40:32;
   GPU 2 (3A:00.0) 109 corrected DRAM errors, none uncorrected, the other GPUs none (one read through the job, 20:43).
   Weights 107.41 GiB (-20.9, the estimate), KV 26.47 GiB, "1,004,792 tokens, 7.55x" per engine (all-gather: 517,438,
@@ -420,6 +427,15 @@ with the test's profiler (`profiler_start` / `profiler_stop`); none in the vLLM 
 |---|---|---|---|---|---|---|
 | conc1 | 30.99 | 208 / 390 | 31.55 / 31.57 | 31.55 / 31.68 | 29.95, TPOT 32.88 | 105.22, TPOT 9.14 |
 | conc64 | 655.54 | 2120 / 23803 | 50.39 / 134.6 | 45.86 / 48.64 | 1093.07, TPOT 45.35 | 1479.77, TPOT 28.9 |
+
+Which DeepEP mode (vLLM 0.32, `prepare_finalize/deepep_v2.py`, `all2all_utils.py`): DeepEP V2 has no separate
+low-latency and high-throughput kernels; vLLM picks its "decode mode" (`do_expand=False`, `do_cpu_sync=False`: CUDA-graph
+safe, receive buffers sized to the DP-padded batch rounded up to a power of 2, one JIT kernel per size) whenever CUDA
+graphs are on (`use_cudagraph = not enforce_eager`), for the engine's whole life: prefill batches use it too. Its "prefill
+mode" runs only with `--enforce-eager`. The low-latency kernels are V1's (`--all2all-backend deepep_low_latency`,
+NVSHMEM): they assert `num_topk <= 11` in dispatch and combine (`kNumMaxTopK = 11`, `csrc/kernels/legacy/internode_ll.cu`)
+and take hidden sizes from a list without 3,584; vLLM would also need a batched-format expert kernel (Marlin, not
+TRTLLM). Not runnable for K3's top-16: not tried.
 
 conc1 is the same on both backends. Inferred, not profiled: DeepEP's test measured about 120 us per dispatch and 90-140 us
 per combine at 128 tokens per rank; over 92 MoE layers that is about 24 ms per decode step, close to the 31.5 against
