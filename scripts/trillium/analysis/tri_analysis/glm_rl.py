@@ -1,10 +1,11 @@
 """GLM-5.3 GRPO with slime (Megatron-LM trainer, SGLang rollouts, Ray) on 32 nodes: one row per job, per step, per
 node (host memory), per host-memory snapshot and per visible engine decode line, from the run directory under
-``data/raw/trillium/glm-rl/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, all three on the same 32
+``data/raw/trillium/glm-rl/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/glm-rl/runs/``, the first three on the same 32
 nodes: GLM-RL-03 colocated without and GLM-RL-04 with rollout routing replay, whose command lines differ in
 ``--use-rollout-routing-replay`` only; GLM-RL-05 disaggregated, the trainer on 16 nodes and the engines on the other 16, whose
 command line differs from GLM-RL-03's in no ``--colocate``, ``--actor-num-nodes 16``, EP16, ``--rollout-num-gpus 128`` and
-``--sglang-cuda-graph-backend-prefill disabled``).
+``--sglang-cuda-graph-backend-prefill disabled``; GLM-RL-06 colocated on B200's default SGLang rollout kernels, whose command line
+differs from GLM-RL-03's in no DSA, MoE or FP8 GEMM backend flag and ``--sglang-max-running-requests 2048``; its nodes differ by one).
 
 Everything comes from the run's ``.0.data`` file: the command line (``start`` event), the node list (``config``), slime's
 log lines (``line`` events: per-step ``perf N`` dicts of the rollout manager and of the trainer, ``rollout N`` and ``step N``
@@ -50,8 +51,8 @@ import pandas as pd
 
 # The 32-node row (REQUESTS.md GLM-RL-03). The 1-, 2-, 4- and 8-node entries are bring-up and tests: not read. GLM-RL-01
 # (1265179) failed at engine load and was withdrawn; its directory is not collected.
-SCALE_ENTRIES = ("slime-glm5-grpo", "slime-glm5-grpo-r3", "slime-glm5-grpo-disagg")
-REQUESTS = {"1266065": "GLM-RL-03", "1267147": "GLM-RL-04", "1267151": "GLM-RL-05"}
+SCALE_ENTRIES = ("slime-glm5-grpo", "slime-glm5-grpo-r3", "slime-glm5-grpo-disagg", "slime-glm5-grpo-trtllm-mrr2048")
+REQUESTS = {"1266065": "GLM-RL-03", "1267147": "GLM-RL-04", "1267151": "GLM-RL-05", "1275601": "GLM-RL-06"}
 LOG_TZ = ZoneInfo("America/Toronto")
 SLOW_DECODE = 7.5  # tokens/s per sequence: the engines' decode lines fall at 7.6-10.1 or 5.8-6.1 (GLM-RL-03), nothing between
 
@@ -66,6 +67,7 @@ _MEMORY = re.compile(r"\(\w+ pid=\d+(?:, ip=([\d.]+))?\).*?" + _TS + r" memory_u
 _TOPK = re.compile(_TS + r" http_utils\.py:\d+ - Error: ValueError\('Sampler top-k logprobs must be finite")
 _PROGRESS = re.compile(r"Rollout generation:[^|]*\|[^|]*\| *(\d+)/(\d+) \[(?:(\d+):)?(\d+):(\d+)[<\]]")
 _MICRO = re.compile(r"actor train:.*?\| *\d+/(\d+) \[")
+_GRAPH = re.compile(r"Capture target decode CUDA graph end\. elapsed=([\d.]+) s")  # SGLang's decode CUDA-graph capture, per rank
 _COMPILE = re.compile(r"TileLang completes to compile kernel(?:.*?repeated (\d+)x)?")
 _DECODE = re.compile(r"\(SGLangEngine pid=\d+(?:, ip=([\d.]+))?\).*?\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) DP(\d+) TP\d+ EP\d+\] Decode batch, "
                      r"#running-req: (\d+), #token: (\d+), .*?gen throughput \(token/s\): ([\d.]+), #queue-req: (\d+)(?:.*?repeated (\d+)x)?")
@@ -99,7 +101,7 @@ def _argv(command: list) -> dict:
 def read_run(path: Path) -> dict:
     """Facts of one run's .0.data file: argv, nodes, per-step dicts, syncs, memory snapshots, micro-batches, decode lines, GPU monitor."""
     d = {"argv": {}, "nodes": [], "rollout": {}, "train": {}, "rollout_stats": {}, "step": {}, "syncs": [], "engines_up": [],
-         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": [], "host": [], "topk": [], "progress": {}}
+         "memory": [], "micro": {}, "compiles": {}, "decode": [], "reward": [], "gpu": [], "host": [], "topk": [], "progress": {}, "graph": []}
     step = None  # the step whose rollout ended last: the trainer's progress bar that follows belongs to it
     with open(path) as f:
         for line in f:
@@ -126,6 +128,8 @@ def read_run(path: Path) -> dict:
                 if "Rollout generation" in x:
                     for m in _PROGRESS.finditer(x):  # samples done, of all, at the bar's elapsed time
                         d["progress"].setdefault(rollout, []).append((int(m[1]), int(m[2]), 3600 * int(m[3] or 0) + 60 * int(m[4]) + int(m[5])))
+                if "CUDA graph end" in x:
+                    d["graph"] += [float(m[1]) for m in _GRAPH.finditer(x)]
                 if "Decode batch" in x:
                     if (m := _DECODE.search(x)):
                         d["decode"].append({"time": _local(m[2]), "ip": m[1], "dp_rank": int(m[3]), "running": int(m[4]), "kv_tokens": int(m[5]),
@@ -182,9 +186,12 @@ def build_run(run_dir: Path, job_start: datetime | None) -> tuple[dict, list[dic
            "max_response": _int(a, "--rollout-max-response-len"), "max_tokens_per_gpu": _int(a, "--max-tokens-per-gpu"),
            "num_rollout": _int(a, "--num-rollout"), "reward_type": a.get("--rm-type"), "routing_replay": bool(a.get("--use-rollout-routing-replay")),
            "kl_loss": bool(a.get("--use-kl-loss")), "moe_backend": a.get("--sglang-moe-runner-backend"),
+           "default_kernels": not a.get("--sglang-moe-runner-backend"), "max_running_requests": _int(a, "--sglang-max-running-requests"),
            "fp8_gemm_backend": a.get("--sglang-fp8-gemm-runner-backend"), "mem_fraction": a.get("--sglang-mem-fraction-static"),
            "chat_kwargs": a.get("--apply-chat-template-kwargs"), "tis_clip_low": a.get("--tis-clip-low"), "tis_clip": a.get("--tis-clip"),
-           "steps_logged": len(d["train"]), "syncs": len(d["syncs"]), "head_host_gib": max(d["host"]) if d["host"] else None}
+           "steps_logged": len(d["train"]), "syncs": len(d["syncs"]), "head_host_gib": max(d["host"]) if d["host"] else None,
+           "graph_s_lo": min(d["graph"], default=None), "graph_s_hi": max(d["graph"], default=None),  # in the lines Ray printed
+           "gpu_peak_gib": max((g for _, g in d["gpu"]), default=None)}
     t0 = job_start.replace(tzinfo=LOG_TZ).timestamp() if job_start else None
     if t0 and d["syncs"]:
         run["startup_min"] = (d["syncs"][0][0] - t0) / 60  # to the end of the first weight sync

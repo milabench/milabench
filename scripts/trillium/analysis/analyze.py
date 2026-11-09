@@ -91,15 +91,17 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 ("trillium/new/k3-trn/runs/", "k3-trn/runs"),
                 *[(f"trillium/new/k3-trn/nodemon/{run}/nodes/*.gpu.tsv", f"k3-trn/nodemon/{run}")
                   for run in ("k3-pp48-full-rbf16.1263956", "k3-pp48-l49.1263476")],
-                # GLM-5.3 GRPO with slime, 32 nodes: colocated without and with rollout routing replay (GLM-RL-03, GLM-RL-04), and
-                # disaggregated (GLM-RL-05): their run directories (21 MB each) and job logs (19-21 MB each) only; the other GLM-RL
-                # jobs are bring-up and tests, not read.
+                # GLM-5.3 GRPO with slime, 32 nodes: colocated without and with rollout routing replay (GLM-RL-03, GLM-RL-04),
+                # disaggregated (GLM-RL-05), and colocated on B200's default rollout kernels (GLM-RL-06): their run directories
+                # (21 MB each) and job logs (19-21 MB each) only; the other GLM-RL jobs are bring-up and tests, not read.
                 *[(f"trillium/new/glm-rl/runs/{run}/", f"glm-rl/runs/{run}") for run in ("nw-glm-rl-glm5.1266065.slime-glm5-grpo",
                                                                                           "nw-glm-rl-glm5-r3.1267147.slime-glm5-grpo-r3",
-                                                                                          "nw-glm-rl-glm5-disagg.1267151.slime-glm5-grpo-disagg")],
+                                                                                          "nw-glm-rl-glm5-disagg.1267151.slime-glm5-grpo-disagg",
+                                                                                          "nw-glm-rl-glm5-trtllm.1275601.slime-glm5-grpo-trtllm-mrr2048")],
                 *[(f"trillium/new/glm-rl/slurm/{log}", "glm-rl/slurm") for log in ("nw-glm-rl-glm5-1266065.out",
                                                                                    "nw-glm-rl-glm5-r3-1267147.out",
-                                                                                   "nw-glm-rl-glm5-disagg-1267151.out")],
+                                                                                   "nw-glm-rl-glm5-disagg-1267151.out",
+                                                                                   "nw-glm-rl-glm5-trtllm-1275601.out")],
                 # GLM-5 C-speed with BF16, MXFP8 and NVFP4 at 13 nodes (GLM-FP4-01, job 1271210): its three run directories (49-71 MB
                 # each) and the GPU telemetry of each entry (gpu.tsv only, 23 MB in all). Outside runs/: not campaign runs.
                 *[(f"trillium/new/glm-fp4/runs/{run}/", f"glm-fp4/runs/{run}") for run in GLM_FP4_RUNS],

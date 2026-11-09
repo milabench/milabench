@@ -1279,7 +1279,8 @@ def kimi_training(t):
 
 def glm_rl(t):
     """GLM-5.3 GRPO with slime on 32 nodes: where each step's time goes (rollout, training, weight sync, the rest), colocated without
-    and with rollout routing replay and disaggregated side by side (GLM-RL-03, GLM-RL-04, GLM-RL-05, same nodes), and the per-sequence
+    and with rollout routing replay, disaggregated, and colocated on B200's default rollout kernels side by side (GLM-RL-03, -04, -05, -06;
+    the last with one node swapped), and the per-sequence
     decode speed in the engines' log lines over the measured rollouts colocated without replay (a sample: Ray prints one rank's line
     per repeat window). Completed runs only."""
     r, st, dc = (t.get(k, pd.DataFrame()) for k in ("glm_rl_runs", "glm_rl_steps", "glm_rl_decode"))
@@ -1287,10 +1288,13 @@ def glm_rl(t):
         return None
     r = r.sort_values("start")
     colocated = r.colocate.astype(bool) if "colocate" in r else pd.Series(True, index=r.index)
-    hatches = {(True, False): None, (True, True): "////", (False, False): "...."}  # (colocated, routing replay)
-    names = {(True, False): "colocated", (True, True): "colocated, routing replay", (False, False): "disaggregated"}
-    runs = [(str(x.job), (bool(c), bool(x.routing_replay))) for x, c in zip(r.itertuples(), colocated)]
-    base = next((job for job, kind in runs if kind == (True, False)), runs[0][0])
+    default = r.default_kernels.astype(bool) if "default_kernels" in r else pd.Series(False, index=r.index)
+    hatches = {(True, False, False): None, (True, True, False): "////", (False, False, False): "....",
+               (True, False, True): "xxxx"}  # (colocated, routing replay, B200's default rollout kernels)
+    names = {(True, False, False): "colocated", (True, True, False): "colocated, routing replay", (False, False, False): "disaggregated",
+             (True, False, True): "colocated, default kernels"}
+    runs = [(str(x.job), (bool(c), bool(x.routing_replay), bool(k))) for x, c, k in zip(r.itertuples(), colocated, default)]
+    base = next((job for job, kind in runs if kind == (True, False, False)), runs[0][0])
     fig, (a, b) = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6), gridspec_kw={"width_ratios": [1.2, 1.5]})
     parts = [("rollout_s", "rollout", SERIES[0]), ("train_s", "training", SERIES[1]), ("sync_s", "weight sync", SERIES[2]),
              ("rest_s", "rest (offload, onload, data)", LIGHT)]
@@ -1309,7 +1313,8 @@ def glm_rl(t):
             bottom += np.nan_to_num(v)
         for xi, total in zip(x, g.step_s / 60):
             if pd.notna(total):
-                a.annotate(f"{total:.1f}", (xi, total), xytext=(0, 1.5), textcoords="offset points", ha="center", va="bottom", fontsize=5.5, color=INK2)
+                a.annotate(f"{total:.1f}", (xi, total), xytext=(0, 1.5), textcoords="offset points", ha="center", va="bottom", fontsize=5.5, color=INK2,
+                           rotation=90 if len(runs) > 3 else 0)  # four bars per step: upright labels overlap
         top = max(top, bottom.max())
     warm = dict(zip(st.step, st.warmup.astype(bool)))
     a.set_xticks(np.arange(len(steps)))

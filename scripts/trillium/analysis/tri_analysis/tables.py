@@ -161,6 +161,14 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriGrDgLastGroupMinOne", "TriGrDgLatMaxOne", "TriGrDgHostLastLo", "TriGrDgHostLastHi", "TriGrDgHostLastTb", "TriGrDgHostFirstLo",
           "TriGrDgHostFirstHi", "TriGrDgHostMidLo", "TriGrDgHostMidHi", "TriGrDgHostMidNodes", "TriGrDgHostMidAll", "TriGrDgHostEngine",
           "TriGrDgGpuRollout", "TriGrDgGpuTrainer",
+          # GLM-RL-06, colocated on B200's default rollout kernels with max running requests capped (TriGrKn*), against GLM-RL-03 (Ref)
+          "TriGrKnCap", "TriGrKnCapRank", "TriGrKnRunningMax", "TriGrKnEnginesUp", "TriGrKnStartup", "TriGrKnGraphLo", "TriGrKnGraphHi",
+          "TriGrKnGraphRefLo", "TriGrKnGraphRefHi", "TriGrKnRolloutOne", "TriGrKnRolloutTwo", "TriGrKnTrainOne", "TriGrKnTrainTwo",
+          "TriGrKnSyncOne", "TriGrKnSyncTwo", "TriGrKnStepOne", "TriGrKnStepTwo", "TriGrKnDecodeReqOne", "TriGrKnDecodeReqTwo",
+          "TriGrKnDecodeGainOne", "TriGrKnDecodeGainTwo", "TriGrKnDecodeFast", "TriGrKnDecodeSlow", "TriGrKnLatMaxOne", "TriGrKnLatMaxTwo",
+          "TriGrKnSwitchOne", "TriGrKnSwitchTwo", "TriGrKnSwitchRefOne", "TriGrKnSwitchRefTwo", "TriGrKnTisAbsOne", "TriGrKnTisAbsTwo",
+          "TriGrKnTisClipOne", "TriGrKnTisClipTwo", "TriGrKnTisRatioOne", "TriGrKnTisRatioTwo", "TriGrKnClipRatioOne", "TriGrKnClipRatioTwo",
+          "TriGrKnRewardOne", "TriGrKnRewardTwo", "TriGrKnGpuRollout",
           # New workloads: GLM-5 C-speed with NVFP4 (_glm_fp4_numbers, GLM-FP4-01): setup, then per recipe (Bf, Mx, Nv), ratios, power cap,
           # and the campaign's 13-node run (Camp*) on the same measure
           "TriFpFourNodes", "TriFpFourGpus", "TriFpFourSeqs", "TriFpFourSeqLen", "TriFpFourLayers", "TriFpFourBfLast", "TriFpFourSteps",
@@ -1750,7 +1758,8 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
     out = {}
     done = r[r.job_state == "COMPLETED"] if len(r) else r
     coloc = done[done.colocate.astype(bool)] if len(done) else done
-    base = coloc[~coloc.routing_replay.astype(bool)] if len(coloc) else coloc
+    fallback = ~coloc.default_kernels.astype(bool) if "default_kernels" in coloc else True
+    base = coloc[~coloc.routing_replay.astype(bool) & fallback] if len(coloc) else coloc
     if base.empty or st.empty:
         return out
     x = base.iloc[-1]
@@ -1810,10 +1819,56 @@ def _glm_rl_numbers(t) -> dict[str, tuple]:
                     "TriGrHostOtherHi": (other.host_used_gib.max(), ".0f", False), "TriGrHostTotal": (hh.host_total_gib.max(), ",.0f", False),
                     "TriGrGpuCap": (hh.gpu_total_gib.max(), ".1f", False)})
     replay = coloc[coloc.routing_replay.astype(bool)]
+    kernels = coloc[coloc.default_kernels.astype(bool)] if "default_kernels" in coloc else coloc.iloc[:0]
+    if len(kernels):
+        out.update(_glm_rl_kernel_numbers(x, kernels.iloc[-1], st, dc))
     out.update(_glm_rl_replay_numbers(x, replay.iloc[-1] if len(replay) else None, st, h, t.get("glm_rl_memory", pd.DataFrame())))
     dis = done[~done.colocate.astype(bool)]
     if len(dis):
         out.update(_glm_rl_disagg_numbers(x, dis.iloc[-1], st, t.get("glm_rl_memory", pd.DataFrame())))
+    return out
+
+
+def _glm_rl_kernel_numbers(x, z, st, dc) -> dict[str, tuple]:
+    """GLM-RL-06 (z), colocated on B200's default SGLang rollout kernels with max running requests capped, against GLM-RL-03 (x, the
+    fallback kernels), steps 1 and 2. Decode modes: the engines' lines with one sequence per rank (a Ray-deduplicated sample), as for
+    GLM-RL-03. The last request's engine: the engine of the rollout's last decode line; its switch: its first slower line (glm_rl.SLOW_DECODE,
+    as for GLM-RL-03), in minutes into the rollout; a line caught mid-switch, above the threshold, does not count."""
+    s = st[st.job.astype(str) == str(z.job)].set_index("step")
+    b = st[st.job.astype(str) == str(x.job)].set_index("step")
+    out = {"TriGrKnCap": (int(z.max_running_requests), ",d", False), "TriGrKnCapRank": (int(z.max_running_requests // z.engine_dp), "d", False),
+           "TriGrKnEnginesUp": (z.engines_up_min, ".1f", False), "TriGrKnStartup": (z.startup_min, ".1f", False),
+           "TriGrKnGraphLo": (z.graph_s_lo, ".1f", False), "TriGrKnGraphHi": (z.graph_s_hi, ".1f", False),
+           "TriGrKnGraphRefLo": (x.graph_s_lo, ".1f", False), "TriGrKnGraphRefHi": (x.graph_s_hi, ".1f", False),
+           "TriGrKnGpuRollout": (s.gpu_rollout_gib.max(), ".1f", False)}
+    for k, n in ((1, "One"), (2, "Two")):
+        if k not in s.index or k not in b.index:
+            continue
+        y, w = s.loc[k], b.loc[k]
+        out.update({f"TriGrKnRollout{n}": (y.rollout_s, ",.1f", False), f"TriGrKnTrain{n}": (y.train_s, ".1f", False),
+                    f"TriGrKnSync{n}": (y.sync_s, ".1f", False), f"TriGrKnStep{n}": (y.step_s, ",.1f", False),
+                    f"TriGrKnDecodeReq{n}": (y.decode_tok_s_median, ".2f", False),
+                    f"TriGrKnDecodeGain{n}": (100 * (y.decode_tok_s_median / w.decode_tok_s_median - 1), ".0f", False),
+                    f"TriGrKnLatMax{n}": (y.latency_max_s, ",.0f", False), f"TriGrKnTisAbs{n}": (y.tis_abs, ".4f", False),
+                    f"TriGrKnTisClip{n}": (y.tis_clipfrac, ".4f", False), f"TriGrKnTisRatio{n}": (y.tis_abs / w.tis_abs, ".1f", False),
+                    f"TriGrKnClipRatio{n}": (y.tis_clipfrac / w.tis_clipfrac, ".1f", False), f"TriGrKnReward{n}": (y.raw_reward, ".3f", False)})
+    if len(dc):
+        d = dc[(dc.job.astype(str) == str(z.job)) & ~dc.idle.astype(bool)]
+        if len(d):
+            out["TriGrKnRunningMax"] = (int(d.running.max()), "d", False)
+            one = d[(d.step > 0) & (d.running == 1)]
+            out.update({"TriGrKnDecodeFast": (one[~one.slow.astype(bool)].tok_s_seq.median(), ".1f", False),
+                        "TriGrKnDecodeSlow": (one[one.slow.astype(bool)].tok_s_seq.median(), ".1f", False)})
+        for job, ref in ((str(z.job), ""), (str(x.job), "Ref")):
+            g = dc[(dc.job.astype(str) == job) & ~dc.idle.astype(bool) & (dc.step > 0)]
+            for k, n in ((1, "One"), (2, "Two")):
+                r = g[g.step == k]
+                if r.empty:
+                    continue
+                last = r.loc[r.time.idxmax(), "engine"]
+                switch = r[(r.engine == last) & r.slow.astype(bool)].minute
+                if len(switch):
+                    out[f"TriGrKnSwitch{ref}{n}"] = (switch.min(), ".1f", False)
     return out
 
 
@@ -2450,9 +2505,9 @@ def glm_rl_runs_table(t) -> str:
     r = t.get("glm_rl_runs", pd.DataFrame())
     if r.empty:
         return ""
-    lines = [r"\begin{tabular}{lllllllrrlll}", r"\toprule",
-             r"Request & Job & Layout & Routing & Nodes & Trainer & Rollout engines & Samples & Steps & Started & Ended & State \\",
-             r" & & & replay & & & & per step & & & & \\", r"\midrule"]
+    lines = [r"\begin{tabular}{llllllllrrlll}", r"\toprule",
+             r"Request & Job & Layout & Routing & Nodes & Trainer & Rollout engines & Rollout & Samples & Steps & Started & Ended & State \\",
+             r" & & & replay & & & & kernels & per step & & & & \\", r"\midrule"]
     for x in r.sort_values("start").itertuples():
         trainer = f"TP{int(x.tp)} PP{int(x.pp)} CP{int(x.cp)} EP{int(x.ep)} (DP{int(x.dp)})"
         engines = f"{int(x.engines)} $\\times$ {int(x.engine_gpus)} GPUs (EP{int(x.engine_ep)})"
@@ -2460,7 +2515,9 @@ def glm_rl_runs_table(t) -> str:
         colocate = bool(getattr(x, "colocate", True))
         layout = "colocated" if colocate else "disaggregated"
         nodes = f"{int(x.nodes)}" if colocate else f"{int(x.nodes)}: {int(x.trainer_nodes)} + {int(x.nodes - x.trainer_nodes)}"
-        lines.append(f"{x.request} & {x.job} & {layout} & {replay} & {nodes} & {trainer} & {engines} & {int(x.samples):,} & {int(x.steps_logged)} & "
+        kernels = (f"B200 default, {int(x.max_running_requests // x.engine_dp)} requests per rank" if bool(getattr(x, "default_kernels", False))
+                   else "fallback")
+        lines.append(f"{x.request} & {x.job} & {layout} & {replay} & {nodes} & {trainer} & {engines} & {kernels} & {int(x.samples):,} & {int(x.steps_logged)} & "
                      f"{str(x.start).replace('T', ' ')[:16]} & {str(x.end).replace('T', ' ')[:16]} & {x.job_state} " + r"\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
@@ -2493,7 +2550,7 @@ def _glm_rl_by_run(t) -> tuple[pd.DataFrame, list[tuple[str, str]]]:
         return pd.DataFrame(), []
     def label(x):
         layout = "colocated" if bool(getattr(x, "colocate", True)) else "disaggregated"
-        return layout + (" + replay" if bool(x.routing_replay) else "")
+        return layout + (" + replay" if bool(x.routing_replay) else "") + (", default kernels" if bool(getattr(x, "default_kernels", False)) else "")
     return st, [(str(x.job), label(x)) for x in r.sort_values("start").itertuples()]
 
 
