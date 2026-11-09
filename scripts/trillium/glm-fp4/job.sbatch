@@ -2,7 +2,8 @@
 # GLM-FP4 bring-up job: one `milabench run` per entry of benchmarks/megatron/dev.yaml, in the order given, as the
 # campaign's scripts/trillium/glm/job.sbatch, with the GLM-FP4 base ($G: venv, data, runs, nodemon, caches), core dumps
 # off (ulimit here, --propagate=CORE on its srun steps), wandb disabled. An entry given as lt:ENTRY runs with cuBLASLt's
-# trace log in $G/logs (the operand types of every GEMM; its times are not used).
+# trace log in $G/logs (the operand types of every GEMM; its times are not used). check:MODEL runs nvfp4_check.py MODEL
+# (glm5, qwen3) on one GPU, with the venv's CUDA headers for TE's runtime-compiled kernels (milabench sets them for runs).
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-glm-fp4-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-glm-fp4-s2 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=1 \
@@ -17,7 +18,7 @@ export WANDB_MODE=disabled TORCHINDUCTOR_COMPILE_THREADS=2
 export TT_CAMPAIGN=trillium-new-$(date +%m%d) TT_EXPERIMENT=GLM-FP4-bringup TT_REPETITION=1 TT_FAMILY=slurm
 CONFIG=$G/src/benchmarks/megatron/dev.yaml
 LOCAL=/dev/shm/$USER
-run_all() { srun --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
+run_all() { srun --export=ALL --overlap --propagate=CORE --nodes="$SLURM_JOB_NUM_NODES" --ntasks="$SLURM_JOB_NUM_NODES" --ntasks-per-node=1 "$@"; }
 run_all mkdir -p "$LOCAL/tmp"
 trap 'run_all rm -rf "$LOCAL"' EXIT
 export TMPDIR=$LOCAL/tmp TRITON_CACHE_DIR=$LOCAL/triton TILELANG_CACHE_DIR=$LOCAL/tilelang FLASHINFER_WORKSPACE_BASE=$LOCAL \
@@ -28,7 +29,15 @@ system=$G/slurm/system.$SLURM_JOB_ID.yaml
 milabench slurm system > "$system" || exit 1
 mkdir -p $G/logs
 status_all=0
+SP=$(echo $G/venv/torch/lib/python3.*/site-packages)
 for item in "$@"; do
+    if [ "${item#check:}" != "$item" ]; then
+        srun --export=ALL --overlap --propagate=CORE --ntasks=1 env CUDA_VISIBLE_DEVICES=0 CUDA_HOME=$SP/nvidia/cu13 \
+            NVTE_CUDA_INCLUDE_DIR=$SP/nvidia/cu13/include LD_LIBRARY_PATH=$SP/nvidia/cu13/lib:${LD_LIBRARY_PATH:-} \
+            $G/venv/torch/bin/python $G/src/scripts/trillium/glm-fp4/nvfp4_check.py "${item#check:}"
+        echo "[glm-fp4] $item rc=$?"
+        continue
+    fi
     entry=${item#lt:}
     run=glm-fp4.$SLURM_JOB_ID.$entry
     [ "$item" != "$entry" ] && run=$run.lt

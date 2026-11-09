@@ -1,40 +1,51 @@
-"""GLM-FP4 step 1, disposable: TransformerEngine's NVFP4 recipe on one B200, at GLM-5's GEMM shapes.
+"""GLM-FP4, disposable: TransformerEngine's GEMM modules on one B200 in bf16 / mxfp8 / nvfp4, at a model's shapes.
 
-One micro-batch of pp13-ep8 (8192 tokens; 32 local experts of 256, about 2048 tokens each at top-8). For each TE module
-GLM-5 calls under Megatron's per-layer autocast (glm5.py get_glm5_spec, dev.yaml model.argv), in bf16 / mxfp8 / nvfp4:
-- the quantizers TE builds (RHT, 2D weight blocks, stochastic rounding),
-- fwd and fwd+bwd time per micro-batch, weights cached across micro-batches as Megatron does (is_first_microbatch),
-- the memory TE keeps after the first micro-batch (the quantized weight copies),
-- the output and weight-gradient error against bf16 (same weights, same input).
-Run: python nvfp4_check.py (one GPU).
+    python nvfp4_check.py glm5     GLM-5, one micro-batch of pp13-ep8: 8192 tokens; 32 local experts of 256, 2048
+                                   tokens each at top-8 (glm5.py get_glm5_spec, dev.yaml model.argv)
+    python nvfp4_check.py qwen3    Qwen3 32B (hidden 5120, 64 x 128 query heads, 8 x 128 KV heads, FFN 25600, SwiGLU)
+                                   at 4096 and 8192 tokens
+
+Each module as Megatron's TE spec builds it (te.Linear, te.LayerNormLinear with RMSNorm where the norm is fused,
+te.GroupedLinear for the experts), under te.fp8_autocast with the recipe Megatron builds (MXFP8BlockScaling(),
+NVFP4BlockScaling() with TE's defaults: RHT on the weight-gradient inputs, 2D weight blocks, stochastic rounding).
+Times per call, in ms: `fwd` (no grad, the first forward under full recompute) and `step` (forward + dgrad + wgrad),
+with the weights quantized once and cached across micro-batches as Megatron does (is_first_microbatch), the
+activation and gradient quantization (and the Hadamard transforms) in every call; `first` is `step` with the weights
+quantized again in every call (a step of one micro-batch). Also the error against bf16 (random data, same weights).
 """
+
+import sys
 
 import torch
 import transformer_engine
 import transformer_engine.pytorch as te
 from transformer_engine.common import recipe as R
 
-T, EXPERTS, TOK = 8192, 32, 2048
-# name: (module, in, out); GLM-5: hidden 6144, q_lora 2048, heads 64 x (192 + 64) q / 256 v, kv_lora 512 + rope 64,
-# indexer 32 x 128 heads, expert / shared ffn 2048 (gate + up fused), dense ffn 12288
-MODULES = {
-    "q_down": ("linear", 6144, 2048),
-    "q_up": ("ln_linear", 2048, 16384),
-    "kv_down": ("linear", 6144, 576),
-    "o_proj": ("linear", 16384, 6144),
-    "idx_wq_b": ("linear", 2048, 4096),
-    "idx_wk": ("linear", 6144, 128),
-    "shared_fc1": ("linear", 6144, 4096),
-    "shared_fc2": ("linear", 2048, 6144),
-    "expert_fc1": ("grouped", 6144, 4096),
-    "expert_fc2": ("grouped", 2048, 6144),
-    "dense_fc1": ("ln_linear", 6144, 24576),
-    "dense_fc2": ("linear", 12288, 6144),
+EXPERTS, TOK = 32, 2048
+MODELS = {
+    # name: (module, in, out); GLM-5: hidden 6144, q_lora 2048, 64 x (192 + 64) q / 256 v, kv_lora 512 + rope 64,
+    # indexer 32 x 128, expert / shared FFN 2048 (gate + up fused), dense FFN 12288
+    "glm5": {
+        "q_down": ("linear", 6144, 2048), "q_up": ("ln_linear", 2048, 16384), "kv_down": ("linear", 6144, 576),
+        "o_proj": ("linear", 16384, 6144), "idx_wq_b": ("linear", 2048, 4096), "idx_wk": ("linear", 6144, 128),
+        "shared_fc1": ("linear", 6144, 4096), "shared_fc2": ("linear", 2048, 6144),
+        "expert_fc1": ("grouped", 6144, 4096), "expert_fc2": ("grouped", 2048, 6144),
+        "dense_fc1": ("ln_linear", 6144, 24576), "dense_fc2": ("linear", 12288, 6144),
+    },
+    # Qwen3 32B: QKV 64 x 128 + 2 x 8 x 128, O 64 x 128 -> 5120, gate + up 2 x 25600, down 25600 -> 5120
+    "qwen3": {
+        "qkv": ("ln_linear", 5120, 10240), "o": ("linear", 8192, 5120),
+        "gate_up": ("ln_linear", 5120, 51200), "down": ("linear", 25600, 5120),
+    },
 }
-MOE_LAYER = ["q_down", "q_up", "kv_down", "o_proj", "idx_wq_b", "idx_wk", "shared_fc1", "shared_fc2", "expert_fc1", "expert_fc2"]
-DENSE_LAYER = ["q_down", "q_up", "kv_down", "o_proj", "idx_wq_b", "idx_wk", "dense_fc1", "dense_fc2"]
+TOKENS = {"glm5": [8192], "qwen3": [4096, 8192]}
+# per layer and micro-batch: GLM-5 runs full recompute (fwd + step), Qwen3 is counted without recompute (step)
+LAYERS = {
+    "glm5": {"moe": ["q_down", "q_up", "kv_down", "o_proj", "idx_wq_b", "idx_wk", "shared_fc1", "shared_fc2", "expert_fc1", "expert_fc2"],
+             "dense": ["q_down", "q_up", "kv_down", "o_proj", "idx_wq_b", "idx_wk", "dense_fc1", "dense_fc2"]},
+    "qwen3": {"layer": ["qkv", "o", "gate_up", "down"]},
+}
 RECIPES = {"bf16": None, "mxfp8": R.MXFP8BlockScaling(), "nvfp4": R.NVFP4BlockScaling()}
-GIB = 2**30
 
 
 def build(kind, n_in, n_out):
@@ -53,118 +64,90 @@ def call(mod, kind, x, recipe, first):
         return mod(x, is_first_microbatch=first)
 
 
-def quantizer_summary(mod):
+def quantizers(mod):
     out = []
-    for key in ("scaling_fwd", "scaling_bwd"):
-        seen = set()
-        for i, q in enumerate(getattr(mod, "quantizers", {}).get(key, [])):
-            if q is None:
-                continue
-            attrs = {a: getattr(q, a) for a in ("with_rht", "with_2d_quantization", "stochastic_rounding") if hasattr(q, a)}
-            item = (key, i % (3 if key == "scaling_fwd" else 2), type(q).__name__, tuple(sorted(attrs.items())))
-            if item not in seen:
-                seen.add(item)
-                out.append(item)
+    for key, roles in (("scaling_fwd", 3), ("scaling_bwd", 2)):
+        for i, q in enumerate(getattr(mod, "quantizers", {}).get(key, [])[:roles]):
+            if q is not None:
+                attrs = {a: getattr(q, a) for a in ("with_rht", "with_2d_quantization", "stochastic_rounding") if hasattr(q, a)}
+                out.append((key, i, type(q).__name__, attrs))
     return out
 
 
-def bench(name, ref_state, results):
-    kind, n_in, n_out = MODULES[name]
-    rows = T if kind != "grouped" else TOK * EXPERTS
+def timed(fn, n=10):
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    for _ in range(3):
+        fn()
+    start.record()
+    for _ in range(n):
+        fn()
+    end.record()
+    torch.cuda.synchronize()
+    return start.elapsed_time(end) / n
+
+
+def bench(name, kind, n_in, n_out, tokens, results):
+    rows = TOK * EXPERTS if kind == "grouped" else tokens
     g = torch.Generator(device="cuda").manual_seed(0)
     x0 = torch.randn(rows, n_in, device="cuda", dtype=torch.bfloat16, generator=g)
     dy = torch.randn(rows, n_out, device="cuda", dtype=torch.bfloat16, generator=g) * 1e-2
+    ref = None
     for rname, recipe in RECIPES.items():
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
+        torch.manual_seed(0)  # the same weights for every recipe
         mod = build(kind, n_in, n_out)
-        if ref_state.get(name) is None:
-            ref_state[name] = {k: v.detach().clone() for k, v in mod.state_dict().items() if torch.is_tensor(v) and v.is_floating_point()}
-        else:
-            with torch.no_grad():
-                for k, v in mod.state_dict().items():
-                    if k in ref_state[name]:
-                        v.copy_(ref_state[name][k])
-        torch.cuda.synchronize()
-        m0 = torch.cuda.memory_allocated()
         x = x0.detach().requires_grad_(True)
         y = call(mod, kind, x, recipe, True)
         y.backward(dy)
-        y_out = y.detach().float()
-        wgrad = next(p for p in mod.parameters() if p.dim() == 2).grad.detach().float()
-        nan = bool(torch.isnan(y_out).any() or torch.isnan(wgrad).any())
-        if rname == "bf16":
-            ref_bytes = y_out.nbytes + wgrad.nbytes  # kept as the reference, not counted below
-            ey = ew = 0.0
+        out = (y.detach().float(), next(p for p in mod.parameters() if p.dim() == 2).grad.detach().float())
+        nan = bool(torch.isnan(out[0]).any() or torch.isnan(out[1]).any())
+        if ref is None:
+            ref, err = out, (0.0, 0.0)
         else:
-            ref = results[(name, "bf16")]
-            ey = ((y_out - ref["y"]).norm() / ref["y"].norm()).item()
-            ew = ((wgrad - ref["wgrad"]).norm() / ref["wgrad"].norm()).item()
-            ref_bytes = 0
-            del y_out, wgrad
-        del y, x
-        for p in mod.parameters():
-            p.grad = None
-        torch.cuda.synchronize()
-        kept = torch.cuda.memory_allocated() - m0 - ref_bytes
-        params = sum(p.numel() for p in mod.parameters() if p.dim() == 2)
-        quant = quantizer_summary(mod)
-        # steady state: weights already quantized (micro-batches 2..32 of a step)
-        ev = [torch.cuda.Event(enable_timing=True) for _ in range(4)]
-        for _ in range(3):
-            x = x0.detach().requires_grad_(True)
-            call(mod, kind, x, recipe, False).backward(dy)
-        n = 10
-        ev[0].record()
-        for _ in range(n):
-            x = x0.detach().requires_grad_(True)
+            err = tuple(((a - b).norm() / b.norm()).item() for a, b in zip(out, ref))
+        del y, x, out
+
+        def fwd():
             with torch.no_grad():
-                call(mod, kind, x, recipe, False)
-        ev[1].record()
-        for _ in range(n):
-            x = x0.detach().requires_grad_(True)
-            call(mod, kind, x, recipe, False).backward(dy)
-        ev[2].record()
-        torch.cuda.synchronize()
-        fwd = ev[0].elapsed_time(ev[1]) / n
-        fwdbwd = ev[1].elapsed_time(ev[2]) / n
-        results[(name, rname)] = dict(fwd=fwd, fwdbwd=fwdbwd, kept=kept, params=params, quant=quant)
-        if rname == "bf16":
-            results[(name, rname)].update(y=y_out, wgrad=wgrad)
-        print(f"{name:11s} {rname:6s} fwd {fwd:7.3f} ms  fwd+bwd {fwdbwd:7.3f} ms  kept {kept / GIB:6.3f} GiB "
-              f"({kept / params:5.3f} B/param of {params / 1e6:7.1f} M)  rel.err y {ey:.4f} wgrad {ew:.4f}  nan {nan}", flush=True)
+                call(mod, kind, x0, recipe, False)
+
+        def step(first=False):
+            call(mod, kind, x0.detach().requires_grad_(True), recipe, first).backward(dy)
+
+        t = dict(fwd=timed(fwd), step=timed(step), first=timed(lambda: step(True)))
+        results[(name, tokens, rname)] = t
+        print(f"{name:11s} {tokens:5d} {rname:6s} fwd {t['fwd']:7.3f}  step {t['step']:7.3f}  first {t['first']:7.3f} ms"
+              f"  rel.err y {err[0]:.4f} wgrad {err[1]:.4f}  nan {nan}", flush=True)
+        if rname == "nvfp4" and name in ("q_down", "expert_fc1", "qkv"):
+            for q in quantizers(mod):
+                print("    ", q, flush=True)
         del mod
-    for rname in RECIPES:
-        results.get((name, rname), {}).pop("y", None)
-        results.get((name, rname), {}).pop("wgrad", None)
 
 
 def main():
+    model = sys.argv[1] if len(sys.argv) > 1 else "glm5"
     print(torch.__version__, transformer_engine.__version__, torch.cuda.get_device_name(), torch.cuda.get_device_capability(), flush=True)
     print("NVFP4BlockScaling():", RECIPES["nvfp4"], flush=True)
-    results, ref_state = {}, {}
-    for name in MODULES:
-        try:
-            bench(name, ref_state, results)
-        except Exception as exc:  # a shape TE refuses is a finding: report it, go on with the others
-            print(f"{name:11s} FAILED: {type(exc).__name__}: {str(exc)[:400]}", flush=True)
-        ref_state[name] = None
-    for name in ("q_down", "expert_fc1"):
-        if (name, "nvfp4") not in results:
-            continue
-        print(f"quantizers {name} (nvfp4): (list, index mod 3 fwd [input, weight, output] / mod 2 bwd [grad_out, grad_in], type, settings)")
-        for q in results[(name, "nvfp4")]["quant"]:
-            print("   ", q)
-    # per micro-batch and layer, full recompute (dev.yaml): forward twice (forward, recompute) + backward
-    for layer, names in (("moe", MOE_LAYER), ("dense", DENSE_LAYER)):
-        for rname in RECIPES:
-            if any((n, rname) not in results for n in names):
+    results = {}
+    for tokens in TOKENS[model]:
+        for name, (kind, n_in, n_out) in MODELS[model].items():
+            try:
+                bench(name, kind, n_in, n_out, tokens, results)
+            except Exception as exc:  # a shape TE refuses is a finding: report it, go on with the others
+                print(f"{name:11s} {tokens:5d} FAILED: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+        for name in MODELS[model]:
+            if all((name, tokens, r) in results for r in RECIPES):
+                b, m, f = (results[(name, tokens, r)] for r in RECIPES)
+                print(f"speedup {name:11s} {tokens:5d}  step mxfp8 {b['step'] / m['step']:5.2f}x nvfp4 {b['step'] / f['step']:5.2f}x"
+                      f" (nvfp4 / mxfp8 {m['step'] / f['step']:5.2f}x)  first mxfp8 {b['first'] / m['first']:5.2f}x"
+                      f" nvfp4 {b['first'] / f['first']:5.2f}x", flush=True)
+        for layer, names in LAYERS[model].items():
+            if any((n, tokens, r) not in results for n in names for r in RECIPES):
                 continue
-            t = sum(results[(n, rname)]["fwd"] + results[(n, rname)]["fwdbwd"] for n in names)
-            kept = sum(results[(n, rname)]["kept"] for n in names)
-            params = sum(results[(n, rname)]["params"] for n in names)
-            print(f"layer {layer:5s} {rname:6s} GEMM modules per micro-batch {t:7.2f} ms; middle stage step (32 x 6 layers) "
-                  f"{t * 192 / 1000:6.2f} s; kept {kept / GIB:6.2f} GiB per layer ({kept / params:5.3f} B/param)", flush=True)
+            keys = ("fwd", "step") if model == "glm5" else ("step",)
+            t = {r: sum(results[(n, tokens, r)][k] for n in names for k in keys) for r in RECIPES}
+            print(f"layer {model} {layer:5s} {tokens:5d}  per micro-batch ({' + '.join(keys)}) bf16 {t['bf16']:7.2f} mxfp8 "
+                  f"{t['mxfp8']:7.2f} nvfp4 {t['nvfp4']:7.2f} ms: mxfp8 {t['bf16'] / t['mxfp8']:5.2f}x nvfp4 "
+                  f"{t['bf16'] / t['nvfp4']:5.2f}x", flush=True)
 
 
 if __name__ == "__main__":
