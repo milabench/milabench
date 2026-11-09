@@ -62,7 +62,8 @@ megatron-glm5-fp4-test-n1-bf16` (GLM-5.3's config and tokenizer, 200,000 FineWeb
 `job.sbatch megatron-glm5-fp4-test-n1-bf16 megatron-glm5-fp4-test-n1-nvfp4 lt:megatron-glm5-fp4-test-n1-nvfp4-lt`
 (submit line at its top). The campaign ran this model on 2 nodes only (PP2), so the BF16 step time has no campaign
 reference at one node: that comparison is step 3's, on `megatron-glm5-tri-test-b200-n2-gbs32`. `job.sbatch` items:
-`exp:NAME` (`run.experiment` for the entries after it), `check:MODEL` (`nvfp4_check.py`), `lt:ENTRY` (cuBLASLt's trace),
+`exp:NAME` (`run.experiment` for the entries after it), `rep:N` (`run.repetition`, default 1), `check:MODEL`
+(`nvfp4_check.py`), `lt:ENTRY` (cuBLASLt's trace),
 and `src:DIR` as the first item, to run another checkout: it runs DIR's `main.py` and Megatron-LM, but `$G/src`'s
 benchmate (the venv's editable install).
 
@@ -315,6 +316,11 @@ against 19.33) and stays: the runs are not deterministic. Its gap to the first r
 than either recipe's (MXFP8 +0.27, NVFP4 +0.01), so with one repeat pair the 500-step comparison cannot tell BF16, MXFP8
 and NVFP4 apart. No run hit a NaN or diverged: all losses finite, every run's highest loss after step 50 between 7.97 and
 8.42, and all four end between 5.22 and 5.61.
+
+Three runs per recipe at seed 1234: five more 1-node jobs with the same entries, `job.sbatch exp:C-loss rep:N ENTRY`
+(`rep:` sets `run.repetition`): `rep:3 megatron-qwen3-32b-loss-bf16-n1`, `rep:2` and `rep:3` of `-loss-mxfp8-n1` and of
+`-loss-nvfp4-n1`, `--time=01:40:00` each as GLM-FP4-02. The four runs above all record `run.repetition` 1 (`job.sbatch`
+had no `rep:` then): 1272020 is BF16's second run by its entry name, `-loss-bf16-rep2-n1`.
 
 ## GLM-FP4-03: Qwen3 32B C-speed at 13 nodes (job 1272011, 2026-11-08 22:54-23:09, COMPLETED)
 
