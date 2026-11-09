@@ -6,3 +6,6 @@ export MLPERF_SYSTEM_NAME="Trillium B200 (8x B200-SXM-180GB)"
 export NCCL_TEST=0
 export OMPI_MCA_pml=ucx
 export OMPI_MCA_btl=^openib
+# Trillium binds each task of a step to its CPUs (task/affinity, task/cgroup) and gives a step 1 CPU per task without
+# -c: each rank (main process and its 8 data workers) gets the node's share instead, 96 / 8 = 12 cores
+export SRUN_CPUS_PER_TASK=$((SLURM_CPUS_ON_NODE / DGXNGPU))
