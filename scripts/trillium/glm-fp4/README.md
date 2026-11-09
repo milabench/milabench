@@ -293,6 +293,29 @@ CUDA graphs): BF16 6.948 s (2.3 % faster than without it), MXFP8 5.328 s (0.8 %)
 `--fp8-format` (`initialize.py` `_initialize_tp_communicators`), TE asks for them under NVFP4. The speed layout is CUDA
 graphs without it, for all three recipes: using the overlap for BF16 and MXFP8 only would skew the comparison.
 
+## GLM-FP4-02: Qwen3 32B C-loss, 500 steps (jobs 1272019-1272022, 2026-11-08 22:54 to 11-09 00:03, COMPLETED)
+
+`job.sbatch exp:C-loss megatron-qwen3-32b-loss-{bf16,bf16-rep2,mxfp8,nvfp4}-n1` at 887719c6, one node each (trig0115,
+0116, 0117, 0118), TP2 x PP2 x data parallel 2 without CUDA graphs, 32 x 8192 tokens per step, seed 1234, lr 3e-4,
+warm-up 50, cosine to 3e-5, 600,000 FineWeb documents at stride 4. Loss from the last stage's step rows (rank 4), step
+time from rank 0's (steps 3-500), peak allocated over the 8 ranks:
+
+| | BF16 | BF16 repeat (same seed) | MXFP8 | NVFP4 |
+|---|---|---|---|---|
+| loss at step 100 / 250 / 500 | 7.411 / 6.286 / 5.224 | 7.463 / 6.430 / 5.611 | 7.596 / 6.370 / 5.503 | 7.593 / 6.300 / 5.233 |
+| loss, mean of steps 401-500 | 5.341 | 5.713 | 5.610 | 5.350 |
+| minus BF16, steps 401-500 / 491-500 / step 500 | | +0.372 / +0.387 / +0.387 | +0.269 / +0.281 / +0.279 | +0.009 / +0.009 / +0.009 |
+| step time mean (median) | 7.945 s (7.991) | 7.819 s (7.850) | 5.280 s (5.276) | 5.076 s (5.081) |
+| peak allocated | 115.0 GiB | 115.0 GiB | 129.4 GiB | 112.2 GiB |
+| job time | 1:08:33 | 1:07:26 | 0:46:21 | 0:44:43 |
+
+The same-seed BF16 repeat is not identical: equal at steps 1 and 2, it differs at step 3 by 2e-4 (11.66043 against
+11.66063); through the early loss spikes of the warm-up (step 5 at 31.08 / 30.99) the difference grows (step 10: 17.97
+against 19.33) and stays: the runs are not deterministic. Its gap to the first run over steps 401-500, +0.37, is larger
+than either recipe's (MXFP8 +0.27, NVFP4 +0.01), so with one repeat pair the 500-step comparison cannot tell BF16, MXFP8
+and NVFP4 apart. No run hit a NaN or diverged: all losses finite, every run's highest loss after step 50 between 7.97 and
+8.42, and all four end between 5.22 and 5.61.
+
 ## GLM-FP4-03: Qwen3 32B C-speed at 13 nodes (job 1272011, 2026-11-08 22:54-23:09, COMPLETED)
 
 `job.sbatch exp:C-speed megatron-qwen3-32b-n13-{bf16,mxfp8,nvfp4}` at 887719c6 on
