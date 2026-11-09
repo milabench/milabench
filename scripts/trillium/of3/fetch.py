@@ -1,4 +1,4 @@
-"""Download the S3 keys listed in KEYS (one per line) from the public bucket openfold3-data to DEST/<key>, 16 at a time.
+"""Download the S3 keys listed in KEYS (one per line) from the public bucket openfold3-data to DEST/<key>, 64 at a time.
 A file already in DEST is skipped, so a rerun resumes. Prints the count and bytes fetched and the keys that failed.
 Usage: python fetch.py KEYS DEST"""
 import concurrent.futures as cf
@@ -30,7 +30,7 @@ def fetch(key):
 
 done = size = 0
 failed = []
-with cf.ThreadPoolExecutor(16) as ex:
+with cf.ThreadPoolExecutor(64) as ex:
     for key, n, err in ex.map(fetch, keys):
         if err:
             failed.append(f"{key}: {err}")
