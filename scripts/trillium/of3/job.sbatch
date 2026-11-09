@@ -36,6 +36,7 @@ STEPS=$1
 shift
 echo "[of3] job=$SLURM_JOB_ID nodes=$SLURM_JOB_NODELIST steps=$STEPS $(git -C $O/src rev-parse --short HEAD) ulimit -c $(ulimit -c)"
 run_nodes bash "$O/src/scripts/trillium/power_check.sh" || exit 4
+run_nodes bash -c 'echo "[of3] $(hostname -s): $(nvidia-smi --query-gpu=name,driver_version,enforced.power.limit --format=csv,noheader | sort | uniq -c | xargs)"'
 status_all=0
 for variant in "$@"; do
     run=$O/runs/of3.$SLURM_JOB_ID.$variant
