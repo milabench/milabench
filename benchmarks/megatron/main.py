@@ -165,8 +165,8 @@ def configure_model(model_cfg, args, spec: dict, hf_path: str):
 
 def model_params(models) -> tuple[int, int]:
     """(parameters, trainable parameters) of one model copy, a collective: the dense ones of each stage counted on its
-    first data-parallel rank, the experts (``allreduce`` False) on the first expert data-parallel rank of each expert
-    group, so that replicas count once."""
+    first data-parallel and first context-parallel rank (CP ranks hold the same weights), the experts (``allreduce``
+    False) on the first expert data-parallel rank of each expert group, so that replicas count once."""
     import torch.distributed as dist
     from megatron.core import parallel_state as ps
 
@@ -177,11 +177,12 @@ def model_params(models) -> tuple[int, int]:
             local[expert] += param.numel()
             if param.requires_grad:
                 local[2 + expert] += param.numel()
-    info = (ps.get_data_parallel_rank(), ps.get_expert_data_parallel_rank(), *local)
+    info = (ps.get_data_parallel_rank(), ps.get_context_parallel_rank(), ps.get_expert_data_parallel_rank(), *local)
     every = [None] * dist.get_world_size()
     dist.all_gather_object(every, info)
-    total = sum(r[2] for r in every if r[0] == 0) + sum(r[3] for r in every if r[1] == 0)
-    active = sum(r[4] for r in every if r[0] == 0) + sum(r[5] for r in every if r[1] == 0)
+    first = [r for r in every if r[0] == 0 and r[1] == 0]
+    total = sum(r[3] for r in first) + sum(r[4] for r in every if r[2] == 0)
+    active = sum(r[5] for r in first) + sum(r[6] for r in every if r[2] == 0)
     return total, active
 
 
@@ -545,7 +546,9 @@ def run_start(args, trainable_fraction):
             "params_trainable_fraction": trainable_fraction,
             "params_total": RUN["params_total"], "params_active": RUN["params_active"],
             "seq_len": args.seq_length, "microbatch_sequences": args.micro_batch_size, "grad_accum": grad_accum,
-            "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum,
+            # the tokens of a data-parallel replica, which its TP and PP ranks all process; a CP rank holds 1/CP of each
+            # sequence
+            "tokens_per_gpu_per_step": args.micro_batch_size * args.seq_length * grad_accum // args.context_parallel_size,
             "global_batch_tokens": args.global_batch_size * args.seq_length,
             "precision": precision(args)[0], "precision_detail": precision(args)[1],
             # the gradient buffers' dtype is the one reduced across data parallel

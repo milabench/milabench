@@ -176,8 +176,9 @@ parameters, 30.5 GiB each per GPU (16.38 B parameters per TP rank), over the dat
 16 on 4), counted as rings: (N - 1) / N x 30.5 GiB per node per collective and TP rank. CP8 p2p, 2 nodes: 2 rings (TP) x
 64 layers x 4 micro-batches x 2 crossings x 28 chunks of 32 MiB = 896 GiB, 448 per node, plus 107 of gradients. Rank 0's
 profile agrees with the per-rank count: 96 / 224 / 480 GiB of K/V sent per step at CP4 / CP8 / CP16 (`record_param_comms`),
-30.5 GiB in the gradient reduce-scatter. The measured bytes are 0.5-3.5 % above the count in every layout (the counters
-are read at the node monitor's 1 s samples nearest the window's ends, scaled to the window).
+30.5 GiB in the gradient reduce-scatter. The measured bytes are within 3.5 % of the count in every layout: 0.5-3.5 % above,
+0.6 % below for CP8 x DP2 on 4 nodes (the counters are read at the node monitor's 1 s samples nearest the window's ends,
+scaled to the window).
 
 Where the time goes (rank 0, the profiled step, kernel time by class; "CP exchange": NCCL SendRecv kernels, the p2p rings
 and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU idle):
@@ -220,21 +221,23 @@ and a2a+p2p's all-to-all; "alone": no other kernel running; "no kernel": the GPU
   a2a+p2p, no recompute) in 80-87 % at 857-886 W, with median SM clocks of 1,537-1,627 MHz against 1,432-1,466 for CP4 x DP
   and CP8 p2p: there the network, not the power cap, sets the step. CP4 x DP4 selective: 61 %, 714 W (the allocator). No Xid.
 - MXFP8 at 128k (1 node): 22.56 against 25.00 s, 1.11x (8k: 1.32x at 13 nodes): its GEMMs take 2.87 s instead of 5.32, and
-  attention, BF16 in both, is 74 % of its step. Peak 146.2 GiB.
-
-## The 1-node 128k step: 24.25 s in step 1, 25.0 s in step 2
+  attentio## The 1-node 128k step: 24.25 s in step 1, 25.0 s in step 2
 
 Not the node: the same entry (`megatron-qwen3-32b-cp-n1-128k-p2p-full`, learning rate 1e-6, 20 steps) took 25.239 s on
 trig0121 (job 1273446) and 25.111 s on trig0145 (job 1273448), 0.5 % apart; step 2's profiled run on trig0145 took 24.999
-s. Step 1's 24.25 s is the 50-step loss run (trig0121), the only one at learning rate 3e-4: its steps fall from 24.82 s at
-step 3 (warm-up) to 24.2-24.3 s from step 5. All runs are power-capped (99-100 % of samples, 976-984 W); the loss run's
-GPUs ran at a median of 1,485 MHz at that power, against 1,432-1,447 MHz at 1e-6: the weights the higher learning rate
-moves change the values computed, and the power each kernel draws (likely, not measured per kernel).
-Checked on one node (`megatron-qwen3-32b-cp-n1-128k-lr3e-4`, the loss settings for 12 steps, job 1273463, trig0145):
-steps 5-12 take 23.859 s at 3e-4 against 25.122 s at 1e-6 on the same node (job 1273448), 5.3 % apart, at the same power
-(978 against 976 W, capped in 99.8 / 99.1 % of samples) with median SM clocks of 1,507 against 1,447 MHz. So the 1-node
-gap is the learning rate, through the power cap; node to node it is 0.5-1.6 % (trig0121 and trig0145). Every speed entry
-here, as the campaign's, runs at a constant 1e-6: at 128k its step times are about 5 % above those of training at 3e-4
+s. Step 1's 24.25 s is the 50-step loss run (job 1273065, trig0121), at learning rate 3e-4: its steps fall from 24.82 s at
+step 3 (warm-up) to 24.2-24.3 s from step 5. Two same-node pairs, one run per arm, in separate jobs:
+
+| node | 1e-6 | 3e-4 | 1e-6 slower by | median SM clock, 1e-6 / 3e-4 | mean power, 1e-6 / 3e-4 |
+|---|---|---|---|---|---|
+| trig0121 | 25.239 s (1273446, steps 3-20) | 24.252 s (1273065, the loss run, steps 3-50) | 4.1 % | 1,432 / 1,485 MHz | 984 / 979 W |
+| trig0145 | 25.122 s (1273448, steps 5-12) | 23.859 s (1273463, `-128k-lr3e-4`, the loss settings for 12 steps, steps 5-12) | 5.3 % | 1,447 / 1,507 MHz | 976 / 978 W |
+
+The steps are 4-5 % slower at 1e-6, consistent with lower clocks at the same power (every run is capped in 99-100 % of
+samples): a mechanism inferred, not measured per kernel (the values the higher learning rate produces would draw less
+power). Every speed entry here, as the campaign's, runs at a constant 1e-6.
+
+5 % above those of training at 3e-4
 (one comparison).
 
 ## 32k across nodes, and the 13-node row
