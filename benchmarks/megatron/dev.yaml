@@ -1297,7 +1297,12 @@ megatron-glm5-fp4-test-n1-bf16:
 megatron-glm5-fp4-test-n1-nvfp4:
   inherits: _fp4_test_n1
   argv: {<<: *tri_nvfp4, --num-layers-at-end-in-bf16: 1}
+# the campaign's MXFP8 on the same model: its memory per quantized parameter against NVFP4's
+megatron-glm5-fp4-test-n1-mxfp8:
+  inherits: _fp4_test_n1
+  argv: {<<: *tri_mxfp8}
 # the NVFP4 one for 3 steps, for cuBLASLt's trace (glm-fp4/job.sbatch lt:ENTRY): which GEMMs ran in E2M1
 megatron-glm5-fp4-test-n1-nvfp4-lt:
   inherits: megatron-glm5-fp4-test-n1-nvfp4
-  argv: {--train-iters: 3}
+  # warm-up below the decay steps (Megatron asserts it, job 1270151)
+  argv: {--train-iters: 3, --lr-warmup-iters: 1}
