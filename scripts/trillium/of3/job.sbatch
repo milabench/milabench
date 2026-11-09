@@ -7,7 +7,8 @@
 # initial_training.yml (the published first stage on the data.sh subset) merged with the variant (merge.py), run by
 # train.py (run_openfold train plus a per-step log). Per run in $O/runs/of3.<job>.<variant>: runner.yml, train.log,
 # steps-r<rank>.jsonl, nodemon/ (benchmate's node monitor: GPU power and clocks, CPU clocks, InfiniBand bytes), nccl/
-# (NCCL's INIT and NET log per process). Core dumps off.
+# (NCCL's INIT and NET log per process); with variant prof, prof/ (each node's local rank 0 trace) and prof.txt (prof.py
+# on the first node's trace). Core dumps off.
 # Submit from a login node, the lane's nodes in --nodelist, a job name nw-of3-...:
 #   /opt/slurm/bin/.sbatch --export=NONE --get-user-env --job-name=nw-of3-s1 --account=rrg-bengioy-ad \
 #     --partition=compute_b200_full_node --reservation=b200-friendly-users --qos=bump --nodes=1 --ntasks-per-node=8 \
@@ -52,6 +53,8 @@ for variant in "$@"; do
     status=$?
     kill $monitor; wait $monitor
     [ $status != 0 ] && status_all=$status
+    trace=$(ls "$run"/prof/*.pt.trace.json 2>/dev/null | head -1)
+    [ -n "$trace" ] && srun --export=ALL --overlap --propagate=CORE --nodes=1 --ntasks=1 $PY "$S/prof.py" "$trace" > "$run/prof.txt" 2>&1
     echo "[of3] $variant: $([ $status = 0 ] && echo PASS || echo "FAIL ($status)") $(( $(date +%s) - start )) s, $(cat "$run"/steps-r*.jsonl 2>/dev/null | grep -c '"step"') step lines"
 done
 exit $status_all

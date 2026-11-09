@@ -4,7 +4,8 @@ the time from the previous step's end to this step's start (`gap_s`: waiting for
 previous step), the recycles drawn, the gradient sync (`sync_s`: grad_manager.sync_and_average_grads, from its call
 with the GPU idle to its end: waiting for the slowest rank, then the all-reduces; the fastest rank's is the all-reduce
 itself), the loss, the sample's size and the peak allocated and reserved GPU memory so far. OpenFold3 only logs to
-wandb, every log_every_n_steps."""
+wandb, every log_every_n_steps. With OpenFold3's profiler on (variant prof), only each node's local rank 0 traces (a
+trace is about 1.4 GB per rank and 2 steps)."""
 import json
 import os
 import time
@@ -60,6 +61,8 @@ callbacks = experiment_runner.TrainingExperimentRunner.callbacks.func
 prop = cached_property(lambda self: callbacks(self) + [StepLog(os.environ["OF3_STEPLOG"])])
 prop.__set_name__(experiment_runner.TrainingExperimentRunner, "callbacks")
 experiment_runner.TrainingExperimentRunner.callbacks = prop
+build = experiment_runner.ExperimentRunner._build_profiler
+experiment_runner.ExperimentRunner._build_profiler = lambda self: build(self) if os.environ["SLURM_LOCALID"] == "0" else None
 
 if __name__ == "__main__":
     cli()
