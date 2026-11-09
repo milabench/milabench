@@ -96,7 +96,8 @@ for s in steps:
     print(f"{s['name']}: CPU {s['dur'] / 1e6:.3f} s, GPU span {span / 1e6:.3f} s, busy {busy / 1e6:.3f} s"
           f" ({busy / span:.1%} of the span); {len(kernels)} kernels, median {kernels[len(kernels) // 2]:.1f} us,"
           f" {sum(k < 10 for k in kernels) / len(kernels):.0%} under 10 us; launch calls {sum(launches) / 1e6:.3f} s on the CPU")
-    print(f"  NCCL {union(nccl) / 1e6:.3f} s, not overlapped {exposed / 1e6:.3f} s")
+    print(f"  NCCL {union(nccl) / 1e6:.3f} s, not overlapped {exposed / 1e6:.3f} s; NCCL kernels in order, ms (the first ones"
+          f" also wait for the slowest rank): " + " ".join(f"{(b - a) / 1e3:.1f}" for a, b in sorted(nccl)))
     print("  by kernel class: " + ", ".join(f"{k} {v / 1e6:.3f} s ({v / total:.0%})" for k, v in by_kind.most_common()))
     compute = sum(by_part.values())
     print("  compute kernels by part: " + ", ".join(f"{k} {v / 1e6:.3f} s ({v / compute:.0%})" for k, v in by_part.most_common()))
