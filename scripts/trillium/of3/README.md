@@ -85,25 +85,26 @@ not persistent). What does repeat is the files: the subset's 9 GB stays in a nod
 (imports, dataset caches, 128 workers; plus 7.4 min the first time DeepSpeed's kernel is built), then 4-6 s per step.
 All 8 GPUs, batch 1 per GPU,
 bf16-mixed, 16 workers per GPU. Same seed, so every run trains on the same sample at each step: the variants compare
-step by step. Step period: time between successive step ends on rank 0 (`summary.py`, steps 7 to the end); ratio: the
-median over those steps of the variant's period over the published run's at the same step. Peak memory over all ranks.
+step by step. Throughput by wall clock: (t of the last step - t of step 6) / steps between, from rank 0's step ends
+(`summary.py`); the median step period beside it; ratio: the variant's wall clock over published's over the same steps
+6-40 (published: 5.314 s there). Peak memory over all ranks.
 Power, clocks and use: benchmate's node monitor over the same steps.
 
-| run (job) | steps | period median (p10-p90) | samples/s per GPU | ratio | peak alloc / reserved | loss, mean of ranks |
+| run (job) | steps | s per step, wall clock (median, p10-p90) | samples/s per GPU | ratio | peak alloc / reserved | loss, mean of ranks |
 |---|---|---|---|---|---|---|
-| published (1273594) | 100 | 5.207 s (4.43-6.06) | 0.192 | 1 | 31.5 / 33.5 GiB (28.9 by step 40) | steps 1-10 12.32, 91-100 8.54 |
-| `+tf32` (1273674) | 40 | 5.010 s | 0.200 | 0.937 | 28.9 / 30.6 | 31-40 10.38 |
-| `triton` (1273611) | 40 | 5.113 s | 0.196 | 0.979 | 28.9 / 30.6 | 31-40 10.39 |
-| `ds` (1273611) | 40 | 4.698 s | 0.213 | 0.875 | 28.9 / 30.5 | 31-40 10.38 |
-| `cueq+tf32` (1273674) | 40 | 4.262 s (3.62-4.79) | 0.235 | 0.788 | 28.9 / 30.6 | 31-40 10.39 |
-| `cueq-ds+tf32` (1273674) | 40 | 4.199 s | 0.238 | 0.788 | 28.9 / 30.6 | 31-40 10.39 |
+| published (1273594) | 100 | 5.252 s (5.207, 4.43-6.06) | 0.1904 | 1 | 31.5 / 33.5 GiB (28.9 by step 40) | steps 1-10 12.32, 91-100 8.54 |
+| `+tf32` (1273674) | 40 | 5.008 s (5.010) | 0.1997 | 0.942 | 28.9 / 30.6 | 31-40 10.38 |
+| `triton` (1273611) | 40 | 5.223 s (5.113) | 0.1915 | 0.983 | 28.9 / 30.6 | 31-40 10.39 |
+| `ds` (1273611) | 40 | 4.673 s (4.698) | 0.2140 | 0.879 | 28.9 / 30.5 | 31-40 10.38 |
+| `cueq+tf32` (1273674) | 40 | 4.254 s (4.262, 3.62-4.79) | 0.2351 | 0.801 | 28.9 / 30.6 | 31-40 10.39 |
+| `cueq-ds+tf32` (1273674) | 40 | 4.229 s (4.199) | 0.2364 | 0.796 | 28.9 / 30.6 | 31-40 10.39 |
 | `cueq`, `cueq-ds` (1273611) | 0 | fail in the first backward | | | | |
 
 - Kernels on B200 (`sm_100`): all run. The published config uses none of them (plain PyTorch triangle attention and
   multiplication, FP32 matmuls without TF32). cuEquivariance's triangle attention refuses an FP32 backward unless TF32
   is on ("Full precision FP32 backward pass for triangle attention is not implemented yet"), so it needs
-  `--use_tf32 True`, itself 6 % faster; cuEquivariance then takes another 15 % (0.788 against FP32). DeepSpeed's
-  Evoformer attention: 12.5 %; with cuEquivariance it adds nothing (cuEquivariance takes the calls first). OpenFold3's
+  `--use_tf32 True`, itself 6 % faster; cuEquivariance then takes another 15 % (0.801 against FP32). DeepSpeed's
+  Evoformer attention: 12 %; with cuEquivariance it adds little (0.796) (cuEquivariance takes the calls first). OpenFold3's
   Triton kernels: 2 %, and they warn that their tuning is AMD's. cuEquivariance falls back to PyTorch for crops of
   100 tokens or fewer and for head widths it does not handle (which calls fall back: not measured, the step-2 profile).
   Losses agree to 0.01 at step 40; peak memory does not change.
@@ -159,7 +160,7 @@ What the mix changes:
   rows (`subsample_all_msa`), so a sample's cost moves with its atoms and the recycles drawn: per rank, forward and
   backward = 3.85 s + 0.14 s per 1,000 atoms + 0.47 s per recycle (R2 0.92, 712 rank-steps of the 1-node profile run,
   profiler overhead included). Large assemblies and other PDB entries cost the same (5.17 and 5.18 s median), monomers
-  5 % less. 1-node step: 5.207 s on the step-1 subset, 5.195 s on the uniform one.
+  5 % less. 1-node step by wall clock: 5.252 s on the step-1 subset (100 steps), 5.244 s on the uniform one (40).
 - Data loader: the giant assemblies are what the loader finds hard. On the step-1 subset the 4-node job (1273810,
   trig[0101-0104]) had no first step after 9 min: 30 ranks waited in NCCL (GPUs at 100 % use, 255 W) for ranks 16 and
   23 (trig0103), whose workers were in OpenFold3's MSA processing of PDB samples (`create_main`, `calculate_profile`,
@@ -171,13 +172,16 @@ What the mix changes:
 
 ### Scaling, published and cuEquivariance + TF32 (uniform subset, 40 steps, no profiler)
 
-| nodes (job, nodes) | published period | samples/s per GPU | cueq+tf32 period | samples/s per GPU | ratio |
-|---|---|---|---|---|---|
-| 1 (1273887, trig0145) | 5.195 s | 0.192 | 4.269 s | 0.234 | 0.818 |
-| 2 (1273885, trig[0105-0106]) | 5.524 s | 0.181 (94 %) | 4.402 s | 0.227 (97 %) | 0.792 |
-| 4 (1273884, trig[0101-0104]) | 5.708 s | 0.175 (91 %) | 4.536 s | 0.220 (94 %) | 0.807 |
+Wall clock, (t40 - t6) / 34 of rank 0's step ends, the median step period in brackets; per-GPU throughput against
+1 node in brackets; ratio of the wall clocks.
 
-`ds` (DeepSpeed's attention), 1 node: 4.594 s, ratio 0.870. Losses of each variant against published on the same
+| nodes (job, nodes) | published s per step | samples/s per GPU | cueq+tf32 s per step | samples/s per GPU | ratio |
+|---|---|---|---|---|---|
+| 1 (1273887, trig0145) | 5.244 (5.195) | 0.1907 | 4.284 (4.269) | 0.2334 | 0.817 |
+| 2 (1273885, trig[0105-0106]) | 5.467 (5.524) | 0.1829 (95.9 %) | 4.367 (4.402) | 0.2290 (98.1 %) | 0.799 |
+| 4 (1273884, trig[0101-0104]) | 5.618 (5.708) | 0.1780 (93.3 %) | 4.593 (4.536) | 0.2177 (93.3 %) | 0.818 |
+
+`ds` (DeepSpeed's attention), 1 node: 4.617 s (4.594), 0.2166 samples/s per GPU, ratio 0.880. Losses of each variant against published on the same
 samples: within 0.01 over 40 steps. The data loader's gap: 3.5-4.8 % at every size.
 
 InfiniBand bytes sent per node and step (nodemon, timing runs), against one 1.473 GB all-reduce: 2 nodes 1.489 GB on
@@ -201,14 +205,14 @@ profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes
 - The all-reduce: the 1.473 GB buffer takes 17.9 and 18.2 ms (82 GB/s algorithm bandwidth), 0.3 % of the step; the
   count all-reduces 0.1-1.5 ms, the first of them also absorbing the wait for the slowest rank. The whole gradient sync
   on the last rank to arrive (train.py's timing: copies, all-reduces, per-parameter averaging) is 0.26, 0.21 and
-  0.22 s at 1, 2 and 4 nodes: InfiniBand adds nothing visible over NVLink. The per-GPU loss with nodes (6 and 9 % for
-  published) is the wait for the slowest of more samples (est.: the period grows while the sync stays flat).
+  0.22 s at 1, 2 and 4 nodes: InfiniBand adds nothing visible over NVLink. The per-GPU loss with nodes (4.1 and 6.7 % for
+  published, by wall clock) is the wait for the slowest of more samples (est.: the period grows while the sync stays flat).
 - The GPU's idle time (16 % by nodemon in the timing run): in the traced steps, 0.34 s of gaps under 10 us between
   kernels, 1.8-1.9 s of 10-100 us gaps, 0.1 s of 0.1-1 ms, 0.14-0.43 s over 1 ms (`prof.py` bins gaps by length
   only). Inferred: the CPU issues one small kernel after another and the GPU waits for the launches, and the gaps over
   1 ms are the gradient sync's copies and Python loop and the `.item()` syncs; measured: the all-reduce (18 ms) and
   the data loader's gap (0.11 s) are minor. With cuEquivariance (2 nodes) kernel time falls
-  from 5.07 to 2.98 s per traced step, and GPU use from 83 to 65-68 %: the step gains only 18-21 %.
+  from 5.07 to 2.98 s per traced step, and GPU use from 83 to 65-68 %: the step gains only 18-20 % (wall clock).
 - DeepSpeed's attention (1 node): its kernels take 0.79 s, elementwise falls from 1.73 to 0.76 s.
 
 ### Precision
@@ -219,7 +223,7 @@ attention encoder (autocast to float32), the confidence heads' pairformer (`pair
 `run_openfold train` leaves TF32 off (`--use_tf32` False), so those FP32 matmuls run as SIMT SGEMM, without tensor
 cores (`cutlass3x_sm100_simt_sgemm_f32`): 0.59-0.60 s per profiled step, 12-14 % of the GPU's kernel time.
 `--use_tf32 True` (`torch.set_float32_matmul_precision("high")`) puts them on TF32 tensor cores (0.14 s in the
-cuEquivariance profile) and sets OpenFold3's Triton dot precision to TF32: 0.937 of the published step alone.
+cuEquivariance profile) and sets OpenFold3's Triton dot precision to TF32: 0.942 of the published step alone.
 
 cuEquivariance's triangle attention refuses an FP32 backward ("Full precision FP32 backward pass for triangle attention
 is not implemented yet! Please set torch.backends.cuda.matmul.allow_tf32=True"): the FP32 inputs come from the
@@ -239,14 +243,15 @@ Loss over 100 steps, 1 node, same samples (step-1 subset; mean over ranks, per 1
 Two published runs drift apart as much as cuEquivariance + TF32 does from published: the difference is inside the
 run-to-run noise over 100 steps (one run each).
 
-DeepSpeed's attention needs no TF32 and agrees with published to 0.01 over 40 steps, for 0.870-0.875 of the
-step at 1 node; cuEquivariance + TF32 gives 0.79-0.82. For runs at scale: DeepSpeed as the fast variant without a
+DeepSpeed's attention needs no TF32 and agrees with published to 0.01 over 40 steps, for 0.873-0.880 of the
+published step by wall clock (1 and 13 nodes); cuEquivariance + TF32 gives 0.80-0.82. For runs at scale: DeepSpeed as the fast variant without a
 compromise, cuEquivariance + TF32 as the fastest, named as one.
 
 ### Fine-tuning stage 1 (crop 640, 32 diffusion samples), 1 node (1273762, trig0151, step-1 subset)
 
-Published 12.93 s per step (with train.py's gradient-sync timing, a few % slow), 0.077 samples/s per GPU, peak
-47.2 GiB allocated, GPUs 721 W and 93 % used; cuEquivariance + TF32 6.95 s (0.546 of the step: triangle attention grows
+Published 12.578 s per step by wall clock (median 12.93; with train.py's gradient-sync timing, a few % slow), 0.0795
+samples/s per GPU, peak
+47.2 GiB allocated, GPUs 721 W and 93 % used; cuEquivariance + TF32 7.001 s (median 6.95; 0.557 of the step: triangle attention grows
 with the cube of the crop), 46.1 GiB, 606 W, 85 %. Loss within 0.02 over 40 steps.
 
 ### Kernel messages
@@ -275,15 +280,17 @@ monomers, or `sample_in_order: false` (a compromise).
 ## OF3-01 (13 nodes, job 1274059, trig[0101-0113], 2026-11-09 08:22-08:59, commit 0d9484c0)
 
 `job.sbatch 40 uniform uniform,ds uniform,cueq+tf32 uniform,prof`, 104 ranks, `subset-u2` (4,330 monomers), all four
-PASS. `summary.py`, steps 7-40 (the profile run without steps 26-30):
+PASS. `summary.py`: throughput by wall clock, (t40 - t6) / 34 of rank 0's step ends; in brackets, seconds per step
+by wall clock, then the median step period (steps 7-40):
 
-| samples/s per GPU (period) | 1 node | 2 nodes | 4 nodes | 13 nodes | 13 against 1 |
+| samples/s per GPU | 1 node | 2 nodes | 4 nodes | 13 nodes | 13 against 1 |
 |---|---|---|---|---|---|
-| published | 0.192 (5.195 s) | 0.181 (5.524) | 0.175 (5.708) | 0.168 (5.967) | 87 % |
-| ds | 0.218 (4.594) | | | 0.190 (5.264) | 87 % |
-| cueq+tf32 | 0.234 (4.269) | 0.227 (4.402) | 0.220 (4.536) | 0.213 (4.695) | 91 % |
+| published | 0.1907 (5.244; 5.195) | 0.1829 (5.467; 5.524) | 0.1780 (5.618; 5.708) | 0.1687 (5.927; 5.967) | 88.5 % |
+| ds | 0.2166 (4.617; 4.594) | | | 0.1934 (5.172; 5.264) | 89.3 % |
+| cueq+tf32 | 0.2334 (4.284; 4.269) | 0.2290 (4.367; 4.402) | 0.2177 (4.593; 4.536) | 0.2094 (4.775; 4.695) | 89.7 % |
 
-In all: 17.4, 19.8 and 22.2 samples/s. `ds`'s first step took 118 s (its extension loaded by 104 ranks). Peak 33.6 GiB
+The three scale alike: 93.3 % at 4 nodes for published and cueq+tf32, 88.5-89.7 % at 13. In all: 17.55, 20.11 and
+21.78 samples/s. `ds`'s first step took 118 s (its extension loaded by 104 ranks). Peak 33.6 GiB
 allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 over the last 10 steps.
 
 - Data loader: the gap before a step 4.3-5.3 % of the time (mean over ranks; worst rank 5.2-6.5 %). Featurization per
@@ -295,19 +302,22 @@ allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 ov
   plus one more featurization in a worker, inside the prefetch.
 - Gradient sync (profile run, last rank to arrive): 0.221 s, as at 4 nodes (0.219). The 1.473 GB all-reduce kernel:
   18.6 and 18.4 ms (17.9 and 18.2 at 4 nodes); the first count all-reduce holds rank 0's wait for the slowest rank
-  (0.50 and 0.19 s). The per-GPU loss from 1 to 13 nodes (13 % for
-  published) is the wait for the slowest of 104 samples (est.), not the network.
+  (0.50 and 0.19 s). The per-GPU loss from 1 to 13 nodes (11.5 % for
+  published by wall clock, 10.3-10.7 % for the others) is the wait for the slowest of 104 samples (est.), not the
+  network.
 - InfiniBand sent per node and step (timing runs): 1.493 GB on one node, 2.239-2.240 GB on two, 2.986 GB on ten;
-  35.83 GB in all, 24.3 x 1.473 GB against the double binary tree's 2 (N - 1) = 24 (+1.3 %). The profile run +3-5 %
-  (its traces written to VAST through the same ports, est.).
+  35.83 GB in all, 24.3 x 1.473 GB against the double binary tree's 2 (N - 1) = 24 (+1.3 %). The profile run
+  +1.3-2.7 % over them with exact step boundaries: about one 1.4 GB trace per node written to VAST over 34 steps
+  (est.).
 - GPUs: 573 W mean (published), 532 (ds), 454 (cueq+tf32); SM clock median 1,965 MHz in all; use 85, 83, 69 %.
   CPU: busy cores at 3,200 MHz median, 3,084-3,134 minimum: no drop.
 - Profile at 13 nodes, rank 0, published, traced steps 27 / 28: elementwise 1.73 / 1.45 s, copies 0.81 / 0.72, layer
   norm 0.62 / 0.53, FP32 SIMT GEMM 0.60 / 0.58, BF16 GEMM 0.38 / 0.33, softmax 0.29 / 0.27; triangle attention 36-38 %
   of compute kernels, diffusion 23-25 %; 193,989 / 179,342 kernels; 1.89 / 1.86 s of 10-100 us gaps. Step 27 matches
-  4 nodes within 0.01 s in every class; step 28 differs with its sample (rank 0 draws other samples at other sizes).
+  4 nodes within 0.01 s in every compute class, though the two traced different samples (7lhv, 2,191 atoms, here;
+  4xit, 1,869 atoms, at 4 nodes); NCCL does not: 0.522 against 0.071 s, rank 0's wait for the slowest rank.
 - Nodemon near each run's end (about 210 W, 0 % use): after the run's last step, outside the step window the numbers
-  above use (1.6-2.3 % of in-window samples have 0 % use): Lightning's teardown and exit, then prof.py (profile run)
+  above use (1.2-2.2 % of in-window samples, all nodes, have 0 % instantaneous use): Lightning's teardown and exit, then prof.py (profile run)
   or the next run's 4-min start. Each run's sampler was also left running until the job's end (job.sbatch killed the
   function's subshell, not its srun; fixed after this job), writing into its own run directory: no effect on the
   per-run windows.
