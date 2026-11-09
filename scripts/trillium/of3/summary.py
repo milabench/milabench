@@ -102,7 +102,7 @@ if samples:
 
 
 def window(kind):
-    rows = []
+    header, rows = None, []
     for f in glob.glob(str(run / f"nodemon/nodes/*.{kind}.tsv")):
         for row in csv.reader(open(f), delimiter="\t"):
             if row and row[0].isdigit() and t0 <= int(row[0]) <= t1:
