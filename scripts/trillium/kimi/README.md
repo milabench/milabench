@@ -591,7 +591,13 @@ at a later stream sync, so the kernel is not known; its engine died and the rema
 The job's kernel log shows no Xid, but that log is the batch host's (`trig0101`): `trig0108` was not checked. Review 3
 found no configuration limit exceeded (256 per engine under 512, decode within the capture sizes, KV 45% used); what is
 new is 65,536 tokens gathered per MoE layer, so routing skew or a race are the candidates (medium-low confidence). Before
-that the pass ran at about 1 s per decode step. Not determined; inferred, not
+that the pass ran at about 1 s per decode step.
+
+**It repeats: software.** `kimi-vllm-4n-dp4tp8-ep32-conc1024` (the warm-up and conc1024 only), job 1271958,
+`trig[0101-0103,0107]` (no `trig0108`), 2026-11-08 22:45:40-22:56:10, from a second base (`$SCRATCH/trillium/new/k3-xn2`,
+its own checkout, while K3-XN-01 ran from `k3-xn/src`): "CUDA error: an illegal memory access" at 22:55:12 on
+`Worker_DP1_TP0_EP8` (`trig0102`, GPU 0), and again exactly 953 requests done and 1095 failed, TPOT p50 1082 ms, TTFT p50
+17.2 s; all four nodes "GPUs free". The same pass on other GPUs and nodes fails the same way: not `trig0108`. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
 during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
 nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
