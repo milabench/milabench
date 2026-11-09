@@ -198,8 +198,11 @@ class FineWebPackedDataset(torch.utils.data.Dataset):
     by the next ones (separated by EOS) so the slot is always full and the tensor shapes stay fixed. Documents wrap
     around when the subset is smaller than what the run consumes."""
 
-    def __init__(self, samples: int, seq_length: int, docs: int, hf_path: str, data: dict):
+    def __init__(self, samples: int, seq_length: int, docs: int, hf_path: str, data: dict, thd: bool = True):
         assert seq_length % docs == 0, "seq-length must be a multiple of data.docs_per_sample"
+        # thd False (Megatron without --dataloader-inter-document-masking): no cu_seqlens, one causal mask over the whole
+        # sample (sbhd). TP rank 0 would keep the dataset's cu_seqlens and run THD while the other TP ranks run sbhd
+        self.thd = thd
         from benchmate.fineweb import load_fineweb
         from transformers import AutoTokenizer
 
@@ -244,16 +247,16 @@ class FineWebPackedDataset(torch.utils.data.Dataset):
         # inputs and labels are shifted inside each slot: no label crosses a document boundary
         tokens = torch.tensor([t for s in slots for t in s[:-1]], dtype=torch.int64)
         labels = torch.tensor([t for s in slots for t in s[1:]], dtype=torch.int64)
-        cu = torch.arange(0, self.seq + 1, self.doc_len, dtype=torch.int32)
-        return {
+        sample = {
             "tokens": tokens,
             "labels": labels,
             "loss_mask": torch.ones(self.seq, dtype=torch.float32),
             "position_ids": torch.arange(self.doc_len).repeat(self.docs),
-            "cu_seqlens": cu,
-            "cu_seqlens_padded": cu.clone(),
-            "max_seqlen": torch.tensor(self.doc_len, dtype=torch.int32),
         }
+        if self.thd:
+            cu = torch.arange(0, self.seq + 1, self.doc_len, dtype=torch.int32)
+            sample.update(cu_seqlens=cu, cu_seqlens_padded=cu.clone(), max_seqlen=torch.tensor(self.doc_len, dtype=torch.int32))
+        return sample
 
 
 def build_dataset_provider(docs: int, hf_path: str, data: dict):
@@ -261,7 +264,8 @@ def build_dataset_provider(docs: int, hf_path: str, data: dict):
 
     def provider(train_val_test_num_samples, vp_stage=None):
         args = get_args()
-        train = FineWebPackedDataset(train_val_test_num_samples[0], args.seq_length, docs, hf_path, data)
+        train = FineWebPackedDataset(train_val_test_num_samples[0], args.seq_length, docs, hf_path, data,
+                                     thd=args.dataloader_inter_document_masking)
         RUN["dataset"] = train
         return train, None, None
 
@@ -1005,7 +1009,7 @@ def drop(argv: list[str], name: str, value: bool = False) -> list[str]:
     return out
 
 
-LIST_FLAGS = ("--recompute-modules",)
+LIST_FLAGS = ("--recompute-modules", "--hierarchical-context-parallel-sizes")
 
 
 def split_lists(argv: list[str]) -> list[str]:

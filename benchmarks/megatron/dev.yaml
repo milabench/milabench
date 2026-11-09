@@ -1598,3 +1598,78 @@ megatron-qwen3-32b-n13-nvfp4:
   inherits: megatron-qwen3-32b-n4-tp2-cg-nvfp4
   num_machines: 13
   argv: {<<: *qwen3_n13}
+
+# --- QW-CP: Qwen3 32B at long context with context parallelism (scripts/trillium/qw-cp/README.md) ---------------------
+# One causal mask over each whole sequence: one slot per sample (data.docs_per_sample 1: FineWeb documents joined with EOS)
+# in Megatron's sbhd input (no --dataloader-inter-document-masking, so no cu_seqlens: TE 2.18 refuses THD with the
+# hierarchical a2a+p2p). Slots start 256 documents apart (a 128k slot holds about 190). RoPE as the 8k entries (base 1e6;
+# Qwen3's YaRN for 128k changes the frequencies, not the compute). TP2 (sequence parallel) x CP4 on one node, no pipeline,
+# 32,768 tokens per GPU per step as the 8k entries: 8 x 32k, 4 x 64k or 2 x 128k sequences
+_qwcp:
+  inherits: _qwen3_32b
+  data:
+    docs_per_sample: 1
+    doc_stride: 256
+  argv:
+    --dataloader-inter-document-masking: null
+    --no-create-attention-mask-in-dataloader: true
+    --pipeline-model-parallel-size: 1
+    --context-parallel-size: 4
+    --cp-comm-type: p2p
+    --seq-length: 32768
+    --max-position-embeddings: 32768
+    --global-batch-size: 8
+_qwcp_128k: &qwcp_128k
+  --seq-length: 131072
+  --max-position-embeddings: 131072
+  --global-batch-size: 2
+_qwcp_full: &qwcp_full
+  --recompute-granularity: full
+  --recompute-method: uniform
+  --recompute-num-layers: 1
+# 8 layers, 10 steps: which CP options run, and TE's attention backend (NVTE_DEBUG: its selection log)
+_qwcp_t8:
+  inherits: _qwcp
+  max_duration: 300
+  env:
+    NVTE_DEBUG: "1"
+    NVTE_DEBUG_LEVEL: "2"
+  model:
+    argv:
+      --num-layers: 8
+  argv:
+    --train-iters: 10
+megatron-qwen3-32b-cp-t8-32k-p2p:
+  inherits: _qwcp_t8
+# the 8k entries' THD input (cu_seqlens), one slot per sample
+megatron-qwen3-32b-cp-t8-32k-p2p-thd:
+  inherits: _qwcp_t8
+  argv: {--dataloader-inter-document-masking: true, --no-create-attention-mask-in-dataloader: null}
+megatron-qwen3-32b-cp-t8-32k-a2a:
+  inherits: _qwcp_t8
+  argv: {--cp-comm-type: a2a}
+megatron-qwen3-32b-cp-t8-32k-allgather:
+  inherits: _qwcp_t8
+  argv: {--cp-comm-type: allgather}
+# hierarchical: a2a inside pairs of GPUs, p2p between the pairs
+megatron-qwen3-32b-cp-t8-32k-a2ap2p:
+  inherits: _qwcp_t8
+  argv: {--cp-comm-type: a2a+p2p, --hierarchical-context-parallel-sizes: [2, 2]}
+megatron-qwen3-32b-cp-t8-32k-tp1cp8:
+  inherits: _qwcp_t8
+  argv: {--tensor-model-parallel-size: 1, --sequence-parallel: null, --context-parallel-size: 8}
+# 128k without recompute: the activation memory per layer at 128k
+megatron-qwen3-32b-cp-t8-128k-p2p:
+  inherits: _qwcp_t8
+  argv: {<<: *qwcp_128k}
+megatron-qwen3-32b-cp-t8-32k-p2p-cg:
+  inherits: _qwcp_t8
+  argv: {<<: *qwen3_cg}
+megatron-qwen3-32b-cp-t8-32k-a2a-cg:
+  inherits: _qwcp_t8
+  argv: {<<: *qwen3_cg, --cp-comm-type: a2a}
+# full recompute: Megatron allows CUDA graphs with it only as one graph per iteration (full_iteration), which needs the
+# NaN check off
+megatron-qwen3-32b-cp-t8-128k-p2p-full-fi:
+  inherits: _qwcp_t8
+  argv: {<<: [*qwcp_128k, *qwcp_full], --cuda-graph-impl: full_iteration, --no-check-for-nan-in-loss-and-grad: true}
