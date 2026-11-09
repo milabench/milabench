@@ -272,6 +272,20 @@ files, 9.98 GB). At 13 nodes it has no repeated monomer up to 54 steps and no In
 runs read the same samples from it). Runs that reach more than 2 N monomer draws fail; longer runs need more
 monomers, or `sample_in_order: false` (a compromise).
 
+## Step 4: one H100 node (Nibi)
+
+Nibi's H100 nodes: 8 H100 80 GB (NVLink), 112 cores, 2 TB. Same layout as Trillium, `O=$SCRATCH/trillium/new/of3` on
+Nibi's scratch: the same commit of this repository, OpenFold3 0.5.1, a venv from the same install lines (uv 0.10.12
+installed in `$O/bin`; `uv pip freeze` identical to Trillium's venv but for py-spy), the step-2 subset fetched on the
+login node (`subset-u/keys.txt`, same md5, plus the reference molecules: 103,370 files, 9.32 GB) and the subset caches
+copied from Trillium (`subset-u`, `subset-u2`). Same seed, so the same samples as the 1-node B200 runs (1273887).
+12 cores per rank as on Trillium (Nibi has 14). Submit from the login node, one job at a time:
+
+    sbatch --job-name=nw-of3-h100-a --account=rrg-bengioy-ad_gpu --nodes=1 --ntasks-per-node=8 --cpus-per-task=12 \
+      --exclusive --mem=0 --gpus-per-node=h100:8 --time=00:35:00 --output=$O/slurm/%x-%j.out \
+      $O/src/scripts/trillium/of3/job.sbatch 40 uniform uniform,cueq+tf32
+    # then job.sbatch 40 uniform,ds uniform,prof (--time=00:45:00: DeepSpeed's kernel is built for sm_90 first)
+
 ## Not tested yet
 
 More than 4 nodes; the step-1 subset's stall at scale with the full mix; the later stages beyond one 1-node point;
