@@ -380,12 +380,41 @@ The uneven steps (from every rank's step rows and the local-rank-0 monitor's 0.5
   depends on CP4 x DP13 sitting at the memory limit; with headroom, CP4 in the node at selective recompute might be faster
   (inferred, one run).
 
+## MXFP8 at 128k on 4 nodes (job 1278205, trig[0140-0143], 2026-11-09 17:34:09-17:54:41, COMPLETED)
+
+`job.sbatch exp:QW-CP-n4-mxfp8 megatron-qwen3-32b-cp-n4-128k megatron-qwen3-32b-cp-n4-128k-mxfp8` at 2f098173, a lane
+job: QW-CP-01's `-n13-128k` on 4 nodes (TP2 x CP4 x DP4, full recompute, 8 x 128k per step, 2 micro-batches per
+data-parallel rank, 32,768 tokens per GPU per step, learning rate 1e-6, 20 steps, not profiled), BF16 then MXFP8
+(`--fp8-format e4m3 --fp8-recipe mxfp8`, GLM-FP4's Qwen3 recipe; Megatron's argument dump shows it), one run each, on
+the step-2 4-node nodes. Rank 0's step rows, steps 3-20; peaks over all 32 ranks; power over the same steps, range over
+the 4 nodes. (A first attempt, 1277951, was cancelled at BF16 step 10 under the user's 4-node cap: not used.)
+
+| | BF16 | MXFP8 |
+|---|---|---|
+| step median (min-max), mean | 26.043 s (25.906-26.131), 26.032 | 23.330 s (23.257-23.360), 23.320 |
+| tokens/s per GPU | 1,258 | 1,405 |
+| MFU (604.2 GFLOP per token) | 33.8 % | 37.7 % |
+| peak allocated / reserved | 91.5 / 102.7 GiB | 123.3 / 134.1 GiB |
+| first step | 51.3 s | 52.5 s |
+| power cap, mean power, SM clock median (lowest) | 96.4-97.0 %, 962-965 W, 1,417-1,440 (1,102) MHz | 96.4-97.4 %, 963-967 W, 1,432-1,444 (1,162) MHz |
+| loss at step 20 | 9.076 | 9.129 |
+
+- MXFP8 over BF16: 1.116x (medians and means alike), against 1.108x on one node (22.557 against 24.999 s, the step-2
+  profiled pair, steps 3-9) and 1.32x at 8k (13 nodes). The gain holds across nodes: 2.71 s per step saved here, 2.44 on
+  one node. Estimated before the run: MXFP8 about 23.5 s (one node's step plus the 4-node data-parallel reduce), about
+  1.10x; measured 23.33 s.
+- BF16 repeats step 2's same-node point (1273313, 25.953 s, 12 steps, profiled): +0.3 %.
+- MXFP8 adds 31.8 GiB here (37.6 on one node); estimated about 129 GiB, measured 123.3.
+- Both at the software power cap in about 97 % of samples at the same power: at 128k MXFP8 does not draw less (at 8k it
+  was capped in 80 % against BF16's 89 %), so these are throttled step times and the 1.12x does not come from drawing less power.
+  No Xid or NaN.
+
 ## Not run, untested
 
 - CP across more than 2 nodes per group at scale (CP16 x DP); a profile at 12-13 nodes; MXFP8 at 13 nodes.
 - `--overlap-grad-reduce` (the data-parallel reduce runs at the end of the step in every entry) and the TP comm overlap.
 - The all_gather and a2a+p2p implementations at full depth on one node; a2a+p2p with selective recompute or CUDA graphs.
-- MXFP8 across nodes; NVFP4 with CP.
+- MXFP8 with CP across nodes (only CP4 x DP4 on 4 nodes, above); NVFP4 with CP.
 - The THD input with a2a and all_gather (p2p only); the 8k entries' THD input with 8 slots under CP is not used: with
   `--dataloader-inter-document-masking` Megatron splits the whole sequence into 2 x CP chunks while TE's THD path expects
   each slot split (read from the code, not run).
