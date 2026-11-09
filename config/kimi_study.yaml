@@ -687,7 +687,7 @@ kimi-vllm-4n-pd-ep16-colocated:
     K3XN_PD_MODE: colocated
 
 # K3-XN part 1 on 4 nodes: the experts over 4 nodes, EP32 (DP4 x TP8, one engine per node, 28 experts per GPU), against
-# K3-INF-02 (TP8 x PP4). The same server as EP16 otherwise (all-gather all-to-all, sharded shared experts): half the experts
+# K3-INF-02 (TP8 x PP4). The same server as EP16 otherwise (all-gather all-to-all, shared experts whole): half the experts
 # per GPU (84.2 -> 42.1 GiB), so about 42 GiB more for the KV cache (est.)
 kimi-vllm-4n-dp4tp8-ep32:
   inherits: kimi-vllm-2n-dp2tp8-ep16

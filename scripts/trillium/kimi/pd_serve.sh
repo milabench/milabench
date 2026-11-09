@@ -5,7 +5,7 @@
 # vLLM's NIXL KV transfer (KV cache and KDA state), and on the main node vLLM v0.32.0's NIXL toy proxy (pd_proxy.py) on the
 # port milabench's client uses. The first child to exit ends the script, which stops the others.
 # K3XN_PD_MODE=colocated: the reference, the same two instances and proxy, but the proxy sends each request whole to one of
-# them, round-robin (pd_proxy.py --colocated). Every 30 s the instances' NIXL transfer histograms (/metrics: count and sum
+# them, round-robin (pd_proxy.py --colocated). Every 5 s the instances' NIXL transfer histograms (/metrics: count and sum
 # of vllm:nixl_xfer_time_seconds, vllm:nixl_post_time_seconds) go to slurm/pd-nixl.<job>.txt, with the time.
 #
 #   login node, once: curl -sSfL -o $SCRATCH/trillium/new/k3-xn/pd/toy_proxy_server.py \
@@ -48,7 +48,7 @@ fi
 PYTHONPATH=$MILABENCH_BASE/pd "$V/bin/python" "$(dirname "$0")/pd_proxy.py" --host 127.0.0.1 --port 8000 "${routing[@]}" \
     > >(sed -u "s/^/[proxy] /") 2>&1 &
 metrics=$MILABENCH_BASE/slurm/pd-nixl.$SLURM_JOB_ID.txt
-while sleep 30; do
+while sleep 5; do
     for target in "prefill $(ip "${nodes[0]}"):8100" "decode $(ip "${nodes[2]}"):8200"; do
         set -- $target
         # no match before the first transfer, and in the colocated mode: not an error (set -e, pipefail)

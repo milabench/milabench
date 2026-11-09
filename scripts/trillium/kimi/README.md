@@ -588,7 +588,10 @@ init 157-194 s (DP0, DP1: 626-663 s, waiting for the cold nodes); CUDA graphs 57
 
 conc1024 failed: at 22:39:04 a worker of DP3 (`trig0108`, GPU 0) hit "CUDA error: an illegal memory access", reported
 at a later stream sync, so the kernel is not known; its engine died and the remaining requests failed; GSM8K did not run.
-No Xid in the job's kernel log. Before that the pass ran at about 1 s per decode step. Not determined; inferred, not
+The job's kernel log shows no Xid, but that log is the batch host's (`trig0101`): `trig0108` was not checked. Review 3
+found no configuration limit exceeded (256 per engine under 512, decode within the capture sizes, KV 45% used); what is
+new is 65,536 tokens gathered per MoE layer, so routing skew or a race are the candidates (medium-low confidence). Before
+that the pass ran at about 1 s per decode step. Not determined; inferred, not
 measured: with the all-gather all-to-all every GPU receives every engine's tokens at each MoE layer, up to 4 x 16,384
 during prefill. One request decodes at 51.65 ms against EP16's 33 ms on 2 nodes: the all-gather now spans 32 ranks on 4
 nodes. Next: the same with `CUDA_LAUNCH_BLOCKING=1`, or on `deepep_v2`.
@@ -640,7 +643,10 @@ optional `deep_ep` module logs an `AssertionError` (DeepEP wants `CUDA_HOME`, un
 
 GSM8K's first 200: 197 / 200 (K3-INF-01: 197): the transferred KV and KDA state decode right. The KV transfer time per
 request is not measured here: vLLM's stats log is off in these DP servers, but its Prometheus histograms are not, and
-`pd_serve.sh` now samples `vllm:nixl_xfer_time_seconds` (count, sum) every 30 s (checked in 1271710, zero there). At
+`pd_serve.sh` now samples `vllm:nixl_xfer_time_seconds` (count, sum) every 5 s (checked in 1271710, zero there): sum /
+count is the mean transfer time per TP worker (each of a request's 8 workers records its own transfer handle, so sum per
+request would be 8x too high), recorded on the decode side only (NIXL pulls), with no percentiles (sum and count only),
+and it may include up to one engine step of polling. At
 conc1 P/D's TTFT is 461 ms over the reference's, for the prefill instance's run, the KV and KDA transfer and the
 proxy's second hop (derived, not measured).
 
