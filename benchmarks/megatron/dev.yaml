@@ -1868,3 +1868,14 @@ megatron-qwen3-32b-cp-n1-128k-lr3e-4:
 megatron-qwen3-32b-cp-n13-128k-sel:
   inherits: megatron-qwen3-32b-cp-n13-128k
   argv: {<<: *qwcp_none, --recompute-granularity: selective, --recompute-modules: [mlp]}
+# MXFP8 at 128k across nodes (lane, 4 nodes): QW-CP-01's -n13-128k on 4 nodes, TP2 x CP4 x DP4, full recompute (selective
+# fits in BF16 but the allocator maps memory every step: 34.37 s, job 1273313; MXFP8 adds about 38 GiB, 146.2 against
+# 108.6 on one node), 8 x 128k per step (2 micro-batches per data-parallel rank), 20 steps, not profiled; BF16 and MXFP8
+# (GLM-FP4's Qwen3 recipe) in one job on the same nodes
+megatron-qwen3-32b-cp-n4-128k:
+  inherits: megatron-qwen3-32b-cp-n13-128k
+  num_machines: 4
+  argv: {--global-batch-size: 8}
+megatron-qwen3-32b-cp-n4-128k-mxfp8:
+  inherits: megatron-qwen3-32b-cp-n4-128k
+  argv: {<<: *qwen3_mxfp8}
