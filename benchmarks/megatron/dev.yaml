@@ -1510,9 +1510,8 @@ _qwen3_cg: &qwen3_cg
   --cuda-graph-impl: local
 megatron-qwen3-32b-n4-tp2-bf16:
   inherits: _qwen3_32b_tp2
-  argv: {--tensorboard-dir: ../../../prof/n4-tp2-bf16/tb}
   num_machines: 4
-  argv: {--global-batch-size: 128}
+  argv: {--global-batch-size: 128, --tensorboard-dir: ../../../prof/n4-tp2-bf16/tb}
 megatron-qwen3-32b-n4-tp2-mxfp8:
   inherits: megatron-qwen3-32b-n4-tp2-bf16
   argv: {<<: *qwen3_mxfp8, --tensorboard-dir: ../../../prof/n4-tp2-mxfp8/tb}

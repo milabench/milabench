@@ -144,9 +144,10 @@ NVFP4 over BF16 / NVFP4 over MXFP8 (fc1 + fc2 time), by tokens per expert:
 Below a few thousand tokens per expert the times hardly change with the token count (Qwen3-30B-A3B: 2.1 / 3.3 / 4.3 ms
 BF16 / MXFP8 / NVFP4 from 128 to 2048): the GPU waits for the host to issue the per-expert GEMMs and quantization
 kernels, and NVFP4 issues the most. In a training step part of that issue time can overlap other GPU work, which this
-microbenchmark does not show. Kimi K3 at EP8 (112 experts per GPU): NVFP4 stops in TE's grouped Hadamard transform
-(`group_hadamard_transform.cu:408`, `num_tensors <= kMaxTensorsPerKernel`); BF16 and MXFP8 run (8192 tokens per
-expert: fc1 97.4 / 60.7 ms, fc2 50.0 / 32.5 ms).
+microbenchmark does not show. BF16 and MXFP8 run for Kimi K3 at EP8 (8192 tokens per expert: fc1 97.4 / 60.7 ms, fc2
+50.0 / 32.5 ms); NVFP4 does not, in TE 2.18 (not fixed):
+
+Kimi K3, EP8, 112 experts per GPU, NVFP4: `RuntimeError: transformer_engine/common/hadamard_transform/group_hadamard_transform.cu:408 in function group_hadamard_transform_amax: Assertion failed: num_tensors <= kMaxTensorsPerKernel`
 
 ## Qwen3 32B dense (`megatron-qwen3-32b-*`, `dev.yaml` `_qwen3_32b`)
 
