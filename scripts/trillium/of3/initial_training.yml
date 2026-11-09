@@ -1,0 +1,155 @@
+# OpenFold3's published first training stage (openfold-3 0.5.1, examples/training_yamls/initial_training.yml) on the
+# step-1 data subset (data.sh). Same model, crops (384 tokens), batch (1 per GPU), precision (bf16-mixed), workers (16
+# per GPU), dataset classes and weights. Differences, for a timed bring-up run:
+# - data paths: @S3@ (the bucket's layout) and the subset caches in @SUBSET@; the 3 datasets of the subset only:
+#   short-monomer-distillation (weight 0.005) and disordered-pdb (0.02) left out; no validation set;
+# - no wandb, no checkpoint, no restart; max_steps, devices and num_nodes set by job.sbatch (merge.py);
+# - Lightning's simple profiler (time spent in train_dataloader_next, run_training_batch), no progress bar.
+experiment_settings:
+  mode: train
+  output_dir: null
+  restart_checkpoint_path: null
+
+data_module_args:
+  batch_size: 1
+  num_workers: 16
+  epoch_len: 128000
+
+logging_config:
+  log_lr: true
+  wandb_config: null
+
+pl_trainer_args:
+  devices: 8
+  num_nodes: 1
+  precision: bf16-mixed
+  max_epochs: -1
+  log_every_n_steps: 50
+  mpi_plugin: false
+  deepspeed_config_path: null
+  profiler: simple
+  enable_progress_bar: false
+
+checkpoint_config:
+  every_n_epochs: 1
+  auto_insert_metric_name: false
+  save_last: false
+  save_top_k: 0
+
+model_update:
+  presets:
+    - train
+  custom:
+    architecture:
+      shared:
+        use_confidence_emb_prob: 0.8
+        diffusion:
+          use_conditioning_prob: 0.8
+
+dataset_configs:
+  train:
+    weighted-pdb:
+      dataset_class: WeightedPDBDataset
+      weight: 0.5
+      config:
+        debug_mode: true
+        template:
+          n_templates: 4
+          take_top_k: false
+        crop:
+          token_crop:
+            enabled: true
+            token_budget: 384
+            crop_weights:
+              contiguous: 0.2
+              spatial: 0.4
+              spatial_interface: 0.4
+          chain_crop:
+            enabled: true
+
+    long-monomer-distillation:
+      dataset_class: ProteinMonomerDataset
+      weight: 0.495
+      config:
+        debug_mode: true
+        template:
+          n_templates: 4
+          take_top_k: false
+        sample_in_order: true
+        crop:
+          token_crop:
+            enabled: true
+            token_budget: 384
+            crop_weights:
+              contiguous: 0.25
+              spatial: 0.75
+              spatial_interface: 0.0
+        loss:
+          loss_weights:
+            experimentally_resolved: 0.0
+            plddt: 0.0
+            pae: 0.0
+            pde: 0.0
+
+    RNA-monomer-distillation:
+      dataset_class: RNAMonomerDataset
+      weight: 0.05
+      config:
+        debug_mode: true
+        crop:
+          token_crop:
+            enabled: true
+            token_budget: 384
+            crop_weights:
+              contiguous: 0.25
+              spatial: 0.75
+              spatial_interface: 0.0
+        loss:
+          loss_weights:
+            experimentally_resolved: 0.0
+            plddt: 0.0
+            pae: 0.0
+            pde: 0.0
+
+dataset_paths:
+  weighted-pdb:
+    alignments_directory: none
+    alignment_db_directory: none
+    alignment_array_directory: @S3@/pdb_training_set/alignment_arrays
+    dataset_cache_file: @SUBSET@/pdb_cache.json
+    target_structures_directory: @S3@/pdb_training_set/preprocessed_pdb_data/standard/structure_files
+    target_structure_file_format: npz
+    reference_molecule_directory: @S3@/pdb_training_set/preprocessed_pdb_data/standard/reference_mols
+    template_cache_directory: @S3@/pdb_training_set/templates/train_template_cache
+    template_structure_array_directory: @S3@/pdb_training_set/templates/template_structure_arrays
+    template_structures_directory: none
+    template_file_format: npz
+    ccd_file: null
+
+  long-monomer-distillation:
+    alignments_directory: null
+    alignment_db_directory: null
+    alignment_array_directory: @S3@/monomer_distillation_sets_v2/long_monomers/preprocessed
+    target_structures_directory: @S3@/monomer_distillation_sets_v2/long_monomers/preprocessed
+    target_structure_file_format: npz
+    dataset_cache_file: @SUBSET@/long_monomer_cache.json
+    reference_molecule_directory: @S3@/monomer_distillation_sets_v2/shared/reference_mols
+    template_cache_directory: @S3@/monomer_distillation_sets_v2/long_monomers/preprocessed
+    template_structure_array_directory: @S3@/pdb_training_set/templates/template_structure_arrays
+    template_structures_directory: null
+    template_file_format: npz
+    ccd_file: null
+    use_roda_monomer_format: true
+
+  RNA-monomer-distillation:
+    alignments_directory: null
+    alignment_db_directory: null
+    alignment_array_directory: @S3@/rna_distillation_set/rna_monomer_preprocessed_cache
+    target_structures_directory: @S3@/rna_distillation_set/rna_monomer_preprocessed_cache
+    target_structure_file_format: npz
+    dataset_cache_file: @SUBSET@/rna_cache.json
+    reference_molecule_directory: @S3@/rna_distillation_set/reference_mols
+    template_structures_directory: null
+    template_file_format: npz
+    ccd_file: null
+    use_roda_monomer_format: true

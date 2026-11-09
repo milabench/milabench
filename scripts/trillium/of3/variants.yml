@@ -1,0 +1,21 @@
+# Variants of initial_training.yml, merged into it by merge.py (job.sbatch STEPS VARIANT...).
+# The kernels are OpenFold3's settings.memory.train switches (openfold3/projects/of3_all_atom/config/model_config.py);
+# the published training config sets none of them: plain PyTorch triangle attention and multiplication.
+published: {}
+
+# cuEquivariance triangle attention and triangle multiplication (falls back to PyTorch for short sequences and for
+# head widths it does not handle, docs/source/kernels.md)
+cueq:
+  model_update: {custom: {settings: {memory: {train: {use_cueq_triangle_kernels: true}}}}}
+
+# DeepSpeed's Evoformer attention (CUTLASS, built at first use with the CUDA toolkit in CUDA_HOME)
+ds:
+  model_update: {custom: {settings: {memory: {train: {use_deepspeed_evo_attention: true}}}}}
+
+# both, as docs/source/kernels.md shows for inference: cuEquivariance first, DeepSpeed where cuEquivariance falls back
+cueq-ds:
+  model_update: {custom: {settings: {memory: {train: {use_cueq_triangle_kernels: true, use_deepspeed_evo_attention: true}}}}}
+
+# OpenFold3's Triton triangle attention kernels
+triton:
+  model_update: {custom: {settings: {memory: {train: {use_triton_triangle_kernels: true}}}}}
