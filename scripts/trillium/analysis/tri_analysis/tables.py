@@ -216,6 +216,13 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriQwCpSlowSteps", "TriQwCpSlowMulti", "TriQwCpSlowNodes", "TriQwCpSlowNodeList", "TriQwCpFastNodes", "TriQwCpBehindLo", "TriQwCpBehindHi",
           "TriQwCpDropLo", "TriQwCpDropHi", "TriQwCpDropOther", "TriQwCpDropOne", "TriQwCpBehindFull", "TriQwCpBehindEight", "TriQwCpCleanSteps",
           "TriQwCpCleanLo", "TriQwCpCleanHi", "TriQwCpCleanBelowLo", "TriQwCpCleanBelowHi",
+          # MXFP8 against BF16 at 128k on 4 nodes (_qw_cp_mx_numbers; job 1278205, CP4 x DP4, full recompute): the layout, per recipe (Bf, Mx) the
+          # step (mean, median, SD), tokens/s per GPU, MFU, peak allocated and reserved memory; the speed-up by mean and median, the step time saved;
+          # power cap, mean power and SM clocks over both recipes' nodes
+          "TriQwCpMxNodes", "TriQwCpMxSplit", "TriQwCpMxDp", "TriQwCpMxSeqs",
+          *[f"TriQwCpMx{m}{e}" for e in ("Bf", "Mx") for m in ("Step", "Med", "Sd", "Tok", "Mfu", "Mem", "Res")],
+          "TriQwCpMxSpeedup", "TriQwCpMxSpeedupMed", "TriQwCpMxSaved", "TriQwCpMxCapLo", "TriQwCpMxCapHi", "TriQwCpMxPowerLo",
+          "TriQwCpMxPowerHi", "TriQwCpMxSmLo", "TriQwCpMxSmHi", "TriQwCpMxSmMin", "TriQwCpMxXid",
           # New workloads: OpenFold3 training (_of3_numbers; OF3 step 2 at 1, 2 and 4 nodes, OF3-01 at 13): setup; per variant (Pub: published,
           # Ds: DeepSpeed attention, Cueq: cuEquivariance + TF32) and node count the wall-clock step, its median, samples/s per GPU and in all, the
           # loader's wait, against 1 node and against published; at the top node count, ranges over the variants; telemetry, memory, InfiniBand
@@ -2294,11 +2301,12 @@ QW_CP_ENTRIES = (("8k", "Ref"), ("32k-cp4-none", "ThirtyTwo"), ("128k-cp4-full",
 
 
 def _qw_cp(t) -> pd.DataFrame:
-    """Qwen3 32B with context parallelism (glm_fp4.build_cp, qw_cp_runs): the completed entries by run label (8k, 32k-cp4, 128k-cp4, 128k-cp8)."""
+    """Qwen3 32B with context parallelism (glm_fp4.build_cp, qw_cp_runs): the completed entries by run label (8k, 32k-cp4, 128k-cp4, 128k-cp8), without
+    the 4-node MXFP8 job's (_qw_cp_mx)."""
     r = t.get("qw_cp_runs", pd.DataFrame())
     if r.empty:
         return r
-    done = r[r.job_state == "COMPLETED"]
+    done = r[(r.job_state == "COMPLETED") & ~r.job.astype(str).isin(glm_fp4.CP_MX_JOBS)]
     if done.run.duplicated().any():
         raise SystemExit("[report] qw_cp_runs: two completed entries with the same label")
     return done.set_index("run")
@@ -2379,6 +2387,66 @@ def _qw_cp_numbers(t) -> dict[str, tuple]:
             out[f"TriQwCp{macro}"] = (getattr(cp[col], agg)(), fmt, False)
     out["TriQwCpXid"] = (int(m.xid_rows.sum()), "d", False)
     return out
+
+
+QW_CP_MX = (("bf16", "Bf"), ("mxfp8", "Mx"))
+
+
+def _qw_cp_mx(t) -> pd.DataFrame:
+    """MXFP8 against BF16 at 128k on 4 nodes (glm_fp4.CP_MX_JOBS, qw_cp_runs): the completed entries by precision."""
+    r = t.get("qw_cp_runs", pd.DataFrame())
+    if r.empty:
+        return r
+    done = r[(r.job_state == "COMPLETED") & r.job.astype(str).isin(glm_fp4.CP_MX_JOBS)]
+    if done.precision.duplicated().any():
+        raise SystemExit("[report] qw_cp_runs: two completed 4-node entries with the same precision")
+    return done.set_index("precision")
+
+
+def _qw_cp_mx_numbers(t) -> dict[str, tuple]:
+    """MXFP8 against BF16 at 128k, CP4 x DP4 on 4 nodes, TriQwCpMx*: as _qw_cp_numbers (means over steps 3-20 on milabench's timer, tokens/s per
+    GPU at the mean step), the speed-up as BF16's step over MXFP8's, and the GPU telemetry over both recipes' nodes."""
+    m = _qw_cp_mx(t)
+    out = {}
+    if not {"bf16", "mxfp8"} <= set(m.index):
+        return out
+    bf, mx = m.loc["bf16"], m.loc["mxfp8"]
+    for col, macro in (("nodes", "Nodes"), ("cp", "Split"), ("dp", "Dp"), ("seqs", "Seqs")):
+        out[f"TriQwCpMx{macro}"] = (int(bf[col]), "d", False)
+    for precision, name in QW_CP_MX:
+        x = m.loc[precision]
+        for col, macro, fmt in (("step_mean", "Step", ".2f"), ("step_median", "Med", ".3f"), ("step_sd", "Sd", ".3f"), ("tok_s_gpu", "Tok", ",.0f"),
+                                ("mfu_pct", "Mfu", ".1f"), ("mem_alloc_gib", "Mem", ".1f"), ("mem_res_gib", "Res", ".1f")):
+            out[f"TriQwCpMx{macro}{name}"] = (x[col], fmt, False)
+    out["TriQwCpMxSpeedup"] = (bf.step_mean / mx.step_mean, ".3f", False)
+    out["TriQwCpMxSpeedupMed"] = (bf.step_median / mx.step_median, ".3f", False)
+    out["TriQwCpMxSaved"] = (bf.step_mean - mx.step_mean, ".2f", False)
+    for col, agg, macro, fmt in (("cap_lo", "min", "CapLo", ".1f"), ("cap_hi", "max", "CapHi", ".1f"), ("power_lo", "min", "PowerLo", ".0f"),
+                                 ("power_hi", "max", "PowerHi", ".0f"), ("sm_med_lo", "min", "SmLo", ",.0f"), ("sm_med_hi", "max", "SmHi", ",.0f"),
+                                 ("sm_min", "min", "SmMin", ",.0f")):
+        out[f"TriQwCpMx{macro}"] = (getattr(m[col], agg)(), fmt, False)
+    out["TriQwCpMxXid"] = (int(m.xid_rows.sum()), "d", False)
+    return out
+
+
+def qw_cp_mx_table(t) -> str:
+    """MXFP8 against BF16 at 128k, CP4 x DP4 on 4 nodes, one row per recipe: as qw_cp_speed_table, with the median step, the speed-up over BF16,
+    peak reserved memory, mean power and median SM clock per node."""
+    m = _qw_cp_mx(t)
+    if not {"bf16", "mxfp8"} <= set(m.index):
+        return ""
+    bf = m.loc["bf16"]
+    lines = [r"\begin{tabular}{lrrrrrrrrrrrr}", r"\toprule",
+             r"Precision & Mean step & Median & SD & Tokens/s & vs BF16 & MFU & Peak alloc. & Peak reserved & Across nodes, GiB & At power cap, \% & Power & SM clock \\",
+             r" & s & s & s & per GPU & & \% & GiB & GiB & per node and step & median node (range) & W & MHz \\", r"\midrule"]
+    for precision, _ in QW_CP_MX:
+        x = m.loc[precision]
+        ib = f"{x.ib_lo:.1f}--{x.ib_hi:.1f} ({int(x.first)}--{int(x.ib_last_lo)})" if pd.notna(x.ib_lo) else ""
+        lines.append(f"{precision.upper()} & {x.step_mean:.2f} & {x.step_median:.3f} & {x.step_sd:.3f} & {x.tok_s_gpu:,.0f} & {bf.step_mean / x.step_mean:.3f} & "
+                     f"{x.mfu_pct:.1f} & {x.mem_alloc_gib:.1f} & {x.mem_res_gib:.1f} & {ib} & {x.cap_med:.1f} ({x.cap_lo:.1f}--{x.cap_hi:.1f}) & "
+                     f"{x.power_lo:.0f}--{x.power_hi:.0f} & {x.sm_med_lo:,.0f}--{x.sm_med_hi:,.0f} " + r"\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
 
 
 def qw_cp_speed_table(t) -> str:
@@ -2946,6 +3014,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_glm_fp4_numbers(t))
     out.update(_qw_fp4_numbers(t))
     out.update(_qw_cp_numbers(t))
+    out.update(_qw_cp_mx_numbers(t))
     out.update(_of3_numbers(t))
     out.update(_flux_numbers(t))
     w = _completed(runs, "B-Q-weak")
@@ -3176,6 +3245,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "qw_fp4_speed.tex").write_text(qw_fp4_speed_table(tables))
     (out / "qw_fp4_loss.tex").write_text(qw_fp4_loss_table(tables))
     (out / "qw_cp_speed.tex").write_text(qw_cp_speed_table(tables))
+    (out / "qw_cp_mx.tex").write_text(qw_cp_mx_table(tables))
     (out / "of3_speed.tex").write_text(of3_speed_table(tables))
     (out / "flux_runs.tex").write_text(flux_runs_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))

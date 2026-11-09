@@ -44,9 +44,10 @@ QW_FP4_RUNS = [*[f"glm-fp4.1272011.megatron-qwen3-32b-n13-{r}" for r in ("bf16",
                                                                              ("1272416", "bf16"), ("1272419", "mxfp8"), ("1272423", "mxfp8"),
                                                                              ("1272429", "nvfp4"), ("1272431", "nvfp4"))]]
 # Qwen3 32B at 32k and 128k tokens with context parallelism (QW-CP-01, job 1273505: three entries, 13 nodes; the CP8 one on 12 of them),
-# and 128k CP4 with selective recompute (QW-CP-02, job 1273588)
+# 128k CP4 with selective recompute (QW-CP-02, job 1273588), and 128k CP4 x DP4 in BF16 and MXFP8 on 4 nodes (job 1278205, `nw-qw-cp-n4-mxfp8`)
 QW_CP_RUNS = [*[f"qw-cp.1273505.megatron-qwen3-32b-cp-{e}" for e in ("n13-32k", "n13-128k", "n12-128k-cp8")],
-              "qw-cp.1273588.megatron-qwen3-32b-cp-n13-128k-sel"]
+              "qw-cp.1273588.megatron-qwen3-32b-cp-n13-128k-sel",
+              *[f"qw-cp.1278205.megatron-qwen3-32b-cp-n4-128k{s}" for s in ("", "-mxfp8")]]
 # Kimi K3 EP16 over 2 nodes (K3-XN-01): job 1271952 all-gather, 1271953 DeepEP V2; on 4 nodes, prefill and decode on separate nodes
 # (K3-XN-02: 1272790 P/D, 1272791 its colocated reference) and the experts over all 4 (K3-XN-03: 1272792, EP32, 128 sequences per engine)
 # OpenFold3 training on the uniform subset (OF3 step 2: 1273887 on 1 node, 1273885 on 2, 1273884 on 4; OF3-01: 1274059 on 13), keyed on job and
@@ -110,7 +111,7 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # the twelve run directories (9-16 MB each) and their gpu.tsv. Outside runs/: not campaign runs.
                 *[(f"trillium/new/glm-fp4/runs/{run}/", f"glm-fp4/runs/{run}") for run in QW_FP4_RUNS],
                 *[(f"trillium/new/glm-fp4/nodemon/{run}/nodes/*.gpu.tsv", f"glm-fp4/nodemon/{run}") for run in QW_FP4_RUNS],
-                # Qwen3 32B with context parallelism (QW-CP-01, job 1273505; QW-CP-02, 1273588): the four run directories (14-23 MB each), their gpu.tsv and ib.tsv
+                # Qwen3 32B with context parallelism (QW-CP-01, job 1273505; QW-CP-02, 1273588; MXFP8 on 4 nodes, 1278205): the six run directories (6-23 MB each), their gpu.tsv and ib.tsv
                 # (InfiniBand counters), and the 8k reference's ib.tsv (GLM-FP4-03's BF16 entry, 1272011). Outside runs/: not campaign runs.
                 *[(f"trillium/new/qw-cp/runs/{run}/", f"qw-cp/runs/{run}") for run in QW_CP_RUNS],
                 *[(f"trillium/new/qw-cp/nodemon/{run}/nodes/*.{kind}.tsv", f"qw-cp/nodemon/{run}") for run in QW_CP_RUNS for kind in ("gpu", "ib")],

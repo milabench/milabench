@@ -31,7 +31,9 @@ four compute ports' tx counters (``ib.tsv``), each interpolated at rank 0's wall
 node's monitor stopped (19 or 20), over the steps between. Stragglers (``qw_cp_strag``, one row per entry, step and node): how far the node's
 slowest rank's forward plus backward (per-rank metrics, ``fwd_ms + bwd_ms``) is behind the median rank's, and the largest drop of any of its GPUs'
 memory in use within the step (NVML, the local rank 0's 0.5 s ``gpudata`` samples in the per-rank metrics, and milabench's ``.0.data`` for rank 0's
-node: the most any sample falls below the highest one before it), over rank 0's wall-clock step.
+node: the most any sample falls below the highest one before it), over rank 0's wall-clock step. MXFP8 against BF16 at 128k on 4 nodes (job 1278205,
+``CP_MX_JOBS``): QW-CP-01's 128k CP4 entry with full recompute as CP4 x DP4, BF16 then MXFP8, one run each, read the same way and labelled
+``n4-128k-cp4-full-<precision>`` so the 13-node entries' labels stay unique; the report keeps them apart.
 """
 
 from __future__ import annotations
@@ -55,7 +57,8 @@ QW_JOBS = {"1272011": "GLM-FP4-03", **{j: "GLM-FP4-02" for j in ("1272019", "127
 FIRST_STEP, LAST_STEP = 3, 20
 SW_POWER_CAP = 0x4  # nvmlClocksEventReasonSwPowerCap
 # Qwen3 32B with context parallelism (QW-CP-01; REQUESTS.md), and its 8k reference: GLM-FP4-03's BF16 entry, on the same nodes
-CP_JOBS = {"1273505": "QW-CP-01", "1273588": "QW-CP-02"}
+CP_JOBS = {"1273505": "QW-CP-01", "1273588": "QW-CP-02", "1278205": "QW-CP-n4-mxfp8"}
+CP_MX_JOBS = ("1278205",)  # 128k CP4 x DP4 on 4 nodes, BF16 then MXFP8 (the job's experiment tag QW-CP-n4-mxfp8): not 13-node entries
 SLOW_S = 1.0  # a node this far behind the median rank's forward + backward in a step is slow in that step
 CP_REF = ("1272011", "megatron-qwen3-32b-n13-bf16")
 IB_PORTS = ("mlx5_0", "mlx5_1", "mlx5_4", "mlx5_9")  # the compute ports (mlx5_2, 3: storage)
@@ -316,6 +319,8 @@ def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict
         losses = {x["step"]: x["loss"] for x in loss if x.get("step") is not None}
         tok = row["global_batch_tokens"] / window.mean() / row["gpus"]
         label = "8k" if job not in CP_JOBS else f"{row['seq_len'] // 1024}k-cp{par.get('cp')}-{work.get('activation_checkpointing')}"
+        if job in CP_MX_JOBS:
+            label = f"n{row['nodes']}-{label}-{row['precision']}"
         sg = pd.DataFrame(_stragglers(f.parent, FIRST_STEP, LAST_STEP) if job in CP_JOBS else [])
         slow = sg[sg.behind_s > SLOW_S] if len(sg) else sg
         ever = set(slow.host) if len(slow) else set()
@@ -335,6 +340,7 @@ def build_cp(root: Path, ref_root: Path, sacct: Path, unfinished: tuple) -> dict
                      "step_median": window.median(), "step_sd": window.std(), "step_min": window.min(), "step_max": window.max(),
                      "step1_s": st.step_s[st.step == 1].sum(), "tok_s_gpu": tok, "flops_per_token": row["flops_per_token"],
                      "mfu_pct": 100 * row["flops_per_token"] * tok / PEAK_BF16, "mem_alloc_gib": row["mem_alloc_gib"],
+                     "mem_res_gib": summ.get("memory_gib", {}).get("peak_reserved", {}).get("max"),
                      "loss_last": losses.get(LAST_STEP),
                      "cap_med": per.cap_pct.median() if len(per) else None, "cap_lo": per.cap_pct.min() if len(per) else None,
                      "cap_hi": per.cap_pct.max() if len(per) else None, "cap_nodes": len(per),
