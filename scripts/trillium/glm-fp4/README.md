@@ -191,6 +191,58 @@ GEMM share of a BF16 step is about 60-65 % (estimated: tensor activity 38.6 % at
 32 layers x about 9 ms of a 473 ms micro-batch slot), not the 75-85 % estimated before measuring. Not measured: a
 profile, a layout without PP (TP2 x data parallel fits from 4 nodes, an estimate), CUDA graphs.
 
+### Without the pipeline, with CUDA graphs (jobs 1271063, 4 nodes trig[0122-0123,0133,0145]; 1271160, 1 node trig0152)
+
+`megatron-qwen3-32b-n4-tp2[-cg]-*`: TP2 x data parallel 16, 128 x 8192 tokens per step (8 micro-batches per
+data-parallel rank); `-n1-tp2-cg-*`: TP2 x data parallel 4, 32 sequences; `-cg`: `--cuda-graph-impl local` (128 graphs,
+64 layers forward and backward, built in 48 s). Step time median over steps 3-17 (5-17 with graphs; 18-19 are profiled):
+
+| | BF16 | MXFP8 | NVFP4 | NVFP4 / MXFP8 |
+|---|---|---|---|---|
+| 4 nodes, TP2 x DP16: step, tokens/s per GPU | 8.341 s, 3,929 | 5.894 s, 5,560 (1.42x) | 4.968 s, 6,596 (1.68x) | 1.19x |
+| the same with CUDA graphs | 7.109 s, 4,609 | 5.371 s, 6,101 (1.32x) | 4.464 s, 7,341 (1.59x) | 1.20x |
+| peak allocated, without / with graphs | 131.6 / 125.9 GiB | 155.0 / 151.2 | 136.5 / 130.7 | |
+| 1 node, TP2 x DP4, CUDA graphs | 6.440 s, 5,088 | out of memory | 3.828 s, 8,560 (1.68x) | |
+
+(Speed-ups against the BF16 of the same row.) 1-node MXFP8 with graphs stops at its first optimizer step:
+`torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 500.00 MiB ... 167.48 GiB is allocated by PyTorch, with
+53.91 GiB allocated in private pools (e.g., CUDA Graphs)`; it was not tried without graphs. With graphs the peaks come in
+the first step, before the optimizer state exists, so they are the same on 1 and 4 nodes (allocated after it: 84.1 GiB
+on 1 node against 66.9 on 4, BF16).
+
+Without the pipeline NVFP4 over MXFP8 per step is 1.19x, close to the GEMMs' 1.31x at these shapes; CUDA graphs speed
+every recipe up by 9 to 17 % and leave it at 1.20x. Where the time goes, from Megatron's profiler (rank 0, step 18,
+one step; kernel time by class, summed over streams; idle: no kernel running):
+
+| run | window | busy | GEMM | quantize + Hadamard | NCCL | other | attention | kernels |
+|---|---|---|---|---|---|---|---|---|
+| 1 node PP2 4096 BF16 | 4.14 s | 80.3 % | 50.2 % | 0 | 17.2 % | 14.7 % | 3.4 % | 41,370 |
+| 1 node PP2 4096 MXFP8 | 4.22 s | 55.1 % | 24.3 % | 3.0 % | 12.4 % | 13.5 % | 3.0 % | 50,461 |
+| 1 node PP2 4096 NVFP4 | 5.83 s | 41.7 % | 9.4 % | 4.8 % | 15.6 % | 9.8 % | 2.2 % | 76,186 |
+| 4 nodes TP2 MXFP8 | 5.98 s | 80.5 % | 36.4 % | 3.9 % | 22.8 % | 16.8 % | 5.0 % | 50,102 |
+| 4 nodes TP2 NVFP4 | 6.27 s | 69.8 % | 21.2 % | 7.4 % | 24.0 % | 15.6 % | 4.6 % | 74,222 |
+| 4 nodes TP2 BF16, graphs | 7.10 s | 96.8 % | 58.4 % | 0 | 24.3 % | 15.0 % | 4.5 % | 44,702 |
+| 4 nodes TP2 NVFP4, graphs | 4.53 s | 92.0 % | 29.6 % | 10.6 % | 28.9 % | 21.9 % | 6.4 % | 85,504 |
+| 1 node TP2 BF16, graphs | 6.50 s | 97.3 % | 64.5 % | 0 | 16.8 % | 17.0 % | 5.0 % | 45,145 |
+| 1 node TP2 NVFP4, graphs | 4.00 s | 89.9 % | 33.9 % | 12.0 % | 17.5 % | 25.5 % | 7.2 % | 85,947 |
+
+The idle time is launch gaps: the gaps between kernels of 10 us to 1 ms make most of it (3.2 of 3.4 s at 4096 NVFP4,
+1.7 of 1.9 s on 4 nodes), and NVFP4 issues 1.6-1.9x the kernels of BF16 per step (quantization, Hadamard transform,
+scale swizzles around each GEMM). The pipeline adds waits on stage 0 (NCCL SendRecv 0.55 s at 4096 NVFP4 against 0.21
+in BF16) for the last stage, which holds the BF16 layers and the output layer. With graphs the GPUs are 90-97 % busy and
+the remaining limits are TP2's sequence-parallel all-gather and reduce-scatter (17-29 %, little of it overlapped with
+compute), elementwise kernels (15-26 %) and, in NVFP4, quantization (11-12 %); the GEMMs are a third of the NVFP4 step
+and two thirds of the BF16 one (measured GEMM share of a BF16 step: 58-65 %). The 4-node TP2 BF16 trace without graphs
+was overwritten by a concurrent job's (fixed in 18fc60af); its step times are not affected.
+
+NVFP4 at 0.88x BF16 (1 node, PP2, 4096 tokens; profiled again in 1271160: 4.365 against 4.141 s): the GPU does the
+work faster (GEMMs 0.55 s against 2.08 s per step) and waits for the host for 58 % of the step. Checked: the recipe is
+applied (cuBLASLt trace of `-s4k-nvfp4-lt`, a stage-0 rank: all 18,432 GEMM calls in E2M1 with E4M3 scales per 16, 32
+layers x 4 modules x 3 GEMMs x 16 micro-batches x 3 steps); no memory pressure (87 GiB of 178); no fallback (the GEMMs
+are cuBLASLt's block-scaled FP4 kernels); no re-quantization of the weights per micro-batch (Megatron sets
+`is_first_microbatch` on the first micro-batch of each step; quantization kernels 0.28 s per step). Each GPU's work per
+kernel is small there (TP2 halves the GEMMs, 4096 tokens), and NVFP4's extra kernels per GEMM make the host the limit.
+
 ## Proposed rows
 
 GLM-FP4-01, GLM-5 C-speed at 13 nodes: `scripts/trillium/glm-fp4/job.sbatch exp:C-speed
@@ -208,5 +260,4 @@ seed 1234, lr 3e-4, warm-up 50, cosine to 3e-5): BF16 and a BF16 repeat about 68
 about 44 min (from the 20-step runs). Needs entries and about 600,000 FineWeb documents in `$G/data` (stride 4 as C-loss),
 not yet done.
 
-Qwen3 32B speed at 13 nodes (26 copies of 4 GPUs, 416 sequences): bf16 / mxfp8 / nvfp4, 20 steps, about 6 min each
-(est.). Entries not yet written: the layout is worth a 4-node test without PP first (above).
+Qwen3 32B: held until the user decides whether Qwen3 keeps FP4 (the layout test above is in).
