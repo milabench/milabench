@@ -111,12 +111,12 @@ that all three train.
 
 `job.sbatch exp:C-speed megatron-glm5-tri-pp13-ep8-n13-gbs256{,-mxfp8,-nvfp4}` at 57b77658 on
 trig[0129-0131,0136-0137,0139-0144,0147,0149], pp13-ep8, 256 sequences, 20 steps, all three PASS. Timer: rank 0's
-per-rank metrics `elapsed` (CUDA events), steps 3-20 (the `.0.data` rate events use the same timer here); peak allocated
-over all 104 ranks:
+per-rank metrics `elapsed` (CUDA events), steps 3-20 (the `.0.data` rate events use the same timer here), standard
+deviations over the 18 steps with n-1; peak allocated over all 104 ranks:
 
 | | BF16 | MXFP8 | NVFP4 |
 |---|---|---|---|
-| step time mean (sd), median | 48.59 s (1.06), 48.38 | 45.82 s (0.61), 46.00 | 46.05 s (0.96), 45.65 |
+| step time mean (sd), median | 48.59 s (1.06), 48.38 | 45.82 s (0.62), 46.00 | 46.05 s (0.96), 45.65 |
 | the campaign's job 1242058, mean | 48.61 s | 45.97 s | |
 | against BF16 (means) | | 0.943 | 0.948 |
 | steps 3-5 then 18-20 | 47.29 then 50.17 s | 44.93 then 46.41 | 45.02 then 47.02 |
@@ -133,12 +133,15 @@ Recipe as run (`run_start` `precision_detail`, Megatron's argument dump): MXFP8 
 e2m1, recipe nvfp4, Hadamard transforms on the weight-gradient inputs, 16x16 weight blocks, stochastic rounding, 5 BF16
 layers at the end. With `--decoder-last-pipeline-num-layers 5` the last stage (trig0149) runs entirely in BF16.
 
-trig0149 and the BF16 tail: trig0149 is at the software power cap (`clocks_event_reasons` 0x4) in 17 / 8 / 17 % of its
-training-window samples in BF16 / MXFP8 / NVFP4 (the results review, with another window: 22 / 10 / 22 %), on all 8
-GPUs, down to 1,485 MHz; it is the only node capped in MXFP8 and NVFP4 (the others at most 0.9 %), while in BF16 every
-node is (8-13 %). In NVFP4 it is the slowest stage (the review, from the straggler lines: GEMMs 5.2-5.7 s), so the
-all-BF16 last stage probably sets NVFP4's step (medium confidence); the cap costs at most about 0.5 s per step (the
-review's estimate). Not a hardware fault: no Xid, ECC or drains.
+Power cap (software power cap, `clocks_event_reasons` 0x4, share of training-window samples, as recomputed for the
+report): in BF16 every node is capped in 14-22 % of its samples (trig0129 22.1 %); outside trig0149, MXFP8 at most 1.3 %
+and NVFP4 0 %. trig0149, on all 8 GPUs and down to 1,485 MHz, stands out only in MXFP8 and NVFP4: 21 / 10 / 22 % in BF16 /
+MXFP8 / NVFP4. What the cap costs BF16's step is not measured: BF16's step time includes some power capping that the
+lower precisions mostly avoid.
+
+trig0149 and the BF16 tail: in NVFP4 trig0149 is the slowest stage (the review, from the straggler lines: GEMMs
+5.2-5.7 s), so the all-BF16 last stage probably sets NVFP4's step (medium confidence); its cap costs NVFP4 at most about
+0.5 s per step (the review's estimate). Not a hardware fault: no Xid, ECC or drains.
 
 The drift: the step time rises through the run in all three entries and in 1242058 (above). Not throttling: the share
 of capped samples falls as the steps grow longer (the review). The all-to-all time grows from step 10 in every stage,
