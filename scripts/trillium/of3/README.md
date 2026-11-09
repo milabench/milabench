@@ -15,11 +15,15 @@ DeepSpeed kernel build, OpenFold3's cache directory).
   adds `run_openfold train --use_tf32 True`. 8 ranks per node, 12 cores each, Lightning's SLURM environment; benchmate's
   node monitor per run.
 - `initial_training.yml`: the published first stage on the subset; its header lists the differences.
-- `variants.yml`: the kernel switches (`settings.memory.train`), merged by `merge.py`.
+- `variants.yml`: the kernel switches (`settings.memory.train`), the profiler (`prof`), fine-tuning stage 1 (`ft1`), the
+  step-2 subset (`uniform`), merged by `merge.py` (comma-separated: `uniform,cueq+tf32`).
 - `train.py`: `run_openfold train` plus one JSON line per step and rank (`steps-r<rank>.jsonl`: step time, the gap
   before it, loss, crop, peak memory). OpenFold3 itself logs only to wandb.
-- `summary.py RUN [SKIP [REF]]`: the numbers below from one run (REF: step-by-step ratio to a run of the same samples).
-- `data.sh` (on tri-dm2), `subset.py`, `fetch.py`: the data subset.
+- `summary.py RUN [SKIP [REF]]`: the numbers below from one run (REF: step-by-step period ratio and loss difference to a
+  run of the same samples).
+- `prof.py TRACE`, `prof.sbatch RUN...`: kernel classes, model parts, NCCL kernels and GPU idle gaps from a profiler
+  trace (variant `prof`; job.sbatch runs it after each such run).
+- `data.sh` (on tri-dm2), `subset.py`, `fetch.py`: the data subsets; `mix.py`: a subset's PDB mix against the full set.
 
 ## Install (login node, once)
 
@@ -117,16 +121,144 @@ Power, clocks and use: benchmate's node monitor over the same steps.
 
 Lightning DDP (`DDPStrategy(find_unused_parameters=False)`, no DeepSpeed config in the published stage), one sample
 per GPU. The training config clips gradients per sample (`per_sample_clipping`, default), so the step is manual: the
-backward runs under `no_sync`, then `grad_manager.sync_and_average_grads` all-reduces a sample count (then `.item()`),
-the per-parameter sample counts (one int64 per parameter tensor) and all gradients as one flat FP32 buffer: 368,293,788
-parameters, 1.47 GB per step, after the backward, not overlapped with it. Grad-norm metrics sync through torchmetrics.
-At 13 nodes that is one 1.47 GB all-reduce per 4-5 s step.
+backward runs under `no_sync`, then `grad_manager.sync_and_average_grads` copies the gradients out of its accumulator,
+all-reduces a sample count (then `.item()`), the per-parameter sample counts (one int64 per parameter tensor) and all
+gradients as one flat FP32 buffer (368,293,788 parameters, 1.473 GB), then divides each parameter's gradient in a
+Python loop. Grad-norm metrics sync through torchmetrics. Nothing of it overlaps the backward. Overlap is a
+configuration option the published setup leaves off: `settings.gradient_clipping.per_sample_clipping: false` switches
+to Lightning's automatic optimization, where DDP's bucketed all-reduce runs during the backward, and clips the
+summed gradient instead of each sample's (not run: it changes the training).
+
+## Step 2: 1, 2 and 4 nodes (2026-11-09)
+
+### The data mix
+
+The step-1 subset drew its 150 PDB entries by summed weight, without replacement. `mix.py` weights every chain and
+interface as OpenFold3's sampler does (AF3 SI Algorithm 1) and compares the PDB part of a subset with the full training
+cache (both caches read from the bucket into memory, 1.42 and 1.68 GB, nothing written). Weighted shares and
+p10/p50/p90:
+
+| | step-1 subset (150, by weight) | full (180,975 entries) | step-2 subset (700, uniform) |
+|---|---|---|---|
+| entry tokens before cropping | 4,420 / 22,800 / 30,300 | 216 / 806 / 15,800 | 195 / 840 / 13,900 |
+| crop full (entry of 384 tokens or more) | 97.1 % | 74.6 % | 74.2 % |
+| chains per entry | 24 / 103 / 578 | 2 / 8 / 133 | 2 / 7 / 71 |
+| entries of 100 chains or more | 56.9 % | 11.8 % | 5.4 % |
+| datapoint with a nucleic-acid chain / a ligand | 62.8 / 10.2 % | 27.1 / 45.4 % | 29.5 / 43.5 % |
+| template hits (up to 4 per chain) | 0 / 4 / 8 | 0 / 4 / 8 | 0 / 4 / 8 |
+| MSA arrays of the datapoint's chains (MB) | 0.2 / 6.0 / 25.2 | 0 / 3.8 / 19.6 | 0 / 4.3 / 22 |
+
+Drawing by weight without replacement keeps every heavy entry once and then gives it its full weight, so ribosomes
+and capsids took 57 % of the samples. A uniform draw lets the sampler reproduce the full mix in expectation; with 700
+entries the largest assemblies are under-represented (5.4 % against 11.8 %). Step 2 runs on that draw
+(`data.sh subset-u uniform 700 subset`, 07:13: 103,370 files, 9.32 GB in `s3/` after deleting the 19,059 files only
+the step-1 subset read; variant `uniform`). Same 800 monomers, another 400 RNA entries.
+
+What the mix changes:
+- GPU step: next to nothing. Every sample is padded to the crop (384 tokens) and the model keeps at most 1,024 MSA
+  rows (`subsample_all_msa`), so a sample's cost moves with its atoms and the recycles drawn: per rank, forward and
+  backward = 3.85 s + 0.14 s per 1,000 atoms + 0.47 s per recycle (R2 0.92, 712 rank-steps of the 1-node profile run,
+  profiler overhead included). Large assemblies and other PDB entries cost the same (5.17 and 5.18 s median), monomers
+  5 % less. 1-node step: 5.207 s on the step-1 subset, 5.195 s on the uniform one.
+- Data loader: the giant assemblies are what the loader finds hard. On the step-1 subset the 4-node job (1273810,
+  trig[0101-0104]) had no first step after 9 min: 30 ranks waited in NCCL (GPUs at 100 % use, 255 W) for ranks 16 and
+  23 (trig0103), whose workers were in OpenFold3's MSA processing of PDB samples (`create_main`, `calculate_profile`,
+  `vstack_pad_msa_arrays`, py-spy) for over 7 min; cancelled. The DataLoader hands batches out in order, so one slow
+  sample holds its rank, and DDP holds every rank. On the uniform subset, per sample (`samples/`, 2,303 at 4 nodes):
+  median 2.5 s, p99 18 s, max 23 s (2 nodes: p99 50 s, max 59 s); the workers are busy 3-4 % of the time. The full
+  mix has twice the uniform subset's share of 100-chain entries; how often its slowest samples outlast the
+  prefetch (16 workers x 2 samples, about 160 s at 5 s per step) is not measured.
+
+### Scaling, published and cuEquivariance + TF32 (uniform subset, 40 steps, no profiler)
+
+| nodes (job, nodes) | published period | samples/s per GPU | cueq+tf32 period | samples/s per GPU | ratio |
+|---|---|---|---|---|---|
+| 1 (1273887, trig0145) | 5.195 s | 0.192 | 4.269 s | 0.234 | 0.818 |
+| 2 (1273885, trig[0105-0106]) | 5.524 s | 0.181 (94 %) | 4.402 s | 0.227 (97 %) | 0.792 |
+| 4 (1273884, trig[0101-0104]) | 5.708 s | 0.175 (91 %) | 4.536 s | 0.220 (94 %) | 0.807 |
+
+`ds` (DeepSpeed's attention), 1 node: 4.594 s, ratio 0.870. Losses of each variant against published on the same
+samples: within 0.01 over 40 steps. The data loader's gap: 3.5-4.8 % at every size.
+
+InfiniBand bytes sent per node and step (nodemon, timing runs), against one 1.473 GB all-reduce: 2 nodes 1.489 GB on
+each node (+1.1 %); 4 nodes 1.493, 2.986, 2.986, 1.493 GB, 6.08 x 1.473 GB in all. That is NCCL's double binary tree
+(each node sends the buffer once per tree it is inside of, 2 (N - 1) x 1.473 GB in all, 6 at 4 nodes; a ring would send
+1.94 x 1.473 GB from every node): at 13 nodes about 3 GB from the busiest nodes per step (est.), 15 ms at 200 GB/s
+per node.
+
+### Where a step goes (profiles)
+
+`variant prof`: PyTorch's profiler over steps 27-28 on each node's local rank 0, `prof.py` on rank 0's trace (4 nodes:
+1273884; 2 nodes: 1273763, step-1 subset; 1 node: 1273761, 1273762). Traced steps take 7.0 s against 5.7 s (the
+profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes, per traced step:
+- About 190,000 kernels, median 2.9 us, 67 % under 10 us; 1.06 s of CPU time in launch calls.
+- Kernel time 4.2-4.6 s: elementwise 37 %, copies, casts, cat and indexing 18 %, layer norm 13 %, FP32 SIMT GEMMs 13 %,
+  BF16 GEMMs 8 %, softmax 6 %, reductions 2-3 %, NCCL 0.5-2 %. Memory-bound small kernels, not GEMMs: hence 600 W and
+  1,965 MHz, unlike the LLM workloads.
+- By module (kernels inside a module's annotated range, forward and the recomputed forward of the backward;
+  approximate): triangle attention 33-38 %, diffusion module 23-27 %, the rest of the pairformer 18 %, triangle
+  multiplication 10-11 %, MSA module 3 %, template module 2 %.
+- The all-reduce: the 1.473 GB buffer takes 17.9 and 18.2 ms (82 GB/s algorithm bandwidth), 0.3 % of the step; the
+  count all-reduces 0.1-1.5 ms, the first of them also absorbing the wait for the slowest rank. The whole gradient sync
+  on the last rank to arrive (train.py's timing: copies, all-reduces, per-parameter averaging) is 0.26, 0.21 and
+  0.22 s at 1, 2 and 4 nodes: InfiniBand adds nothing visible over NVLink. The per-GPU loss with nodes (6 and 9 % for
+  published) is the wait for the slowest of more samples (est.: the period grows while the sync stays flat).
+- The GPU's idle time (16 % by nodemon in the timing run): in the traced steps, 0.34 s of gaps under 10 us between
+  kernels, 1.8-1.9 s of 10-100 us gaps, 0.1 s of 0.1-1 ms, 0.14-0.43 s over 1 ms. The CPU issues one small kernel
+  after another and the GPU waits for the launches; the long gaps are the gradient sync's copies and Python loop and
+  the `.item()` syncs; the all-reduce and the data loader are minor. With cuEquivariance (2 nodes) kernel time falls
+  from 5.07 to 2.98 s per traced step, and GPU use from 83 to 65-68 %: the step gains only 18-21 %.
+- DeepSpeed's attention (1 node): its kernels take 0.79 s, elementwise falls from 1.73 to 0.76 s.
+
+### Precision
+
+The published stage trains in Lightning's `bf16-mixed`: BF16 autocast for most matmuls, FP32 weights, Adam state and
+gradient all-reduce. OpenFold3 keeps some parts in FP32 under autocast: layer norms, the input embedder's atom
+attention encoder (autocast to float32), the confidence heads' pairformer (`pairformer_dtype` float32), losses.
+`run_openfold train` leaves TF32 off (`--use_tf32` False), so those FP32 matmuls run as SIMT SGEMM, without tensor
+cores (`cutlass3x_sm100_simt_sgemm_f32`): 0.59-0.60 s per profiled step, 12-14 % of the GPU's kernel time.
+`--use_tf32 True` (`torch.set_float32_matmul_precision("high")`) puts them on TF32 tensor cores (0.14 s in the
+cuEquivariance profile) and sets OpenFold3's Triton dot precision to TF32: 0.937 of the published step alone.
+
+cuEquivariance's triangle attention refuses an FP32 backward ("Full precision FP32 backward pass for triangle attention
+is not implemented yet! Please set torch.backends.cuda.matmul.allow_tf32=True"): the FP32 inputs come from the
+confidence heads' pairformer. This is a documented limitation, not new: cuEquivariance's docs (CUDA 12.9.1 archive)
+say "Full FP32 is not supported for backward pass. Please set torch.backends.cuda.matmul.allow_tf32=True"; the
+current page no longer says it, and 0.13.0 (the latest on PyPI) still raises. OpenFold3 documents cuEquivariance for
+inference and does not mention TF32. So cuEquivariance in training needs TF32: a compromise against the published
+numerics.
+
+Loss over 100 steps, 1 node, same samples (step-1 subset; mean over ranks, per 10 steps):
+
+| against published (1273594) | mean absolute difference | per 10 steps |
+|---|---|---|
+| published again (1273761, with the profiler) | 0.044 | 0.000, 0.000, 0.002, 0.002, 0.003, 0.014, 0.041, 0.091, 0.124, -0.035 |
+| cuEquivariance + TF32 (1273761, with the profiler) | 0.034 | 0.001, 0.001, 0.004, 0.005, 0.006, 0.009, 0.006, 0.012, -0.028, -0.177 |
+
+Two published runs drift apart as much as cuEquivariance + TF32 does from published: the difference is inside the
+run-to-run noise over 100 steps (one run each).
+
+DeepSpeed's attention needs no TF32 and agrees with published to 0.01 over 40 steps, for 0.870-0.875 of the
+step at 1 node; cuEquivariance + TF32 gives 0.79-0.82. For runs at scale: DeepSpeed as the fast variant without a
+compromise, cuEquivariance + TF32 as the fastest, named as one.
+
+### Fine-tuning stage 1 (crop 640, 32 diffusion samples), 1 node (1273762, trig0151, step-1 subset)
+
+Published 12.93 s per step (with train.py's gradient-sync timing, a few % slow), 0.077 samples/s per GPU, peak
+47.2 GiB allocated, GPUs 721 W and 93 % used; cuEquivariance + TF32 6.95 s (0.546 of the step: triangle attention grows
+with the cube of the crop), 46.1 GiB, 606 W, 85 %. Loss within 0.02 over 40 steps.
+
+### Kernel messages
+
+`NVRM: knvlinkSendInbandData_IMPL: Failed to send inband data: 0` in the Slurm logs' kernel messages, at the times
+runs start and end: trig0145 (1273590 at 05:37; 1273594 at 05:40, 05:42, 05:51), trig0151 (1273611: 05:45, 05:48,
+05:49, 05:59, 06:02, 06:03, 06:06, 06:07, 06:10, 06:14), trig0152 (1273674: 06:04, 06:06, 06:10, 06:11, 06:13,
+06:16, 06:18, 06:20, 06:23). The same line is in 51 other new-workload jobs (flux, glm-fp4, glm-rl, k3-inf, k3-xn,
+k3-xn2) on 32 nodes, trig0145 (1262531, 1262691, 1263799, 1269990, 1270053, 1271416, 1271975, 1272006, 1272079),
+trig0151 (1264182, 1272079) and trig0152 (1264182) included. Training ran normally.
 
 ## Not tested yet
 
-More than one node (NCCL over InfiniBand with the pip NCCL 2.30.7), the all-reduce's share, a profile; the later
-stages (larger crops); more or fewer workers; short monomers and disordered PDB; checkpoint writes and validation.
-
-Kernel messages during the jobs on trig0145 (05:37, 05:40) and trig0151 (05:45-05:49), at process starts:
-`NVRM: knvlinkSendInbandData_IMPL: Failed to send inband data: 0`. Training ran normally; cause not determined, not
-compared with other workloads' jobs.
+More than 4 nodes; the step-1 subset's stall at scale with the full mix; the later stages beyond one 1-node point;
+more or fewer workers; short monomers and disordered PDB; checkpoint writes and validation; `per_sample_clipping:
+false` (overlapped all-reduce).
