@@ -1836,3 +1836,23 @@ megatron-qwen3-32b-cp-n2-32k-cg:
   inherits: megatron-qwen3-32b-cp-n13-32k
   num_machines: 2
   argv: {--global-batch-size: 16}
+# QW-CP-01's third entry, CP across nodes at scale: 128k, TP2 x CP8 x DP6, selective recompute, on 12 of the job's 13 nodes.
+# placement leaf with groups of 2 nodes keeps whole pairs (one CP8 group each) and leaves the last node out (Slurm has no
+# topology on Trillium: the main node first, the others by name); 24 x 128k per step (4 micro-batches per CP group)
+megatron-qwen3-32b-cp-n12-128k-cp8:
+  inherits: _qwcp
+  num_machines: 12
+  placement: {nodes: leaf, group_nodes: 2}
+  argv: {<<: [*qwcp_128k, *qwcp_sel], --context-parallel-size: 8, --global-batch-size: 24}
+# its layout on 4 nodes (CP8 x DP2, 8 x 128k), profiled as the step-2 entries
+megatron-qwen3-32b-cp-n4-cp8dp2-sel:
+  inherits: megatron-qwen3-32b-cp-n12-128k-cp8
+  num_machines: 4
+  max_duration: 900
+  argv: {<<: *qwcp_prof, --global-batch-size: 8, --train-iters: 12, --tensorboard-dir: ../../../prof/n4-cp8dp2-sel/tb}
+# an entry on a subset of the job's nodes: 8 layers, 32k, TP2 x CP4 x DP3 on 3 of 4 nodes (leaf, groups of 3)
+megatron-qwen3-32b-cp-t8-n3of4:
+  inherits: _qwcp_t8
+  num_machines: 3
+  placement: {nodes: leaf, group_nodes: 3}
+  argv: {--global-batch-size: 24}
