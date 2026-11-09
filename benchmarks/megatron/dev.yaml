@@ -1477,8 +1477,8 @@ megatron-qwen3-32b-n1-s4k-mxfp8:
 megatron-qwen3-32b-n1-s4k-nvfp4:
   inherits: _qwen3_32b_s4k
   argv: {<<: *qwen3_nvfp4}
-# Megatron's PyTorch profiler on rank 0 at step 18 of 20 (the trace lands in $G/prof/torch_profile, the working directory
-# being the pack's; glm-fp4/job.sbatch moves it to $G/prof/<run>)
+# Megatron's PyTorch profiler on rank 0 at step 18 of 20; each entry names its directory (--tensorboard-dir, relative to
+# the pack's directory, the ranks' working directory): the trace lands in $G/prof/<entry>/torch_profile
 _qwen3_prof: &qwen3_prof
   --profile: true
   --use-pytorch-profiler: true
@@ -1489,13 +1489,13 @@ _qwen3_prof: &qwen3_prof
 # 1 node, 4096 tokens, PP2, profiled: why NVFP4 is slower than BF16 there; -lt: 3 steps for cuBLASLt's trace
 megatron-qwen3-32b-n1-s4k-prof-bf16:
   inherits: megatron-qwen3-32b-n1-s4k-bf16
-  argv: {<<: *qwen3_prof}
+  argv: {<<: *qwen3_prof, --tensorboard-dir: ../../../prof/n1-s4k-prof-bf16/tb}
 megatron-qwen3-32b-n1-s4k-prof-mxfp8:
   inherits: megatron-qwen3-32b-n1-s4k-mxfp8
-  argv: {<<: *qwen3_prof}
+  argv: {<<: *qwen3_prof, --tensorboard-dir: ../../../prof/n1-s4k-prof-mxfp8/tb}
 megatron-qwen3-32b-n1-s4k-prof-nvfp4:
   inherits: megatron-qwen3-32b-n1-s4k-nvfp4
-  argv: {<<: *qwen3_prof}
+  argv: {<<: *qwen3_prof, --tensorboard-dir: ../../../prof/n1-s4k-prof-nvfp4/tb}
 megatron-qwen3-32b-n1-s4k-nvfp4-lt:
   inherits: megatron-qwen3-32b-n1-s4k-nvfp4
   argv: {--train-iters: 3}
@@ -1510,29 +1510,30 @@ _qwen3_cg: &qwen3_cg
   --cuda-graph-impl: local
 megatron-qwen3-32b-n4-tp2-bf16:
   inherits: _qwen3_32b_tp2
+  argv: {--tensorboard-dir: ../../../prof/n4-tp2-bf16/tb}
   num_machines: 4
   argv: {--global-batch-size: 128}
 megatron-qwen3-32b-n4-tp2-mxfp8:
   inherits: megatron-qwen3-32b-n4-tp2-bf16
-  argv: {<<: *qwen3_mxfp8}
+  argv: {<<: *qwen3_mxfp8, --tensorboard-dir: ../../../prof/n4-tp2-mxfp8/tb}
 megatron-qwen3-32b-n4-tp2-nvfp4:
   inherits: megatron-qwen3-32b-n4-tp2-bf16
-  argv: {<<: *qwen3_nvfp4}
+  argv: {<<: *qwen3_nvfp4, --tensorboard-dir: ../../../prof/n4-tp2-nvfp4/tb}
 megatron-qwen3-32b-n4-tp2-cg-bf16:
   inherits: megatron-qwen3-32b-n4-tp2-bf16
-  argv: {<<: *qwen3_cg}
+  argv: {<<: *qwen3_cg, --tensorboard-dir: ../../../prof/n4-tp2-cg-bf16/tb}
 megatron-qwen3-32b-n4-tp2-cg-mxfp8:
   inherits: megatron-qwen3-32b-n4-tp2-mxfp8
-  argv: {<<: *qwen3_cg}
+  argv: {<<: *qwen3_cg, --tensorboard-dir: ../../../prof/n4-tp2-cg-mxfp8/tb}
 megatron-qwen3-32b-n4-tp2-cg-nvfp4:
   inherits: megatron-qwen3-32b-n4-tp2-nvfp4
-  argv: {<<: *qwen3_cg}
+  argv: {<<: *qwen3_cg, --tensorboard-dir: ../../../prof/n4-tp2-cg-nvfp4/tb}
 megatron-qwen3-32b-n1-tp2-cg-bf16:
   inherits: _qwen3_32b_tp2
-  argv: {<<: *qwen3_cg}
+  argv: {<<: *qwen3_cg, --tensorboard-dir: ../../../prof/n1-tp2-cg-bf16/tb}
 megatron-qwen3-32b-n1-tp2-cg-mxfp8:
   inherits: megatron-qwen3-32b-n1-tp2-cg-bf16
-  argv: {<<: *qwen3_mxfp8}
+  argv: {<<: *qwen3_mxfp8, --tensorboard-dir: ../../../prof/n1-tp2-cg-mxfp8/tb}
 megatron-qwen3-32b-n1-tp2-cg-nvfp4:
   inherits: megatron-qwen3-32b-n1-tp2-cg-bf16
-  argv: {<<: *qwen3_nvfp4}
+  argv: {<<: *qwen3_nvfp4, --tensorboard-dir: ../../../prof/n1-tp2-cg-nvfp4/tb}
