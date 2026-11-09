@@ -1,0 +1,30 @@
+# Stall investigation (K3-XN): K3-INF-02's server, TP8 x PP4 over 4 nodes with FlashInfer's autotune, which stalled in
+# every pass from conc64 up (stall_gaps.py: K3-INF-02 1265338 conc64 14.2 s, conc128 10.9 s, conc256 8.5 and 8.5 s;
+# its bring-up 1264956 conc64 17.8 s, conc1024 7.5 and 8.5 s). The warm-up, then the passes that stalled, each twice:
+# a stall paid once per shape shows in the first only. Logging only, nothing that changes the engine: one log line per
+# batch (--enable-logging-iteration-details: its context and generation requests and tokens, the engine's wait for it,
+# KV use); job.sh runs benchmate.nodemon on every node. README "Stall investigation".
+#   src/scripts/trillium/kimi/serve.sh kimi-vllm-4n-tp8pp4-stall 4 1:00:00 \
+#     CONFIG=$PWD/src/scripts/trillium/kimi/stall.yaml VLLM_LOG_STATS_INTERVAL=1 TRITON_PRINT_AUTOTUNING=1
+include:
+  - ../../../config/kimi_study.yaml
+
+kimi-vllm-4n-tp8pp4-stall:
+  inherits: kimi-vllm-4n-tp8pp4
+  # paths resolve from this file's folder, not config/
+  definition: ../../../benchmarks/serving
+  # ready after ~38 min (K3-INF-02: weights 704-749 s cold, engine init 1300 s), the passes ~9 min; job.sh's USR1 stop
+  # 5 min before a 1 h --time
+  max_duration: 3420
+  client:
+    passes:
+      - {name: warmup,    argv: {--max-concurrency: 64,  --num-prompts: 64,  --random-input-len: 1024, --random-output-len: 64}}
+      - {name: conc64-1,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc64-2,  argv: {--max-concurrency: 64,  --num-prompts: 128, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc128-1, argv: {--max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc128-2, argv: {--max-concurrency: 128, --num-prompts: 256, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc256-1, argv: {--max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: conc256-2, argv: {--max-concurrency: 256, --num-prompts: 512, --random-input-len: 1024, --random-output-len: 256}}
+  server:
+    argv:
+      --enable-logging-iteration-details: true

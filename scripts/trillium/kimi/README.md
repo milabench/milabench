@@ -1001,3 +1001,39 @@ Open: where P/D's short-prompt TTFT goes beyond the transfer (vLLM's `vllm:reque
 `vllm:request_prefill_time_seconds` on both instances, sampled as the NIXL histograms, would split it; not done), EP32
 conc128's two pauses and the colocated conc128/conc256 stalls (causes not logged), and `nodemon` in `job.sh` for the
 power of every node.
+
+## Stall investigation (K3-XN, 2026-11-09)
+
+The engine-wide stalls above (intervals with requests in flight and no token at all) had no node metrics beside them.
+`stall_gaps.py RUN_DIR [MIN_S]` lists them per pass from the client's per-request token times (`benchmark_results.db`),
+with the wall-clock start as the server logs it. Over the runs above, gaps of 2.5 s or more (JIT-logged ones aside):
+
+| layout | run | stalls (s), pass |
+|---|---|---|
+| TP8 x PP2, 2 nodes | K3-INF-01 1263799 | 4.60 conc128, 4.41 conc256, 8.64 ctx32k-c16 |
+| TP8 x PP2, notune | 1263425 | 3.80 conc64 |
+| TP8 x PP4, 4 nodes | K3-INF-02 1265338 | 14.18 conc64, 10.94 conc128, 8.51 + 8.46 conc256, 7.88 + 8.93 ctx128k-c16 |
+| TP8 x PP4 | bring-up 1264956 | 17.82 conc64, 7.52 + 8.46 conc1024 |
+| EP16 all-gather | K3-XN-01 1271952 | 3.80 warmup, 3.70 + 3.33 warmup-mixed, 2.77 + 2.78 conc256 |
+| EP32 s128 | K3-XN-03 1272792 | 3.88 + 5.08 conc128, 2.96 conc512, 3.13 ctx8k-c16, 3.63 ctx32k-c16 |
+| EP16 x 2 colocated | K3-XN-02 1272791 | 5.18 conc256 |
+
+(DeepEP's 16.5-19.6 s stalls, K3-XN-01, are left out: inferred DeepEP JIT.) The 10-s throughput windows missed the
+2-node ones: K3-INF-01 stalls too, about half as long as 4 nodes (PP2 4.4-4.6 s, PP4 8.5-17.8 s at conc64-256).
+TP8 x PP4 stalls most reliably and longest: every pass of conc64 to conc256 in both runs (none in 1265338's conc512
+and conc1024, after them).
+
+`stall.yaml` (`kimi-vllm-4n-tp8pp4-stall`): K3-INF-02's server unchanged (autotune on), the warm-up, then conc64,
+conc128 and conc256 twice each, so a cost paid once per batch shape shows in the first of each pair only. Logging only:
+`--enable-logging-iteration-details` (one line per batch: context and generation requests and tokens, the engine's
+wait for the batch, KV use), `VLLM_LOG_STATS_INTERVAL=1` (the throughput line every second), `TRITON_PRINT_AUTOTUNING=1`
+(a line per Triton autotune). `job.sh` now runs `benchmate.nodemon` on every node for the whole run (`nodemon/<run>/`:
+GPU power, SM clock, throttle reasons, utilization and GPM activity every 1 s, NVLink every 10 s, InfiniBand and host
+memory every 1 s, CPU every 2 s) and saves each node's kernel log at the end (`<host>.dmesg.txt` there).
+
+```bash
+cd $SCRATCH/trillium/new/k3-xn && git -C src pull --ff-only
+JOB_PREFIX=nw-k3-xn NODELIST=<4 nodes> MILABENCH_BASE=$PWD src/scripts/trillium/kimi/serve.sh kimi-vllm-4n-tp8pp4-stall 4 1:00:00 \
+  CONFIG=$PWD/src/scripts/trillium/kimi/stall.yaml VLLM_LOG_STATS_INTERVAL=1 TRITON_PRINT_AUTOTUNING=1
+python3 -I src/scripts/trillium/kimi/stall_gaps.py runs/kimi-vllm-4n-tp8pp4-stall.<job> 1
+```
