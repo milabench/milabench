@@ -61,7 +61,10 @@ Data, once, from a login node: `MILABENCH_BASE=$G milabench prepare --config $G/
 megatron-glm5-fp4-test-n1-bf16` (GLM-5.3's config and tokenizer, 200,000 FineWeb documents, under `$G/data`). Job:
 `job.sbatch megatron-glm5-fp4-test-n1-bf16 megatron-glm5-fp4-test-n1-nvfp4 lt:megatron-glm5-fp4-test-n1-nvfp4-lt`
 (submit line at its top). The campaign ran this model on 2 nodes only (PP2), so the BF16 step time has no campaign
-reference at one node: that comparison is step 3's, on `megatron-glm5-tri-test-b200-n2-gbs32`.
+reference at one node: that comparison is step 3's, on `megatron-glm5-tri-test-b200-n2-gbs32`. `job.sbatch` items:
+`exp:NAME` (`run.experiment` for the entries after it), `check:MODEL` (`nvfp4_check.py`), `lt:ENTRY` (cuBLASLt's trace),
+and `src:DIR` as the first item, to run another checkout: it runs DIR's `main.py` and Megatron-LM, but `$G/src`'s
+benchmate (the venv's editable install).
 
 Measured (jobs 1270151 and 1270295, trig0145; rank 0's step rows, step time over steps 6-50; peak allocated over the 8
 ranks; `-mxfp8` is the campaign's recipe on the same model, added for its memory):
@@ -322,5 +325,6 @@ Qwen3 32B C-speed at 13 nodes, one job: `job.sbatch exp:C-speed megatron-qwen3-3
 megatron-qwen3-32b-n13-nvfp4`, `--time=00:45:00`. TP2 x data parallel 52, CUDA graphs, 416 x 8192 tokens per step, 20
 steps. First lines per entry: Megatron's arguments, `Creating 128 CUDA graphs`, `built 128 cuda graph(s) in` about 48 s,
 the first step at about 85 s; then (est. from 4 nodes, the larger data-parallel reduce added) BF16 7.1-7.8 s, MXFP8
-5.4-5.9 s, NVFP4 4.5-4.9 s per step; peaks below the 4-node ones (the optimizer state over 52), at most about 151 GiB
-(MXFP8). Cancel: no first step 15 min into an entry, steps above 2x those, NaN.
+5.4-5.9 s, NVFP4 4.5-4.9 s per step; peaks as on 4 nodes, not lower: with CUDA graphs the peak comes in step 1, before
+the optimizer state exists, so the larger data parallel does not reduce it (MXFP8 about 151 GiB allocated, 166
+reserved). Cancel: no first step 15 min into an entry, steps above 2x those, NaN.
