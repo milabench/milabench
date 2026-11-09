@@ -42,6 +42,13 @@ router=$B/wheelhouse/sglang_router-0.3.2-cp38-abi3-manylinux_2_28_x86_64.whl
 echo "c26d31b9decd4bef04c5c2bf72470e7660c2802b9599b885eb7c1dfbfbd9a4b5  $router" | sha256sum -c
 uv pip install --python "$B/venv/torch/bin/python" --no-deps --reinstall-package sglang-router "$router"
 "$B/venv/torch/bin/python" -c 'import sglang_router; assert "slime" in sglang_router.__version__, sglang_router.__version__'
+# FlashInfer's cubins (B200's trtllm attention, MoE and FP8 GEMM kernels, which the nodes cannot download) at sglang
+# 0.5.21's flashinfer_python==0.6.18, for the *-trtllm entries (the user's choice, 2026-11-09; README.md). 1.57 GB from
+# GitHub, 0.2 MB/s from the login node (2026-11-07): curl it into the wheelhouse on tri-dm2 first
+cubin=$B/wheelhouse/flashinfer_cubin-0.6.18-py3-none-any.whl
+[ -f "$cubin" ] || curl -sSfL -o "$cubin" "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18/${cubin##*/}"
+echo "2dd65c0fcfc6bc44c67f148530de5372979c2e3d260e47935730f94156d4d873  $cubin" | sha256sum -c
+uv pip install --python "$B/venv/torch/bin/python" --no-deps "$cubin"
 # torch_memory_saver (colocated GRPO offloads the trainer with it): offline, uv takes a pinned git commit from its
 # cache. The dry run fetches it there (its build needs a GPU node: a failure here is expected)
 tms=$(sed -n 's/^TMS_REQUIREMENT = "\(.*\)"$/\1/p' benchmarks/slime/benchfile.py)

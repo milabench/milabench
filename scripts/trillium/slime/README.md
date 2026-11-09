@@ -53,6 +53,17 @@ entry's HF checkpoint and dataset (`milabench prepare` with `SLIME_DOWNLOAD_ONLY
   `https://github.com/zhuzilin/sgl-router/releases/download/v0.3.2-9daabcd/sglang_router-0.3.2-cp38-abi3-manylinux_2_28_x86_64.whl`,
   sha256 `c26d31b9decd4bef04c5c2bf72470e7660c2802b9599b885eb7c1dfbfbd9a4b5` (the digest GitHub lists for that asset).
   Since 2026-11-07 21:10 every entry in this venv runs with it (jobs 1262032, 1262053 and before: PyPI's).
+- FlashInfer's cubins, for the `*-trtllm` entries (the user's choice, 2026-11-09): `flashinfer-cubin` 0.6.18, the
+  version sglang 0.5.21's `flashinfer_python==0.6.18` needs (flashinfer refuses another version), from FlashInfer's
+  GitHub release, installed `--no-deps` in this workload's venv (6.6 GB, 85,498 files). `install.sh` checks its sha256:
+  `https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18/flashinfer_cubin-0.6.18-py3-none-any.whl`,
+  sha256 `2dd65c0fcfc6bc44c67f148530de5372979c2e3d260e47935730f94156d4d873` (GitHub's digest; 1,565,107,227 bytes).
+  Downloaded on `tri-dm2` in under a minute (2026-11-09 08:11; GitHub gave the login node 0.2 MB/s on 2026-11-07).
+  flashinfer then reads its cubins from the package; the `*-trtllm` entries set `FLASHINFER_NO_DOWNLOAD=1`, so a file
+  missing from it fails instead of being fetched. No other entry changes kernels: SGLang picks its backends without
+  looking at the package (only `check_env.py` names it), Megatron's flag for it also needs `flashinfer-jit-cache` (not
+  installed) and is read nowhere, and no passing job of this venv ever fetched a cubin (only the failed 1261477,
+  1263962, 1263975 and 1264112, whose paths every other entry pins to Triton or FlashMLA).
 
 ## Entries
 

@@ -611,6 +611,22 @@ slime-glm5-grpo-r3:
   argv:
     --use-rollout-routing-replay: true
 
+# B200's default SGLang kernels where FlashInfer's cubins were the only obstacle (flashinfer-cubin 0.6.18 in the venv,
+# install.sh): DSA prefill and decode on trtllm, prefills up to 2,048 tokens on dense MHA (trtllm-gen FMHA), MoE and FP8
+# GEMMs on flashinfer_trtllm. DeepGEMM stays off (the indexer wk's UE8M0 scales) and the trainer at TP1 / CP1 (apex).
+# No internet on the nodes: FLASHINFER_NO_DOWNLOAD makes a cubin missing from the package fail instead of downloading
+slime-glm5-grpo-trtllm:
+  inherits: slime-glm5-grpo
+  env: &trtllm_env
+    # SGLang's own value when unset (the model's index_topk); the yaml cannot unset an inherited variable
+    SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD: "2048"
+    FLASHINFER_NO_DOWNLOAD: "1"
+  argv: &trtllm_argv
+    --sglang-dsa-prefill-backend: null
+    --sglang-dsa-decode-backend: null
+    --sglang-moe-runner-backend: null
+    --sglang-fp8-gemm-runner-backend: null
+
 # The real engine at its real width without the trainer: one SGLang engine of 64 GPUs (TP64, EP64, DP attention 64) on
 # 8 nodes, loaded from the FP8 HF checkpoint (slime's --debug-rollout-only: no Megatron model or argument checks, no
 # training, no weight sync), 2 rollouts of GLM-RL-01's share per engine (32 prompts x 8 = 256 samples): measures the
@@ -684,6 +700,12 @@ slime-glm5-l10-grpo-2n:
     --rollout-num-gpus-per-engine: 16
     --sglang-ep-size: 16
     --sglang-dp-size: 16
+
+# The same with B200's default kernels (slime-glm5-grpo-trtllm), before GLM-RL-06
+slime-glm5-l10-grpo-2n-trtllm:
+  inherits: slime-glm5-l10-grpo-2n
+  env: *trtllm_env
+  argv: *trtllm_argv
 
 # 4 nodes, one SGLang engine of 32 GPUs: wide enough that the shared experts' gate_up_proj splits below the 128 block
 # (2048 / 32 = 64; GLM-RL-01's TP64 engines: 32, job 1265179), which the 2-node test's 16 GPUs (128) did not reach.
