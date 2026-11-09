@@ -24,7 +24,7 @@ SET_ASIDE = {
     "1251904": "trig0114 stopped responding at 17:03 on Nov 6, after step 30 of 500, NODE_FAIL: says nothing about the recipe",
     "1241064": "whole measurement beside a PP2 job in its bandwidth group, 4.955 s; rerun on the same nodes as 1241200",
     "1268278": "R on the fixed nodes after trig0150 GPU 2 lost all NVLinks (HW-30, between Nov 8 12:03 and 14:56), 6.13 s per "
-               "step against 2.89-2.91 s: not a drift point; R ends at 1267099",
+               "step against 2.89-2.91 s: not a drift point; R resumes with 1277886, after the node's reboot (Nov 9)",
 }
 # 1265619 (1 node, repetition 3) was cancelled after the site drained trig0102 (08:25:48), 43 s after full sync's last
 # operation: its two completed entries, model sync and full sync, are in; full async wrote no event (no run data), and
