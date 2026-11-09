@@ -609,22 +609,39 @@ Accuracy (the study's `eval` pass: GSM8K in full, 1,319, not the first 200):
 | DeepEP | 97.6 | 98.3 | 84.3 | 87.2 |
 | K3-INF-01 | 97.5 | 98.5 | 84.8 | 87.7 |
 
+Not run on EP16 (KV memory): conc512, conc1024, ctx64k-c16, ctx128k-c16. EP16 had a second warm-up (`warmup-mixed`),
+K3-INF-01 one.
+
+The two EP16 servers differ in more than the all-to-all: the DeepEP one shards the shared experts (107.41 against 127.13
+GiB of weights per GPU, KV 7.55x against 4.23x per engine), runs NCCL 2.30.7 against 2.29.7, and has `CUDA_HOME` set, so
+FlashInfer's JIT can run only there. Every difference below between the two is between these two setups, one run each.
+
 On the same 2 nodes EP16 gives less than TP8 x PP2 at nearly every pass: one request decodes at 31-32 against 8.7 ms
-per token (conc1 0.28x; the all-to-all is a third of a step, profile above), conc64 0.65x and 0.59x. It gives more only
-with long prompts at 16 concurrent: ctx8k-c16 1.18x and ctx32k-c16 1.59x on all-gather (1.12x on DeepEP), and the same at
-conc256 on all-gather (0.99x). DeepEP gives less than all-gather everywhere but conc1 (+1%).
+per token (conc1 0.28x; the all-to-all is a third of a step, profile above), conc64 0.65x and 0.59x. Among the passes
+run, it gives more only with long prompts at 16 concurrent: ctx8k-c16 1.18x and ctx32k-c16 1.59x on all-gather (1.12x on
+DeepEP), and the same at conc256 on all-gather (0.99x). The DeepEP server (sharded shared experts, NCCL 2.30.7,
+`CUDA_HOME` set) gives less except at conc1, ctx1k-c1 and decodelong-c1 (+0.5 to +1.5%); one run each. Its conc4 and
+conc256 include an engine-wide stall (16.5, 17.1 s): without them, about 0.94x and 0.86x of all-gather (reviewer's
+estimate).
 
 Anomalies, from the raw files:
-- DeepEP conc4, TTFT p99 17.1 s: requests 1, 2 and 3 waited 17.1 s, the other 57 had a median of 0.36 s: the pass's
-  first batch, once. Inferred: DeepEP compiling its kernel for a batch size neither warm-up made.
+- DeepEP conc4, TTFT p99 17.1 s: requests 1, 2 and 3 waited 17.1 s, and request 0 stopped 16.5 s after its first token,
+  so one engine-wide stall at the pass's start; the other 56 had a median TTFT of 0.36 s.
+- DeepEP conc256: the engine stalled 17.1 s, starting 37.2 s into the pass, with 251 requests in flight; the five late
+  requests (448-511, up to 20.5 s) are its tail.
+- Both stalls, cause not logged: 1271953's log has no FlashInfer or DeepEP JIT, compile or autotune line, nor anything
+  else, in either window (23:21:46 for conc4; 23:28:55-23:29:15 for conc256: the progress bar stands at 256/512 from
+  23:29:00 to 23:29:15). The only server lines there are the DP coordinator's "Received stats for out-of-order step"
+  warnings, which the all-gather job logs too (225 against 352) without stalling. FlashInfer's JIT, possible only on the
+  DeepEP server, stays a candidate.
 - conc256, TTFT p99 10.1 s (all-gather) and 13.8 s (DeepEP): requests 128-255 (by index) wait for the first half's
-  prefill, on both backends (medians 6.6-7.3 and 6.1-10.4 s), then 1.6-3.4 s; not a stall. Five late DeepEP requests
-  (448-511) reach 20.5 s: not explained.
-- `JSONDecodeError`: during the run, 3 lines of voir's telemetry (one `gpudata` or `torchmem` sample each, in conc16,
-  conc128 and ctx1k-c1) came split in the stream and were dropped (one GPU sample each); at the end, milabench's
+  prefill, on both backends (medians 6.6-7.3 and 6.1-10.4 s), then 1.6-3.4 s; K3-INF-01 shows the same first-burst wait.
+- `JSONDecodeError`, all-gather job only during the run: 3 lines came split in the stream (in conc16, conc128 and
+  ctx1k-c1) and were dropped. Each held a voir telemetry sample (`gpudata` or `torchmem`) and a client record: a
+  throughput-window sample in conc16 and conc128, one request's ITL in ctx1k-c1. At the end, in both jobs, milabench's
   `_parse_report` (`milabench/common.py`) failed on 8 lines of `<entry>.0.server.nolog.dpworker.data` (the second node's
-  server: FlashInfer's autotune progress bars, stored as Python repr, not JSON), in both jobs. Every pass `.data` file
-  parses; no number lost.
+  server: FlashInfer's autotune progress bars, stored as Python repr, not JSON). Every pass `.data` file parses; no pass
+  summary lost.
 - The all-gather main node's GPU 0 drew 25% more than the others at conc1 (experiment coordinator's read; not checked
   here).
 
