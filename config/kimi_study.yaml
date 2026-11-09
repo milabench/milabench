@@ -628,9 +628,11 @@ kimi-vllm-2n-dp2tp8-ep16-deepep-bringup-diag:
 # starts a prefill EP16 instance on the job's nodes 0-1 and a decode EP16 instance on nodes 2-3, with NIXL's KV transfer
 # (KV cache and KDA state), and vLLM v0.32.0's NIXL toy proxy on the main node's port 8000. The bring-up's passes,
 # GSM8K included. num_machines 1: milabench starts the launcher on the main node only; the launcher places the instances.
-# The venv with nixl: venv/deepep
+# All-gather all-to-all (prefill under deepep_v2 runs its decode mode, 2.1 s TTFT p50 against 1.3 at conc64, job 1271240);
+# venv/deepep for nixl only
 kimi-vllm-4n-pd-ep16-bringup-notune:
-  inherits: kimi-vllm-2n-dp2tp8-ep16-deepep-bringup-notune
+  inherits: kimi-vllm-2n-dp2tp8-ep16-bringup-notune
+  install_group: deepep
   num_machines: 1
   server:
     command: [bash, "${...config_base}/../scripts/trillium/kimi/pd_serve.sh"]
