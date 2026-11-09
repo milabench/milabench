@@ -45,7 +45,10 @@ for variant in "$@"; do
     tf32=False
     [ "$name" != "$variant" ] && tf32=True
     $PY "$S/merge.py" "$S/initial_training.yml" "$S/variants.yml" "$name" "$O/data" "$run" "$NODES" "$STEPS" > "$run/runner.yml" || exit 1
-    run_nodes $PY -m benchmate.nodemon --out "$run/nodemon" --bench "of3-$variant" 2> "$run/nodemon.log" &
+    # srun itself in the background (not run_nodes: $! would be the function's subshell, and killing it left the
+    # samplers of earlier runs running until the job's end, OF3-01)
+    srun --export=ALL --overlap --propagate=CORE --nodes=$NODES --ntasks=$NODES --ntasks-per-node=1 --cpus-per-task=1 \
+        $PY -m benchmate.nodemon --out "$run/nodemon" --bench "of3-$variant" 2> "$run/nodemon.log" &
     monitor=$!
     echo "[of3] === $variant ($run) $(date +%T)"
     start=$(date +%s)

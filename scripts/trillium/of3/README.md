@@ -272,6 +272,45 @@ files, 9.98 GB). At 13 nodes it has no repeated monomer up to 54 steps and no In
 runs read the same samples from it). Runs that reach more than 2 N monomer draws fail; longer runs need more
 monomers, or `sample_in_order: false` (a compromise).
 
+## OF3-01 (13 nodes, job 1274059, trig[0101-0113], 2026-11-09 08:22-08:59, commit 0d9484c0)
+
+`job.sbatch 40 uniform uniform,ds uniform,cueq+tf32 uniform,prof`, 104 ranks, `subset-u2` (4,330 monomers), all four
+PASS. `summary.py`, steps 7-40 (the profile run without steps 26-30):
+
+| samples/s per GPU (period) | 1 node | 2 nodes | 4 nodes | 13 nodes | 13 against 1 |
+|---|---|---|---|---|---|
+| published | 0.192 (5.195 s) | 0.181 (5.524) | 0.175 (5.708) | 0.168 (5.967) | 87 % |
+| ds | 0.218 (4.594) | | | 0.190 (5.264) | 87 % |
+| cueq+tf32 | 0.234 (4.269) | 0.227 (4.402) | 0.220 (4.536) | 0.213 (4.695) | 91 % |
+
+In all: 17.4, 19.8 and 22.2 samples/s. `ds`'s first step took 118 s (its extension loaded by 104 ranks). Peak 33.6 GiB
+allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 over the last 10 steps.
+
+- Data loader: the gap before a step 4.3-5.3 % of the time (mean over ranks; worst rank 5.2-6.5 %). Featurization per
+  sample (7,487 per run): median 2.5-2.6 s, p99 19-34 s, max 32-57 s; the workers busy 3-4 % of the time. Each run
+  skipped the same 2 samples (OpenFold3's debug mode replaces a failing sample with a random other one, in the
+  worker): monomer MGYP003513374722, whose `alignment.npz` is not a valid zip in the bucket itself (1,835,008 bytes
+  there and here; a fetch gives the same file), and PDB 6x0v chain 1 ("No resolved atoms"). Cost: one failed attempt
+  plus one more featurization in a worker, inside the prefetch.
+- Gradient sync (profile run, last rank to arrive): 0.221 s, as at 4 nodes (0.219). The 1.473 GB all-reduce kernel:
+  18.6 and 18.4 ms (17.9 and 18.2 at 4 nodes); the first count all-reduce holds rank 0's wait for the slowest rank
+  (0.50 and 0.19 s). The per-GPU loss from 1 to 13 nodes (13 % for
+  published) is the wait for the slowest of 104 samples (est.), not the network.
+- InfiniBand sent per node and step (timing runs): 1.493 GB on one node, 2.239-2.240 GB on two, 2.986 GB on ten;
+  35.83 GB in all, 24.3 x 1.473 GB against the double binary tree's 2 (N - 1) = 24 (+1.3 %). The profile run +3-5 %
+  (its traces written to VAST through the same ports, est.).
+- GPUs: 573 W mean (published), 532 (ds), 454 (cueq+tf32); SM clock median 1,965 MHz in all; use 85, 83, 69 %.
+  CPU: busy cores at 3,200 MHz median, 3,084-3,134 minimum: no drop.
+- Profile at 13 nodes, rank 0, published, traced steps 27 / 28: elementwise 1.73 / 1.45 s, copies 0.81 / 0.72, layer
+  norm 0.62 / 0.53, FP32 SIMT GEMM 0.60 / 0.58, BF16 GEMM 0.38 / 0.33, softmax 0.29 / 0.27; triangle attention 36-38 %
+  of compute kernels, diffusion 23-25 %; 193,989 / 179,342 kernels; 1.89 / 1.86 s of 10-100 us gaps. Step 27 matches
+  4 nodes within 0.01 s in every class; step 28 differs with its sample (rank 0 draws other samples at other sizes).
+- Nodemon near each run's end (about 210 W, 0 % use): after the run's last step, outside the step window the numbers
+  above use (1.6-2.3 % of in-window samples have 0 % use): Lightning's teardown and exit, then prof.py (profile run)
+  or the next run's 4-min start. Each run's sampler was also left running until the job's end (job.sbatch killed the
+  function's subshell, not its srun; fixed after this job), writing into its own run directory: no effect on the
+  per-run windows.
+
 ## Step 4: one H100 node (Nibi)
 
 Nibi's H100 nodes: 8 H100 80 GB (NVLink), 112 cores, 2 TB. Same layout as Trillium, `O=$SCRATCH/trillium/new/of3` on
