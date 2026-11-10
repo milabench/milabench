@@ -1,5 +1,5 @@
 """FLUX.1 training, MLPerf Training v5.1, with the University of Florida's submission code (FLUX-01: job 1276503, 8 nodes; FLUX-02: job 1278821,
-16 nodes; FLUX-03: job 1279253, 4 nodes; one run each to the quality target), against Florida's 10 published runs at the same node count, in
+16 nodes; FLUX-03: job 1279253, 4 nodes; FLUX-04: job 1279891, 2 nodes; one run each to the quality target), against Florida's 10 published runs at the same node count, in
 tables of their own (``flux_*``). Also read: the 4-node real-data bring-up (job 1276381, 300 steps, for the step from 4 to 8 nodes) and
 Florida's 10 runs at 4 nodes. Ours from ``flux/runs/<run>/`` (the MLPerf log ``*_1.log`` and the nvidia-smi telemetry ``gpu-<host>.csv``;
 collect, from ``$SCRATCH/trillium/new/flux/runs/``); Florida's from ``flux/florida/n<nodes>/result_<i>.txt`` (public,
@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-RUNS = {"1276503": "FLUX-01", "1278821": "FLUX-02", "1279253": "FLUX-03",
+RUNS = {"1276503": "FLUX-01", "1278821": "FLUX-02", "1279253": "FLUX-03", "1279891": "FLUX-04",
         "1276381": "FLUX step 4"}  # keyed on the job; the synthetic-data bring-ups are not read
 FROM_BLOCK = 4  # steady step: blocks 4 to the last (the first three are slower: data workers starting, a slow third block)
 TEN_FROM = 30  # ten-step intervals from step 30 on (the 4-node bring-up's convention: data workers starting before)

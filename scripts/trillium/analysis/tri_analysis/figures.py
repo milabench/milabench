@@ -1394,11 +1394,11 @@ def qw_fp4_loss(t):
     return fig
 
 
-FLUX_ROWS = (("FLUX-03", 6.0), ("FLUX-01", 8.0), ("FLUX-02", 13.0))  # one row per run to the target; the right panel's first sample count, millions
+FLUX_ROWS = (("FLUX-04", 5.5), ("FLUX-03", 6.0), ("FLUX-01", 8.0), ("FLUX-02", 13.0))  # one row per run to the target; the right panel's first sample count, millions
 
 
 def flux(t):
-    """FLUX.1 training (FLUX-03 at 4 nodes, FLUX-01 at 8, FLUX-02 at 16) against Florida's runs at the same node count: the evaluation loss at
+    """FLUX.1 training (FLUX-04 at 2 nodes, FLUX-03 at 4, FLUX-01 at 8, FLUX-02 at 16) against Florida's runs at the same node count: the evaluation loss at
     each block (every 262,144 samples) until the target, one row per run. Left: every block; right: the last blocks, where the runs reach the target.
     Florida's runs end where they reach it."""
     r, b = t.get("flux_runs", pd.DataFrame()), t.get("flux_blocks", pd.DataFrame())
@@ -1408,7 +1408,7 @@ def flux(t):
     rows = [(ours[ours.request == name].iloc[0], zoom_from) for name, zoom_from in FLUX_ROWS if (ours.request == name).any()]
     if not rows:
         return None
-    fig, grid = plt.subplots(len(rows), 2, figsize=(TEXT_WIDTH, 2.6 * len(rows)), squeeze=False)
+    fig, grid = plt.subplots(len(rows), 2, figsize=(TEXT_WIDTH, min(2.6 * len(rows), 7.6)), squeeze=False)  # 4 rows: fits the page
     for (x, zoom_from), axes in zip(rows, grid):
         fl = r[(r.source == "florida") & (r.nodes == x.nodes)]
         target = x.target

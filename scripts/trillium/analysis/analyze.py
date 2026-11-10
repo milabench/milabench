@@ -123,11 +123,12 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # gpu, ib and cpu tables (up to 36 MB a run at 13 nodes; the monitor sits inside the run directory). Outside runs/: not campaign runs.
                 *[(f"trillium/new/of3/runs/{run}/{name}", f"of3/runs/{run}") for run in OF3_RUNS for name in ("steps-r*.jsonl", "runner.yml")],
                 *[(f"trillium/new/of3/runs/{run}/nodemon/nodes/*.{kind}.tsv", f"of3/nodemon/{run}") for run in OF3_RUNS for kind in ("gpu", "ib", "cpu")],
-                # FLUX.1 training, MLPerf (FLUX-01, job 1276503, 8 nodes; FLUX-02, 1278821, 16 nodes; FLUX-03, 1279253, 4 nodes; the 4-node real-data
-                # bring-up 1276381): MLPerf log, compliance output and nvidia-smi telemetry (4.1, 6.3, 3.2 and 0.4 MB). Florida's published logs are
-                # not on Trillium: data/raw/trillium/flux/florida/README.
+                # FLUX.1 training, MLPerf (FLUX-01, job 1276503, 8 nodes; FLUX-02, 1278821, 16 nodes; FLUX-03, 1279253, 4 nodes; FLUX-04, 1279891,
+                # 2 nodes; the 4-node real-data bring-up 1276381): MLPerf log, compliance output and nvidia-smi telemetry (4.1, 6.3, 3.2, 3.0 and
+                # 0.4 MB). Florida's published logs are not on Trillium: data/raw/trillium/flux/florida/README.
                 *[(f"trillium/new/flux/runs/{run}/", f"flux/runs/{run}") for run in ("nw-flux-run8.1276503", "nw-flux-run16.1278821",
-                                                                                     "nw-flux-run4.1279253", "nw-flux-real4.1276381")],
+                                                                                     "nw-flux-run4.1279253", "nw-flux-run2.1279891",
+                                                                                     "nw-flux-real4.1276381")],
                 # FLUX.1 step-time gap against Florida, 2 nodes, 200 steps a run: job 1278802's five runs (7.4 MB), and job 1277931's MLPerf log
                 # and 1 s telemetry only (44 MB; its Nsight Systems profile is not read).
                 ("trillium/new/flux/dev/runs/gap.1278802/", "flux/dev/gap.1278802"),
