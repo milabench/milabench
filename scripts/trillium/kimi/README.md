@@ -1082,3 +1082,41 @@ before it runs the batch, the next stage starting only once it receives the batc
 compute, clocks and power (idle GPUs, no throttle), the fabric (no IB traffic, no link event), host memory, and the JITs
 vLLM's monitor watches. The host work itself is not determined: no log names it. Candidates, not checked: a JIT or
 lazily built object the monitor does not watch (kernel loading, CUDA graph or kernel-plan builds).
+
+**Offline checks after job 1278355 (2026-11-09, no job).**
+- The CPU: nodemon's `busy_cores` counts 8 busy cores on a stage during its turn in all three stalls (0 before it, about
+  24 once its GPUs wait, the usual level of 8 workers waiting on their GPUs): one single-threaded piece of work per TP
+  rank, about 2 s (4-5 s in the warm-up), not one process.
+- vLLM's JIT monitor (`vllm/utils/jit_monitor.py`, vLLM 0.32.0 in `venv/torch`) runs in each of the 32 workers ("Kernel
+  JIT monitor activated", once per worker) and hooks Triton compiles (`jit_post_compile_hook`, logged after the
+  compile), Triton autotuning (prints), CuTeDSL `cute.compile` (logged when it is called, line 307) and TileLang. It does
+  not hook FlashInfer or DeepEP JIT builds, cuBLASLt or CUTLASS plans, cubin loads or the allocator. By default it logs
+  a kernel name once per process (`logger.warning_once`, line 140): `FlashAttentionForwardSm100`, logged in the
+  warm-up on stages 0, 2 and 3, would not be logged again in those processes.
+- Triton ruled out for K3-INF-01 and K3-INF-02: both wrote their Triton cache to `k3-inf/cache/triton` (shared, kept),
+  and none of its 46 entries dates from their stalls (entries at 00:45-00:58 from jobs 1263424/1263425 and one at 07:59:28,
+  none at 03:32-03:33, 07:33-07:35 or 08:03). The stall job's own cache was node-local and is gone.
+- Candidate: FA4, vLLM's MLA prefill kernel ("Using FLASH_ATTN MLA prefill backend"; CuTeDSL, `vllm_flash_attn/cute/
+  interface.py`). It compiles a variant on a miss of an in-memory cache (line 1403; on disk only with
+  `FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1`, off), per process, and its key holds fields picked from each batch: split-KV
+  and `seqlen_k_per_split`, the static-persistent scheduler (`max_m_blocks_leq_one`: every query within one tile), the
+  batch-search aids (more than 256 sequences), tile and stage sizes. vLLM's start-up JIT warm-up compiles FA4's MLA
+  prefill at batch size 1 only ("Batch is not a current FA4 MLA-prefill key field", `v1/attention/backends/mla/
+  prefill/flash_attn.py:43-51`). So two batches with the same token and request counts but other sequence lengths can
+  take different variants, a new one compiled once per worker (8 per stage) and logged by nobody. Not shown: no log names
+  the work in the stall windows, and which key field changed between iterations 9866 and 9868 is not known.
+
+The second job (proposed; on the coordinator's go): the same entry with `--jit-monitor-verbose` (`stall.yaml`: every
+monitored compile logged with its time and worker, not once per name), Ray's log de-duplication off
+(`RAY_DEDUP_LOGS=0`, so that each of the 32 workers' lines shows), FA4's cache left as it is, and `pyspy_dump.sh`
+(`PYSPY=<py-spy>`, from `job.sh`): a non-blocking py-spy dump (the worker is not paused) of one worker per node every
+second, with the node's `ptrace_scope` first. py-spy covers what the monitor cannot: host work that is not a Triton,
+CuTeDSL or TileLang compile, and how long a CuTeDSL compile runs (the monitor logs it when it starts). py-spy 0.4.3 in
+`k3-xn/tools/pyspy` (`uv`, `UV_LINK_MODE=copy`, the workload's own cache).
+
+```bash
+cd $SCRATCH/trillium/new/k3-xn && git -C src pull --ff-only
+JOB_PREFIX=nw-k3-xn NODELIST=trig[0135-0138] MILABENCH_BASE=$PWD src/scripts/trillium/kimi/serve.sh kimi-vllm-4n-tp8pp4-stall 4 1:00:00 \
+  CONFIG=$PWD/src/scripts/trillium/kimi/stall.yaml VLLM_LOG_STATS_INTERVAL=1 TRITON_PRINT_AUTOTUNING=1 RAY_DEDUP_LOGS=0 \
+  PYSPY=$PWD/tools/pyspy/bin/py-spy
+```

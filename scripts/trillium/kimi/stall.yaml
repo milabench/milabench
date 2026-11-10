@@ -28,3 +28,5 @@ kimi-vllm-4n-tp8pp4-stall:
   server:
     argv:
       --enable-logging-iteration-details: true
+      # every JIT compile the monitor sees (Triton, CuTeDSL, TileLang), each time, not once per kernel name and process
+      --jit-monitor-verbose: true

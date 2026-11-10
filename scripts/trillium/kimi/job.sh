@@ -37,6 +37,12 @@ mkdir -p "$nodemon"
 srun --overlap --propagate=CORE --ntasks-per-node=1 python -m benchmate.nodemon --out "$nodemon" --bench "$ENTRY" \
     2> "$nodemon/nodemon.log" &
 monitor=$!
+# stall investigation (README): py-spy stack dumps of one worker per node, every second
+spy=
+if [ -n "${PYSPY:-}" ]; then
+    srun --overlap --propagate=CORE --ntasks-per-node=1 bash "$SRC/scripts/trillium/kimi/pyspy_dump.sh" "$PYSPY" "$nodemon" &
+    spy=$!
+fi
 start=$(date +%s)
 # in the background: bash runs a trap only between commands, `wait` lets the time-limit signal in
 milabench run --config "${CONFIG:-$SRC/config/kimi_study.yaml}" --system "$system" --select "$ENTRY" --run-name "$run" &
@@ -46,7 +52,7 @@ trap 'echo "[k3inf] time limit in 5 min: stopping the run"; kill -TERM $pid; sle
 status=0
 while kill -0 $pid 2>/dev/null; do wait $pid; status=$?; done
 echo "[k3inf] $ENTRY: exit $status after $(( $(date +%s) - start )) s, run data $MILABENCH_BASE/runs/$run"
-kill $monitor; wait $monitor
+kill $monitor $spy; wait $monitor $spy
 # each node's kernel log (Xid, NVLink, InfiniBand events), to line up with the run
 srun --overlap --propagate=CORE --ntasks-per-node=1 bash -c 'dmesg -T | tail -n 5000 > "$1/$(hostname -s).dmesg.txt"' _ "$nodemon"
 
