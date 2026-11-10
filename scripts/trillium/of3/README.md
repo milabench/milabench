@@ -338,15 +338,26 @@ copied from Trillium (`subset-u`, `subset-u2`). Same seed, so the same samples a
 
 ### First job: published and cueq+tf32 (26594554, g26, 2026-11-09 13:08-13:35, commit 0185adf4)
 
-Setup, from job.sbatch's start print and the run logs: 8 NVIDIA H100 80GB HBM3 (SXM, NVLink), driver 580.196.07 (CUDA
-13.0; torch 2.15.0 brings CUDA 13.2 and runs on it), enforced power limit 700 W (B200: 1,000 W); NCCL 2.30.7, one node.
-Differences from the Trillium runs besides the GPU: 2 x 56 Sapphire Rapids cores (feature `sapphire`) against 2 x 48,
-busy cores at 4,000 MHz median against 3,200; Nibi's `/scratch` (an NFS mount) for code, venv and data; the same
-package versions, subset, seed and 12 cores per rank. The first run took 1,066 s, 13 min of it before training
-started (not measured; likely cold imports and caches on Nibi's scratch; 23 s from Lightning's start to step 1).
+Setup, from job.sbatch's start print and the run logs: 8 NVIDIA H100 80GB HBM3 (SXM, NVLink), driver 580.196.07
+(reports CUDA 13.0, `cudaDriverVersion 13000`; torch 2.15.0 brings CUDA 13.2 and runs on it), enforced power limit
+700 W (B200: 1,000 W); NCCL 2.30.7, one node. Differences from the Trillium runs (1273887) besides the GPU:
+- commit 0185adf4 against 23d64566 (the later one adds only job.sbatch's start print);
+- `uniform` read subset-u2's caches on Nibi against subset-u's on Trillium (same PDB, RNA and first 800 monomers;
+  the samples were checked equal on all 8 ranks at all 40 steps);
+- the B200 driver reports CUDA 13.2 (`cudaDriverVersion 13020`), Nibi's 13.0;
+- CPUs: 2 x 56 Sapphire Rapids cores on g26 (Slurm feature `sapphire`; model not recorded) against 2 x 48 Xeon
+  Platinum 8558P (lscpu in `$SCRATCH/trillium/hw/`). Clocks of the cores at least 50 % busy (nodemon, from
+  /proc/cpuinfo), median over steps 6-40: 4,000 MHz on Nibi (minimum 3,590 and 3,461 in the two runs) against
+  3,200 MHz on Trillium, which never goes above 3,200 though its scaling_max_freq is 4,000;
+- NUMA: on g26, 5 of the 8 ranks have no core in their GPU's NUMA domain and 2 only partly; on trig0145, 4 of 8 have
+  none (effect on step time not measured);
+- filesystem: Nibi's `/scratch` for code, venv and data, NFS v3 over TCP (Trillium: VAST, NFS v3 over RDMA).
+Same package versions, subset, seed and 12 cores per rank. The first run took 1,066 s, 13 min of it before training
+started (cause not measured; 23 s from Lightning's start to step 1); the second run, warm, reached step 1 in 5.2 min,
+against 3.3-3.5 min on B200.
 
 Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step period beside it; B200 = 1273887
-(trig0145), the same samples at every step:
+(trig0145), the same samples at every step on every rank:
 
 | | H100 s per step (median) | H100 samples/s per GPU | B200 samples/s per GPU | B200 / H100 |
 |---|---|---|---|---|
@@ -355,19 +366,24 @@ Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step pe
 | ds | job 2 | | 0.2166 | |
 
 - cuEquivariance + TF32 against published on the H100: 0.638 of the step (B200: 0.817). The B200's lead shrinks
-  from 32 % to 3 % with the fast kernels. Inferred, not measured (the H100 profile is in job 2): the published step's
-  small memory-bound kernels and FP32 SIMT GEMMs run faster on the B200, and once cuEquivariance removes most of them,
-  the step is held by the host's kernel launches (as in the B200 profile), where Nibi's CPUs run at 4.0 GHz against
-  3.2.
-- Same numerics: loss against B200 at the same steps, mean absolute 0.012 over 40 steps (both entries; largest
-  0.086). Peak 31.5 GiB allocated, 33.3-33.4 reserved, as on B200.
+  from 32 % to 3 % with the fast kernels. Estimates from GPU use x step period: with cueq+tf32 the GPUs are busy
+  3.73 s per step on the H100 against 2.76 s on the B200 (1.35x; published 1.48x), and idle 0.69 s against 1.52 s.
+  So the lead shrinks because the B200 waits while the H100 stays 84 % busy; the faster CPU clock is not needed to
+  explain it. Inferred, not measured, until job 2's H100 profile: the B200's waiting is the host's kernel launches
+  (inferred from the B200 profile's gaps).
+- Loss tracks B200's: 0.012 mean absolute over 40 steps (largest 0.086, step 21; loss 6.5-15.3), ten times a same-seed
+  B200 rerun (0.0012) or cueq+tf32 on either GPU: the GPU moves the loss more than the kernels do. Peak 31.5 GiB
+  allocated, 33.3-33.4 reserved, as on B200.
 - Data loader: gap 2.4 % (published) and 3.3 % (cueq+tf32) of the time, mean over ranks (B200: 3.5, 4.8 %);
   featurization median 2.4-2.6 s per sample, max 20 s, workers busy 3-4 %.
 - GPUs: 439 W mean, 590 max (published), 378 and 548 W (cueq+tf32), of 700 W; SM clock 1,980 MHz, the H100's
-  maximum, in every sample, no clock-event reason set (no power or thermal cap), 55 C at most; use 93 and 84 %
-  (B200: 615 and 471 W, 1,965 MHz, 83 and 65 %).
+  maximum, in every sample, and the clock-event reasons, which nodemon logs, are 0x0 in every sample: no power or
+  thermal cap, on both the reasons and the clocks; 55 C at most; use 93 and 84 %. B200: 615 and 471 W, SM clock
+  median 1,965 MHz; its cueq+tf32 run had 18 of 1,168 samples at the software power cap (reason 0x4), down to
+  1,897 MHz; use 83 and 65 %.
+- Limits: one run per variant and side, 34 timed steps, one node; H100 run-to-run spread not measured.
 - Not yet (job 26618631, pending): `ds` on H100 (DeepSpeed's kernel built for sm_90) and the H100 profile (kernel
-  classes, gaps, where the published step's 32 % goes), which would test the launch-bound reading above.
+  classes, gaps, where the published step's 32 % goes), which would test the reading above.
 
 ## Not tested yet
 
