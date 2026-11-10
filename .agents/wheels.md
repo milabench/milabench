@@ -37,7 +37,10 @@ Upload a wheel only after a smoke test passes. Wheels go to release tag `torch<X
 - Upload: `gh release upload <tag> -R milabench/wheels wheels/<dir>/*.whl` (`gh release create` first if new).
 
 ### Versions (`wheels/.env`)
-- vLLM 0.32.0: pins `torch==2.13.0`; `build-vllm.sh` strips it with `use_existing_torch.py`.
+- vLLM 0.32.0: pins `torch==2.13.0`; `build-vllm.sh` strips it with `tools/use_existing_torch.py --prefix`
+  (CUDA: only when the pin differs from the build torch). Building a vLLM against a newer torch than it
+  pins (GCC 13, libdw headers, nvcc parallelism, wheel checks): see "Building vLLM against a newer torch"
+  in `wheels/AGENTS.md` before dispatching CI.
 - aiter `v0.1.26` for torch 2.15 (needs `flydsl==0.4.0`); ATOM 0.1.8's Kimi-K3/GLM-5.2 need aiter ≥ 0.1.25.
 - mori `v1.2.3.post1`; ATOM 0.1.8 (built `0.1.8.post1`); xformers 0.0.35; flash-attn 2.8.3;
   torchao 0.18.0 (built `0.18.0.post1`); torch-cluster 1.6.3, torch-scatter 2.1.2, torch-sparse 0.6.18.

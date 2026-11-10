@@ -3,9 +3,10 @@
 # Trillium - run step of a pipeline (see scripts/pipeline/TrilliumRun.json)
 #
 # Runs on the GPU compute nodes: NO internet access, $HOME is read only, no local disk.
-# Everything (python, venvs, milabench, datasets, weights) was built on scratch by
-# trillium_prepare.sh on a data mover node, in the folder shared by the steps of the
-# pipeline run ($JR_PIPELINE_ID). Nothing is downloaded or installed here.
+# python, venvs and milabench were built on scratch by trillium_prepare.sh on a data mover
+# node, in a cached environment linked from the pipeline run folder ($JR_PIPELINE_ID).
+# Datasets / weights are checked out of the cherrybin archive onto each node (RAM disk).
+# Nothing is downloaded or installed here.
 #
 # Several run steps can share one prepare (parallel jobs on different GPUs): each one writes
 # its results to its own run folder.
@@ -17,8 +18,11 @@ export MILABENCH_GPU_ARCH=cuda
 export MILABENCH_REPO=https://github.com/milabench/milabench.git
 export CUDA_VERSION="132"
 export PYTORCH_VERSION="2.15.0"
-export CONFIG_PATH=benchmarks/torchtitan/dev.yaml
-export MILABENCH_ARGS="--select torchtitan-qwen3-4b-pretrain-smoke,torchtitan-qwen3-4b-sft-smoke"
+# the full benchmark suite (relative to the milabench checkout)
+export CONFIG_PATH=config/all.yaml
+# extra milabench arguments, e.g. --select <bench>,<bench> for a subset
+# vllm excluded: the torch2.15-cu132 vllm wheel still requires torch==2.13 (pin fails)
+export MILABENCH_ARGS="--exclude vllm"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -34,13 +38,15 @@ scontrol show job --json $SLURM_JOB_ID | jq '.jobs[0]' > $OUTPUT_DIRECTORY/meta/
 # ===
 
 SCRATCH="${SCRATCH:-$HOME/links/scratch}"
-export MILABENCH_WORDIR="$SCRATCH/milabench/pipelines/${JR_PIPELINE_ID:?run this script as a pipeline step}/$MILABENCH_GPU_ARCH"
+# pipelines/<id>/cuda is a link to the cached environment (envs/<key>/cuda) made by the prepare step
+export MILABENCH_WORDIR="$(readlink -f "$SCRATCH/milabench/pipelines/${JR_PIPELINE_ID:?run this script as a pipeline step}/$MILABENCH_GPU_ARCH")"
 export MILABENCH_BASE="$MILABENCH_WORDIR/results"
 export MILABENCH_ENV="$MILABENCH_WORDIR/.env/$PYTHON_VERSION/"
 export BENCHMARK_VENV="$MILABENCH_WORDIR/results/venv/torch"
 export MILABENCH_SOURCE="$MILABENCH_WORDIR/milabench"
 export MILABENCH_CONFIG="$MILABENCH_SOURCE/$CONFIG_PATH"
 export MILABENCH_SHARED="$SCRATCH/shared"
+export CHERRYBIN_DB="${CHERRYBIN_DB:-$MILABENCH_SHARED/archive.db}"
 export MILABENCH_USE_TOML_DEPS=1
 
 if [ ! -f "$MILABENCH_WORDIR/.prepared" ]; then
@@ -58,11 +64,15 @@ export TORCH_HOME="$MILABENCH_WORDIR/cache/torch"
 # Per job caches: compiled kernels are written while running, $HOME is read only
 JOB_CACHE="$MILABENCH_WORDIR/jobs/$SLURM_JOB_ID"
 mkdir -p $JOB_CACHE
+# Copy of the job's output on scratch (the dashboard cleans up the job folder), unbuffered so
+# nothing is lost if the job is killed
+export PYTHONUNBUFFERED=1
+exec > >(tee -a $JOB_CACHE/job.stdout) 2> >(tee -a $JOB_CACHE/job.stderr >&2)
 export XDG_CACHE_HOME="$JOB_CACHE/cache"
 export TRITON_CACHE_DIR="$JOB_CACHE/triton"
 export TORCHINDUCTOR_CACHE_DIR="$JOB_CACHE/inductor"
 export MILABENCH_SIZER_SAVE="$JOB_CACHE/scaling.yaml"
-# no local disk, $SLURM_TMPDIR is a RAM disk
+# no local disk: $SLURM_TMPDIR is a RAM disk (/dev/shm, 1.5T on the B200 nodes)
 export TMPDIR="${SLURM_TMPDIR:-$JOB_CACHE/tmp}"
 mkdir -p $TMPDIR
 
@@ -73,13 +83,54 @@ export TRANSFORMERS_OFFLINE=1
 export UV_OFFLINE=1
 export PIP_NO_INDEX=1
 export WANDB_MODE=offline
+# The jobrunner prologue sets a SOCKS proxy to the login node: huggingface_hub builds its http
+# client from it before checking offline mode and fails (socksio is not installed). Offline anyway.
+unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
 
 . $MILABENCH_ENV/bin/activate
 
 module load cuda 2>/dev/null || echo "no cuda module"
 
+# ffmpeg for torchcodec (whisper-transcribe). The ffmpeg modules (CVMFS 2023 stack) need glibc 2.35+,
+# our python runs on the host glibc (2.34): use ffmpeg 4 of the 2020 stack (glibc 2.30) instead.
+# Only ffmpeg and the dependencies the host does not have are linked into a folder put on
+# LD_LIBRARY_PATH, so no host library (libstdc++, zlib, ...) is shadowed.
+setup_ffmpeg_shim() {
+    local shim="$1" src=/cvmfs/soft.computecanada.ca/gentoo/2020/usr/lib64 l m missing i
+    mkdir -p "$shim"
+    for l in libavutil.so.56 libavcodec.so.58 libavformat.so.58 libavdevice.so.58 libavfilter.so.7 libswscale.so.5 libswresample.so.3; do
+        ln -sfn "$src/$l" "$shim/$l"
+    done
+    for i in $(seq 15); do
+        missing=$(LD_LIBRARY_PATH="$shim" /usr/bin/ldd "$shim"/*.so* 2>/dev/null | awk '$2 == "=>" && $3 == "not" {print $1}' | sort -u)
+        [ -z "$missing" ] && return 0
+        for m in $missing; do
+            if [ -e "$src/$m" ]; then ln -sfn "$src/$m" "$shim/$m"; else echo "ffmpeg shim: $m not found"; return 1; fi
+        done
+    done
+}
+if setup_ffmpeg_shim "$JOB_CACHE/ffmpeg"; then
+    export LD_LIBRARY_PATH="$JOB_CACHE/ffmpeg${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+else
+    echo "no ffmpeg for torchcodec, whisper-transcribe will fail"
+fi
+
 # On the GPU node(s) of this job
 milabench slurm system > $JOB_CACHE/system.yaml
+
+# Datasets / weights: checked out of the cherrybin archive onto every node of the job, in
+# $SLURM_TMPDIR (same path on each node). ~580G for all.yaml without vllm, it is RAM!
+# Generated datasets (FakeImageNet, ...) are built there as well (no internet needed).
+LOCAL_DIR="${SLURM_TMPDIR:?}/milabench"
+export MILABENCH_DIRS_DATA="$LOCAL_DIR/data"
+export MILABENCH_DIRS_CACHE="$LOCAL_DIR/cache"
+# its output is also kept on scratch ($JOB_CACHE), the dashboard cleans up the job folder
+set -o pipefail
+srun --overlap --nodes=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 \
+    milabench cherrybin prepare --config $MILABENCH_CONFIG --system $JOB_CACHE/system.yaml \
+        --shared $CHERRYBIN_DB --cache $LOCAL_DIR/blobs $MILABENCH_ARGS 2>&1 | tee $JOB_CACHE/cherrybin_prepare.log \
+    || echo "cherrybin checkout incomplete: the benchmarks missing from the archive will fail"
+du -sh $LOCAL_DIR || true
 
 RUN_NAME="trillium.$SLURM_JOB_ID"
 RC=0

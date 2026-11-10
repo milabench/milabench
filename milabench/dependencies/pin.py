@@ -776,7 +776,7 @@ def _filter_combinations(
     combinations: list[tuple[str, str, str, str]],
     overrides: dict[str, str] | None,
 ) -> list[tuple[str, str, str, str]]:
-    """Keep only combos matching CLI ``--set`` keys (cuda, torch, backend, …).
+    """Keep only combos matching CLI ``--set`` keys (cuda, torch, backend, arch, …).
 
     ``--set`` is otherwise ignored by discovery, which is why
     ``--set cuda=130 --set torch=2.10.0`` used to pin the full matrix.
@@ -798,11 +798,16 @@ def _filter_combinations(
         if key in overrides:
             accel_filters[key] = normalized[key]
 
-    if torch_filter is None and not accel_filters:
+    # --set arch=x86_64 restricts the [pin.discovery] platforms (e.g. no aarch64 wheels yet)
+    arch_filter = overrides.get("arch") or None
+
+    if torch_filter is None and not accel_filters and arch_filter is None:
         return combinations
 
     def keep(combo: tuple[str, str, str, str]) -> bool:
-        backend, backend_version, torch_version, _arch = combo
+        backend, backend_version, torch_version, arch = combo
+        if arch_filter is not None and arch and arch != arch_filter:
+            return False
         if torch_filter is not None and torch_version != torch_filter:
             return False
         if accel_filters:
