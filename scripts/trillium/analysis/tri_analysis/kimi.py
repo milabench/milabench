@@ -2,7 +2,8 @@
 under ``data/raw/trillium/k3-inf/runs/`` (``analyze.py collect``: ``$SCRATCH/trillium/new/k3-inf/runs/``), and, in tables of
 their own (``kimi_xn_*``), the experts over 2 nodes (K3-XN-01, EP16 = DP2 x TP8 with expert parallelism, one job per all-to-all
 backend) from ``data/raw/trillium/k3-xn/runs/``; and on 4 nodes (``kimi_xn4_*``), prefill and decode on separate nodes against
-colocated (K3-XN-02) and the experts over all 4 (K3-XN-03, EP32 = DP4 x TP8), from the same directory.
+colocated (K3-XN-02) and the experts over all 4 (K3-XN-03, EP32 = DP4 x TP8), from the same directory; and the stall job (``kimi_stall_*``):
+K3-INF-02's server on 4 other nodes, each concurrency run twice in a row.
 
 The event parsing (``pass_summary`` and ``eval_summary`` events, the main node's GPU power over each pass's request
 window) is copied from ``scripts/analysis/kimi_study.py`` on branch ``trillium-new`` (``read_events``, ``pass_energy``),
@@ -11,6 +12,10 @@ facts (vLLM version, MoE backend, KV cache size and use) from the server's log l
 
 Power: voir samples the GPUs of the main node only, so a pass's power is that node's mean times the node count, an
 estimate (``power_nodes_measured`` = 1), as in kimi_study.py.
+
+Stalls: per pass, the gaps of more than STALL_MIN_S between one token and the next over all the pass's requests, with a request in
+flight across the gap, from the client's per-request records (``benchmark_results.db``: send time, time to first token, then the time
+between tokens): the engine produced no token at all for that long.
 
 Zero windows: vLLM logs its prompt and generation throughput every 10 s; a pass's ``zero_windows`` counts the logged
 intervals overlapping it with requests running and no token at all, prompt or output. The log's clock is Trillium's
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -38,6 +44,12 @@ XN_JOBS = ("1271952", "1271953")
 # engine (1272792); keyed on job, in tables of their own (kimi_xn4_*); the bring-ups beside them are not read.
 XN4_ENTRIES = ("kimi-vllm-4n-pd-ep16", "kimi-vllm-4n-pd-ep16-colocated", "kimi-vllm-4n-dp4tp8-ep32-s128")
 XN4_JOBS = ("1272790", "1272791", "1272792")
+# The stall job (2026-11-09, 1278355): K3-INF-02's server (TP8 x PP4) unchanged, on trig0115-0118, node telemetry on every node; the warm-up,
+# then conc64, conc128 and conc256 twice each in a row (passes <name>-1, <name>-2). In tables of its own (kimi_stall_*).
+STALL_ENTRIES = ("kimi-vllm-4n-tp8pp4-stall",)
+STALL_JOBS = ("1278355",)
+# a gap between tokens longer than this, with requests in flight, is a stall; prefill chunks of long prompts leave gaps up to 1.7 s here
+STALL_MIN_S = 2.0
 # run before the measured passes, so that kernels compile outside them; EP16 has a second one (64 requests of 1k in, 256 out)
 THROWAWAY = {"warmup", "warmup-mixed"}
 
@@ -110,6 +122,37 @@ def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict,
     if full:
         facts["kv_use_pct_full"] = max(full)
     return facts, sorted(zero)
+
+
+def token_gaps(run_dir: Path, min_s: float = STALL_MIN_S) -> dict[str, list[float]] | None:
+    """Per pass (by name), the stalls: gaps of more than min_s between consecutive token times over all of the pass's successful requests
+    (send time + time to first token, then + each time between tokens), with a request sent before the gap and finished after it.
+    None without a benchmark_results.db."""
+    db = run_dir / "benchmark_results.db"
+    if not db.exists():
+        return None
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    out = {}
+    try:
+        for run_id, desc in con.execute("SELECT run_id, description FROM runs").fetchall():
+            times, spans = [], []
+            for start, latency, ttft, itl in con.execute("SELECT start_time, latency, ttft, itl_json FROM requests WHERE run_id = ? AND success",
+                                                         (run_id,)):
+                if ttft is None:
+                    continue
+                t = start + ttft
+                times.append(t)
+                for x in json.loads(itl or "[]"):
+                    t += x
+                    times.append(t)
+                spans.append((start, start + latency))
+            times.sort()
+            # description: "<entry>.<pass>/<pass> (<model>)"
+            out[desc.split("/")[0].rpartition(".")[2]] = [b - a for a, b in zip(times, times[1:])
+                                                          if b - a > min_s and any(s <= a and b <= e for s, e in spans)]
+    finally:
+        con.close()
+    return out
 
 
 def _questions(run_dir: Path, entry: str, job: str) -> list[dict]:
@@ -188,8 +231,11 @@ def read_run(run_dir: Path) -> tuple[list[dict], list[dict], dict, list[dict]]:
     year = datetime.fromtimestamp(passes[0]["start_time"], LOG_TZ).year if passes else datetime.now().year
     facts, zero = _server_facts(run_dir, entry, run.get("max_num_seqs"), year)
     run.update(facts)
+    gaps = token_gaps(run_dir)
     for row in passes:  # logged intervals (t - 10 s, t] overlapping the pass
         row["zero_windows"] = sum(row["start_time"] < t and t - LOG_INTERVAL_S < row["end_time"] for t in zero)
+        if gaps is not None and row["pass"] in gaps:  # stalls in pass order, seconds
+            row["stalls"], row["stalls_s"] = len(gaps[row["pass"]]), ";".join(f"{g:.2f}" for g in gaps[row["pass"]])
     return passes, evals, run, _questions(run_dir, entry, job)
 
 

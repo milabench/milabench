@@ -95,6 +95,12 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
               "CtxTok", "CtxRatio", "CtxEightSixteenTok", "CtxEightSixteenRatio", "CtxThirtyTwoSixteenTok", "CtxThirtyTwoSixteenRatio",
               "Gsm", "GsmErr", "Arc", "ArcErr", "Gpqa", "GpqaErr", "Mmlu", "MmluErr")],
           "TriKxnDpAgFour", "TriKxnDpAgTwoFiftySix",
+          # ... the stall job (_kimi_stall_numbers): K3-INF-02's server on 4 other nodes, each concurrency twice in a row (First, Repeat), its
+          # stalls (Stall, second one StallSecond), and the stalls of K3-INF-02 (Four) and K3-INF-01 (Two) in the same passes
+          *[f"TriKstall{c}{m}" for c in ("SixtyFour", "OneTwentyEight", "TwoFiftySix") for m in ("First", "Repeat")],
+          "TriKstallSixtyFourPct", "TriKstallWarmStall", "TriKstallSixtyFourStall", "TriKstallTwoFiftySixStall", "TriKstallTwoFiftySixStallSecond",
+          "TriKstallFourSixtyFourStall", "TriKstallFourOneTwentyEightStall", "TriKstallFourTwoFiftySixStall", "TriKstallFourTwoFiftySixStallSecond",
+          "TriKstallTwoOneTwentyEightStall", "TriKstallTwoTwoFiftySixStall",
           # ... and on 4 nodes: prefill and decode on separate nodes against colocated (_kimi_pd_numbers, colocated: Co), and the experts
           # over all 4 (_kimi_xn_four_numbers) against TP8 x PP4 (Pp) and EP16 with all-gather (Ep)
           "TriKpdNodes", "TriKpdGpus", "TriKpdInstNodes", "TriKpdLayout", "TriKpdMaxSeqs", "TriKpdWeights", "TriKpdKvGib", "TriKpdKvTok", "TriKpdUp",
@@ -1597,6 +1603,92 @@ def _kimi_xn_four_numbers(t) -> dict[str, tuple]:
     return out
 
 
+_STALL_CONC = (("SixtyFour", 64), ("OneTwentyEight", 128), ("TwoFiftySix", 256))
+
+
+def _kimi_pp_runs(t) -> dict[str, pd.DataFrame]:
+    """Passes by name, warm-up included, of the 2-node (K3-INF-01) and 4-node (K3-INF-02) pipeline servers, the runs TriKimi* and TriKimiFour*
+    read, and of the stall job (kimi_stall_*): {"two", "four", "stall"}, each present only with its data."""
+    out = {}
+    p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
+    for key, nodes in (("two", 2), ("four", 4)):
+        if len(p) and len(runs) and (runs.nodes == nodes).any():
+            run = runs[runs.nodes == nodes].sort_values("job").iloc[-1]
+            out[key] = p[p.job.astype(str) == str(run.job)].set_index("pass")
+    p, runs = t.get("kimi_stall_passes", pd.DataFrame()), t.get("kimi_stall_runs", pd.DataFrame())
+    if len(p) and len(runs):
+        out["stall"] = p[p.job.astype(str) == str(runs.sort_values("job").iloc[-1].job)].set_index("pass")
+    return out
+
+
+def _stalls(p, name) -> list[float] | None:
+    """The stalls of pass name, in order (s); [] for none, None if not read."""
+    if name not in p.index or "stalls" not in p or pd.isna(p.stalls[name]):
+        return None
+    return [float(x) for x in str(p.stalls_s[name]).split(";")] if int(p.stalls[name]) else []
+
+
+def _kimi_stall_numbers(t) -> dict[str, tuple]:
+    """The stall job, TriKstall*: K3-INF-02's server unchanged on 4 other nodes, the warm-up then 64, 128 and 256 requests twice each in a
+    row; output tokens/s of each first pass and its repeat, the stalls (kimi.token_gaps), the 64-request repeat against the 2-node server
+    (derived), and the stalls of K3-INF-02 and K3-INF-01 in the same passes. One run each."""
+    r, out = _kimi_pp_runs(t), {}
+
+    def stall(key, name, macro):
+        g = _stalls(r[key], name) if key in r else None
+        for value, suffix in zip(g or [], ("", "Second")):
+            out[f"{macro}{suffix}"] = (value, ".1f", False)
+
+    if "stall" in r:
+        p = r["stall"]
+        for tag, c in _STALL_CONC:
+            for n, m in ((1, "First"), (2, "Repeat")):
+                if f"conc{c}-{n}" in p.index:
+                    out[f"TriKstall{tag}{m}"] = (p.output_throughput[f"conc{c}-{n}"], ",.0f", False)
+        if "two" in r and "conc64-2" in p.index and "conc64" in r["two"].index:
+            out["TriKstallSixtyFourPct"] = (100 * (p.output_throughput["conc64-2"] / r["two"].output_throughput["conc64"] - 1), ".0f", False)
+        stall("stall", "warmup", "TriKstallWarmStall")
+        stall("stall", "conc64-1", "TriKstallSixtyFourStall")
+        stall("stall", "conc256-1", "TriKstallTwoFiftySixStall")
+    for key, tag in (("four", "Four"), ("two", "Two")):
+        for name, c in (("SixtyFour", 64), ("OneTwentyEight", 128), ("TwoFiftySix", 256)):
+            stall(key, f"conc{c}", f"TriKstall{tag}{name}Stall")
+    return out
+
+
+def kimi_stall_table(t) -> str:
+    """The stall job against K3-INF-01 and K3-INF-02, by concurrency: output tokens/s and stalls of each pass; the stall job's first pass
+    and its repeat. The warm-up: its stalls only (not a measured pass, not repeated)."""
+    r = _kimi_pp_runs(t)
+    if "stall" not in r:
+        return ""
+    cols = [("two", "{}"), ("four", "{}"), ("stall", "{}-1"), ("stall", "{}-2")]
+
+    def cells(key, name):
+        p = r.get(key, pd.DataFrame())
+        if name not in p.index:
+            return ["--", "--"]
+        g = _stalls(p, name)
+        stalls = "?" if g is None else ("none" if not g else " + ".join(f"{x:.2f}" for x in g))
+        return ["--" if name == "warmup" else f"{p.output_throughput[name]:,.0f}", stalls]
+
+    lines = [r"\begin{tabular}{l" + "rr" * len(cols) + "}", r"\toprule",
+             r"Requests & \multicolumn{2}{c}{2 nodes} & \multicolumn{2}{c}{4 nodes} & "
+             r"\multicolumn{2}{c}{4 nodes, Nov.~9: first pass} & \multicolumn{2}{c}{repeat} \\",
+             r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}",
+             r" & tok/s & stalls, s & tok/s & stalls, s & tok/s & stalls, s & tok/s & stalls, s \\", r"\midrule"]
+    for label, name in (("warm-up", "warmup"), *((str(c), f"conc{c}") for _, c in _STALL_CONC)):
+        row = []
+        for key, fmt in cols:
+            if name == "warmup":
+                row += ["", ""] if fmt == "{}-2" else cells(key, "warmup")
+            else:
+                row += cells(key, fmt.format(name))
+        lines.append(f"{label} & " + " & ".join(row) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def kimi_pd_passes_table(t) -> str:
     """Kimi K3 inference on 4 nodes, pass for pass: prefill and decode on separate nodes (P/D) against colocated (K3-XN-02), one run
     each; output tokens/s and its ratio (derived), TTFT medians and the difference of the means (derived), TPOT medians."""
@@ -1724,8 +1816,8 @@ def kimi_runs_table(t) -> str:
     if r.empty:
         return ""
     # EP16 and EP32 (K3-XN-01, -03): one engine per node, so their sequence cap is per engine; P/D and colocated (K3-XN-02): two EP16
-    # instances of 2 nodes each
-    xn = [x for x in (t.get("kimi_xn_runs", pd.DataFrame()), t.get("kimi_xn4_runs", pd.DataFrame())) if len(x)]
+    # instances of 2 nodes each; the stall job (kimi_stall_runs): TP8 x PP4, as K3-INF-02
+    xn = [x for x in (t.get(k, pd.DataFrame()) for k in ("kimi_xn_runs", "kimi_xn4_runs", "kimi_stall_runs")) if len(x)]
     r = pd.concat([r, *xn], ignore_index=True)
     labels = {backend: label for _, backend, label in XN_BACKENDS}
     roles = {"pd": "P/D", "colocated": "colocated"}
@@ -3009,6 +3101,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_kimi_xn_numbers(t))
     out.update(_kimi_pd_numbers(t))
     out.update(_kimi_xn_four_numbers(t))
+    out.update(_kimi_stall_numbers(t))
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
@@ -3239,6 +3332,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "kimi_xn_passes.tex").write_text(kimi_xn_passes_table(tables))
     (out / "kimi_pd_passes.tex").write_text(kimi_pd_passes_table(tables))
     (out / "kimi_xn_four_passes.tex").write_text(kimi_xn_four_passes_table(tables))
+    (out / "kimi_stall.tex").write_text(kimi_stall_table(tables))
     (out / "kimi_train_runs.tex").write_text(kimi_train_runs_table(tables))
     (out / "glm_rl_runs.tex").write_text(glm_rl_runs_table(tables))
     (out / "glm_fp4_runs.tex").write_text(glm_fp4_runs_table(tables))
