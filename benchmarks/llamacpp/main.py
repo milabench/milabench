@@ -2,7 +2,7 @@
 """llama.cpp serving benchmark.
 
 Default `host` mode: boots llama-server (OpenAI-compatible API) with the
-selected ggml backend (sycl | vulkan) and drives it with the shared
+selected ggml backend (sycl | vulkan | cuda | hip, or native: the arch's own one) and drives it with the shared
 benchmate bench client (vllm.benchmarks.serve in-process, random ISL/OSL,
 saturating request rate, bounded concurrency) — the exact client used by the
 vLLM packs, so the numbers are directly comparable and report as tok/s.
@@ -50,11 +50,52 @@ def server_env(backend, device):
         env.setdefault("ONEAPI_DEVICE_SELECTOR", f"level_zero:{device}")
         if os.environ.get("MILABENCH_GPU_ID"):
             env["ONEAPI_DEVICE_SELECTOR"] = f"level_zero:{device}"
+    elif backend in ("cuda", "hip"):
+        name = "CUDA_VISIBLE_DEVICES" if backend == "cuda" else "HIP_VISIBLE_DEVICES"
+        env.setdefault(name, str(device))
+        if os.environ.get("MILABENCH_GPU_ID"):
+            env[name] = str(device)
     else:
         env.setdefault("GGML_VK_VISIBLE_DEVICES", str(device))
         if os.environ.get("MILABENCH_GPU_ID"):
             env["GGML_VK_VISIBLE_DEVICES"] = str(device)
     return env
+
+
+_SHARD = re.compile(r"^(?P<stem>.*)-00001-of-(?P<count>\d{5})\.gguf$")
+
+
+def download_gguf(repo, filename):
+    """Path of the GGUF; a split model (``*-00001-of-0000N.gguf``) downloads every shard, llama.cpp
+    loads the others from the first one's folder."""
+    from huggingface_hub import hf_hub_download
+
+    match = _SHARD.match(filename)
+    if not match:
+        return hf_hub_download(repo_id=repo, filename=filename)
+    count = int(match["count"])
+    paths = [
+        hf_hub_download(repo_id=repo, filename=f"{match['stem']}-{i:05d}-of-{count:05d}.gguf")
+        for i in range(1, count + 1)
+    ]
+    return paths[0]
+
+
+# ggml backend of each milabench arch (llama.cpp build folder: build-<backend>)
+ARCH_BACKENDS = {"cuda": "cuda", "rocm": "hip", "xpu": "sycl"}
+
+
+def resolve_backend(backend):
+    """``native`` (or ``auto``): the arch's own backend (MILABENCH_CONFIG system.arch), Vulkan for anything else."""
+    if backend not in ("native", "auto"):
+        return backend
+    import json
+
+    try:
+        arch = json.loads(os.environ.get("MILABENCH_CONFIG", "{}")).get("system", {}).get("arch")
+    except json.JSONDecodeError:
+        arch = None
+    return ARCH_BACKENDS.get(arch, "vulkan")
 
 
 def wrap_sycl(cmd):
@@ -198,7 +239,7 @@ def main(argv=None):
     parser.add_argument("--file", required=True, help="GGUF filename in the repo")
     parser.add_argument("--model", default=None,
                         help="HF id used by the bench client for the tokenizer")
-    parser.add_argument("--backend", default="sycl", choices=["sycl", "vulkan"])
+    parser.add_argument("--backend", default="sycl", choices=["sycl", "vulkan", "cuda", "hip", "native", "auto"])
     parser.add_argument("--mode", default="host", choices=["host", "micro"])
     parser.add_argument("--device", default=os.environ.get("MILABENCH_GPU_ID", "0"))
     parser.add_argument("--llama-root", default=DEFAULT_ROOT)
@@ -209,14 +250,13 @@ def main(argv=None):
     parser.add_argument("--tg", type=int, default=128)
     parser.add_argument("--repetitions", type=int, default=5)
     args, rest = parser.parse_known_args(argv)
+    args.backend = resolve_backend(args.backend)
     server_extra, client_argv = split_args(rest, [])
 
     if not args.model:
         args.model = args.repo
 
-    from huggingface_hub import hf_hub_download
-
-    model_path = hf_hub_download(repo_id=args.repo, filename=args.file)
+    model_path = download_gguf(args.repo, args.file)
 
     observer, monitor = prepare_voir()
     dataset = observer.loader(itertools.repeat(None), custom_step=False)

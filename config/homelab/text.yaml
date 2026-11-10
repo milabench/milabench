@@ -1,0 +1,576 @@
+# =============================================================================
+# Homelab — text generation (LLM)
+#
+#   homelab-llm-chat        HF transformers, Llama-3.1-8B-Instruct
+#   homelab-vllm-*          vLLM quantized serving (fp8 / w8a8) for a 32 GB card, passes conc 1 / 8 / 32
+#   homelab-llamacpp-*      llama.cpp GGUF, native backend (SYCL / CUDA / HIP) vs Vulkan, conc 1 / 8
+#
+# Then, on the regular per-arch install (bottom of the file), recent 4-bit models + speculative decoding:
+#   homelab-vllm-{qwen36-35b-a3b, gemma4-26b-a4b}-*-mtp, homelab-vllm-qwen38-27b-nvfp4-dflash2,
+#   homelab-vllm-{qwen3-coder-30b-a3b-awq, nemotron3-nano-30b-a3b-nvfp4, qwen36-27b-nvfp4, gptoss-120b-mxfp4},
+#   homelab-llamacpp-glm53-flash-q2 (and homelab-sglang-qwen38-27b-nvfp4-dflash2, off)
+#
+# Runtime FP8 vs pre-quantized (Qwen3-8B, Llama-3.1-8B, gemma-4-E4B): --select quant-compare
+#
+# Every perf pass sends real text (--real-text), not random token ids, after its warmup requests.
+#
+# 2-GPU variants (TP=2 / DP=2): multigpu.yaml
+# =============================================================================
+
+include:
+  - _base.yaml
+
+homelab-llm-chat:
+  inherits: _inference
+  tags:
+    - text
+    - monogpu
+  max_duration: 3600
+  plan:
+    method: per_gpu
+  url: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+  argv:
+    --mode: chat
+    --model: meta-llama/Llama-3.1-8B-Instruct
+    --dataset: hendrydong/gpqa_diamond
+    --split: "test"
+    # bs=1 already reserves ~17.4 GB on the B70; autosizer steps down from 4.
+    --batch_size: "auto_batch(4)"
+
+# --- 32 GB card (_serving_vllm_32gb): one server per model, passes conc1 / conc8 / conc32 ---
+
+# FP8: Qwen3-8B (dense) — the bring-up pack, smallest download
+_h_vllm_qwen3_8b_fp8:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - fp8
+  url: https://huggingface.co/Qwen/Qwen3-8B-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3-8B-FP8
+  server:
+    argv:
+      Qwen/Qwen3-8B-FP8: true
+
+homelab-vllm-qwen3-8b-fp8:
+  inherits: _h_vllm_qwen3_8b_fp8
+  enabled: true
+  tags:
+    - quant-compare
+  weight: 1
+
+# W8A8 INT8: Llama-3.1-8B dense fallback
+_h_vllm_llama8b_w8a8:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - w8a8
+  url: https://huggingface.co/RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8
+  client:
+    argv:
+      --model: RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8
+  server:
+    argv:
+      RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8: true
+
+homelab-vllm-llama8b-w8a8:
+  inherits: _h_vllm_llama8b_w8a8
+  enabled: true
+  tags:
+    - quant-compare
+  weight: 1
+
+# FP8: Gemma-4 26B-A4B MoE (26.5 GB weights): a 4k context, small prefill chunks and eager mode
+# (graph capture needs memory) leave room for the KV cache on a 32 GB card
+_h_vllm_gemma4_fp8:
+  inherits: _serving_vllm_32gb
+  max_duration: 7200
+  tags:
+    - text
+    - moe
+    - fp8
+  url: https://huggingface.co/RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+  client:
+    argv:
+      --model: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+  server:
+    argv:
+      RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic: true
+      --gpu-memory-utilization: 0.95
+      --max-model-len: 4096
+      --max-num-batched-tokens: 2048
+      --enforce-eager: true
+
+homelab-vllm-gemma4-fp8:
+  inherits: _h_vllm_gemma4_fp8
+  enabled: true
+  weight: 1
+
+# W8A8 INT8: Instella-MoE 16B-A3B (15.9 GB weights). Needs a vLLM that registers InstellaMoEForCausalLM.
+_h_vllm_instella_w8a8:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - moe
+    - w8a8
+  url: https://huggingface.co/amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor
+  client:
+    argv:
+      --model: amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor
+  server:
+    argv:
+      amd/Instella-MoE-16B-A3B-SFT-w8a8-llmcompressor: true
+
+homelab-vllm-instella-w8a8:
+  inherits: _h_vllm_instella_w8a8
+  enabled: false  # vllm 0.29: InstellaMoEForCausalLM arch not registered
+  weight: 1
+
+# --- Runtime FP8 vs pre-quantized (tag quant-compare): per model, the same server settings and passes
+# (_serving_vllm_32gb), only the weights change:
+#   bf16          the original checkpoint
+#   fp8-runtime   the same checkpoint quantized when it loads (--quantization fp8: FP8 weights, dynamic
+#                 per-token activation scales), no calibration
+#   fp8           a pre-quantized FP8 checkpoint (offline, calibrated) — homelab-vllm-qwen3-8b-fp8 above
+#   w8a8          INT8 weights and activations (Llama only) — homelab-vllm-llama8b-w8a8 above
+# Run the set with --select quant-compare. Speed is one half of the choice: check accuracy too
+# (client.passes eval, benchmarks/serving). ---
+
+_h_vllm_qwen3_8b:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - quant-compare
+  url: https://huggingface.co/Qwen/Qwen3-8B
+  client:
+    argv:
+      --model: Qwen/Qwen3-8B
+  server:
+    argv:
+      Qwen/Qwen3-8B: true
+
+homelab-vllm-qwen3-8b-bf16:
+  inherits: _h_vllm_qwen3_8b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+
+homelab-vllm-qwen3-8b-fp8-runtime:
+  inherits: _h_vllm_qwen3_8b
+  enabled: true
+  weight: 1
+  tags:
+    - fp8
+  server:
+    argv:
+      --quantization: fp8
+
+# Llama-3.1-8B-Instruct (gated: accept the license, HF_TOKEN)
+_h_vllm_llama8b:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - quant-compare
+  url: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+  client:
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+  server:
+    argv:
+      meta-llama/Llama-3.1-8B-Instruct: true
+
+homelab-vllm-llama8b-bf16:
+  inherits: _h_vllm_llama8b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+
+homelab-vllm-llama8b-fp8-runtime:
+  inherits: _h_vllm_llama8b
+  enabled: true
+  weight: 1
+  tags:
+    - fp8
+  server:
+    argv:
+      --quantization: fp8
+
+homelab-vllm-llama8b-fp8:
+  inherits: _serving_vllm_32gb
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - fp8
+    - quant-compare
+  url: https://huggingface.co/RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+  client:
+    argv:
+      --model: RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic
+  server:
+    argv:
+      RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic: true
+
+# Gemma 4 E4B (instruction-tuned; 8B parameters with per-layer embeddings, ~4B effective). No first-party
+# FP8 checkpoint: BF16 vs runtime FP8, and Gemma 4's MTP drafter (the "assistant" model) on BF16.
+# Known: runtime FP8 crashed on XPU with vLLM 0.30 / 0.31 (oneDNN fp8_gemm_w8a16 assert).
+_h_vllm_gemma4_e4b:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - quant-compare
+  url: https://huggingface.co/google/gemma-4-E4B-it
+  client:
+    argv:
+      --model: google/gemma-4-E4B-it
+  server:
+    argv:
+      google/gemma-4-E4B-it: true
+
+homelab-vllm-gemma4-e4b-bf16:
+  inherits: _h_vllm_gemma4_e4b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+
+homelab-vllm-gemma4-e4b-fp8-runtime:
+  inherits: _h_vllm_gemma4_e4b
+  enabled: true
+  weight: 1
+  tags:
+    - fp8
+  server:
+    argv:
+      --quantization: fp8
+
+homelab-vllm-gemma4-e4b-bf16-mtp:
+  inherits: _h_vllm_gemma4_e4b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+    - mtp
+  server:
+    argv:
+      --speculative-config: '{"model": "google/gemma-4-E4B-it-assistant", "num_speculative_tokens": 3}'
+
+# --- llama.cpp: native backend vs Vulkan, one bench per concurrency (slots are sized by it) ---
+
+homelab-llamacpp-qwen3-8b-q8:
+  matrix:
+    backend: [native, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-qwen3-8b-q8-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true  # bring-up model; frontier GGUFs stay off until this passes
+    weight: 1
+    server:
+      argv:
+        --repo: ggml-org/Qwen3-8B-GGUF
+        --file: Qwen3-8B-Q8_0.gguf
+        --model: Qwen/Qwen3-8B
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-gptoss-q4xl:
+  matrix:
+    backend: [native, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-gptoss-q4xl-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: unsloth/gpt-oss-20b-GGUF
+        --file: gpt-oss-20b-UD-Q4_K_XL.gguf
+        --model: openai/gpt-oss-20b
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-qwen3-30b-q4km:
+  matrix:
+    backend: [native, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-qwen3-30b-q4km-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF
+        --file: Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
+        --model: Qwen/Qwen3-30B-A3B-Instruct-2507
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-gemma4-q4:
+  matrix:
+    backend: [native, vulkan]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-gemma4-q4-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: ggml-org/gemma-4-26B-A4B-it-GGUF
+        --file: gemma-4-26B-A4B-it-Q4_0.gguf
+        --model: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# =============================================================================
+# Serving on the regular per-arch install (_serving_vllm / _llamacpp_serving in _base.yaml):
+# recent MoE / dense models in 4-bit and their speculative decoding. Each loads its server once and
+# runs the single / fill4k / conc8 / conc32 passes. They need more memory than the 32 GB-card benches
+# above: ~20-25 GB of weights, gpt-oss-120b 65 GB, GLM-5.3-Flash 109 GB.
+# NVFP4 runs natively on Blackwell, vLLM falls back to W4A16 (Marlin) kernels elsewhere.
+# =============================================================================
+
+# --- Qwen3.6-35B-A3B NVFP4, MTP 3-token draft (its built-in MTP head) ---
+homelab-vllm-qwen36-35b-a3b-nvfp4-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - mtp
+  url: https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Qwen3.6-35B-A3B-NVFP4
+  server:
+    argv:
+      nvidia/Qwen3.6-35B-A3B-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+
+# --- Qwen3-Coder-30B-A3B AWQ 4-bit ---
+homelab-vllm-qwen3-coder-30b-a3b-awq:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - awq
+  url: https://huggingface.co/cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit
+  client:
+    argv:
+      --model: cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit
+  server:
+    argv:
+      cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit: true
+
+# --- Nemotron 3 Nano 30B-A3B NVFP4 (hybrid Mamba-MoE) ---
+homelab-vllm-nemotron3-nano-30b-a3b-nvfp4:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+  url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+  client:
+    argv:
+      --model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      --trust-remote-code: true
+  server:
+    argv:
+      nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4: true
+      --trust-remote-code: true
+
+# --- Gemma 4 26B-A4B NVFP4, Gemma 4's MTP drafter (the "assistant" model; vLLM gemma4_mtp,
+# detected from the drafter's config) ---
+homelab-vllm-gemma4-26b-a4b-nvfp4-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - mtp
+  url: https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Gemma-4-26B-A4B-NVFP4
+  server:
+    argv:
+      nvidia/Gemma-4-26B-A4B-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-26B-A4B-it-assistant", "num_speculative_tokens": 3}'
+
+# --- Qwen3.8-27B NVFP4, DFlash 2 block-diffusion drafter (8-token block = 7 draft tokens) ---
+homelab-vllm-qwen38-27b-nvfp4-dflash2:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - nvfp4
+    - dflash
+  url: https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Qwen3.8-27B-NVFP4
+  server:
+    argv:
+      nvidia/Qwen3.8-27B-NVFP4: true
+      --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
+
+# --- The same on SGLang, where DFlash 2 was first released. SGLang pins its own torch and the client
+# imports vLLM, so it gets its own venv (install_group homelab-sglang), which milabench does not
+# provision yet: install sglang (with DFLASH) + vllm[bench] into it by hand. Off until then. ---
+homelab-sglang-qwen38-27b-nvfp4-dflash2:
+  inherits: _serving
+  enabled: false
+  weight: 1
+  install_group: homelab-sglang
+  tags:
+    - text
+    - dense
+    - nvfp4
+    - dflash
+    - sglang
+  url: https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Qwen3.8-27B-NVFP4
+  server:
+    backend: sglang
+    argv:
+      --model-path: nvidia/Qwen3.8-27B-NVFP4
+      --served-model-name: model
+      --mem-fraction-static: 0.85
+      --context-length: 16384
+      --kv-cache-dtype: fp8_e4m3
+      --disable-radix-cache: true
+      --speculative-algorithm: DFLASH
+      --speculative-draft-model-path: z-lab/Qwen3.8-27B-DFlash2
+      --speculative-num-draft-tokens: 8
+
+# --- Qwen3.6-27B NVFP4, no draft ---
+homelab-vllm-qwen36-27b-nvfp4:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - nvfp4
+  url: https://huggingface.co/nvidia/Qwen3.6-27B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Qwen3.6-27B-NVFP4
+  server:
+    argv:
+      nvidia/Qwen3.6-27B-NVFP4: true
+
+# --- gpt-oss-120b MXFP4 (65 GB of weights), plus a 256-stream pass for the aggregate number ---
+homelab-vllm-gptoss-120b-mxfp4:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  tags:
+    - text
+    - moe
+    - mxfp4
+  url: https://huggingface.co/openai/gpt-oss-120b
+  client:
+    argv:
+      --model: openai/gpt-oss-120b
+    passes:
+      - {name: single,  argv: {--max-concurrency: 1,   --num-warmups: 1,   --num-prompts: 8,    --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k,  argv: {--max-concurrency: 1,   --num-warmups: 1,   --num-prompts: 8,    --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,   argv: {--max-concurrency: 8,   --num-warmups: 8,   --num-prompts: 40,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: conc32,  argv: {--max-concurrency: 32,  --num-warmups: 32,  --num-prompts: 160,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: conc256, argv: {--max-concurrency: 256, --num-warmups: 256, --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 512}}
+  server:
+    argv:
+      openai/gpt-oss-120b: true
+      --max-num-seqs: 256
+      # gpt-oss: its own attention sinks, keep the KV cache in bf16
+      --kv-cache-dtype: auto
+
+# --- GLM-5.3-Flash 320B-A18B, unsloth UD-Q2_K_XL (108.7 GB, 4 shards), llama.cpp on the arch's native backend.
+# Build llama.cpp once in $MILABENCH_LLAMACPP_ROOT, e.g. for CUDA:
+#   cmake -B build-cuda -DGGML_CUDA=ON && cmake --build build-cuda -j --target llama-server llama-bench ---
+homelab-llamacpp-glm53-flash-q2:
+  matrix:
+    concurrency: [1, 4]
+  job:
+    name: 'homelab-llamacpp-glm53-flash-q2-conc{concurrency}'
+    tags:
+      - text
+      - moe
+      - gguf
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    url: https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF
+    server:
+      argv:
+        --repo: unsloth/GLM-5.3-Flash-GGUF
+        --file: UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00001-of-00004.gguf
+        --model: zai-org/GLM-5.3-Flash
+        --backend: native
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"

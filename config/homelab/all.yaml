@@ -1,0 +1,48 @@
+# =============================================================================
+# Homelab — every benchmark: text / image / video / audio inference, plus the
+# LLM fine-tune below. Each modality also runs on its own (e.g. -c homelab/text.yaml),
+# or select one here by tag: --select text|image|video|audio
+#
+# Not included: multigpu.yaml (needs more than one GPU)
+# =============================================================================
+
+include:
+  - text.yaml
+  - image.yaml
+  - video.yaml
+  - audio.yaml
+
+# -----------------------------------------------------------------------------
+# LLM fine-tuning (unsloth, own venv via requirements.toml [xpu])
+# -----------------------------------------------------------------------------
+
+homelab-llm-ft-unsloth:
+  name: homelab-llm-ft-unsloth
+  definition: ../../benchmarks/unsloth
+  inherits: _defaults
+  group: finetune
+  install_group: unsloth
+  install_variant: unpinned
+  enabled: true
+  weight: 1
+  max_duration: 3600
+  tags:
+    - training
+    - llm
+    - finetune
+    - unsloth
+    - homelab
+    - monogpu
+  num_machines: 1
+  voir:
+    options:
+      stop: 20
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --model: unsloth/Llama-3.2-1B
+    --dataset: Trelis/tiny-shakespeare
+    --steps: 60
+    --seq_length: 2048
+    --batch_size: 1

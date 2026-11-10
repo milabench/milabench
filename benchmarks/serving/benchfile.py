@@ -153,10 +153,11 @@ class Serving(Package):
         """A client pass as its own benchmark: ``<name>.<pass>``, tagged with the pass name.
 
         Its own voir monitor and .data file (``<name>.<pass>.<job>.data``), so ``milabench report`` lists every
-        load point and its power on its own row. lm-eval reports scores, not a rate: nolog, or the report
-        counts it as a failed run."""
+        load point and its power on its own row. Scoring passes (lm-eval, QualityBench, SWE-bench) report
+        scores, not a rate: nolog, or the report counts them as failed runs."""
         name = spec["name"]
-        extra = ["nolog"] if "eval" in spec else []
+        # lm-eval / QualityBench / SWE-bench report scores, not a rate
+        extra = ["nolog"] if any(kind in spec for kind in ("eval", "quality", "swebench")) else []
         tag = [f"{self.config['tag'][0]}.{name}", *self.config["tag"][1:], *extra]
         return self.copy(cmd.clone_with(self.config, {"name": f"{self.config['name']}.{name}", "tag": tag}))
 

@@ -1,6 +1,6 @@
-"""Real-text prompts for the serving client, from OpenHermes-2.5 (ShareGPT format).
+"""Real-text prompts for the serving client (benchmate.benchserve), from OpenHermes-2.5 (ShareGPT format).
 
-``prepare.py`` extracts a sample of (first user turn, assistant reply) pairs once into
+A pack's ``prepare.py`` (benchserve.prepare_text_corpus) extracts a sample of (first user turn, assistant reply) pairs once into
 ``$MILABENCH_DIR_DATA/serving/openhermes_pairs.json``; the 1.9 GB source is too slow to load in every pass.
 
 * chat passes: vLLM's own ``--dataset-name sharegpt`` on that file (real prompt and reply lengths)
@@ -22,6 +22,7 @@ NUM_PAIRS = 20000
 
 
 def corpus_path() -> str:
+    # shared by every serving pack (vllm, serving, llamacpp)
     return os.path.join(os.environ["MILABENCH_DIR_DATA"], "serving", "openhermes_pairs.json")
 
 
@@ -103,5 +104,41 @@ def make_real_text_dataset(datasets):
                     request_id=request_id_prefix + str(i),
                 ))
             return samples
+
+        def sample_shared_prefix(self, tokenizer, num_requests: int, prefix_len: int, suffix_len: int,
+                                 num_prefixes: int, output_len: int, request_id_prefix: str = "") -> list:
+            """Agent-shaped requests (vLLM's ``prefix_repetition`` layout, in real text): ``num_prefixes``
+            long contexts of ``prefix_len`` tokens, each continued by its own ``suffix_len``-token turns, the
+            requests of all contexts interleaved. With prefix caching only the suffix is prefilled again,
+            as in a coding-agent session (repository context + the new command output)."""
+            rng = np.random.default_rng(self.random_seed)
+            total = prefix_len + suffix_len
+            stream = self._stream(tokenizer, max(4 * total * num_prefixes, 262144))
+
+            def cut(length):
+                start = int(rng.integers(0, len(stream) - length))
+                return stream[start:start + length]
+
+            per_prefix = max(1, num_requests // num_prefixes)
+            samples = []
+            for p in range(num_prefixes):
+                prefix = cut(prefix_len)
+                for _ in range(per_prefix):
+                    prompt, token_ids, _ = datasets.gen_prompt_decode_to_target_len(
+                        tokenizer=tokenizer,
+                        token_sequence=prefix + cut(suffix_len),
+                        target_token_len=total,
+                        add_special_tokens=False,
+                        rng=rng,
+                    )
+                    samples.append(datasets.SampleRequest(
+                        prompt=prompt,
+                        prompt_len=len(token_ids),
+                        expected_output_len=output_len,
+                        request_id=request_id_prefix + str(len(samples)),
+                    ))
+            # the contexts' turns interleaved, not one context after the other
+            order = rng.permutation(len(samples))
+            return [samples[i] for i in order]
 
     return RealTextDataset

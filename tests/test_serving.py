@@ -16,6 +16,7 @@ from milabench.commands import CmdCommand, SequenceCommand, Service, clone_with
 from milabench.commands.serving import (
     AtomServer,
     InferenceServer,
+    OmniServer,
     RawServer,
     SGLangServer,
     TRTLLMServer,
@@ -48,6 +49,7 @@ def test_inference_server_selects_backend():
     assert type(InferenceServer(pack, backend="atom", entry="e.py")) is AtomServer
     assert type(InferenceServer(pack, backend="sglang")) is SGLangServer
     assert type(InferenceServer(pack, backend="trtllm")) is TRTLLMServer
+    assert type(InferenceServer(pack, backend="vllm-omni")) is OmniServer
     assert type(InferenceServer(pack, backend="atom", command=["my-server"])) is RawServer
     with pytest.raises(ValueError):
         InferenceServer(pack, backend="nope")
@@ -65,6 +67,15 @@ def test_server_argv():
     assert AtomServer(pack, "--model", "m", entry="/code/entry.py").argv() == [
         "/tmp/venv/bin/python", "/code/entry.py", "--model", "m"
     ]
+
+
+def test_omni_server_argv():
+    pack = _stub(arch="cuda")
+    assert OmniServer(pack, "black-forest-labs/FLUX.1-dev", "--tensor-parallel-size", "2").argv() == [
+        "/tmp/venv/bin/vllm", "serve", "black-forest-labs/FLUX.1-dev", "--tensor-parallel-size", "2", "--omni"
+    ]
+    # --omni given in the config is not repeated
+    assert OmniServer(pack, "m", "--omni").argv().count("--omni") == 1
 
 
 def test_atom_drops_vllm_only_flags():
@@ -268,6 +279,36 @@ def test_serving_plan_single_client():
     assert plan.workload.argv()[-6:-4] == ["--mode", "perf"]
 
 
+def test_omni_plan():
+    mod = _load(ROOT / "benchmarks" / "omni" / "benchfile.py", "omni_benchfile")
+    from test_vllm_variants import _make_vllm_pack
+    from milabench.merge import merge
+
+    class Bench(mod.Omni):
+        def copy(self, config):
+            return type(self)(merge(self.config, config), core=self.core)
+
+    class Mod:
+        VLLM = Bench
+
+    config = {
+        **BENCH, "name": "omni-flux", "tag": ["omni-flux"], "definition": str(ROOT / "benchmarks" / "omni"),
+        "system": {**BENCH["system"], "arch": "cuda"},
+        "server": {"backend": "vllm-omni", "argv": {"black-forest-labs/FLUX.1-dev": True, "--tensor-parallel-size": 2}},
+        "client": {"argv": {"--task": "t2i", "--steps": 20, "--port": 8124}},
+    }
+    pack = _make_vllm_pack(Mod, config)
+    plan = pack.build_run_plan()
+
+    assert isinstance(plan, mod.OmniPlan) and plan.pack is pack
+    assert isinstance(plan.service, OmniServer)
+    assert plan.service.pack.config["tag"] == ["omni-flux", "server", "nolog"]
+    assert plan.service.argv()[-4:] == ["black-forest-labs/FLUX.1-dev", "--tensor-parallel-size", "2", "--omni"]
+    assert plan.service.ready_url() == "http://127.0.0.1:8124/v1/models"
+    assert plan.workload.pack is pack
+    assert "--task" in plan.workload.argv() and "--omni" not in plan.workload.argv()
+
+
 def test_serving_plan_one_client_per_pass():
     passes = [{"name": "conc4", "argv": {}}, {"name": "ctx4k", "argv": {}}, {"name": "eval", "eval": {"tasks": ["t"]}}]
     mod, pack = _serving_bench({**BENCH, "tag": ["serving-smoke", "0"], "client": {**BENCH["client"], "passes": passes}})
@@ -373,3 +414,16 @@ def test_server_worker_fills_rank(tmp_path, monkeypatch):
     ])
     assert worker.main() == 0
     assert out.read_text().split() == ["--data-parallel-rank", "16", "--node", "2"]
+
+
+def test_memory_fraction_cap(monkeypatch):
+    from milabench.commands.serving import cap_memory_fraction
+
+    argv = ["m", "--gpu-memory-utilization", "0.9", "--mem-fraction-static=0.85", "--max-model-len", "8192"]
+    assert cap_memory_fraction(argv) == argv
+    monkeypatch.setenv("MILABENCH_GPU_MEMORY_FRACTION_MAX", "0.75")
+    assert cap_memory_fraction(argv) == ["m", "--gpu-memory-utilization", "0.75", "--mem-fraction-static=0.75",
+                                         "--max-model-len", "8192"]
+    # a lower value in the config stays
+    assert cap_memory_fraction(["--gpu-memory-utilization", "0.5"]) == ["--gpu-memory-utilization", "0.5"]
+    assert VLLMServer(_stub(arch="cuda"), "m", "--gpu-memory-utilization", "0.95").argv()[-1] == "0.75"

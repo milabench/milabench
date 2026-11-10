@@ -48,6 +48,10 @@ class GpuCollector(NvmlCollector):
             "Why the SM clock is below its maximum, as hex NVML clock event reason bits (see ClockReason)",
         ),
         CollectorMetric("power_w", MetricKind.SAMPLE, "W", "Board power draw"),
+        CollectorMetric(
+            "energy_j", MetricKind.COUNTER, "J",
+            "Energy the GPU used since the driver loaded (NVML total energy): a run's energy is its difference",
+        ),
         CollectorMetric("temp_c", MetricKind.SAMPLE, "C", "GPU temperature"),
         CollectorMetric("util", MetricKind.SAMPLE, "fraction", "Utilization at the tick: one reading of a coarse counter"),
         CollectorMetric(
@@ -152,6 +156,7 @@ class GpuCollector(NvmlCollector):
         for gpu in self._gpus:
             reasons = self._query(gpu, "reasons", self._reasons)
             power = self._query(gpu, "power", self._nvml.nvmlDeviceGetPowerUsage)
+            energy = self._query(gpu, "energy", self._nvml.nvmlDeviceGetTotalEnergyConsumption)
             util = self._query(gpu, "util", self._nvml.nvmlDeviceGetUtilizationRates)
             rows.append(
                 {
@@ -161,6 +166,7 @@ class GpuCollector(NvmlCollector):
                     ),
                     "clocks_event_reasons": None if reasons is None else f"0x{reasons:x}",
                     "power_w": None if power is None else power / 1000,
+                    "energy_j": None if energy is None else energy / 1000,
                     "temp_c": self._query(
                         gpu, "temp", self._nvml.nvmlDeviceGetTemperature, self._nvml.NVML_TEMPERATURE_GPU
                     ),

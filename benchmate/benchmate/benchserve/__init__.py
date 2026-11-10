@@ -354,6 +354,82 @@ def _gpqa_diamond_cls():
 _samples_hook = None
 
 
+def add_real_text_options(parser):
+    # real text instead of random token ids, same lengths (--random-input-len / --random-output-len)
+    parser.add_argument("--real-text", action="store_true")
+
+
+def real_text_samples(args, tokenizer, datasets):
+    """``--real-text``: prompts cut from the OpenHermes corpus (text_corpus) to exactly
+    ``--random-input-len`` tokens. ``--dataset-name sharegpt`` without a path reads the same corpus.
+
+    Random token ids change the measured performance (speculative decoding rejects almost every
+    draft, MoE routing and attention see unnatural inputs): perf passes should use real text."""
+    from benchmate.benchserve import text_corpus
+
+    if getattr(args, "real_text", False):
+        path = args.dataset_path if args.dataset_name not in ("random", "prefix_repetition") and args.dataset_path else None
+        dataset = text_corpus.make_real_text_dataset(datasets)(
+            dataset_path=path or text_corpus.build_corpus(), random_seed=args.seed,
+        )
+        if args.dataset_name == "prefix_repetition":
+            return dataset.sample_shared_prefix(
+                tokenizer=tokenizer,
+                num_requests=args.num_prompts,
+                prefix_len=args.prefix_repetition_prefix_len,
+                suffix_len=args.prefix_repetition_suffix_len,
+                num_prefixes=args.prefix_repetition_num_prefixes,
+                output_len=args.prefix_repetition_output_len,
+                request_id_prefix=args.request_id_prefix,
+            )
+        return dataset.sample(
+            tokenizer=tokenizer,
+            num_requests=args.num_prompts,
+            input_len=args.random_input_len,
+            output_len=args.random_output_len,
+            request_id_prefix=args.request_id_prefix,
+        )
+    if args.dataset_name == "sharegpt" and args.dataset_path is None:
+        args.dataset_path = text_corpus.build_corpus()
+    return None
+
+
+def prepare_passes(passes=None):
+    """For a pack's prepare.py: install the tools and data of the QualityBench / SWE-bench passes
+    (the runs are offline). passes: default ``client_passes()`` (MILABENCH_CONFIG)."""
+    passes = client_passes() if passes is None else passes
+    for spec in passes or []:
+        if "quality" in spec:
+            from benchmate.benchserve import quality
+            quality.prepare(spec["quality"] or {})
+        if "swebench" in spec:
+            from benchmate.benchserve import swebench
+            swebench.prepare(spec["swebench"] or {})
+
+
+def needs_text_corpus(argv, passes=()) -> bool:
+    """The client argv, or one of its passes' overlays, reads the corpus: ``--real-text``, or
+    ``--dataset-name sharegpt`` without its own ``--dataset-path``."""
+    for args in [list(argv), *(_options(spec.get("argv")) for spec in passes or [])]:
+        if "--real-text" in args:
+            return True
+        if _flag(args, "--dataset-name") == "sharegpt" and not _flag(args, "--dataset-path"):
+            return True
+    return False
+
+
+def prepare_text_corpus(argv, passes=None) -> str | None:
+    """For a pack's prepare.py: build the corpus when the client reads it (runs are offline).
+
+    passes: the client passes, default ``client_passes()`` (MILABENCH_CONFIG)."""
+    from benchmate.benchserve import text_corpus
+
+    passes = client_passes() if passes is None else passes
+    if needs_text_corpus(argv, passes):
+        return text_corpus.build_corpus()
+    return None
+
+
 def _patch_vllm_bench(bench):
     """Wrap vLLM's functions once: client passes call benchmark() several times."""
     if getattr(bench, "_milabench_patched", False):
@@ -392,6 +468,10 @@ def _patch_vllm_bench(bench):
             if samples is not None:
                 return samples
 
+        samples = real_text_samples(args, tokenizer, datasets)
+        if samples is not None:
+            return samples
+
         match args.hf_name:
             case "openslr/librispeech_asr":
                 return open_dataset(datasets.ASRDataset, args, tokenizer)
@@ -418,7 +498,8 @@ def benchmark(argv, *, samples_hook=None, parser_hook=None):
 
     samples_hook(args, tokenizer, datasets) -> list | None
         Called first by ``get_samples``: returns the requests, or None for the default lookup
-        (it may still adjust ``args``). ``datasets`` is ``vllm.benchmarks.datasets``.
+        (``--real-text``, then vLLM's datasets; it may still adjust ``args``).
+        ``datasets`` is ``vllm.benchmarks.datasets``.
     parser_hook(parser)
         Adds the pack's own options to vLLM's argument parser.
     """
@@ -440,6 +521,7 @@ def benchmark(argv, *, samples_hook=None, parser_hook=None):
 
     parser = ArgumentParser()
     bench.add_cli_args(parser)
+    add_real_text_options(parser)
     if parser_hook is not None:
         parser_hook(parser)
 
@@ -618,7 +700,7 @@ class PassRecorder:
         bench = f"{cfg['name']}.{spec['name']}"
         # the server's own tag is [<bench>, server, nolog, <job>]: a pass is a regular bench, [<bench>.<pass>, <job>].
         # An eval pass reports accuracy (eval_summary), no rate: nolog, or milabench's report counts it as failed
-        tag = [bench, *(["nolog"] if "eval" in spec else []), str(cfg.get("job-number", 0))]
+        tag = [bench, *(["nolog"] if is_score_pass(spec) else []), str(cfg.get("job-number", 0))]
         self.folder = os.path.join(os.environ.get("MILABENCH_DIR_RUNS", "."), cfg["run_name"])
         os.makedirs(self.folder, exist_ok=True)
         self.path = os.path.join(self.folder, ".".join(tag) + ".data")
@@ -650,6 +732,14 @@ class PassRecorder:
 recorder = PassRecorder()
 
 
+# pass kinds that report scores (accuracy, solve rate), not a rate: lm-eval, QualityBench, SWE-bench agent
+SCORE_PASSES = ("eval", "quality", "swebench")
+
+
+def is_score_pass(spec: dict) -> bool:
+    return any(kind in spec for kind in SCORE_PASSES)
+
+
 def client_passes(mode: str = "all", name: str | None = None) -> list[dict] | None:
     """Passes of ``client.passes`` (shared section, then the arch variant) run by *mode*, or the pass *name*.
 
@@ -668,18 +758,40 @@ def client_passes(mode: str = "all", name: str | None = None) -> list[dict] | No
     if not passes:
         return [] if mode == "eval" else None
     if mode == "eval":
-        return [spec for spec in passes if "eval" in spec]
+        return [spec for spec in passes if is_score_pass(spec)]
     if mode == "perf":
-        return [spec for spec in passes if "eval" not in spec]
+        return [spec for spec in passes if not is_score_pass(spec)]
     return passes
+
+
+def _pass_output(kind: str, record: bool) -> tuple[str, str]:
+    """(folder, bench name) of a scoring pass' outputs, next to the run's .data files."""
+    cfg = _milabench_config()
+    runs = os.path.join(os.environ.get("MILABENCH_DIR_RUNS", "."), cfg.get("run_name", ""))
+    # recorded passes share the server's bench name: the pass name keeps their outputs apart
+    name = f"{cfg.get('name', 'vllm')}.{current_pass or kind}" if record else cfg.get("name", "vllm")
+    return os.path.join(runs, f"{name}.{kind}"), name
 
 
 def _run_pass(bench_argv, spec, *, record, eval_tasks, **hooks):
     if "eval" in spec:
-        # recorded passes share the server's bench name: the pass name keeps their outputs apart
         cfg = _milabench_config()
         output_name = f"{cfg.get('name', 'vllm')}.{current_pass or 'eval'}.lm_eval" if record else None
         run_eval(bench_argv, spec["eval"], eval_tasks=eval_tasks, output_name=output_name)
+    elif "quality" in spec:
+        from benchmate.benchserve import quality
+
+        folder, name = _pass_output("qualitybench", record)
+        wait_ready(f"http://{_flag(bench_argv, '--host', '127.0.0.1')}:{_flag(bench_argv, '--port', '8000')}/v1/models",
+                   float(_flag(bench_argv, "--ready-check-timeout-sec", 3600)))
+        quality.run(bench_argv, spec["quality"] or {}, flag=_flag, output_dir=folder, name=name, push=push_metric)
+    elif "swebench" in spec:
+        from benchmate.benchserve import swebench
+
+        folder, name = _pass_output("swebench", record)
+        wait_ready(f"http://{_flag(bench_argv, '--host', '127.0.0.1')}:{_flag(bench_argv, '--port', '8000')}/v1/models",
+                   float(_flag(bench_argv, "--ready-check-timeout-sec", 3600)))
+        swebench.run(bench_argv, spec["swebench"] or {}, flag=_flag, output_dir=folder, name=name, push=push_metric)
     else:
         benchmark([*bench_argv, *_options(spec.get("argv"))], **hooks)
 

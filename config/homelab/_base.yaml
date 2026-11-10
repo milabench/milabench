@@ -1,0 +1,232 @@
+# =============================================================================
+# Homelab suite — shared bases: prosumer single-GPU inference (<= 32 GB VRAM,
+# e.g. Arc Pro B70). Leaves live in text / image / video / audio .yaml.
+#
+#   _inference          HF-transformers anchors (main torch venv)
+#   _serving            LLM serving (benchmarks/serving): milabench runs the server, the client is
+#                       benchmate.benchserve; one server per model, its loads run as client passes
+#     _serving_vllm       vLLM, defaults for the larger models
+#     _serving_vllm_32gb  vLLM sized for a 32 GB card (<= ~26 GB of weights)
+#   _llamacpp_serving   llama.cpp llama-server (GGUF), same client as _serving: directly comparable
+#   _comfyui            ComfyUI headless server (/srv/ai-cold/scratch/comfyui-xpu-venv,
+#                       checkout /srv/ai-cold/scratch/comfyui)
+#
+# Methodology = InferenceX-style: real text prompts (--real-text: OpenHermes cut to the random-*
+# lengths), no prefix caching, request-rate inf, several concurrencies.
+#
+# The serving benches share one venv, ${dirs.base}/venv/homelab-serving, installed by milabench
+# (benchmarks/serving/requirements.toml). XPU: milabench does not install vLLM there
+# ([xpu] enabled = false); provision vLLM for XPU by hand (vllm + torch +xpu + triton-xpu) and
+# link it at that path, e.g. ln -s /srv/ai-cold/scratch/vllm-xpu-venv $MILABENCH_BASE/venv/homelab-serving
+#
+# Paths (definition:) are relative to this folder: keep every homelab bench in it.
+# =============================================================================
+
+include:
+  - ../_defaults.yaml
+
+_inference:
+  inherits: _defaults
+  definition: ../../benchmarks/inference
+  install_group: torch
+  enabled: true
+  tags:
+    - inference
+    - homelab
+
+_comfyui:
+  inherits: _defaults
+  definition: ../../benchmarks/comfyui
+  group: comfyui
+  install_group: torch
+  enabled: false
+  max_duration: 3600
+  voir:
+    options:
+      stop: 30
+  tags:
+    - inference
+    - comfyui
+    - diffusion
+    - homelab
+    - monogpu
+  num_machines: 1
+  plan:
+    method: njobs
+    n: 1
+  argv:
+    --warmup: 1
+    --max-steps: 31  # must exceed voir stop (30) so voir closes its final step
+
+# -----------------------------------------------------------------------------
+# Serving on the regular per-arch install (no hand-provisioned venv): milabench runs the
+# inference server (benchmarks/serving, backend vllm / sglang / ...), the client is benchmate.benchserve.
+# Engine defaults pick the kernels of the GPU; only model-specific flags go in the leaves.
+#
+# Client passes, one server per model:
+#   single   1 stream, 1k in / 512 out        single-stream decode tok/s
+#   fill4k   1 stream, 4k in / 512 out        the same with a 4k context
+#   conc8    8 streams, 1k in / 512 out
+#   conc32  32 streams, 1k in / 512 out       aggregate throughput
+#   quality QualityBench quick tier (accuracy on the same server, see benchmate/benchserve/quality.py)
+# Every pass first sends --num-warmups requests (= its concurrency), not measured.
+# Requests are real text (--real-text, same lengths as random): speculative decoding (MTP, DFlash2)
+# only pays off on text a model can predict, random token ids reject almost every draft.
+# -----------------------------------------------------------------------------
+
+_serving:
+  inherits: _defaults
+  definition: ../../benchmarks/serving
+  group: serving
+  install_group: homelab-serving
+  enabled: false  # only leaf jobs enable
+  num_machines: 1
+  max_duration: 7200
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - homelab
+    - monogpu
+  voir:
+    options:
+      # several passes push many more rate events than one: do not stop after the first ones
+      stop: 1000000
+      gpu_poll: 0.5
+
+  client:
+    argv:
+      --served-model-name: model
+      --request-rate: inf
+      --dataset-name: random
+      --real-text: true
+      --random-range-ratio: 0.0
+      --ignore-eos: true
+      --label: homelab
+      --backend: openai
+      --endpoint: /v1/completions
+      --ready-check-timeout-sec: 3600  # first run downloads the weights
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+      # accuracy on the same server: QualityBench quick tier (every tenth pinned item, greedy), thinking off.
+      # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...)
+      - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+
+_serving_vllm:
+  inherits: _serving
+  tags:
+    - vllm
+  server:
+    backend: vllm
+    argv:
+      --served-model-name: model
+      --gpu-memory-utilization: 0.90
+      --max-model-len: 16384
+      --max-num-seqs: 32
+      --kv-cache-dtype: fp8
+      --no-enable-prefix-caching: true
+      # QualityBench's logprobs task: top-64 prompt logprobs
+      --max-logprobs: 64
+
+# vLLM on a 32 GB card (e.g. Arc Pro B70): bf16 activations, 8k context, FP8 KV cache (twice the KV
+# pool: what holds throughput up under concurrency), 1024 in / 1024 out at 1 / 8 / 32 streams.
+# Graph mode (CUDA graphs, xpu-graph on vLLM >= 0.31): no --enforce-eager unless a model needs it.
+_serving_vllm_32gb:
+  inherits: _serving_vllm
+  max_duration: 7200
+  server:
+    argv:
+      --dtype: bfloat16
+      --max-model-len: 8192
+      --max-num-batched-tokens: 8192
+  client:
+    argv:
+      --random-range-ratio: 0.2
+    passes:
+      - {name: conc1,  argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 5,   --random-input-len: 1024, --random-output-len: 1024}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 1024}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 1024}}
+      # accuracy on the same server: QualityBench quick tier (every tenth pinned item, greedy), thinking off.
+      # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...)
+      - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+
+# llama.cpp (--backend native: build-cuda / build-hip / build-sycl for the arch, or vulkan; binaries
+# under $MILABENCH_LLAMACPP_ROOT). The client runs in the homelab-serving venv (vLLM).
+# Matrix variables ({backend} / {concurrency}) only interpolate inside each job's own block.
+# --parallel / --ctx-size are set per job: ctx-size is the TOTAL KV pool, divided across slots.
+_llamacpp_serving:
+  inherits: _defaults
+  definition: ../../benchmarks/llamacpp
+  group: llamacpp
+  install_group: homelab-serving
+  enabled: false
+  num_machines: 1
+  max_duration: 5400
+  plan:
+    method: njobs
+    n: 1
+  voir:
+    options:
+      stop: 40
+      gpu_poll: 0.5
+  server:
+    argv:
+      # every layer on the GPU (no auto-fit that may keep layers on the CPU), flash attention,
+      # 2048-token batches, one KV pool shared by the slots: the llama.cpp serving settings
+      --n-gpu-layers: 999
+      --fit: "off"
+      --flash-attn: "on"
+      --batch-size: 2048
+      --ubatch-size: 2048
+      --kv-unified: true
+  tags:
+    - inference
+    - llamacpp
+    - homelab
+    - monogpu
+  client:
+    argv:
+      --random-input-len: 1024
+      --random-output-len: 1024
+      --random-range-ratio: 0.2
+      --ignore-eos: true
+      --label: homelab
+      # real text, not random token ids: random ids change the measured performance
+      --real-text: true
+
+# vLLM-Omni diffusion serving (benchmarks/omni): `vllm serve <model> --omni` run by milabench, the client
+# times each generation (gen_seconds, img_per_s: same metrics as _comfyui, on the same settings).
+# Own venv (vllm + vllm-omni of the same version). Lossless multi-GPU (--tensor-parallel-size, --usp)
+# and lossy step caching (--cache-backend cache_dit) are server flags: see multigpu.yaml / the *-cachedit benches.
+_omni:
+  inherits: _defaults
+  definition: ../../benchmarks/omni
+  group: omni
+  install_group: homelab-omni
+  enabled: false
+  num_machines: 1
+  max_duration: 3600
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - omni
+    - diffusion
+    - homelab
+    - monogpu
+  voir:
+    options:
+      stop: 30
+  server:
+    backend: vllm-omni
+    argv: {}
+  client:
+    argv:
+      --warmup: 1
+      --max-steps: 31  # must exceed voir stop (30) so voir closes its final step
+      --ready-check-timeout-sec: 3600

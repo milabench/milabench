@@ -68,6 +68,10 @@ class ServerCommand(SingleCmdCommand):
     def arch(self) -> str:
         return self.pack.config.get("system", {}).get("arch", "cuda")
 
+    async def execute(self, *args, **kwargs):
+        evict_page_cache()
+        return await super().execute(*args, **kwargs)
+
     @property
     def python(self) -> str:
         return f"{self.pack.dirs.venv}/bin/python"
@@ -154,7 +158,7 @@ class ServerCommand(SingleCmdCommand):
         return FirstExit(coordinator, SrunExceptMain(worker)), SrunExceptMain(stop)
 
     def _argv(self, **kwargs) -> List:
-        return [*self.launcher(), *self.filter_argv(self.server_argv)]
+        return [*self.launcher(), *cap_memory_fraction(self.filter_argv(self.server_argv))]
 
     @property
     def options(self):
@@ -169,6 +173,67 @@ class ServerCommand(SingleCmdCommand):
 
     async def ready(self) -> bool:
         return await asyncio.to_thread(_http_ok, self.ready_url())
+
+
+def evict_page_cache(paths: str | None = None) -> int:
+    """Drop the page cache of the files under ``MILABENCH_EVICT_PAGE_CACHE`` (``:``-separated folders),
+    before a server starts; returns the bytes advised away.
+
+    On unified memory the page cache of the previous models' weights (tens of GB) is memory CUDA reports as
+    used: vLLM refuses to start when its ``--gpu-memory-utilization`` share is above the free memory, and
+    every model a run loads adds its weights to the cache. Dropping the whole cache needs root
+    (``/proc/sys/vm/drop_caches``); advising the kernel the files' pages are not needed
+    (``posix_fadvise(DONTNEED)``) does not, and only the model caches matter."""
+    paths = paths if paths is not None else os.environ.get("MILABENCH_EVICT_PAGE_CACHE", "")
+    advised = 0
+    for root in filter(None, paths.split(":")):
+        for folder, _, files in os.walk(root):
+            for name in files:
+                path = os.path.join(folder, name)
+                try:
+                    if os.path.islink(path):
+                        continue
+                    fd = os.open(path, os.O_RDONLY)
+                except OSError:
+                    continue
+                try:
+                    advised += os.fstat(fd).st_size
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+    return advised
+
+
+# share of the device memory a server may reserve up front (vLLM, SGLang)
+MEMORY_FRACTION_FLAGS = ("--gpu-memory-utilization", "--mem-fraction-static")
+
+
+def cap_memory_fraction(argv: List) -> List:
+    """Clamp the servers' memory fraction to ``MILABENCH_GPU_MEMORY_FRACTION_MAX``, a property of the machine.
+
+    On unified memory (DGX Spark, APUs) the "GPU memory" is the system RAM: a server reserving 90% of it
+    leaves too little for the OS, the client and its containers, and the machine swaps until it freezes
+    instead of failing with an out-of-memory error. The benchmark configs stay hardware neutral; the machine
+    sets the ceiling (e.g. 0.75 on a Spark)."""
+    cap = os.environ.get("MILABENCH_GPU_MEMORY_FRACTION_MAX")
+    if not cap:
+        return list(argv)
+    cap = float(cap)
+    out = []
+    for i, arg in enumerate(argv):
+        arg = str(arg)
+        prev = str(argv[i - 1]) if i else ""
+        if prev in MEMORY_FRACTION_FLAGS:
+            out.append(str(min(float(arg), cap)))
+            continue
+        name, sep, value = arg.partition("=")
+        if sep and name in MEMORY_FRACTION_FLAGS:
+            out.append(f"{name}={min(float(value), cap)}")
+            continue
+        out.append(argv[i])
+    return out
 
 
 def _flag(argv, name, default=None):
@@ -325,6 +390,17 @@ class AtomServer(ServerCommand):
         ]
 
 
+class OmniServer(VLLMServer):
+    """vLLM-Omni: ``vllm serve <model> --omni``, diffusion (image / video / audio) and TTS models behind
+    OpenAI-style endpoints (``/v1/images/generations``, ``/v1/videos``, ``/v1/audio/speech``)"""
+
+    name = "vllm-omni"
+
+    def _argv(self, **kwargs) -> List:
+        argv = cap_memory_fraction(self.filter_argv(self.server_argv))
+        return [*self.launcher(), *argv, *([] if "--omni" in argv else ["--omni"])]
+
+
 class SGLangServer(ServerCommand):
     name = "sglang"
 
@@ -354,7 +430,7 @@ class RawServer(ServerCommand):
         return self.command
 
 
-SERVER_COMMANDS = {cls.name: cls for cls in (VLLMServer, AtomServer, SGLangServer, TRTLLMServer)}
+SERVER_COMMANDS = {cls.name: cls for cls in (VLLMServer, OmniServer, AtomServer, SGLangServer, TRTLLMServer)}
 
 
 def InferenceServer(pack, *server_argv, backend="vllm", command=None, **kwargs) -> ServerCommand:

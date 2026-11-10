@@ -74,13 +74,32 @@ def eval_tasks() -> list[str]:
     return tasks
 
 
-def needs_text_corpus() -> bool:
-    """A pass uses the OpenHermes corpus (text_corpus.py): --real-text, or sharegpt without its own path."""
-    for spec in client_passes():
-        argv = spec.get("argv") or {}
-        if argv.get("--real-text") or (argv.get("--dataset-name") == "sharegpt" and not argv.get("--dataset-path")):
-            return True
-    return False
+def _flag_value(argv, name):
+    for i, arg in enumerate(argv):
+        if arg == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def draft_models() -> list[str]:
+    """Speculative decoding drafters of the server argv: vLLM ``--speculative-config {"model": ...}``,
+    SGLang ``--speculative-draft-model-path``. The server loads them offline like the target."""
+    import json
+
+    argv = sys.argv[1:]
+    models = []
+    if config := _flag_value(argv, "--speculative-config"):
+        try:
+            model = json.loads(config).get("model")
+        except (json.JSONDecodeError, AttributeError):
+            model = None
+        if model:
+            models.append(model)
+    if model := _flag_value(argv, "--speculative-draft-model-path"):
+        models.append(model)
+    return models
 
 
 def download_eval_datasets(tasks):
@@ -103,9 +122,12 @@ def main():
     if tasks := eval_tasks():
         download_eval_datasets(tasks)
 
-    if needs_text_corpus():
-        from text_corpus import build_corpus
-        build_corpus()
+    from benchmate.benchserve import prepare_text_corpus
+    prepare_text_corpus(sys.argv[1:], client_passes())
+
+    # QualityBench / SWE-bench passes: their tools, datasets and container images
+    from benchmate.benchserve import prepare_passes
+    prepare_passes()
 
     model = args.model or args.server_model
     hf_aliases = {
@@ -117,6 +139,10 @@ def main():
     if model is None:
         raise SystemExit("prepare: no model found in server positional or --model")
     download_hf_model(model)
+
+    for draft in draft_models():
+        print(f"Downloading draft model: {draft}")
+        download_hf_model(draft)
 
     # setup_flashinfer()
 

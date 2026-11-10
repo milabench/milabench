@@ -1,0 +1,89 @@
+# =============================================================================
+# Homelab — video generation
+#
+#   homelab-comfyui-wan22-*  ComfyUI Wan 2.2: 5B text/image-to-video, A14B text-to-video
+# =============================================================================
+
+include:
+  - _base.yaml
+
+homelab-comfyui-wan22-5b-ti2v:
+  name: homelab-comfyui-wan22-5b-ti2v
+  tags:
+    - video
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  # ~325s/clip on B70: 30 steps cannot fit in max_duration
+  voir:
+    options:
+      stop: 5
+  argv:
+    --max-steps: 6
+    --workflow: workflows/wan22_ti2v_5b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan2.2_vae.safetensors
+    --set:
+      - UNET=wan2.2_ti2v_5B_fp16.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan2.2_vae.safetensors
+
+homelab-comfyui-wan22-a14b-t2v:
+  name: homelab-comfyui-wan22-a14b-t2v
+  tags:
+    - video
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  max_duration: 9000
+  # ~1000s/clip on B70 (warmup ~950s): 30 steps cannot fit in max_duration
+  voir:
+    options:
+      stop: 4
+  argv:
+    --max-steps: 5
+    --workflow: workflows/wan22_t2v_14b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan_2.1_vae.safetensors
+    --set:
+      - UNET_HIGH=wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors
+      - UNET_LOW=wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan_2.1_vae.safetensors
+
+# -----------------------------------------------------------------------------
+# vLLM-Omni (_omni): the Wan 2.2 5B workflow above on the same settings (1280x704, 121 frames at 24 fps,
+# 20 steps, CFG 5). Wan 2.2 A14B (126 GB of weights in BF16) is in multigpu.yaml, sharded.
+# -----------------------------------------------------------------------------
+
+homelab-omni-wan22-5b-ti2v:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  tags:
+    - video
+  url: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  # minutes per clip: a few steps
+  voir:
+    options:
+      stop: 5
+  server:
+    argv:
+      Wan-AI/Wan2.2-TI2V-5B-Diffusers: true
+  client:
+    argv:
+      --task: t2v
+      --width: 1280
+      --height: 704
+      --num-frames: 121
+      --fps: 24
+      --steps: 20
+      --guidance: 5.0
+      --negative-prompt: "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部"
+      --max-steps: 6

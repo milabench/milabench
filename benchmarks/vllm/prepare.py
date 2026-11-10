@@ -90,6 +90,14 @@ def main():
     if tasks := eval_tasks():
         download_eval_datasets(tasks)
 
+    # --real-text in the client argv or a pass (benchmate.benchserve)
+    from benchmate.benchserve import prepare_text_corpus
+    prepare_text_corpus(sys.argv[1:])
+
+    # QualityBench / SWE-bench passes: their tools, datasets and container images
+    from benchmate.benchserve import prepare_passes
+    prepare_passes()
+
     model = args.model or args.server_model
     hf_aliases = {
         "Kimi-K3": "moonshotai/Kimi-K3",

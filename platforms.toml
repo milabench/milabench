@@ -65,7 +65,8 @@ requires = ["nvidia-ml-py"]
 index-url = "https://pypi.org/simple"
 extra-index-url = [
     "https://download.pytorch.org/whl/cu{cuda}",
-    "https://flashinfer.ai/whl/cu{cuda}",
+    # not https://flashinfer.ai/whl/cu{cuda}: flashinfer-python / flashinfer-cubin are on PyPI, and uv asks
+    # every index about every package, which that one rate-limits (HTTP 429 fails whole installs)
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
@@ -267,6 +268,10 @@ pydantic = ">=2,<3"
 "2.10.0,130" = { version = "0.19.1+cu130", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.19.1" }
 "2.11.0,129" = { version = "0.26.0+cu129", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
 "2.11.0,130" = { version = "0.26.0", find-links = "https://github.com/vllm-project/vllm/releases/expanded_assets/v0.26.0" }
+
+# vLLM 0.33.0 pins torch==2.14.0; PyPI ships it for x86_64 and aarch64 (DGX Spark: no torch 2.15 + cu132
+# vLLM wheel for aarch64). Install with --set torch=2.14.0 --set cuda=130 (scripts/homelab/run.sh on aarch64).
+"2.14.0,130" = { version = "0.33.0", extra-index-url = "https://pypi.org/simple" }
 
 # milabench wheel for pytorch.org torch 2.15 + cu132 (no official vLLM targets torch 2.15:
 # 0.32.0 pins 2.13; built with its torch pin stripped, same as torch2.15-rocm10.0)
