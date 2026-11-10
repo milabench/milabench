@@ -341,7 +341,9 @@ copied from Trillium (`subset-u`, `subset-u2`). Same seed, so the same samples a
 Setup, from job.sbatch's start print and the run logs: 8 NVIDIA H100 80GB HBM3 (SXM, NVLink), driver 580.196.07
 (reports CUDA 13.0, `cudaDriverVersion 13000`; torch 2.15.0 brings CUDA 13.2 and runs on it), enforced power limit
 700 W (B200: 1,000 W); NCCL 2.30.7, one node. Differences from the Trillium runs (1273887) besides the GPU:
-- commit 0185adf4 against 23d64566 (the later one adds only job.sbatch's start print);
+- commit 0185adf4 against 23d64566: between them, of what the runs execute, `uniform` points at subset-u2 and
+  job.sbatch prints a start time and the GPUs; train.py, merge.py and initial_training.yml are unchanged (the rest:
+  README, data.sh, monomers.py, prof.py, summary.py, and other workloads' files);
 - `uniform` read subset-u2's caches on Nibi against subset-u's on Trillium (same PDB, RNA and first 800 monomers;
   the samples were checked equal on all 8 ranks at all 40 steps);
 - the B200 driver reports CUDA 13.2 (`cudaDriverVersion 13020`), Nibi's 13.0;
