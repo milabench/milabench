@@ -3,7 +3,7 @@ under ``data/raw/trillium/k3-inf/runs/`` (``analyze.py collect``: ``$SCRATCH/tri
 their own (``kimi_xn_*``), the experts over 2 nodes (K3-XN-01, EP16 = DP2 x TP8 with expert parallelism, one job per all-to-all
 backend) from ``data/raw/trillium/k3-xn/runs/``; and on 4 nodes (``kimi_xn4_*``), prefill and decode on separate nodes against
 colocated (K3-XN-02) and the experts over all 4 (K3-XN-03, EP32 = DP4 x TP8), from the same directory; and the stall job (``kimi_stall_*``):
-K3-INF-02's server on 4 other nodes, each concurrency run twice in a row.
+K3-INF-02's server on 4 other nodes, each concurrency run twice in a row, in two jobs, the second with every kernel compile logged.
 
 The event parsing (``pass_summary`` and ``eval_summary`` events, the main node's GPU power over each pass's request
 window) is copied from ``scripts/analysis/kimi_study.py`` on branch ``trillium-new`` (``read_events``, ``pass_energy``),
@@ -45,9 +45,10 @@ XN_JOBS = ("1271952", "1271953")
 XN4_ENTRIES = ("kimi-vllm-4n-pd-ep16", "kimi-vllm-4n-pd-ep16-colocated", "kimi-vllm-4n-dp4tp8-ep32-s128")
 XN4_JOBS = ("1272790", "1272791", "1272792")
 # The stall job (2026-11-09, 1278355): K3-INF-02's server (TP8 x PP4) unchanged, on trig0115-0118, node telemetry on every node; the warm-up,
-# then conc64, conc128 and conc256 twice each in a row (passes <name>-1, <name>-2). In tables of its own (kimi_stall_*).
+# then conc64, conc128 and conc256 twice each in a row (passes <name>-1, <name>-2). In tables of its own (kimi_stall_*). Then the same entry
+# on trig0135-0138 (1279246) with vLLM's JIT monitor verbose (every compile logged, with its time and worker) and py-spy dumps (not read).
 STALL_ENTRIES = ("kimi-vllm-4n-tp8pp4-stall",)
-STALL_JOBS = ("1278355",)
+STALL_JOBS = ("1278355", "1279246")
 # a gap between tokens longer than this, with requests in flight, is a stall; prefill chunks of long prompts leave gaps up to 1.7 s here
 STALL_MIN_S = 2.0
 # run before the measured passes, so that kernels compile outside them; EP16 has a second one (64 requests of 1k in, 256 out)
@@ -61,6 +62,9 @@ _WEIGHTS = re.compile(r"Model loading took ([\d.]+) GiB")
 _KV_GIB = re.compile(r"Available KV cache memory: ([\d.]+) GiB")
 _ALL2ALL = re.compile(r"Using (\w+) all2all manager")
 _ENGINE_UP = re.compile(r"INFO (\d\d-\d\d \d\d:\d\d:\d\d) \[core\.py:\d+\] init engine \(.*\) took ([\d.]+) s")
+# vLLM's JIT monitor: one line per compile with --jit-monitor-verbose, else once per kernel name and process
+_FA4_COMPILE = re.compile(r"Worker_PP(\d+)_TP(\d+) pid=\d+\) WARNING .*\[jit_monitor\.py:\d+\] CuTeDSL JIT compilation during inference: "
+                          r"FlashAttentionForwardSm100\b")
 _THROUGHPUT = re.compile(r"INFO (\d\d-\d\d \d\d:\d\d:\d\d) \[loggers\.py:\d+\] Engine \d+: Avg prompt throughput: ([\d.]+) tokens/s, "
                          r"Avg generation throughput: ([\d.]+) tokens/s, Running: (\d+) reqs")
 LOG_TZ = ZoneInfo("America/Toronto")
@@ -91,10 +95,11 @@ def _pass_power(summary: dict, power: list, nodes: int) -> dict:
 def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict, list]:
     """vLLM version, MoE backend, KV cache capacity (tokens per engine, GiB per GPU), weights per GPU, the all-to-all manager, the
     time the last engine was up (Unix, end of its "init engine" line), and the highest KV use with the server full (max_seqs
-    running); and the zero windows: Unix end time of each logged 10 s interval with requests running and no prompt or output
+    running); with the JIT monitor verbose, the FlashAttention 4 (CuTeDSL) compiles it logged and the workers (stage, rank) that
+    logged one; and the zero windows: Unix end time of each logged 10 s interval with requests running and no prompt or output
     token."""
     facts = {}
-    full, zero = [], set()
+    full, zero, fa4 = [], set(), []
     for path in sorted(run_dir.glob(f"{entry}.*server*.data")):
         for e in _events(path):
             if e.get("event") != "line" or not isinstance(e.get("data"), str):
@@ -102,6 +107,10 @@ def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict,
             text = e["data"]
             if "vllm_version" not in facts and "version" in text and (m := _VLLM_VERSION.search(text)) and "api_utils" in text:
                 facts["vllm_version"] = m[1]
+            if "non-default args" in text and "'jit_monitor_verbose': True" in text:
+                facts["jit_verbose"] = True
+            if m := _FA4_COMPILE.search(text):
+                fa4.append((int(m[1]), int(m[2])))
             if "moe_backend" not in facts and (m := _MOE_BACKEND.search(text)):
                 facts["moe_backend"] = m[1]
             if "kv_cache_tokens" not in facts and (m := _KV_TOKENS.search(text)):
@@ -121,6 +130,8 @@ def _server_facts(run_dir: Path, entry: str, max_seqs, year: int) -> tuple[dict,
                 zero.add(datetime.strptime(f"{year}-{m[1]}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOG_TZ).timestamp())
     if full:
         facts["kv_use_pct_full"] = max(full)
+    if facts.get("jit_verbose"):
+        facts.update(fa4_compiles=len(fa4), fa4_workers=len(set(fa4)), fa4_stages=len({pp for pp, _ in fa4}))
     return facts, sorted(zero)
 
 

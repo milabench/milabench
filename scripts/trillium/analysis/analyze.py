@@ -50,7 +50,8 @@ QW_CP_RUNS = [*[f"qw-cp.1273505.megatron-qwen3-32b-cp-{e}" for e in ("n13-32k", 
               *[f"qw-cp.1278205.megatron-qwen3-32b-cp-n4-128k{s}" for s in ("", "-mxfp8")]]
 # Kimi K3 EP16 over 2 nodes (K3-XN-01): job 1271952 all-gather, 1271953 DeepEP V2; on 4 nodes, prefill and decode on separate nodes
 # (K3-XN-02: 1272790 P/D, 1272791 its colocated reference) and the experts over all 4 (K3-XN-03: 1272792, EP32, 128 sequences per engine)
-# and the stall job (1278355: K3-INF-02's server on 4 other nodes, each concurrency twice in a row; 19 MB; its nodemon is not read)
+# and the stall job (1278355: K3-INF-02's server on 4 other nodes, each concurrency twice in a row; 19 MB; its nodemon is not read), then the
+# same entry with every compile logged (1279246, 20 MB; its py-spy dumps, outside the run directory, are not read)
 # OpenFold3 training on the uniform subset (OF3 step 2: 1273887 on 1 node, 1273885 on 2, 1273884 on 4; OF3-01: 1274059 on 13), keyed on job and
 # variant: published, DeepSpeed attention (1 and 13 nodes), cuEquivariance + TF32. Not the profile runs, nor the step-1 subset's (1273594-1273810).
 OF3_RUNS = [f"of3.{job}.{v}" for job, variants in (("1273887", ("uniform", "uniform,cueq+tf32", "uniform,ds")),
@@ -58,7 +59,7 @@ OF3_RUNS = [f"of3.{job}.{v}" for job, variants in (("1273887", ("uniform", "unif
                                                    ("1274059", ("uniform", "uniform,cueq+tf32", "uniform,ds"))) for v in variants]
 K3_XN_RUNS = ["kimi-vllm-2n-dp2tp8-ep16.1271952","kimi-vllm-2n-dp2tp8-ep16-deepep.1271953",
               "kimi-vllm-4n-pd-ep16.1272790", "kimi-vllm-4n-pd-ep16-colocated.1272791", "kimi-vllm-4n-dp4tp8-ep32-s128.1272792",
-              "kimi-vllm-4n-tp8pp4-stall.1278355"]
+              "kimi-vllm-4n-tp8pp4-stall.1278355", "kimi-vllm-4n-tp8pp4-stall.1279246"]
 # Other sources, not under the directories above: (path under $SCRATCH, directory under data/raw/trillium/).
 # The trailing slash matters: health checks are one directory per job, directly under health/.
 REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
@@ -87,7 +88,7 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # so the training build does not read it (tt_analysis.runs.data_files globs runs/*/*.data).
                 ("trillium/new/k3-inf/runs/", "k3-inf/runs"),
                 # Kimi K3 inference across nodes (K3-XN-01: EP16, all-gather and DeepEP all-to-all; K3-XN-02: P/D and colocated; K3-XN-03:
-                # EP32; the stall job), keyed on job: those six run directories only (19-99 MB each); the bring-ups in k3-xn/runs are not read.
+                # EP32; the two stall jobs), keyed on job: those seven run directories only (19-99 MB each); the bring-ups in k3-xn/runs are not read.
                 *[(f"trillium/new/k3-xn/runs/{run}/", f"k3-xn/runs/{run}") for run in K3_XN_RUNS],
                 # Kimi K3 pretraining (TorchTitan): run directories (172 MB on Nov 8), and the GPU telemetry of the two
                 # completed 48-node runs only (gpu.tsv, 119 MB; the other nodemon files and jobs are not read).

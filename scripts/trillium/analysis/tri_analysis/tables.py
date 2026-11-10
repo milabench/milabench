@@ -19,7 +19,7 @@ from . import glm_fp4
 from .flux import FROM_BLOCK as FLUX_FROM_BLOCK
 from .flux import GAP_TO as FLUX_TEN_TO
 from .flux import TEN_FROM as FLUX_TEN_FROM
-from .kimi import LOG_INTERVAL_S
+from .kimi import LOG_INTERVAL_S, STALL_JOBS
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
                      with_energy)
@@ -103,6 +103,12 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
           "TriKstallSixtyFourPct", "TriKstallWarmStall", "TriKstallSixtyFourStall", "TriKstallTwoFiftySixStall", "TriKstallTwoFiftySixStallSecond",
           "TriKstallFourSixtyFourStall", "TriKstallFourOneTwentyEightStall", "TriKstallFourTwoFiftySixStall", "TriKstallFourTwoFiftySixStallSecond",
           "TriKstallTwoOneTwentyEightStall", "TriKstallTwoTwoFiftySixStall",
+          # ... and its follow-up with every compile logged (_kimi_cause_numbers): the same passes (First, Repeat), the stalls (warm-up; 256
+          # requests: first, Second, Third), the FlashAttention 4 compiles the JIT monitor logged, the workers and stages that logged them,
+          # and the compiles per worker (derived)
+          *[f"TriKcause{c}{m}" for c in ("SixtyFour", "OneTwentyEight", "TwoFiftySix") for m in ("First", "Repeat")],
+          "TriKcauseWarmStall", "TriKcauseTwoFiftySixStall", "TriKcauseTwoFiftySixStallSecond", "TriKcauseTwoFiftySixStallThird",
+          "TriKcauseCompiles", "TriKcauseWorkers", "TriKcauseStages", "TriKcausePerWorker",
           # ... and on 4 nodes: prefill and decode on separate nodes against colocated (_kimi_pd_numbers, colocated: Co), and the experts
           # over all 4 (_kimi_xn_four_numbers) against TP8 x PP4 (Pp) and EP16 with all-gather (Ep)
           "TriKpdNodes", "TriKpdGpus", "TriKpdInstNodes", "TriKpdLayout", "TriKpdMaxSeqs", "TriKpdWeights", "TriKpdKvGib", "TriKpdKvTok", "TriKpdUp",
@@ -1633,16 +1639,18 @@ _STALL_CONC = (("SixtyFour", 64), ("OneTwentyEight", 128), ("TwoFiftySix", 256))
 
 def _kimi_pp_runs(t) -> dict[str, pd.DataFrame]:
     """Passes by name, warm-up included, of the 2-node (K3-INF-01) and 4-node (K3-INF-02) pipeline servers, the runs TriKimi* and TriKimiFour*
-    read, and of the stall job (kimi_stall_*): {"two", "four", "stall"}, each present only with its data."""
+    read, and of the stall job and its follow-up (kimi_stall_*): {"two", "four", "stall", "cause"}, each present only with its data."""
     out = {}
     p, runs = t.get("kimi_passes", pd.DataFrame()), t.get("kimi_runs", pd.DataFrame())
     for key, nodes in (("two", 2), ("four", 4)):
         if len(p) and len(runs) and (runs.nodes == nodes).any():
             run = runs[runs.nodes == nodes].sort_values("job").iloc[-1]
             out[key] = p[p.job.astype(str) == str(run.job)].set_index("pass")
-    p, runs = t.get("kimi_stall_passes", pd.DataFrame()), t.get("kimi_stall_runs", pd.DataFrame())
-    if len(p) and len(runs):
-        out["stall"] = p[p.job.astype(str) == str(runs.sort_values("job").iloc[-1].job)].set_index("pass")
+    # the stall job and its follow-up with every compile logged, by job (kimi.STALL_JOBS, in that order)
+    p = t.get("kimi_stall_passes", pd.DataFrame())
+    for key, job in zip(("stall", "cause"), STALL_JOBS):
+        if len(p) and (p.job.astype(str) == job).any():
+            out[key] = p[p.job.astype(str) == job].set_index("pass")
     return out
 
 
@@ -1681,13 +1689,39 @@ def _kimi_stall_numbers(t) -> dict[str, tuple]:
     return out
 
 
+def _kimi_cause_numbers(t) -> dict[str, tuple]:
+    """The stall job's follow-up, TriKcause*: the same server and passes with every compile logged; output tokens/s of each first pass and
+    its repeat, the stalls (kimi.token_gaps), and the FlashAttention 4 compiles the JIT monitor logged (count, workers, stages; per worker
+    derived). One run."""
+    r, out = _kimi_pp_runs(t), {}
+    if "cause" not in r:
+        return out
+    p = r["cause"]
+    for tag, c in _STALL_CONC:
+        for n, m in ((1, "First"), (2, "Repeat")):
+            if f"conc{c}-{n}" in p.index:
+                out[f"TriKcause{tag}{m}"] = (p.output_throughput[f"conc{c}-{n}"], ",.0f", False)
+    for name, macro in (("warmup", "TriKcauseWarmStall"), ("conc256-1", "TriKcauseTwoFiftySixStall")):
+        for value, suffix in zip(_stalls(p, name) or [], ("", "Second", "Third")):
+            out[f"{macro}{suffix}"] = (value, ".1f", False)
+    runs = t.get("kimi_stall_runs", pd.DataFrame())
+    run = runs[runs.job.astype(str) == STALL_JOBS[1]] if len(runs) else runs
+    if len(run) and "fa4_compiles" in run and pd.notna(run.fa4_compiles.iloc[0]):
+        x = run.iloc[0]
+        out.update({"TriKcauseCompiles": (int(x.fa4_compiles), "d", False), "TriKcauseWorkers": (int(x.fa4_workers), "d", False),
+                    "TriKcauseStages": (int(x.fa4_stages), "d", False)})
+        if x.fa4_workers:
+            out["TriKcausePerWorker"] = (x.fa4_compiles / x.fa4_workers, ".0f", False)
+    return out
+
+
 def kimi_stall_table(t) -> str:
-    """The stall job against K3-INF-01 and K3-INF-02, by concurrency: output tokens/s and stalls of each pass; the stall job's first pass
-    and its repeat. The warm-up: its stalls only (not a measured pass, not repeated)."""
+    """The stall job and its follow-up against K3-INF-01 and K3-INF-02, by concurrency: output tokens/s and stalls of each pass; each
+    stall job's first pass and its repeat. The warm-up: its stalls only (not a measured pass, not repeated)."""
     r = _kimi_pp_runs(t)
     if "stall" not in r:
         return ""
-    cols = [("two", "{}"), ("four", "{}"), ("stall", "{}-1"), ("stall", "{}-2")]
+    cols = [("two", "{}"), ("four", "{}"), ("stall", "{}-1"), ("stall", "{}-2")] + ([("cause", "{}-1"), ("cause", "{}-2")] if "cause" in r else [])
 
     def cells(key, name):
         p = r.get(key, pd.DataFrame())
@@ -1697,11 +1731,14 @@ def kimi_stall_table(t) -> str:
         stalls = "?" if g is None else ("none" if not g else " + ".join(f"{x:.2f}" for x in g))
         return ["--" if name == "warmup" else f"{p.output_throughput[name]:,.0f}", stalls]
 
+    jobs = ["4 nodes, Nov.~9", *(["4 nodes, Nov.~9, every compile logged"] if "cause" in r else [])]
     lines = [r"\begin{tabular}{l" + "rr" * len(cols) + "}", r"\toprule",
              r"Requests & \multicolumn{2}{c}{2 nodes} & \multicolumn{2}{c}{4 nodes} & "
-             r"\multicolumn{2}{c}{4 nodes, Nov.~9: first pass} & \multicolumn{2}{c}{repeat} \\",
-             r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}",
-             r" & tok/s & stalls, s & tok/s & stalls, s & tok/s & stalls, s & tok/s & stalls, s \\", r"\midrule"]
+             + " & ".join(rf"\multicolumn{{4}}{{c}}{{{j}}}" for j in jobs) + r" \\",
+             r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}" + "".join(rf"\cmidrule(lr){{{6 + 4 * i}-{9 + 4 * i}}}" for i in range(len(jobs))),
+             r" & & & & & " + " & ".join(r"\multicolumn{2}{c}{first pass} & \multicolumn{2}{c}{repeat}" for _ in jobs) + r" \\",
+             "".join(rf"\cmidrule(lr){{{6 + 2 * i}-{7 + 2 * i}}}" for i in range(2 * len(jobs))),
+             r" & " + " & ".join(["tok/s & stalls, s"] * len(cols)) + r" \\", r"\midrule"]
     for label, name in (("warm-up", "warmup"), *((str(c), f"conc{c}") for _, c in _STALL_CONC)):
         row = []
         for key, fmt in cols:
@@ -3311,6 +3348,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_kimi_pd_numbers(t))
     out.update(_kimi_xn_four_numbers(t))
     out.update(_kimi_stall_numbers(t))
+    out.update(_kimi_cause_numbers(t))
     out.update(_kimi_train_numbers(t))
     out.update(_glm_rl_numbers(t))
     out.update(_glm_fp4_numbers(t))
