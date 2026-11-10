@@ -266,50 +266,68 @@ compliance checker SUCCESS.
 
 ## Step-time gap against Florida (FLUX_BRIEF.md, last section)
 
+Florida's step on the same window and statistic as ours (steps 30-200, median of ten-step intervals between
+`train_loss` events): 0.6177 s over their 10 n2 runs (0.6161-0.6246, two groups). Their 0.620 elsewhere in this README
+is the median of per-block `train_step_time` over whole runs (0.6206); the comparisons below use 0.6177.
+
 Job 1277931 (`nw-flux-gap1`, trig0145, trig0148, 2026-11-09 17:01-17:31, TIMEOUT): Florida's 2-node config, real data,
 telemetry every second with the clock event reasons, Nsight Systems on rank 0 (`nsys_rank.sh`, 20 s window).
-- Step 0.6548 s (median of ten-step intervals, steps 30-150) against Florida's 0.620 (+5.6 %). Init 282 s.
+- Step 0.6548 s (steps 30-150; +6.0 % on 0.6177). Init 282 s.
 - Throttle reasons over steps 30-150 (1 s samples, 16 GPUs): SW power cap active in 88-97 % of samples on every GPU,
   mean power 922-933 W, SM clock median 1,627-1,751 MHz (lowest 1,462; maximum 1,965); no thermal, HW slowdown or power
   brake. So the GPUs run at the 1,000 W software cap most of the time; Florida's logs do not say whether theirs did.
 - Profile, rank 0, 17.5 s (about 27 steps): compute kernels 600 ms per step (91.7 % of the time), NCCL kernels 319 ms
   of which 289 under compute and 30 ms alone (4.6 %), no kernel 24 ms (3.7 %: two gaps of about 4 ms or more per step,
-  14 ms, and 860 shorter ones, 10 ms). NCCL: 43 reduce-scatters and 43 all-gathers per step, 16 channels, protocol
-  RING_LL (unusual for messages this large), 3-4 ms each. Top compute: MXFP8 GEMMs (nvjet), elementwise, MXFP8 casts.
+  14 ms, and 860 shorter ones, 10 ms). NCCL: 43 reduce-scatters and 43 all-gathers per step, 16 channels, 3-4 ms each;
+  the kernels are named `ncclDevKernel_*_RING_LL`, which is the kernel's name, not the protocol: in job 1278802's base
+  run NCCL's TUNING log gives `Algo RING proto SIMPLE` for all 215 large all-gathers and reduce-scatters (LL only for a
+  few calls of 62 bytes or less), and the all-gather's median of 3.08 ms for its 531 MB is about 86 % of 4 x 400 Gb/s
+  line rate, more than LL could carry. Top compute: MXFP8 GEMMs (nvjet), elementwise, MXFP8 casts.
 - The run did not finish: ending the nsys collection (`--duration`) ended rank 0 ("The target application
   terminated"), and the other ranks waited in NCCL until the time limit (22 min of 2 nodes). `nsys_rank.sh` no longer
   ends the collection mid-run.
 
 Next (one job, `gap.sbatch`): 200 steps per run, consecutive in one 2-node job: base (NCCL INIT, TUNING, COLL logs),
 `NCCL_PROTO=Simple`, `NCCL_PXN_DISABLE=1`, `CPU_SHARE=0` (Florida's srun as it is), base again; the GPUs' power and
-clock limits and each node's CPU clock every 5 s. Not varied: the power cap (needs root), the driver, the image's
-pip set (one image), `TRITON_HOME` (only where compiled kernels are cached: the same kernels run).
+clock limits and each node's CPU clock every 5 s.
 
 Job 1278802 (`nw-flux-gap2`, `gap.sbatch`, trig0127, trig0128, 19:11:05-19:52:53, completed, 41:48; src-dev at
-b1c84012): five runs of 200 steps, about 8.3 min each, none failed. All 16 GPUs `692-2G525-0225-001`; enforced power
-limit 1,000 W on every GPU (default and maximum 1,000 W), maximum SM clock 1,965 MHz. Step: median of ten-step intervals
-from step 30 (17 each); cap: share of 1 s samples with the SW power cap active over the same steps, per node.
+b1c84012): five runs of 200 steps, about 8.3 min each, none failed. Enforced power limit 1,000 W on every GPU (default
+and maximum 1,000 W), maximum SM clock 1,965 MHz (the job's `gpu-limits.csv`). Boards: 0 `-000` GPUs on trig0127 and
+trig0128 (`hw/allnodes/parts_by_node.tsv`, 2026-11-06: 0 on trig0127, 0128 and 0148, 8 on trig0145, 1 on trig0107;
+`nvidia-smi -q` read over ssh at 19:11:51 during the job gave `692-2G525-0225-001` on all 16, not saved in its files).
+Step: median of ten-step intervals from step 30 (17 each); cap: share of 1 s samples with the SW power cap active over the
+same steps, per node.
 
 | run | step s | vs base | power cap | power per GPU | SM clock median |
 |---|---|---|---|---|---|
 | base (NCCL logs) | 0.6461 | | 94-96 % | 934 W | 1,695-1,710 MHz |
-| `NCCL_PROTO=Simple` | 0.6443 | -0.3 % | 92-93 % | 935 W | 1,695-1,702 MHz |
+| `NCCL_PROTO=Simple` (base's own choice: a third base run) | 0.6443 | -0.3 % | 92-93 % | 935 W | 1,695-1,702 MHz |
 | `NCCL_PXN_DISABLE=1` | 0.6422 | -0.6 % | 90-93 % | 933-935 W | 1,702-1,710 MHz |
 | `CPU_SHARE=0` | 0.6457 | -0.1 % | 92-94 % | 932-934 W | 1,698-1,717 MHz |
 | base again | 0.6459 | 0.0 % | 93-95 % | 933-934 W | 1,710-1,717 MHz |
 
-- Baseline 0.646 s against Florida's 0.620: +4.2 %. No variant moves it by more than 0.6 % (one run each; the two base
-  runs are 0.03 % apart). No thermal, HW slowdown or power-brake samples.
-- NCCL: each reduce-scatter and all-gather moves about 17.7 M bf16 elements per rank (35 MB); NCCL chose RING_LL for
-  them in 1277931, and Simple changes the step by 0.3 %: the communication is mostly under compute (profile above).
-- CPU: the cores' mean clock during training drops to a median of 1,350-2,374 MHz by run and node (3,200 idle; the known
-  drop under GPU power), and the step does not follow it (trig0127: 1,400 MHz in `CPU_SHARE=0`, 2,149 in base, same step).
-- Boards: job 1277931 (0.6548 s) ran on trig0145 (all 8 GPUs `-000`) and trig0148 (`-001`): 1.3 % above this baseline,
-  and at the same power (928-929 W) trig0145's clock median was 1,650 MHz against trig0148's 1,725. So the `-000` node
-  slowed that run by about 1.3 %; it does not explain the 4.2 %. (FLUX-01's trig0107 has one `-000` GPU; the 4-node
-  real-data run 1276381 held trig0145.)
-- Not determined: the remaining 4.2 %. Ruled out at this level: NCCL protocol and PXN, CPU binding and CPU clocks, the
-  board type (on these nodes). The step is compute (600 of 655 ms in the profile) at clocks held by the 1,000 W software
-  cap 90-96 % of the time; Florida's logs carry no clock or power data, so whether their GPUs ran faster at the same limit
-  (air-cooled, driver 570 with 580 compatibility) cannot be told from here. Not testable without root (clock or power
-  settings), another driver, or another build of the image.
+- Baseline 0.646 s against Florida's 0.6177 on the same window and statistic: +4.6 % (3.4-4.9 % against their single
+  runs). The variants differ from base by 0.0-0.6 %, all inside each median's bootstrap 95 % range (+-0.3-0.7 %), one
+  run each; the two base runs (and the Simple run, the same configuration) are within 0.3 %. No thermal, HW slowdown or
+  power-brake samples.
+- NCCL: each reduce-scatter and all-gather works on a 566 MB buffer (17.7 M bf16 elements, 35 MB, per rank's shard);
+  the communication is mostly under compute (profile above). PXN off: -0.6 %, inside the noise.
+- CPU: the cores' mean clock swings between 200 and 3,200 MHz in every run's 5 s samples (medians 1,350-2,374 MHz during
+  training; the known drop under GPU power). It was not varied, so CPU clocks are not ruled out.
+- CPU binding: in base, NCCL reports CPU affinity 0-95 on all 16 ranks despite `SRUN_CPUS_PER_TASK=12`, so ranks were
+  not bound to 12 cores each; in `CPU_SHARE=0` the binding was not logged. The variant did not test binding as described.
+- Boards: likely, not separated. At the same power (929 / 928 W) in job 1277931, trig0145 (all `-000`) ran a clock median
+  of 1,650 MHz against trig0148's 1,725, and trig0145 was the slowest node of 1276381 too (1,680 against 1,710-1,759 MHz);
+  1277931's 0.6548 s is 1.3 % above this baseline, but across two jobs on four nodes, with nsys on rank 0 in 1277931; and
+  1272079 (trig0145 + trig0151, synthetic data) ran 0.6476 s, only 0.2 % above it. On 1-node Qwen FSDP (2026-11-06,
+  coordinator), the nodes with a single `-000` GPU (trig0137 2.895 s, trig0107 2.949 s) sat inside the `-001` range,
+  2.877-2.977 s: a single `-000` GPU was not seen to slow its node there.
+- Not determined: the remaining 4.6 %. Not moved beyond the noise: PXN, the base configuration repeated 3 times. Not
+  tested: the NCCL protocol (Simple was base's own choice; LL128 not run), NCCL's algorithm, CPU binding and CPU clocks.
+  The step is compute (600 of 655 ms in the profile) at clocks held by the 1,000 W software cap 90-96 % of the time;
+  Florida's logs carry no clock or power data, so whether their GPUs ran faster at the same limit (air-cooled, driver
+  570 with 580 compatibility) cannot be told from here. Without root: `NCCL_PROTO=LL128`, `NCCL_ALGO`, `--cpu-bind`,
+  other nodes and other builds of the image (`--fakeroot`) remain to try; clock or power settings need root.
+- Not checked: `NCCL_DEBUG` was off in the `NCCL_PROTO=Simple` and `NCCL_PXN_DISABLE=1` runs, so their algorithm and
+  protocol choices are not logged; the actual CPU binding in `CPU_SHARE=0` was never confirmed.
