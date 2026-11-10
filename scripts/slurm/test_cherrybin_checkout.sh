@@ -19,8 +19,8 @@ export MILABENCH_CONFIG_NAME=all
 export MILABENCH_REPO=https://github.com/milabench/milabench.git
 export CHERRYBIN_REPO=https://github.com/Delaunay/cherrybin.git
 export CHERRYBIN_BRANCH=main
-export CUDA_VERSION="130"
-export PYTORCH_VERSION="2.10.0"
+export CUDA_VERSION="132"
+export PYTORCH_VERSION="2.15.0"
 
 # Stream I/O chunk in bytes; unset keeps cherrybin's default (4MiB).
 export CHERRYBIN_IO_CHUNK=""

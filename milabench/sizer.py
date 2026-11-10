@@ -317,7 +317,8 @@ def _fit_torchmem_vs_batch(observations):
         _, alloc = pair
         batches.append(float(obs["batch_size"]))
         allocs.append(alloc)
-    if len(batches) < 2:
+    # two runs at the same batch size give no slope (singular fit)
+    if len(set(batches)) < 2:
         return None
     alpha, beta = np.polyfit(batches, allocs, deg=1)
     if alpha <= 0:
@@ -430,8 +431,8 @@ class Sizer:
         Returns ``None`` when there is not enough usable data (caller should
         keep the ``auto_batch`` default).
         """
-        if len(mem) <= 1:
-            syslog(f"Not enough data for {bench_name}")
+        if len(mem) <= 1 or len(set(size)) < 2:
+            syslog(f"Not enough data for {bench_name}: needs observations at two batch sizes")
             return None
 
         # Constant / all-zero memory (e.g. torchmem: 0 MiB) → singular LSTSQ.
@@ -472,6 +473,13 @@ class Sizer:
         if fixed is None or fit is None:
             return None
 
+        if (override := self.options.overhead_override) is not None:
+            override = str(override).strip()
+            if override.endswith("%"):
+                fixed = capacity * float(override[:-1]) / 100
+            else:
+                fixed = to_octet(override)
+
         alpha, beta = fit
         newsize_f = (capacity - fixed - beta) / alpha
         final_size = self._finalize_batch_size(newsize_f)
@@ -490,6 +498,23 @@ class Sizer:
         return final_size
 
     def auto_size(self, benchmark, capacity):
+        result = self._auto_size(benchmark, capacity)
+        if result is None or not self.options.cap_observed:
+            return result
+
+        config = self.benchscaling(benchmark) or {}
+        ran = [
+            int(obs["batch_size"])
+            for obs in config.get("observations", [])
+            if obs.get("batch_size") and (obs.get("perf") or 0) > 0
+        ]
+        if ran and result > max(ran):
+            if self.should_log(("cap", id(config))):
+                syslog("Sizer: capped predicted batch {} to the largest observed batch {}", result, max(ran))
+            return max(ran)
+        return result
+
+    def _auto_size(self, benchmark, capacity):
         capacity = self.get_capacity(capacity)
 
         if capacity is None:
@@ -498,8 +523,9 @@ class Sizer:
 
         config = self.benchscaling(benchmark)
 
+        # no profile for this benchmark: the caller keeps the configured batch size (not 1)
         if not config:
-            return 1
+            return None
 
         if isinstance(benchmark, str):
             bench_name = benchmark
@@ -1061,6 +1087,11 @@ def new_argument_resolver(pack):
             return finalize_val(newvalue)
         except KeyError as err:
             syslog("Couldn't resolve {} because of {}", arg, err)
+            return arg
+        except (ValueError, IndexError) as err:
+            # Literal braces (jinja templates, inline JSON/python snippets)
+            # are not format fields: leave the argument untouched.
+            syslog("Couldn't format {} because of {}", arg, err)
             return arg
 
     return auto_eval

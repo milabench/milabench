@@ -30,3 +30,7 @@ benchrun = "benchmate.benchrun:main"
 benchserve = "benchmate.benchserve:main"
 rayrun = "benchmate.ray_node:main"
 raywait = "benchmate.ray_wait:main"
+
+[tool.poetry.plugins."vllm.general_plugins"]
+# vLLM load format `milabench_sharded` (per-rank weight shards), loaded by every vLLM process
+milabench_sharded = "benchmate.vllm_sharded_loader:register"

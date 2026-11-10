@@ -25,7 +25,7 @@ class Pin(Command):
         constraints  : list[str]       = argument(default=[], nargs="*")   # Constraints files
         variant      : Optional[str]   = None                              # Install variant
         from_scratch : bool            = False                             # Do not use previous pins if they exist
-        set          : list[str]       = argument(default=[], nargs="*")   # Restrict pin matrix: cuda=130 torch=2.10.0
+        set          : list[str]       = argument(default=[], nargs="*")   # Restrict pin matrix: cuda=130 torch=2.10.0 arch=x86_64
     # fmt: on
 
     @staticmethod

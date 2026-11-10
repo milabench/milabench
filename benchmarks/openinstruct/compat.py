@@ -140,6 +140,27 @@ for _name, _hf in (
     path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
 
 
+def patch_upstream_flash_attn_probe(path: Path) -> None:
+    """One-time file patch: find_spec("flash_attn.cute") raises when flash_attn is absent."""
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    needle = (
+        "def _is_flash_attn_4_available() -> bool:\n"
+        '    return importlib.util.find_spec("flash_attn.cute") is not None\n'
+    )
+    if needle not in text:
+        return
+    replacement = (
+        "def _is_flash_attn_4_available() -> bool:\n"
+        "    try:\n"
+        '        return importlib.util.find_spec("flash_attn.cute") is not None\n'
+        "    except ModuleNotFoundError:\n"
+        "        return False\n"
+    )
+    path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+
+
 def _torchvision_videoreader_shim() -> None:
     try:
         from torchvision.io import VideoReader  # noqa: F401

@@ -1,0 +1,26 @@
+# AIME 2024 (30 problems, integer answers 0-999) for reasoning models. Each problem is sampled `repeats`
+# times and scored as the mean over the samples (avg@k, utils.aime_avg): 30 greedy answers would be too noisy.
+# Run it in its own eval pass, with sampling and a long generation budget (gen_kwargs apply to every task of a pass).
+task: milabench_aime24
+dataset_path: HuggingFaceH4/aime_2024
+output_type: generate_until
+test_split: train
+num_fewshot: 0
+repeats: 4
+doc_to_text: "{{problem.strip()}}\n\nSolve the problem step by step. End your response with a final line of the form \"Answer: <integer>\"."
+doc_to_target: "{{answer}}"
+generation_kwargs:
+  until: []
+  do_sample: true
+# no take_first: process_results gets every repeat
+filter_list:
+  - name: all
+    filter:
+      - function: lowercase
+process_results: !function utils.aime_avg
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
