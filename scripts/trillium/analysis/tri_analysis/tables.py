@@ -2728,7 +2728,7 @@ def _flux_numbers(t) -> dict[str, tuple]:
     extrap = x.blocks * tpb
     ours_tpb = x.ttt_min / x.blocks
     diff = x.ttt_min - oly.ttt_min.mean()
-    speed_first = oly.blocks.mean() * (ours_tpb - tpb)
+    speed_first = oly.blocks.mean() * ours_tpb - oly.ttt_min.mean()  # their score's blocks priced at our time per block, less their score
     fl_step = fl.steady_s.median()
     for name, v, fmt in (("Nodes", int(x.nodes), "d"), ("Gpus", int(x.gpus), "d"), ("Gbs", int(x.gbs), ",d"), ("Lr", _power10(x.lr), ""),
                          ("Seed", int(x.seed), "d"), ("Target", x.target, ".3f"), ("BlockSamples", int(x.block_samples), ",d"),
@@ -2800,7 +2800,7 @@ def _flux_sixteen_numbers(t) -> dict[str, tuple]:
     oly = fl.iloc[1:-1]
     tpb, ours_tpb = (fl.ttt_min / fl.blocks).median(), x.ttt_min / x.blocks
     extrap, diff = x.blocks * tpb, x.ttt_min - oly.ttt_min.mean()
-    speed_first = oly.blocks.mean() * (ours_tpb - tpb)
+    speed_first = oly.blocks.mean() * ours_tpb - oly.ttt_min.mean()  # their score's blocks priced at our time per block, less their score
     fl_step, fl_ten = fl.steady_s.median(), fl.ten_gap_s.median()
     same = fl[fl.blocks == x.blocks]
     ob = b[b.run == FLUX_SIXTEEN].set_index("block")
