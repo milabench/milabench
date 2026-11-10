@@ -473,6 +473,13 @@ class Sizer:
         if fixed is None or fit is None:
             return None
 
+        if (override := self.options.overhead_override) is not None:
+            override = str(override).strip()
+            if override.endswith("%"):
+                fixed = capacity * float(override[:-1]) / 100
+            else:
+                fixed = to_octet(override)
+
         alpha, beta = fit
         newsize_f = (capacity - fixed - beta) / alpha
         final_size = self._finalize_batch_size(newsize_f)
