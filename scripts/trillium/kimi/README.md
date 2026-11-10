@@ -1117,8 +1117,9 @@ logs a kernel name once), or work it does not watch (kernel loading, CUDA graph 
   `FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1`, off), per process, and its key holds fields picked from each batch: split-KV
   and `seqlen_k_per_split`, the static-persistent scheduler (`max_m_blocks_leq_one`: every query within one tile), the
   batch-search aids (more than 256 sequences), tile and stage sizes. vLLM's start-up JIT warm-up compiles FA4's MLA
-  prefill at batch size 1 only ("Batch is not a current FA4 MLA-prefill key field", `v1/attention/backends/mla/
-  prefill/flash_attn.py:44-51`). So two batches with the same token and request counts but other sequence lengths can
+  prefill for a few sequence-length probes at batch size 1 ("Batch is not a current FA4 MLA-prefill key field",
+  `v1/attention/backends/mla/prefill/flash_attn.py:44-51`; job 1279246's one-request test run compiled too, so batch
+  size is not the missing field). So two batches with the same token and request counts but other sequence lengths can
   take different variants, a new one compiled once per worker (8 per stage) and logged by nobody. Not shown: no log names
   the work in the stall windows, and which key field changed between iterations 9866 and 9868 is not known.
 
@@ -1167,21 +1168,34 @@ per stage, in pipeline order:
 The py-spy dumps (`stall_pyspy.py`) show the sampled worker of each stage at its turn in CuTeDSL's compiler
 (`cutlass/base_dsl/dsl.py`, `compiler.py`), under `_flash_attn_fwd` (`vllm_flash_attn/cute/interface.py:1740`) ←
 `flash_attn_varlen_func` ← `FA4MLAPrefillKernel` ← `FlashAttnPrefillBackend._flash_attn_varlen_diff_headdims`
-(`v1/attention/backends/mla/prefill/flash_attn.py:438`): vLLM's MLA prefill. In conc256-1: PP0 at 20:59:15, PP1 :16-17,
-PP2 :18, PP3 :19 and :21; then :23-24, :25-26, :28-29, :30; then :42, :44, :46, :48. No other host work shows in those
-dumps. So a stage stalls about 2 s per new FA4 variant (2.5-3 s in the test run and warm-up, two variants per stage in
-the warm-up), the next stage gets the batch only after it, and the stall is about PP x the compile time x the new
-variants in that batch: here 7.5-8.5 s for one, 18.6 s for two. The variants depend on the batch (offline checks,
-above), so which pass pays varies between runs: conc64-1 stalled in 1278355 and not here, and conc256-1 paid three
-variants here and two there. The repeats did not stall in either run: FA4 keeps its compiles in memory for the
-process's life. Nothing else in the window: no Triton or TileLang compile, `dmesg` only `knvlinkSendInbandData` and one
-`hrtimer` line at 20:17.
+(`v1/attention/backends/mla/prefill/flash_attn.py:438`): vLLM's MLA prefill, from two call sites. Through
+`run_prefill_new_tokens` (`flash_attn.py:472`, the prompt tokens of the batch): the test run, the warm-up's first
+variant and conc256-1's third stall. Through `run_prefill_context_chunk` (`flash_attn.py:495`, attention of a chunked
+prefill over its earlier chunks): the warm-up's second variant and conc256-1's first two stalls. In conc256-1: PP0 at
+20:59:15, PP1 :16-17, PP2 :18, PP3 :19 and :21; then :23-24, :25-26, :28-29, :30; then :42, :44, :46, :48. The 192 FA4
+compiles (8 ranks x 4 stages x 6 events) cover each stall, chained by stage, at 1 s resolution; none falls outside a
+stall and no stall is without one. So a stage stalls about 2 s per new FA4 variant (2.5-3 s in the test run and
+warm-up, two variants per stage in the warm-up), the next stage gets the batch only after it, and the stall is about PP
+x the compile time x the new variants in that batch: here 7.5-8.5 s for one, 18.6 s for two. Which pass pays varies
+between runs: conc64-1 stalled in 1278355 and not here, and conc256-1 paid three variants here and two there. The
+repeats did not stall in either run: FA4 keeps its compiles in memory for the process's life.
 
-Cause: vLLM 0.32 compiles FA4 (CuTeDSL) MLA-prefill variants on first use in each worker, cached in memory only
-(`FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=0`), not covered by its start-up JIT warm-up (batch size 1), and with pipeline
-parallelism the stages compile one after the other. Not determined: which compile-key field each batch changed (the
-verbose monitor names only the kernel class). Fixes, not tried (a separate decision): FA4's on-disk cache
-(`FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1`, `FLASH_ATTENTION_CUTE_DSL_CACHE_DIR`) kept across jobs, or warm-up passes
-shaped like the measured ones.
+Limits of the dumps: one rank of 8 per stage was sampled, about once a second, so a compile's end is seen on that rank
+only; 12 dumps inside the stalls failed ("Failed to get stack traces"; 2 in the test run, 3 in the warm-up, 7 in
+conc256-1), mostly at the start of a stage's turn. Other work in the windows: in the test run, PP0's 8 ranks compiled
+Triton `_post_update_kernel` at 20:54:54 and PP0's sampled worker then sat 9 s in Triton's `CompiledKernel._init_handles`,
+off the critical path (PP1-PP3 were compiling FA4 then); no Triton or TileLang compile in the warm-up's or conc256-1's
+stalls. `dmesg`: only `knvlinkSendInbandData` and one `hrtimer` line at 20:17.
+
+Cause, measured by timing and stacks in this run: vLLM 0.32 compiles FA4 (CuTeDSL) MLA-prefill variants on first use in
+each worker, kept in memory only, and with pipeline parallelism the stages compile one after the other. Its start-up JIT
+warm-up does not cover the served batches' keys; the field that changes is not known (the verbose monitor names only the
+kernel class; vLLM's comment says batch size is not a key field, `mla/prefill/flash_attn.py:44`, and the test run, one
+1,024-token request, compiled too; at start-up FA4 also compiled inside FlashInfer's autotune dummy runs, py-spy at
+20:44:37). `FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED` is not set in the job's configuration (default off; not checked in
+the workers' environment). Not confirmed: no run has yet removed the compiles (FA4's on-disk cache, or a warm-up shaped
+like the measured passes) and the stalls with them. Inferred, not shown: 1278355's and the earlier K3-INF stalls are the
+same FA4 compiles. Fixes, not tried (a separate decision): FA4's on-disk cache (`FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1`,
+`FLASH_ATTENTION_CUTE_DSL_CACHE_DIR`) kept across jobs, or warm-up passes shaped like the measured ones.
 
 `stall_pyspy.py HOST.pyspy.txt FROM TO [FRAMES]` prints the dumps' active threads and innermost frames over a window.
