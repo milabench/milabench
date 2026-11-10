@@ -276,20 +276,33 @@ compliance checker SUCCESS. The earlier FLUX-02, job 1277885, was cancelled at 1
 - Florida at 68 blocks: one run, 49.15 min (their 0.7240 min per block gives 49.23). Ours is 3.5 % above that run.
 - Steady step: per-block `train_step_time`, blocks 4-68: 0.6706 s (0.6672-0.6738) against Florida's 0.6500
   (0.6492-0.6510), +3.2 %; steps 30-200, ten-step intervals (88c0006d's convention): 0.6698 against 0.6431
-  (0.6421-0.6433 over their 10 runs), +4.2 %. First block 0.7277 (Florida 0.679-0.707). Validation 1.86 s (1.77).
+  (0.6421-0.6433 over their 10 runs), +4.2 %. The two conventions differ because Florida's 16-node step drifts up
+  within a run, from 0.6432 s (blocks 2-4) to 0.650 (blocks 11-68), while ours stays at 0.670-0.673: at 16 nodes steps
+  30-200 are blocks 1-4, not their steady state (at 8 nodes the two agree, 0.6301 and 0.6303). The window holds 3
+  intervals with an evaluation; without them 0.6696 against 0.6428. First block 0.7277 (Florida 0.679-0.707).
+  Validation 1.86 s (1.77).
 - The 3.1 min above Florida's 47.72, extra blocks first: 49.23 - 47.72 = 1.5 min for 68 against 65.875 blocks (their
-  olympic runs' mean), then 50.86 - 49.23 = 1.6 min for slower blocks. Speed first: 1.6 + 1.6.
+  olympic runs' mean), then 50.86 - 49.23 = 1.6 min for slower blocks. Speed first, pricing the extra blocks at our
+  0.748 min per block: 1.55 min for the speed, 1.59 for the blocks.
 - Convergence against Florida's 10 runs at the same sample counts: above all of them at blocks 24, 28, 30, 31, 46, 48,
-  53, 56, 58 and 64 (10 runs each), 66 (8), 67 and 68 (1); below all at 16 and 21. So ours sat on the slow side of their
-  spread from block 24 on and reached the target at their largest count. The data order is the same for any seed
-  (88c0006d), so their spread is model-side; one run cannot tell whether ours is systematic.
-- Power and clocks per node over the training window (5 s samples): 919-934 W mean per GPU, >= 950 W in 16-33 % of
-  samples, SM clock median 1,650-1,762 MHz (lowest 1,417); no node apart.
-- Boards: trig0137 holds one `-000` GPU (`hw/allnodes/parts_by_node.tsv`), as FLUX-01's trig0107 did. trig0137's GPU 2
-  ran the node's lowest clock median, 1,650 MHz at 934 W; but trig0139, with no `-000` GPU, has one at 1,657 MHz (GPU 3),
-  and trig0107's GPU 6 ran 1,650 in FLUX-01. Likely or not, not separated.
-- trig0131 and trig0132 were drained at 19:57 for `slurmstepd` high CPU (HW-01): not affected; blocks 49-53
-  (19:56-19:59) ran 0.670-0.674 s, inside the run's steady range.
+  53, 56, 58 and 64 (10 runs each), 66 (8), 67 and 68 (1), where 30, 31 and 53 are above their highest by only
+  0.00003-0.00006 (equal at 4 decimals); below all at 16 (by 0.00005: equal at 4 decimals) and 21. So ours sat on the slow
+  side of their spread from block 24 on and reached the target at their largest count. The data order is the same for
+  any seed (e97227b7, FLUX-01's section), so their spread is model-side; one run cannot tell whether ours is systematic.
+- Power and clocks per GPU (not per node) over the training window (5 s samples): 919-934 W mean, >= 950 W in 16-33 %
+  of samples, SM clock median 1,650-1,762 MHz (lowest 1,417). Per node: 923-928 W, 21-27 %, 1,710-1,732 MHz; no node
+  apart.
+- Boards: trig0137 holds one `-000` GPU (`hw/allnodes/parts_by_node.tsv`), GPU 2 (bus 3A, in PCI order from
+  `hw/allnodes/trig0137-1254118/nvsmi_q.before.txt`; nvidia-smi's default index order is assumed to be PCI order). It ran
+  the lowest clock median of all 128 GPUs, 1,650 MHz at 934 W; but trig0139, with no `-000` GPU, has one at 1,657 MHz
+  (GPU 3). In FLUX-01, trig0107's `-000` is GPU 3 (bus 4B, 1,672 MHz), and its GPU 6 (1,650 MHz) is `-001`. Likely or
+  not, not separated.
+- Drains, none affecting the run. trig0131 was DRNG 19:23:02-19:27:54 for `health.chk.nvidia-smi.unresponsive`
+  (`sacctmgr show event`): blocks 5-11 ran 0.669-0.674 s, and trig0131's telemetry has no gap over 5.5 s. trig0131 and
+  trig0132 were drained for `slurmstepd` high CPU (HW-01) from 19:57:49 (RUNS.md:199; sacctmgr records such drains at
+  job end: DRAIN 20:11:32-20:12:41) to 20:12, past the job: blocks 51-68 ran 0.669-0.674 s.
+- Not checked: whether our data shards hold the same content as Florida's; whether FLUX-02's four subnets (35-38,
+  `parts_by_node.tsv`) matter, where FLUX-01 used one.
 
 ## Scaling, 8 to 16 nodes (FLUX-01 against FLUX-02)
 
@@ -301,15 +314,19 @@ compliance checker SUCCESS. The earlier FLUX-02, job 1277885, was cancelled at 1
 | blocks to target | 46 | 68 | | 40-45 to 65-68 |
 | time per block | 1.469 min | 0.748 min | x 0.509 | 1.402 to 0.724 min, x 0.516 |
 
-Our step grows a little less than Florida's from 8 to 16 nodes, and our time per block scales about as theirs. Our time to
-train scales better (x 0.753 against x 0.794) mostly through the blocks: the 8-node run needed 46 blocks, above their
-range, the 16-node run 68, at the top of theirs.
+From 8 to 16 nodes our step grows less than Florida's on the blocks convention (+1.6 % against +3.1 %); on steps
+30-200 (+1.7 % against +2.1 %) the difference is inside one run's noise (+-0.3-0.7 %), and their +2.1 % against +3.1 % is
+their within-run drift at 16 nodes (above). Our time per block scales about as theirs. Our time to train (x 0.753) is
+inside Florida's own range of 16-to-8 ratios over all pairs of their runs, x 0.745-0.876 (median 0.808): the difference
+from their olympic x 0.794 is the block counts (46 at 8 nodes, above their range; 68 at 16), which depend on the seed.
 
 ## Step-time gap against Florida (FLUX_BRIEF.md, last section)
 
 Florida's step on the same window and statistic as ours (steps 30-200, median of ten-step intervals between
 `train_loss` events): 0.6177 s over their 10 n2 runs (0.6161-0.6246, two groups). Their 0.620 elsewhere in this README
-is the median of per-block `train_step_time` over whole runs (0.6206); the comparisons below use 0.6177.
+is the median of per-block `train_step_time` over whole runs (0.6206); the comparisons below use 0.6177. Florida's step
+drifts within a run there too (0.6177 on the window, 0.6206 over whole runs), and our 2-node runs stop at 200 steps, so
+this comparison covers early steps only.
 
 Job 1277931 (`nw-flux-gap1`, trig0145, trig0148, 2026-11-09 17:01-17:31, TIMEOUT): Florida's 2-node config, real data,
 telemetry every second with the clock event reasons, Nsight Systems on rank 0 (`nsys_rank.sh`, 20 s window).
