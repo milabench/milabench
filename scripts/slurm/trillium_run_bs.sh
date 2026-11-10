@@ -104,6 +104,10 @@ export WANDB_MODE=offline
 # The jobrunner prologue sets a SOCKS proxy to the login node: huggingface_hub builds its http
 # client from it before checking offline mode and fails (socksio is not installed). Offline anyway.
 unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
+# SDPA prefers cuDNN attention on B200 (torch 2.15), which builds a plan for every new sequence
+# length: ~1.6 s each (GPU idle, llm-lora at 1/4 of H100). Put it last: flash / memory efficient
+# attention are used, cuDNN only for inputs they do not support. Read by torch in every process.
+export TORCH_CUDNN_SDPA_DEPRIORITIZED=1
 
 . $MILABENCH_ENV/bin/activate
 

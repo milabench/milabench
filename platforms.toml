@@ -65,6 +65,8 @@ index-url = "https://pypi.org/simple"
 extra-index-url = [
     "https://download.pytorch.org/whl/cu{cuda}",
     "https://flashinfer.ai/whl/cu{cuda}",
+    # flashinfer-cubin >= 0.7 (arch independent) is only published here, not on PyPI
+    "https://flashinfer.ai/whl",
 ]
 find-links = [
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",

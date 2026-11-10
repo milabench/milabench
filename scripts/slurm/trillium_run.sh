@@ -22,10 +22,10 @@ export PYTORCH_VERSION="2.15.0"
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
 export MILABENCH_ARGS=""
-# Rerun of the benchmarks that failed in the previous run only (faster, fewer files checked out).
+# Subset run: the benchmarks without B200 numbers yet (faster, fewer files checked out).
 # The prepare step keeps the full suite (its MILABENCH_ARGS is part of the environment key).
 # Remove this line to run everything again.
-export MILABENCH_ARGS="--select txt-to-image-single,rlhf-single,rlhf-gpus,vllm-moe-code-gpus,vllm-dense-physics-gpus"
+export MILABENCH_ARGS="--select dinov2-giant-single,diffusion-gpus,diffusion-single,llama,txt-to-image-single,vllm-dense-physics-gpus,vllm-moe-code-gpus,whisper-transcribe-single"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -89,6 +89,10 @@ export WANDB_MODE=offline
 # The jobrunner prologue sets a SOCKS proxy to the login node: huggingface_hub builds its http
 # client from it before checking offline mode and fails (socksio is not installed). Offline anyway.
 unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
+# SDPA prefers cuDNN attention on B200 (torch 2.15), which builds a plan for every new sequence
+# length: ~1.6 s each (GPU idle, llm-lora at 1/4 of H100). Put it last: flash / memory efficient
+# attention are used, cuDNN only for inputs they do not support. Read by torch in every process.
+export TORCH_CUDNN_SDPA_DEPRIORITIZED=1
 
 . $MILABENCH_ENV/bin/activate
 

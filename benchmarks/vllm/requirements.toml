@@ -14,7 +14,9 @@ dependencies = [
     "vllm[bench]",
     "vllm[audio]",
     "flashinfer-python",
-    "flashinfer-cubin",
+    # must be the same version as flashinfer-python (pinned by the vllm wheel: 0.7.0.post1),
+    # flashinfer refuses to load mismatched cubins
+    "flashinfer-cubin==0.7.0.post1",
     # "flashinfer-jit-cache",
     "torchcodec",
 ]

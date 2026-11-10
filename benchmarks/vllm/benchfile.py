@@ -151,12 +151,11 @@ class VLLM(Package):
 
         if self._arch() == "cuda":
             env["FLASHINFER_CACHE_DIR"] = str(self.dirs.cache / "flashinfer")
-            env["FLASHINFER_CUBIN_DIR"] = str(self.dirs.cache / "flashinfer" / "cubins")
-            # flashinfer defaults its workspace to ~/.cache/flashinfer/<version>
-            # which may not be writable on compute nodes; redirect to our cache dir
-            # env["FLASHINFER_WORKSPACE_DIR"] = os.path.join(
-            #     str(self.dirs.cache), "flashinfer", "workspace"
-            # )
+            # flashinfer >= 0.7 writes <base>/.cache/flashinfer/<version>, base defaults to $HOME
+            # (read only on compute nodes)
+            env["FLASHINFER_WORKSPACE_BASE"] = str(self.dirs.cache)
+            # No FLASHINFER_CUBIN_DIR: it overrides the flashinfer-cubin package with a folder that
+            # is empty unless something downloads the cubins into it (not possible offline)
 
         if self._arch() == "rocm":
             env["VLLM_TARGET_DEVICE"] = "rocm"
