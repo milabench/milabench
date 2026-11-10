@@ -298,7 +298,7 @@ nodes were never sampled.
 | decodelong-c1 | 1024 / 4096 | 111.5 (3.5, 28) | 139 (4, 35) | 88 / 88 | 8.95 / 8.95 | 8.95 / 9.04 | 10913 | 97.9 |
 | decodelong-c16 | 1024 / 4096 | 985.1 (30.8, 246) | 1231 (38, 308) | 733 / 742 | 16.09 / 16.24 | 16.16 / 16.64 | 15025 | 15.3 |
 
-Output tok/s, 2 nodes (K3-INF-01) against 4: conc1 111.1 / 108.8, conc64 2003 / 1112, conc128 2243 / 2018, conc256
+Output tok/s, 2 nodes (K3-INF-01) against 4: conc1 111.1 / 108.8, conc64 2003 / 1111, conc128 2243 / 2018, conc256
 2865 / 2483, conc512 3466 / 4038, conc1024 3452 / 4292; ctx-c16 from 1k to 128k 766 / 768, 221 / 217, 78 / 117, 44 / 60,
 20 / 31; ctx128k-c1 21.5 / 32.0 (TTFT 4555 / 2748 ms).
 
@@ -759,7 +759,10 @@ K3-INF-02 98.0, 98.5, 83.8, 86.8: all within 0.5 points (GPQA's stderr: 2.6 poin
 ctx64k-c16 and ctx128k-c16 (K3-XN-01's pass list); K3-INF-02 ran them.
 
 On 4 nodes each, not the same ones (EP32 on `trig[0109-0112]`, K3-INF-02 on `trig[0139-0142]`), EP32 gives more than
-TP8 x PP4 at conc256 (1.15x), conc1024 (1.16x) and ctx32k-c16 (1.08x), about the same at ctx8k-c16 (0.98x), and less
+TP8 x PP4 at conc256 (1.15x; not established: K3-INF-02's conc256 pass stalled 8.51 + 8.46 s, and the stall-free
+repeat at 256 on TP8 x PP4 in job 1278355 gave 3528 tok/s, above EP32's 2864, whose pass had one 2.47-s gap; one run
+each, other nodes), conc1024 (1.16x; no gap over 2 s in either pass, so this lead stands as measured) and ctx32k-c16
+(1.08x), about the same at ctx8k-c16 (0.98x), and less
 at the other passes: one request decodes at 50.5 against 8.9 ms per token
 (conc1 0.18x), conc64 0.92x, conc512 0.95x (one late request, below), conc128 0.67x (two pauses, below). Against EP16
 on 2 nodes (`trig[0109-0110]`), with twice the GPUs, it gives less at every pass but conc256 (1.01x) and ctx32k-c16
@@ -1058,7 +1061,7 @@ s", ended at 18:42:56.
 
 The stalls reproduce, in the first pass of each pair only: conc256 the same size as K3-INF-02's (8.49 + 8.51 against
 8.51 + 8.46 s), conc64 shorter (7.94 against 14.18 s); conc128 did not stall after two conc64 passes. Without the stall
-conc64 on 4 nodes gives 2208 tok/s against 2 nodes' 2003 (+10%, K3-INF-01): K3-INF-02's conc64 "halving" (1112) was its
+conc64 on 4 nodes gives 2208 tok/s against 2 nodes' 2003 (+10%, K3-INF-01): K3-INF-02's conc64 "halving" (1111) was its
 14.2-s stall (one run each, other nodes).
 
 What lines up with each stall:
@@ -1133,3 +1136,52 @@ JOB_PREFIX=nw-k3-xn NODELIST=trig[0135-0138] MILABENCH_BASE=$PWD src/scripts/tri
   CONFIG=$PWD/src/scripts/trillium/kimi/stall.yaml VLLM_LOG_STATS_INTERVAL=1 TRITON_PRINT_AUTOTUNING=1 RAY_DEDUP_LOGS=0 \
   PYSPY=$PWD/tools/pyspy/bin/py-spy
 ```
+
+**Job 1279246: the cause.** `trig[0135-0138]` (PP0 `trig0135`, PP1 `trig0137`, PP2 `trig0136`, PP3 `trig0138`),
+2026-11-09 20:12:12-21:01:45 (49:33), `460370a6`, COMPLETED, milabench exit 0 after 2951 s, all four nodes "GPUs free",
+nodemon closed cleanly on all four; `kernel.yama.ptrace_scope` 0 on all four, py-spy dumped one worker per node about
+every second (10 MB per node). Weights 822-899 s; "init engine ... took 1350.22 s", ended at 20:54:12.
+
+| pass | stalls s (`stall_gaps.py`, over 1 s) | output tok/s (client) | 1278355 |
+|---|---|---|---|
+| warmup | 18.62 | | 18.77 |
+| conc64-1 | none | 2111 | 7.94 |
+| conc64-2 | none | 2181 | none |
+| conc128-1 | none | 2925 | none |
+| conc128-2 | none | 2980 | none |
+| conc256-1 | 7.51 + 8.50 + 7.75 | 2165 | 8.49 + 8.51 |
+| conc256-2 | none | 3602 | none |
+
+Each stall is an FA4 compile in every TP rank, paid by the stages in turn. With `--jit-monitor-verbose` the monitor logs,
+in every stall and nowhere else in the passes, 8 CuTeDSL compiles of `FlashAttentionForwardSm100` (one per TP rank)
+per stage, in pipeline order:
+
+| stall (engine batch) | PP0 | PP1 | PP2 | PP3 |
+|---|---|---|---|---|
+| test run, 11.7 s (`Iteration(0)`, 1,024 tokens) | 20:54:51 | :54 | :57 | 20:55:00 |
+| warm-up, 18.6 s (`Iteration(72)`: 6 context requests, 5,122 tokens, 9 decodes) | 20:55:06, :09 | :11, :14 | :16, :19 | :20, :23 |
+| conc256-1, 7.5 s (`Iteration(9869)`: 17, 16,336, 48) | 20:59:13 | :15 | :17 | :19 |
+| conc256-1, 8.5 s (`Iteration(9872)`: 17, 16,336, 48) | 20:59:22 | :25 | :27 | :29 |
+| conc256-1, 7.8 s (`Iteration(10884)`: 1 context request of 48 tokens, 48 decodes) | 20:59:41 | :43 | :45 | :47 |
+
+The py-spy dumps (`stall_pyspy.py`) show the sampled worker of each stage at its turn in CuTeDSL's compiler
+(`cutlass/base_dsl/dsl.py`, `compiler.py`), under `_flash_attn_fwd` (`vllm_flash_attn/cute/interface.py:1740`) ←
+`flash_attn_varlen_func` ← `FA4MLAPrefillKernel` ← `FlashAttnPrefillBackend._flash_attn_varlen_diff_headdims`
+(`v1/attention/backends/mla/prefill/flash_attn.py:438`): vLLM's MLA prefill. In conc256-1: PP0 at 20:59:15, PP1 :16-17,
+PP2 :18, PP3 :19 and :21; then :23-24, :25-26, :28-29, :30; then :42, :44, :46, :48. No other host work shows in those
+dumps. So a stage stalls about 2 s per new FA4 variant (2.5-3 s in the test run and warm-up, two variants per stage in
+the warm-up), the next stage gets the batch only after it, and the stall is about PP x the compile time x the new
+variants in that batch: here 7.5-8.5 s for one, 18.6 s for two. The variants depend on the batch (offline checks,
+above), so which pass pays varies between runs: conc64-1 stalled in 1278355 and not here, and conc256-1 paid three
+variants here and two there. The repeats did not stall in either run: FA4 keeps its compiles in memory for the
+process's life. Nothing else in the window: no Triton or TileLang compile, `dmesg` only `knvlinkSendInbandData` and one
+`hrtimer` line at 20:17.
+
+Cause: vLLM 0.32 compiles FA4 (CuTeDSL) MLA-prefill variants on first use in each worker, cached in memory only
+(`FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=0`), not covered by its start-up JIT warm-up (batch size 1), and with pipeline
+parallelism the stages compile one after the other. Not determined: which compile-key field each batch changed (the
+verbose monitor names only the kernel class). Fixes, not tried (a separate decision): FA4's on-disk cache
+(`FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1`, `FLASH_ATTENTION_CUTE_DSL_CACHE_DIR`) kept across jobs, or warm-up passes
+shaped like the measured ones.
+
+`stall_pyspy.py HOST.pyspy.txt FROM TO [FRAMES]` prints the dumps' active threads and innermost frames over a window.
