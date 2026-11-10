@@ -352,19 +352,27 @@ Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPe
   blocks. Init 276 s (Florida 188).
 - Florida at 32 blocks: four runs, 175.98-178.35 min (their 5.5063 min per block, median, gives 176.20). Ours is 3.3-4.7 %
   above those runs.
-- Steady step: per-block `train_step_time`, blocks 4-32: 0.6499 s (0.6487-0.6507) against Florida's 0.6204 (median of
-  their runs; the runs fall in two groups, 0.6197-0.6206 and 0.6277-0.6288), +4.8 %; steps 30-200, ten-step intervals:
-  0.6485 against 0.6177 (0.6161-0.6246), +5.0 %. Florida's step drifts a little within a run (0.6190 at blocks 2-4,
-  0.6207 at 11-32); ours does not (0.648-0.650, then 0.6502). First block 0.6578 (Florida 0.620-0.633). Validation
-  12.52 s (12.54).
-- The 10.8 min above Florida's 173.45, extra blocks first: 176.20 - 173.45 = 2.75 min (32 blocks against 31.375, their
-  olympic runs' mean, at their median time per block), then 184.28 - 176.20 = 8.08 min for slower blocks. Speed first, as
-  FLUX-01's split (the speed priced on Florida's 31.375 blocks at their olympic time per block, 5.528 min; the extra
-  blocks at our 5.759 min per block): 7.23 min for the speed, 3.60 for the blocks. The two orders differ more here than
-  at other sizes because Florida's time per block itself spans two groups (5.4993-5.5735 min).
+- Florida's 2-node runs are two sessions: a slow one, seeds 25952-25955, 4 runs, step 0.6285 s, started 10-03 22:07 to
+  10-04 07:20 UTC; and a fast one, seeds 10879-10886, 6 runs, step 0.6200, from 10-04 21:53 into 10-05, the same session
+  as their 4-, 8- and 16-node runs. Their median over all 10 runs, 0.6204, is the midpoint of two fast-session runs, so
+  it is the fast session's step; it stays the 2-node reference for scaling because it shares a session with their other
+  sizes.
+- Steady step: per-block `train_step_time`, blocks 4-32: 0.6499 s (0.6487-0.6507) against the fast session's 0.6204,
+  +4.8 % (+3.4 % against the slow session's 0.6285); steps 30-200, ten-step intervals: 0.6485 against 0.6177
+  (0.6161-0.6246), +5.0 %. Both steps rise about 0.2 % within a run: ours from 0.6490 (blocks 2-4) to 0.6502 (block 11
+  on), Florida's fast session from 0.6187 to 0.6201. First block 0.6578 (Florida 0.620-0.633). Validation 12.52 s
+  (12.54).
+- The 10.8 min above Florida's 173.45, extra blocks first (as at the other sizes): 176.20 - 173.45 = 2.75 min (32 blocks
+  against 31.375, their olympic runs' mean, at their median time per block, 5.5063 min), then 184.28 - 176.20 = 8.08 min
+  for slower blocks. By session, the speed part is 8.2 min against the fast session (5.502 min per block) and 6.0 against
+  the slow one (5.573). Speed first, as FLUX-01's split (the speed priced on Florida's 31.375 blocks at the olympic runs'
+  time per block, 5.5282 min; the extra blocks at our 5.759): 7.23 min for the speed, 3.60 for the blocks. The two orders
+  differ by 0.85 min: 0.69 min of it is their different Florida references per block (the median against the olympic
+  runs' mean, 3 of whose 8 runs are in the slow session; at 4-16 nodes these agree within 0.04 %), 0.16 min the order.
 - Convergence against Florida's 10 runs at the same sample counts: the first evaluation, 0.70984, is below all of theirs
   (0.7101-0.7179, lowest 0.71015) by 0.00031; above all of them at blocks 5, 7, 10, 13, 14, 15, 17, 21, 29 and 31 (10
-  runs each), by 0.00003-0.00065; at 17 and 29 the margin is 0.00003-0.00004, equal to their highest at 4 decimals. It
+  runs each), by 0.00003-0.00065; at 29 the margin is 0.00003, equal to their highest at 4 decimals, and at 17 0.000045
+  (0.5925 against their best 0.5924). It
   reached the target at 32 blocks, Florida's largest count.
 - Power and clocks per GPU (not per node) over the training window (5 s samples): 928-937 W mean, >= 950 W in 23-33 %
   of samples, SM clock median 1,680-1,740 MHz (lowest 1,455). Per node: 932-936 W, 26-31 %, 1,695-1,717 MHz.
@@ -372,12 +380,15 @@ Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPe
   ran on these two nodes and two others.
 - Drains, not affecting the run: trig0134 from 22:42:50 and trig0133 from 00:02:50 (RUNS.md:211, `slurmstepd` high CPU)
   to 01:12:42; `sacctmgr show event` over the job's window holds only the DRAIN records written at job end, 01:10:33-01:12:42
-  on both (`health.chk.slurmstepd..high.cpu.root.process`). During them blocks 7-32 (trig0134) and 21-32 (trig0133) ran
-  0.6491-0.6507 s, inside the run's steady range, 0.6487-0.6507.
+  on both (`health.chk.slurmstepd..high.cpu.root.process`). trig0134's drain began during block 7, so only blocks 4-6
+  come before it; blocks 7-32 (trig0134) and 21-32 (trig0133) ran 0.6491-0.6507 s, and the run's steady range,
+  0.6487-0.6507, includes those drained blocks. Both our step and Florida's fast session rise about 0.2 % within a run
+  (above), so any drain effect is under 0.2 % and cannot be separated from that rise.
 - Run cap: `RUN_MINUTES=215` raised Florida's 200 min `WALLTIME_RUNANDTIME` to 215 (the log shows both values). The
   training step ran 190.4 min (22:00:01-01:10:26) and the run reached the target at 184.3 min, so neither cap came into
   play. The override stays a difference from Florida's guard (a guard, not a training parameter).
-- Not checked: step variation between node sets; whether our data shards hold the same content as Florida's.
+- Not checked: step variation between node sets; whether our data shards hold the same content as Florida's; what made
+  Florida's two sessions differ.
 
 ## Scaling, 2 to 4 to 8 to 16 nodes (FLUX-04, FLUX-03, FLUX-01, FLUX-02)
 
@@ -392,14 +403,16 @@ Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPe
 | time per block | 5.759 min | 2.885 min | 1.469 min | 0.748 min | 5.506 / 2.738 / 1.402 / 0.724 min |
 
 - Step growth with nodes, blocks convention: ours +0.1 % (2 to 4), +1.5 % (4 to 8) and +1.6 % (8 to 16); Florida's -0.6 %,
-  +2.2 % and +3.1 % (their 2-node runs fall in two step groups, above). On steps 30-200 ours +0.6 %, +0.9 % and +1.7 %,
+  +2.2 % and +3.1 % (their 2-node reference is the fast session's step, the session of their other sizes, above). On steps 30-200 ours +0.6 %, +0.9 % and +1.7 %,
   Florida's -0.3 %, +2.3 % and +2.1 %; at 16 nodes their window misses their within-run drift (FLUX-02, above), and one
   run's noise there is +-0.3-0.7 %.
 - On the blocks convention our step's gap to Florida narrows from 4 to 16 nodes by 2.3 points: +5.50, +4.76, +3.18 %.
-  Each change is larger than one run's bootstrap noise (+-0.05-0.12 %) and Florida's run-to-run spread (0.15-0.29 %), but
-  each size is one run on one set of nodes, and step variation between node sets is not measured: two 4-node sets differ
-  by 0.4 % on early windows (1276381 0.650 s, FLUX-03 0.6526). Part of the 8 to 16 narrowing is Florida's own step rising
-  within their 16-node runs. On steps 30-200 the gap narrows only 0.4 points from 8 to 16 nodes (4.55 to 4.15 %), inside
+  Each change is larger than one run's bootstrap noise (+-0.05-0.12 %) and Florida's run-to-run spread within one session
+  (0.15-0.29 %); but their own 2-node runs differ by 1.4 % between sessions (FLUX-04, above), so 4 to 8 nodes (0.74
+  points) is inside that, 8 to 16 (1.58) about at it, and only 4 to 16 (2.3) exceeds it. Each size is one run on one set
+  of nodes, and step variation between node sets is not measured: two 4-node sets differ by 0.4 % on early windows
+  (1276381 0.650 s, FLUX-03 0.6526). Part of the 8 to 16 narrowing is Florida's own step rising within their 16-node
+  runs. On steps 30-200 the gap narrows only 0.4 points from 8 to 16 nodes (4.55 to 4.15 %), inside
   that window's noise. Our step grows less than theirs from 4 to 16 nodes on blocks (+3.1 % against +5.4 %), with the same
   limits. The 2-node gap, +4.8 %, is below the 4-node +5.5 %: the gap does not narrow with every step in size. FLUX-03 and
   FLUX-04 share trig0133 and trig0134; no conclusion is drawn from that.
