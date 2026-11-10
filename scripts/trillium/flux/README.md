@@ -282,11 +282,13 @@ compliance checker SUCCESS. The earlier FLUX-02, job 1277885, was cancelled at 1
   intervals with an evaluation; without them 0.6696 against 0.6428. First block 0.7277 (Florida 0.679-0.707).
   Validation 1.86 s (1.77).
 - The 3.1 min above Florida's 47.72, extra blocks first: 49.23 - 47.72 = 1.5 min for 68 against 65.875 blocks (their
-  olympic runs' mean), then 50.86 - 49.23 = 1.6 min for slower blocks. Speed first, pricing the extra blocks at our
-  0.748 min per block: 1.55 min for the speed, 1.59 for the blocks.
+  olympic runs' mean), then 50.86 - 49.23 = 1.6 min for slower blocks. Speed first, as FLUX-01's split (the speed
+  priced on Florida's 65.875 blocks, the extra blocks at our 0.748 min per block): 1.55 min for the speed, 1.59 for the
+  blocks.
 - Convergence against Florida's 10 runs at the same sample counts: above all of them at blocks 24, 28, 30, 31, 46, 48,
-  53, 56, 58 and 64 (10 runs each), 66 (8), 67 and 68 (1), where 30, 31 and 53 are above their highest by only
-  0.00003-0.00006 (equal at 4 decimals); below all at 16 (by 0.00005: equal at 4 decimals) and 21. So ours sat on the slow
+  53, 56, 58 and 64 (10 runs each), 66 (8), 67 and 68 (1); below all at 16 (0.6128 against their lowest 0.6129) and 21.
+  At blocks 16, 30, 31 and 53 the margin is only 0.00003-0.00006; 30, 31 and 53 are equal to Florida's highest at 4
+  decimals. So ours sat on the slow
   side of their spread from block 24 on and reached the target at their largest count. The data order is the same for
   any seed (e97227b7, FLUX-01's section), so their spread is model-side; one run cannot tell whether ours is systematic.
 - Power and clocks per GPU (not per node) over the training window (5 s samples): 919-934 W mean, >= 950 W in 16-33 %
@@ -301,8 +303,8 @@ compliance checker SUCCESS. The earlier FLUX-02, job 1277885, was cancelled at 1
   (`sacctmgr show event`): blocks 5-11 ran 0.669-0.674 s, and trig0131's telemetry has no gap over 5.5 s. trig0131 and
   trig0132 were drained for `slurmstepd` high CPU (HW-01) from 19:57:49 (RUNS.md:199; sacctmgr records such drains at
   job end: DRAIN 20:11:32-20:12:41) to 20:12, past the job: blocks 51-68 ran 0.669-0.674 s.
-- Not checked: whether our data shards hold the same content as Florida's; whether FLUX-02's four subnets (35-38,
-  `parts_by_node.tsv`) matter, where FLUX-01 used one.
+- Not checked: whether our data shards hold the same content as Florida's; whether FLUX-02's four address subnets
+  (35-38, `parts_by_node.tsv`) matter, where FLUX-01's nodes spanned two (31 and 32: trig0108 is in 32).
 
 ## Scaling, 8 to 16 nodes (FLUX-01 against FLUX-02)
 
