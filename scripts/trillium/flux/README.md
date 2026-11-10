@@ -402,10 +402,10 @@ Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPe
 | blocks to target | 32 | 34 | 46 | 68 | 31-32 / 33-36 / 40-45 / 65-68 |
 | time per block | 5.759 min | 2.885 min | 1.469 min | 0.748 min | 5.506 / 2.738 / 1.402 / 0.724 min |
 
-- Step growth with nodes, blocks convention: ours +0.1 % (2 to 4), +1.5 % (4 to 8) and +1.6 % (8 to 16); Florida's -0.6 %,
-  +2.2 % and +3.1 % (their 2-node reference is the fast session's step, the session of their other sizes, above). On steps 30-200 ours +0.6 %, +0.9 % and +1.7 %,
-  Florida's -0.3 %, +2.3 % and +2.1 %; at 16 nodes their window misses their within-run drift (FLUX-02, above), and one
-  run's noise there is +-0.3-0.7 %.
+- Step growth with nodes, blocks convention: ours +0.1 % (2 to 4), +1.5 % (4 to 8) and +1.6 % (8 to 16); Florida's
+  -0.6 %, +2.2 % and +3.1 % (their 2-node reference is the fast session's step, the session of their other sizes,
+  above). On steps 30-200 ours +0.6 %, +0.9 % and +1.7 %, Florida's -0.3 %, +2.3 % and +2.1 %; at 16 nodes their window
+  misses their within-run drift (FLUX-02, above), and one run's noise there is +-0.3-0.7 %.
 - On the blocks convention our step's gap to Florida narrows from 4 to 16 nodes by 2.3 points: +5.50, +4.76, +3.18 %.
   Each change is larger than one run's bootstrap noise (+-0.05-0.12 %) and Florida's run-to-run spread within one session
   (0.15-0.29 %); but their own 2-node runs differ by 1.4 % between sessions (FLUX-04, above), so 4 to 8 nodes (0.74
@@ -420,8 +420,8 @@ Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPe
   median 0.539), x 0.367 (8/2; x 0.315-0.370, 0.341), x 0.276 (16/2; x 0.264-0.288, 0.276), x 0.689 (8/4; x 0.569-0.699,
   0.637), x 0.753 (16/8; x 0.745-0.876, 0.808), x 0.519 (16/4; x 0.477-0.544, 0.513). The differences from their olympic
   ratios are the block counts (32, 34, 46, 68 against 31-32, 33-36, 40-45, 65-68), which depend on the seed.
-- Observed, cause not determined: all four runs sit above all of Florida's runs at several blocks, FLUX-04 at 5-31,
-  FLUX-03 at 30-33, FLUX-01 at 38-45, FLUX-02 at 46-68.
+- Observed, cause not determined: all four runs sit above all of Florida's runs at several blocks, FLUX-04 at 10 blocks
+  between 5 and 31 (listed above), FLUX-03 at 30-33, FLUX-01 at 38-45, FLUX-02 at 46-68.
 
 ## Step-time gap against Florida (FLUX_BRIEF.md, last section)
 
