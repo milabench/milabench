@@ -376,8 +376,8 @@ Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step pe
 - Loss tracks B200's: 0.012 mean absolute over 40 steps (largest 0.086, step 21; loss 6.5-15.3), ten times a same-seed
   B200 pair (1273594 `published` against 1273761 `published,prof`, step-1 subset, profiler on in the second; loss
   averaged over ranks per step, steps 1-40: 0.0012, max 0.0043) or cueq+tf32 on either GPU: the GPU moves the loss
-  more than the kernels do. Over 100 steps two published B200 runs differ by 0.044, so the comparison holds over these
-  40 steps only. Peak 31.5 GiB
+  more than the kernels do. Over 100 steps the same pair differs by 0.044 (max 0.32, recomputed from both runs'
+  logs), so the comparison holds over these 40 steps only. Peak 31.5 GiB
   allocated, 33.3-33.4 reserved, as on B200.
 - Data loader: gap 2.4 % (published) and 3.3 % (cueq+tf32) of the time, mean over ranks (B200: 3.5, 4.8 %);
   featurization median 2.4-2.6 s per sample, max 20 s, workers busy 3-4 %.
