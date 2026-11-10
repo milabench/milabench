@@ -23,6 +23,10 @@ export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
 # vllm excluded: the torch2.15-cu132 vllm wheel still requires torch==2.13 (pin fails)
 export MILABENCH_ARGS="--exclude vllm"
+# Rerun of the benchmarks that failed in the previous run only (faster, fewer files checked out).
+# The prepare step keeps the full suite (its MILABENCH_ARGS is part of the environment key).
+# Remove this line to run everything again.
+export MILABENCH_ARGS="--select txt-to-image-single,rlhf-single,rlhf-gpus,dinov2-giant-gpus"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
