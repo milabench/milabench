@@ -28,8 +28,7 @@ export PYTORCH_VERSION="2.15.0"
 # the full benchmark suite (relative to the milabench checkout)
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
-# vllm excluded: the torch2.15-cu132 vllm wheel still requires torch==2.13 (pin fails)
-export MILABENCH_ARGS="--exclude vllm"
+export MILABENCH_ARGS=""
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"

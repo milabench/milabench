@@ -21,12 +21,11 @@ export PYTORCH_VERSION="2.15.0"
 # the full benchmark suite (relative to the milabench checkout)
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
-# vllm excluded: the torch2.15-cu132 vllm wheel still requires torch==2.13 (pin fails)
-export MILABENCH_ARGS="--exclude vllm"
+export MILABENCH_ARGS=""
 # Rerun of the benchmarks that failed in the previous run only (faster, fewer files checked out).
 # The prepare step keeps the full suite (its MILABENCH_ARGS is part of the environment key).
 # Remove this line to run everything again.
-export MILABENCH_ARGS="--select txt-to-image-single,rlhf-single,rlhf-gpus,dinov2-giant-gpus"
+export MILABENCH_ARGS="--select txt-to-image-single,rlhf-single,rlhf-gpus,vllm-moe-code-gpus,vllm-dense-physics-gpus"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -123,7 +122,7 @@ fi
 milabench slurm system > $JOB_CACHE/system.yaml
 
 # Datasets / weights: checked out of the cherrybin archive onto every node of the job, in
-# $SLURM_TMPDIR (same path on each node). ~580G for all.yaml without vllm, it is RAM!
+# $SLURM_TMPDIR (same path on each node). all.yaml is ~580G without the vllm benchmarks, it is RAM!
 # Generated datasets (FakeImageNet, ...) are built there as well (no internet needed).
 LOCAL_DIR="${SLURM_TMPDIR:?}/milabench"
 export MILABENCH_DIRS_DATA="$LOCAL_DIR/data"
