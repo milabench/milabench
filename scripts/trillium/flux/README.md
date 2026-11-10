@@ -341,33 +341,74 @@ compliance checker SUCCESS.
   records it only at job end.
 - Not checked: step variation between node sets; whether our data shards hold the same content as Florida's.
 
-## Scaling, 4 to 8 to 16 nodes (FLUX-03, FLUX-01, FLUX-02)
+## FLUX-04 (2 nodes, job 1279891)
 
-| | 4 nodes | 8 nodes | 16 nodes | Florida 4 / 8 / 16 |
-|---|---|---|---|---|
-| step, blocks 4 to end (median) | 0.6504 s | 0.6603 s | 0.6706 s | 0.6165 / 0.6303 / 0.6500 s |
-| against Florida | +5.5 % | +4.8 % | +3.2 % | |
-| step, steps 30-200 (ten-step median) | 0.6526 s | 0.6588 s | 0.6698 s | 0.6159 / 0.6301 / 0.6431 s |
-| against Florida | +6.0 % | +4.5 % | +4.2 % | |
-| time to train | 98.07 min | 67.58 min | 50.86 min | 93.46 / 60.08 / 47.72 min (olympic) |
-| blocks to target | 34 | 46 | 68 | 33-36 / 40-45 / 65-68 |
-| time per block | 2.885 min | 1.469 min | 0.748 min | 2.738 / 1.402 / 0.724 min |
+Experiment coordinator's run: trig[0133-0134], 2026-11-09 21:59:41 to 2026-11-10 01:10:29, completed, code 8fbd199d with
+`RUN_MINUTES=215` (telemetry every 5 s without the clock event reasons: the power cap's share is not known for this run);
+Florida's 2-node config (GBS 512, LR 2e-4, 1,600 warm-up steps), seed 9779; MLPerf log
+`runs/nw-flux-run2.1279891/261109215950947234634_1.log`, compliance checker SUCCESS.
+- Result: `run_stop` success at 01:09:24, time to train 184.28 min; 8,388,608 samples, 32 evaluation blocks, 16,384
+  steps; first evaluation 0.7098, last 0.5859. Florida: 173.45 min (olympic mean; mean 173.64, 170.49-178.35), 31-32
+  blocks. Init 276 s (Florida 188).
+- Florida at 32 blocks: four runs, 175.98-178.35 min (their 5.5063 min per block, median, gives 176.20). Ours is 3.3-4.7 %
+  above those runs.
+- Steady step: per-block `train_step_time`, blocks 4-32: 0.6499 s (0.6487-0.6507) against Florida's 0.6204 (median of
+  their runs; the runs fall in two groups, 0.6197-0.6206 and 0.6277-0.6288), +4.8 %; steps 30-200, ten-step intervals:
+  0.6485 against 0.6177 (0.6161-0.6246), +5.0 %. Florida's step drifts a little within a run (0.6190 at blocks 2-4,
+  0.6207 at 11-32); ours does not (0.648-0.650, then 0.6502). First block 0.6578 (Florida 0.620-0.633). Validation
+  12.52 s (12.54).
+- The 10.8 min above Florida's 173.45, extra blocks first: 176.20 - 173.45 = 2.75 min (32 blocks against 31.375, their
+  olympic runs' mean, at their median time per block), then 184.28 - 176.20 = 8.08 min for slower blocks. Speed first, as
+  FLUX-01's split (the speed priced on Florida's 31.375 blocks at their olympic time per block, 5.528 min; the extra
+  blocks at our 5.759 min per block): 7.23 min for the speed, 3.60 for the blocks. The two orders differ more here than
+  at other sizes because Florida's time per block itself spans two groups (5.4993-5.5735 min).
+- Convergence against Florida's 10 runs at the same sample counts: the first evaluation, 0.70984, is below all of theirs
+  (0.7101-0.7179, lowest 0.71015) by 0.00031; above all of them at blocks 5, 7, 10, 13, 14, 15, 17, 21, 29 and 31 (10
+  runs each), by 0.00003-0.00065; at 17 and 29 the margin is 0.00003-0.00004, equal to their highest at 4 decimals. It
+  reached the target at 32 blocks, Florida's largest count.
+- Power and clocks per GPU (not per node) over the training window (5 s samples): 928-937 W mean, >= 950 W in 23-33 %
+  of samples, SM clock median 1,680-1,740 MHz (lowest 1,455). Per node: 932-936 W, 26-31 %, 1,695-1,717 MHz.
+- Boards: 0 `-000` GPUs on trig0133 and trig0134 (`hw/allnodes/parts_by_node.tsv`); both in address subnet 36. FLUX-03
+  ran on these two nodes and two others.
+- Drains, not affecting the run: trig0134 from 22:42:50 and trig0133 from 00:02:50 (RUNS.md:211, `slurmstepd` high CPU)
+  to 01:12:42; `sacctmgr show event` over the job's window holds only the DRAIN records written at job end, 01:10:33-01:12:42
+  on both (`health.chk.slurmstepd..high.cpu.root.process`). During them blocks 7-32 (trig0134) and 21-32 (trig0133) ran
+  0.6491-0.6507 s, inside the run's steady range, 0.6487-0.6507.
+- Run cap: `RUN_MINUTES=215` raised Florida's 200 min `WALLTIME_RUNANDTIME` to 215 (the log shows both values). The
+  training step ran 190.4 min (22:00:01-01:10:26) and the run reached the target at 184.3 min, so neither cap came into
+  play. The override stays a difference from Florida's guard (a guard, not a training parameter).
+- Not checked: step variation between node sets; whether our data shards hold the same content as Florida's.
 
-- Step growth with nodes, blocks convention: ours +1.5 % (4 to 8) and +1.6 % (8 to 16), Florida's +2.2 % and +3.1 %.
-  On steps 30-200 ours +0.9 % and +1.7 %, Florida's +2.3 % and +2.1 %; at 16 nodes their window misses their within-run
-  drift (FLUX-02, above), and one run's noise there is +-0.3-0.7 %.
+## Scaling, 2 to 4 to 8 to 16 nodes (FLUX-04, FLUX-03, FLUX-01, FLUX-02)
+
+| | 2 nodes | 4 nodes | 8 nodes | 16 nodes | Florida 2 / 4 / 8 / 16 |
+|---|---|---|---|---|---|
+| step, blocks 4 to end (median) | 0.6499 s | 0.6504 s | 0.6603 s | 0.6706 s | 0.6204 / 0.6165 / 0.6303 / 0.6500 s |
+| against Florida | +4.8 % | +5.5 % | +4.8 % | +3.2 % | |
+| step, steps 30-200 (ten-step median) | 0.6485 s | 0.6526 s | 0.6588 s | 0.6698 s | 0.6177 / 0.6159 / 0.6301 / 0.6431 s |
+| against Florida | +5.0 % | +6.0 % | +4.5 % | +4.2 % | |
+| time to train | 184.28 min | 98.07 min | 67.58 min | 50.86 min | 173.45 / 93.46 / 60.08 / 47.72 min (olympic) |
+| blocks to target | 32 | 34 | 46 | 68 | 31-32 / 33-36 / 40-45 / 65-68 |
+| time per block | 5.759 min | 2.885 min | 1.469 min | 0.748 min | 5.506 / 2.738 / 1.402 / 0.724 min |
+
+- Step growth with nodes, blocks convention: ours +0.1 % (2 to 4), +1.5 % (4 to 8) and +1.6 % (8 to 16); Florida's -0.6 %,
+  +2.2 % and +3.1 % (their 2-node runs fall in two step groups, above). On steps 30-200 ours +0.6 %, +0.9 % and +1.7 %,
+  Florida's -0.3 %, +2.3 % and +2.1 %; at 16 nodes their window misses their within-run drift (FLUX-02, above), and one
+  run's noise there is +-0.3-0.7 %.
 - On the blocks convention our step's gap to Florida narrows from 4 to 16 nodes by 2.3 points: +5.50, +4.76, +3.18 %.
   Each change is larger than one run's bootstrap noise (+-0.05-0.12 %) and Florida's run-to-run spread (0.15-0.29 %), but
   each size is one run on one set of nodes, and step variation between node sets is not measured: two 4-node sets differ
   by 0.4 % on early windows (1276381 0.650 s, FLUX-03 0.6526). Part of the 8 to 16 narrowing is Florida's own step rising
   within their 16-node runs. On steps 30-200 the gap narrows only 0.4 points from 8 to 16 nodes (4.55 to 4.15 %), inside
   that window's noise. Our step grows less than theirs from 4 to 16 nodes on blocks (+3.1 % against +5.4 %), with the same
-  limits.
-- Observed, cause not determined: all three runs sit above all of Florida's runs at several late blocks, FLUX-01 at
-  38-45, FLUX-02 at 46-68, FLUX-03 at 30-33.
-- Time to train: our ratios x 0.689 (8/4), x 0.753 (16/8) and x 0.519 (16/4) fall inside Florida's own over all pairs
-  of their runs: x 0.569-0.699 (median 0.637), x 0.745-0.876 (0.808), x 0.477-0.544 (0.513). The differences from their
-  olympic ratios are the block counts (34, 46, 68 against 33-36, 40-45, 65-68), which depend on the seed.
+  limits. The 2-node gap, +4.8 %, is below the 4-node +5.5 %: the gap does not narrow with every step in size. FLUX-03 and
+  FLUX-04 share trig0133 and trig0134; no conclusion is drawn from that.
+- Time to train: our ratios fall inside Florida's own over all pairs of their runs: x 0.532 (4/2; theirs x 0.506-0.578,
+  median 0.539), x 0.367 (8/2; x 0.315-0.370, 0.341), x 0.276 (16/2; x 0.264-0.288, 0.276), x 0.689 (8/4; x 0.569-0.699,
+  0.637), x 0.753 (16/8; x 0.745-0.876, 0.808), x 0.519 (16/4; x 0.477-0.544, 0.513). The differences from their olympic
+  ratios are the block counts (32, 34, 46, 68 against 31-32, 33-36, 40-45, 65-68), which depend on the seed.
+- Observed, cause not determined: all four runs sit above all of Florida's runs at several blocks, FLUX-04 at 5-31,
+  FLUX-03 at 30-33, FLUX-01 at 38-45, FLUX-02 at 46-68.
 
 ## Step-time gap against Florida (FLUX_BRIEF.md, last section)
 
