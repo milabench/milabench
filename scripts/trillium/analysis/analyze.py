@@ -125,6 +125,10 @@ REMOTE_OTHER = [("slurm-healthcheck/results/", "health"),
                 # FLUX.1 training, MLPerf (FLUX-01, job 1276503, 8 nodes; the 4-node real-data bring-up 1276381): MLPerf log, compliance output and
                 # nvidia-smi telemetry (4.1 MB and 0.4 MB). Florida's published logs are not on Trillium: data/raw/trillium/flux/florida/README.
                 *[(f"trillium/new/flux/runs/{run}/", f"flux/runs/{run}") for run in ("nw-flux-run8.1276503", "nw-flux-real4.1276381")],
+                # FLUX.1 step-time gap against Florida, 2 nodes, 200 steps a run: job 1278802's five runs (7.4 MB), and job 1277931's MLPerf log
+                # and 1 s telemetry only (44 MB; its Nsight Systems profile is not read).
+                ("trillium/new/flux/dev/runs/gap.1278802/", "flux/dev/gap.1278802"),
+                *[(f"trillium/new/flux/dev/runs/gap1/{name}", "flux/dev/gap1") for name in ("*_1.log", "gpu-*.csv")],
                 # The running agents' own tables: cross-checks only, never a source for the report.
                 ("trillium/qwen/aq/results.tsv", "agent-tables/qwen-aq"),
                 ("trillium/qwen/p3/results.tsv", "agent-tables/qwen-p3"),

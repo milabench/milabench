@@ -44,7 +44,7 @@ TABLES = ["runs", "steps", "loss", "checkpoints", "failed_ops", "ep_groups", "no
           "kimi_stall_passes", "kimi_stall_runs",
           "kimi_train_runs", "kimi_train_steps", "kimi_train_stages", "glm_rl_runs", "glm_rl_steps", "glm_rl_hosts", "glm_rl_decode", "glm_rl_memory",
           "glm_fp4_runs", "glm_fp4_steps", "qw_fp4_runs", "qw_fp4_steps", "qw_fp4_loss", "qw_cp_runs", "qw_cp_steps", "qw_cp_strag", "of3_runs", "of3_steps",
-          "flux_runs", "flux_blocks"]
+          "flux_runs", "flux_blocks", "flux_gap", "flux_gap_nodes", "flux_gap_limits"]
 GPU_COLUMNS = {"time_ms", "gpu", "sm_clock_mhz", "power_w", "util_mean"}
 CPU_COLUMNS = {"time_ms", "cpu_mhz_busy_mean"}
 FULL_TELEMETRY = {"F2"}  # experiments whose node telemetry is kept per GPU and minute (gpu_monitor: stability)
@@ -269,8 +269,8 @@ def build(raw: Path, synthetic: Path | None, out: Path, other_clusters=False) ->
     # OpenFold3 training at 1, 2, 4 and 13 nodes (OF3 step 2, OF3-01), the implementers' per-rank step files, in tables of their own (collect: of3/),
     # not runs/.
     tables.update(of3.build(raw / CLUSTER / "of3", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
-    # FLUX.1 training, MLPerf (FLUX-01 at 8 nodes, the 4-node bring-up) and Florida's published runs at 8 and 4 nodes, from the MLPerf logs, in
-    # tables of their own (collect: flux/runs; Florida's: flux/florida, fetched by hand), not runs/.
+    # FLUX.1 training, MLPerf (FLUX-01 at 8 nodes, the 4-node bring-up, the 2-node step-gap jobs) and Florida's published runs at 8, 4 and 2 nodes, from the MLPerf logs, in
+    # tables of their own (collect: flux/runs, flux/dev; Florida's: flux/florida, fetched by hand), not runs/.
     tables.update(flux.build(raw / CLUSTER / "flux", raw / CLUSTER / "sacct.txt", UNFINISHED_JOB_STATES))
     mon = [m for m in rows["gpu_monitor"] if not m.empty]
     tables["gpu_monitor"] = pd.concat(mon, ignore_index=True) if mon else pd.DataFrame()

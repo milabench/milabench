@@ -256,6 +256,14 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
                                  "SmMin", "BlockFirst", "Above", "AboveRuns", "Below", "Inside", "Compared", "LateFrom", "LateLo",
                                  "LateHi", "TenFour", "TenEight", "TenPct", "FlTenFour", "FlTenEight", "FlTenPct", "PowerFourLo", "PowerFourHi",
                                  "BlocksMore", "GapFour", "GapEight")],
+          # FLUX.1, the step-time gap against Florida at 2 nodes (_flux_gap_numbers): job 1278802's five 200-step runs (ten-step step from step
+          # 30 to 200, bootstrap 95 % range of each median; telemetry per node with the clock event reasons; the power and clock limits), Florida's
+          # 10 runs at 2 nodes on the same window and statistic (GapFl*), and the earlier job 1277931 (GapOne*, its two nodes by SM clock)
+          *[f"TriFxGap{m}" for m in ("Nodes", "Steps", "From", "Intervals", "Base", "Simple", "Pxn", "Cpu", "BaseTwo", "SimplePct", "PxnPct", "CpuPct",
+                                     "BaseTwoPct", "SameLo", "SameHi", "SamePct", "BootLo", "BootHi", "FlRuns", "Fl", "FlLo", "FlHi", "FlWhole", "FlDrift", "Pct", "PctLo",
+                                     "PctHi", "PowerLo", "PowerHi", "CapLo", "CapHi", "SmLo", "SmHi", "Samples", "Other", "Limit", "LimitGpus",
+                                     "MaxSm", "One", "OneTo", "OnePct", "OneAbove", "OneSlowHost", "OneSlowSm", "OneSlowW", "OneFastHost",
+                                     "OneFastSm", "OneFastW")],
           # Network on Nov 9, all 52 nodes (_network_numbers, NET_NINE_JOB): D2 all pairs, its pairs below 40 GB/s and the comparison with
           # Nov 7 15:08; D4; D3 up to 13 nodes, and from 26 up, where the sets hold trig0114 (kept apart from the ladder's macros)
           *[f"TriNine{m}" for m in ("Pairs", "Nodes", "Within", "WithinHi", "Across", "AcrossHi", "Low", "LowMin", "LowWithinLo", "LowWithinHi",
@@ -2754,6 +2762,93 @@ def _flux_numbers(t) -> dict[str, tuple]:
 
 
 
+FLUX_GAP_BASE, FLUX_GAP_ONE = "gap.1278802/base", "gap1"
+FLUX_GAP_NAMES = {"gap.1278802/base": "Base", "gap.1278802/proto-simple": "Simple", "gap.1278802/pxn-off": "Pxn", "gap.1278802/cpu-default": "Cpu",
+                  "gap.1278802/base2": "BaseTwo"}
+FLUX_GAP_SAME = ("gap.1278802/base", "gap.1278802/proto-simple", "gap.1278802/base2")  # base's configuration: NCCL chose Simple on its own
+
+
+def _signed_pct(v: float) -> str:
+    """+0.4, -0.6; 0.0 rather than -0.0."""
+    return "0.0" if abs(v) < 0.05 else format(v, "+.1f")
+
+
+def _flux_gap(t) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """The gap runs (by run), their nodes, and Florida's 10 runs at 2 nodes (ten-step step from step 30 to 200)."""
+    g, nodes, r = (t.get(k, pd.DataFrame()) for k in ("flux_gap", "flux_gap_nodes", "flux_runs"))
+    if g.empty or r.empty or not (g.run == FLUX_GAP_BASE).any():
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    return g.set_index("run"), nodes, r[(r.source == "florida") & (r.nodes == 2)]
+
+
+def _flux_gap_numbers(t) -> dict[str, tuple]:
+    """FLUX.1 at 2 nodes, TriFxGap*: job 1278802's five runs against each other and against Florida's 2-node runs on the same window; their
+    telemetry over the five runs; the power and clock limits; the earlier job 1277931 and its two nodes."""
+    g, nodes, fl = _flux_gap(t)
+    out = {}
+    if g.empty or len(fl) < 3:
+        return out
+    base, fl_med = g.ten_s[FLUX_GAP_BASE], fl.ten_gap_s.median()
+    job = g[g.job.astype(str) == "1278802"]
+    nj = nodes[nodes.job.astype(str) == "1278802"]
+    same = g.ten_s[list(FLUX_GAP_SAME)]
+    half = 100 * (job.boot_hi - job.boot_lo) / 2 / job.ten_s
+    for name, v, fmt in (("Nodes", nj.host.nunique(), "d"), ("Steps", int(job.to_step.max()), "d"), ("From", int(job.from_step.min()), "d"),
+                         ("Intervals", int(job.ten_n.min()), "d"), ("SameLo", same.min(), ".4f"), ("SameHi", same.max(), ".4f"),
+                         ("SamePct", 100 * (same.max() / same.min() - 1), ".1f"), ("BootLo", half.min(), ".1f"), ("BootHi", half.max(), ".1f"),
+                         ("FlRuns", len(fl), "d"), ("Fl", fl_med, ".4f"), ("FlLo", fl.ten_gap_s.min(), ".4f"), ("FlHi", fl.ten_gap_s.max(), ".4f"),
+                         # Florida's step over whole runs, by tab:flux_runs' steady step (per-block train_step_time, blocks 4 to the last): it drifts up
+                         ("FlWhole", fl.steady_s.median(), ".4f"), ("FlDrift", 100 * (fl.steady_s.median() / fl_med - 1), ".1f"),
+                         ("Pct", 100 * (base / fl_med - 1), ".1f"), ("PctLo", 100 * (base / fl.ten_gap_s.max() - 1), ".1f"),
+                         ("PctHi", 100 * (base / fl.ten_gap_s.min() - 1), ".1f"),
+                         ("PowerLo", nj.power_w.min(), ".0f"), ("PowerHi", nj.power_w.max(), ".0f"), ("CapLo", nj.cap_pct.min(), ".0f"),
+                         ("CapHi", nj.cap_pct.max(), ".0f"), ("SmLo", nj.sm_mhz.min(), ",.0f"), ("SmHi", nj.sm_mhz.max(), ",.0f"),
+                         ("Samples", int(nj.samples.sum()), ",d"), ("Other", int(nj.other_slowdown.sum()), "d")):
+        out[f"TriFxGap{name}"] = (v, fmt, False)
+    for run, name in FLUX_GAP_NAMES.items():
+        if run in g.index:
+            out[f"TriFxGap{name}"] = (g.ten_s[run], ".4f", False)
+            if run != FLUX_GAP_BASE:
+                out[f"TriFxGap{name}Pct"] = (_signed_pct(100 * (g.ten_s[run] / base - 1)), "", False)
+    lim = t.get("flux_gap_limits", pd.DataFrame())
+    if len(lim) and lim.enforced_w.nunique() == 1 and lim.max_sm_mhz.nunique() == 1:
+        out["TriFxGapLimit"], out["TriFxGapLimitGpus"] = (lim.enforced_w.iloc[0], ",.0f", False), (len(lim), "d", False)
+        out["TriFxGapMaxSm"] = (lim.max_sm_mhz.iloc[0], ",.0f", False)
+    if FLUX_GAP_ONE in g.index:
+        one = g.loc[FLUX_GAP_ONE]
+        out["TriFxGapOne"], out["TriFxGapOneTo"] = (one.ten_s, ".4f", False), (int(one.to_step), "d", False)
+        out["TriFxGapOnePct"], out["TriFxGapOneAbove"] = (100 * (one.ten_s / fl_med - 1), ".1f", False), (100 * (one.ten_s / base - 1), ".1f", False)
+        n1 = nodes[nodes.run == FLUX_GAP_ONE].sort_values("sm_mhz")
+        if len(n1) == 2:
+            for x, side in zip(n1.itertuples(), ("Slow", "Fast")):
+                out[f"TriFxGapOne{side}Host"] = (x.host, "", False)
+                out[f"TriFxGapOne{side}Sm"], out[f"TriFxGapOne{side}W"] = (x.sm_mhz, ",.0f", False), (x.power_w, ".0f", False)
+    return out
+
+
+def flux_gap_table(t) -> str:
+    """FLUX.1 at 2 nodes: job 1278802's five runs, the earlier job 1277931, and Florida's 10 runs, by the ten-step step from step 30."""
+    g, nodes, fl = _flux_gap(t)
+    if g.empty or fl.empty:
+        return ""
+    base, fl_med = g.ten_s[FLUX_GAP_BASE], fl.ten_gap_s.median()
+    span = lambda v, fmt: format(v.min(), fmt) if format(v.min(), fmt) == format(v.max(), fmt) else f"{format(v.min(), fmt)}-{format(v.max(), fmt)}"
+    lines = [r"\begin{tabular}{lrrrrrrr}", r"\toprule",
+             r"Run & Step, s & 95\,\% range & vs base & vs Florida & Power per & SW power & SM clock \\",
+             r" & & & \% & \% & GPU, W & cap, \% & median, MHz \\", r"\midrule"]
+    for run, x in g.iterrows():
+        if run == FLUX_GAP_ONE:
+            lines.append(r"\midrule")
+        n = nodes[nodes.run == run]
+        label = r"\texttt{" + x.label.replace("_", r"\_") + "}" if "=" in x.label else x.label + ("" if str(x.job) == "1278802" else f" ({x.job})")
+        vs_base = "" if run == FLUX_GAP_BASE else _signed_pct(100 * (x.ten_s / base - 1))
+        lines.append(f"{label} & {x.ten_s:.4f} & {x.boot_lo:.4f}-{x.boot_hi:.4f} & {vs_base} & "
+                     f"{100 * (x.ten_s / fl_med - 1):+.1f} & {span(n.power_w, '.0f')} & {span(n.cap_pct, '.0f')} & {span(n.sm_mhz, ',.0f')} " + r"\\")
+    lines += [r"\midrule", f"Florida ({len(fl)} runs) & {fl_med:.4f} & {fl.ten_gap_s.min():.4f}-{fl.ten_gap_s.max():.4f} & & & & & " + r"\\",
+              r"\bottomrule", r"\end{tabular}"]
+    return "\n".join(lines) + "\n"
+
+
 def flux_runs_table(t) -> str:
     """FLUX-01 against Florida's runs at the same node count, one row per run (Florida's by time to train), and Florida's score."""
     x, fl, _, _ = _flux(t)
@@ -3110,6 +3205,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_qw_cp_mx_numbers(t))
     out.update(_of3_numbers(t))
     out.update(_flux_numbers(t))
+    out.update(_flux_gap_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w
@@ -3342,6 +3438,7 @@ def write_all(tables: dict[str, pd.DataFrame], out: Path) -> None:
     (out / "qw_cp_mx.tex").write_text(qw_cp_mx_table(tables))
     (out / "of3_speed.tex").write_text(of3_speed_table(tables))
     (out / "flux_runs.tex").write_text(flux_runs_table(tables))
+    (out / "flux_gap.tex").write_text(flux_gap_table(tables))
     (out / "glm_rl_steps.tex").write_text(glm_rl_steps_table(tables))
     (out / "glm_rl_replay.tex").write_text(glm_rl_replay_table(tables))
     if len(runs):
