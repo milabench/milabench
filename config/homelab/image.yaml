@@ -1,0 +1,181 @@
+# =============================================================================
+# Homelab — image generation (text-to-image)
+#
+#   homelab-flux-image      HF diffusers FLUX.1-schnell (off: bf16 does not fit 32 GB)
+#   homelab-comfyui-*       ComfyUI workflows: FLUX schnell / dev fp8, Z-Image,
+#                          Krea 2, Pony v6
+# =============================================================================
+
+include:
+  - _base.yaml
+
+homelab-flux-image:
+  inherits: _inference
+  tags:
+    - image
+    - monogpu
+  # bf16 schnell (~33 GB weights) OOMs a 32 GB card at load time, bs=1 —
+  # autosizer cannot help (fails before the first step). The fp8 Flux path
+  # is homelab-comfyui-flux-schnell (17 GB). Re-enable with an fp8 loader.
+  enabled: false
+  max_duration: 1800
+  voir:
+    options:
+      stop: 60
+      skip: 10
+  plan:
+    method: per_gpu
+  # schnell is the ungated FLUX (Apache-2); the dev variant is gated.
+  url: https://huggingface.co/black-forest-labs/FLUX.1-schnell
+  argv:
+    --mode: flux
+    --model: black-forest-labs/FLUX.1-schnell
+    --dataset: jackyhate/text-to-image-2M
+    --batch_size: 1
+
+homelab-comfyui-flux-schnell:
+  name: homelab-comfyui-flux-schnell
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: true  # bring-up; flux-dev/z-image off until this passes
+  weight: 1
+  argv:
+    --workflow: workflows/flux_schnell_fp8.json
+    --model: checkpoints:Comfy-Org/FLUX1-schnell:flux1-schnell-fp8.safetensors
+    --set: CKPT=flux1-schnell-fp8.safetensors
+
+homelab-comfyui-flux-dev-fp8:
+  name: homelab-comfyui-flux-dev-fp8
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/flux_dev_fp8.json
+    --model: checkpoints:Comfy-Org/flux1-dev:flux1-dev-fp8.safetensors
+    --set: CKPT=flux1-dev-fp8.safetensors
+
+homelab-comfyui-z-image-turbo:
+  name: homelab-comfyui-z-image-turbo
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/z_image_turbo.json
+    --model:
+      - diffusion_models:Comfy-Org/z_image_turbo:split_files/diffusion_models/z_image_turbo_bf16.safetensors
+      - text_encoders:Comfy-Org/z_image_turbo:split_files/text_encoders/qwen_3_4b.safetensors
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+      - loras:Comfy-Org/z_image_turbo:split_files/loras/z_image_turbo_distill_patch_lora_bf16.safetensors
+    --set:
+      - UNET=z_image_turbo_bf16.safetensors
+      - TE=qwen_3_4b.safetensors
+      - VAE=ae.safetensors
+      - LORA=z_image_turbo_distill_patch_lora_bf16.safetensors
+
+homelab-comfyui-krea2-turbo:
+  name: homelab-comfyui-krea2-turbo
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/krea2_turbo_fp8.json
+    --model:
+      - diffusion_models:Comfy-Org/Krea-2:diffusion_models/krea2_turbo_fp8_scaled.safetensors
+      - text_encoders:Comfy-Org/Krea-2:text_encoders/qwen3vl_4b_fp8_scaled.safetensors
+      - vae:Comfy-Org/Krea-2:vae/qwen_image_vae.safetensors
+    --set:
+      - UNET=krea2_turbo_fp8_scaled.safetensors
+      - TE=qwen3vl_4b_fp8_scaled.safetensors
+      - VAE=qwen_image_vae.safetensors
+
+homelab-comfyui-pony-v6:
+  name: homelab-comfyui-pony-v6
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: false  # aging SDXL line, low adoption now
+  weight: 1
+  argv:
+    --workflow: workflows/pony_v6.json
+    --model: checkpoints:LyliaEngine/Pony_Diffusion_V6_XL:ponyDiffusionV6XL_v6StartWithThisOne.safetensors
+    --set: CKPT=ponyDiffusionV6XL_v6StartWithThisOne.safetensors
+
+# -----------------------------------------------------------------------------
+# vLLM-Omni (_omni): the ComfyUI models above on the same settings (resolution, steps, guidance),
+# so the two engines compare directly. One card: FP8 weights (--quantization fp8) for FLUX, which does
+# not fit 32 GB in BF16; multigpu.yaml shards them in BF16 instead.
+# FLUX repos are gated (accept the license, HF_TOKEN).
+# -----------------------------------------------------------------------------
+
+homelab-omni-flux-dev-fp8:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  tags:
+    - image
+  url: https://huggingface.co/black-forest-labs/FLUX.1-dev
+  server:
+    argv:
+      black-forest-labs/FLUX.1-dev: true
+      --quantization: fp8
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 20
+      # FLUX-dev is guidance-distilled: guidance_scale is its embedded guidance, no CFG pass
+      --guidance: 3.5
+
+# Lossy step caching (cache-dit: reuses DiT block outputs across steps): faster, slightly different images
+homelab-omni-flux-dev-fp8-cachedit:
+  inherits: homelab-omni-flux-dev-fp8
+  tags:
+    - cachedit
+  server:
+    argv:
+      --cache-backend: cache_dit
+
+homelab-omni-flux-schnell-fp8:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  tags:
+    - image
+  url: https://huggingface.co/black-forest-labs/FLUX.1-schnell
+  server:
+    argv:
+      black-forest-labs/FLUX.1-schnell: true
+      --quantization: fp8
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 4
+      --guidance: 0.0
+
+homelab-omni-z-image-turbo:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  tags:
+    - image
+  url: https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+  server:
+    argv:
+      Tongyi-MAI/Z-Image-Turbo: true
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 8
+      --guidance: 0.0

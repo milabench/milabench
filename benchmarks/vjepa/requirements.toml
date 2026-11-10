@@ -21,4 +21,4 @@ dependencies = [
 [rocm]
 
 [xpu]
-enabled = false
+enabled = true

@@ -1,0 +1,4 @@
+# Kept as fallback; real deps come from requirements.toml (arch-gated).
+torch
+argklass
+datasets

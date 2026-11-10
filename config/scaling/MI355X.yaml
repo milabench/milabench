@@ -650,7 +650,6 @@ llm-chat-completion:
   - {batch_size: 128, perf: 33363.91, cpu: 0, memory: 37599 MiB, torchmem: 31540 MiB, time: 1786149152, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
   - {batch_size: 168, perf: 20597.03, cpu: 0, memory: 42437 MiB, torchmem: 36584 MiB, time: 1786149256, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
   - {batch_size: 496, perf: 22693.71, cpu: 0, memory: 46848 MiB, torchmem: 40372 MiB, time: 1786149358, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
-  - {batch_size: 2248, perf: 23454.88, cpu: 0, memory: 46848 MiB, torchmem: 40372 MiB, time: 1786149487, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
 torchatari:
   observations:
   - {batch_size: 16, perf: 3993.01, cpu: 128, memory: 4571 MiB, torchmem: 2276 MiB, time: 1786207271, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
@@ -685,3 +684,58 @@ ppo:
   - {batch_size: 48, perf: 6101.9, cpu: 128, memory: 3767 MiB, jaxmem: 272 MiB, time: 1786158792, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
   - {batch_size: 64, perf: 5294.21, cpu: 128, memory: 3767 MiB, jaxmem: 272 MiB, time: 1786166614, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
   - {batch_size: 128, perf: 6724.62, cpu: 128, memory: 3767 MiB, jaxmem: 272 MiB, time: 1786167190, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+
+# Copied from llm-full-mp-gpus (single node) on 2026-11-06: no 2-node measurements yet.
+# Per-GPU memory is the same or lower on 2 nodes, so these batch sizes are safe picks.
+llm-full-mp-nodes:
+  observations:
+  - {batch_size: 1, perf: 525.64, cpu: 0, memory: 94528 MiB, torchmem: 74021 MiB, time: 1786129264, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 2, perf: 1273.83, cpu: 0, memory: 96449 MiB, torchmem: 74545 MiB, time: 1786127212, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 3, perf: 1976.86, cpu: 0, memory: 96452 MiB, torchmem: 74587 MiB, time: 1786125487, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 4, perf: 2369.81, cpu: 0, memory: 96766 MiB, torchmem: 74631 MiB, time: 1786127387, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 4188.88, cpu: 0, memory: 100863 MiB, torchmem: 74906 MiB, time: 1786127574, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 10, perf: 4948.14, cpu: 0, memory: 102719 MiB, torchmem: 75090 MiB, time: 1786126300, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 16, perf: 6174.0, cpu: 0, memory: 114122 MiB, torchmem: 76746 MiB, time: 1786127829, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 18, perf: 6938.09, cpu: 0, memory: 122462 MiB, torchmem: 77244 MiB, time: 1786126550, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 32, perf: 8346.48, cpu: 0, memory: 142370 MiB, torchmem: 87033 MiB, time: 1786128199, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 34, perf: 8808.16, cpu: 0, memory: 150736 MiB, torchmem: 88931 MiB, time: 1786126919, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 64, perf: 10830.85, cpu: 0, memory: 222047 MiB, torchmem: 122557 MiB, time: 1786205592, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 80, perf: 10886.21, cpu: 0, memory: 261556 MiB, torchmem: 140524 MiB, time: 1786129966, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+
+# Copied from llm-lora-ddp-gpus (single node) on 2026-11-06: no 2-node measurements yet.
+# Per-GPU memory is the same or lower on 2 nodes, so these batch sizes are safe picks.
+llm-lora-ddp-nodes:
+  observations:
+  - {batch_size: 1, perf: 4842.12, cpu: 0, memory: 17717 MiB, torchmem: 6996 MiB, time: 1785814165}
+  - {batch_size: 2, perf: 12217.31, cpu: 0, memory: 18079 MiB, torchmem: 7000 MiB, time: 1785704273}
+  - {batch_size: 4, perf: 24456.57, cpu: 0, memory: 19853 MiB, torchmem: 7009 MiB, time: 1785708817}
+  - {batch_size: 8, perf: 38724.91, cpu: 0, memory: 26219 MiB, torchmem: 13154 MiB, time: 1785715992, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 39482.62, cpu: 0, memory: 26219 MiB, torchmem: 13154 MiB, time: 1785755756, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 39218.23, cpu: 0, memory: 26219 MiB, torchmem: 13154 MiB, time: 1785790884, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 38918.74, cpu: 0, memory: 37376 MiB, torchmem: 13155 MiB, time: 1785987857, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 39795.76, cpu: 0, memory: 37376 MiB, torchmem: 13155 MiB, time: 1786021663, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 8, perf: 37831.2, cpu: 0, memory: 37376 MiB, torchmem: 13155 MiB, time: 1786028992, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 12, perf: 49643.68, cpu: 0, memory: 30980 MiB, torchmem: 17654 MiB, time: 1785724794}
+  - {batch_size: 16, perf: 58110.9, cpu: 0, memory: 36002 MiB, torchmem: 22155 MiB, time: 1785807137}
+  - {batch_size: 24, perf: 67937.36, cpu: 0, memory: 45317 MiB, torchmem: 31151 MiB, time: 1785772824}
+  - {batch_size: 32, perf: 74111.26, cpu: 0, memory: 54667 MiB, torchmem: 40156 MiB, time: 1785831198}
+  - {batch_size: 40, perf: 76269.01, cpu: 0, memory: 64167 MiB, torchmem: 49157 MiB, time: 1785782455}
+  - {batch_size: 56, perf: 83635.78, cpu: 0, memory: 82089 MiB, torchmem: 67158 MiB, time: 1785822629}
+  - {batch_size: 96, perf: 90502.87, cpu: 0, memory: 128095 MiB, torchmem: 112162 MiB, time: 1785852746}
+  - {batch_size: 112, perf: 91281.57, cpu: 0, memory: 146382 MiB, torchmem: 130163 MiB, time: 1785841489, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 112, perf: 92026.14, cpu: 0, memory: 292993 MiB, torchmem: 130167 MiB, time: 1786204303, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+
+# Copied from diffusion-gpus (single node) on 2026-11-06: no 2-node measurements yet.
+diffusion-nodes:
+  observations:
+  - {batch_size: 1, perf: 41.6, cpu: 8, memory: 29830 MiB, torchmem: 20911 MiB, time: 1785813633}
+  - {batch_size: 8, perf: 324.37, cpu: 8, memory: 36858 MiB, torchmem: 27214 MiB, time: 1785806456}
+  - {batch_size: 16, perf: 474.27, cpu: 8, memory: 45704 MiB, torchmem: 35167 MiB, time: 1785741382}
+  - {batch_size: 24, perf: 493.12, cpu: 8, memory: 54999 MiB, torchmem: 44791 MiB, time: 1785748129}
+  - {batch_size: 32, perf: 544.53, cpu: 8, memory: 67183 MiB, torchmem: 54399 MiB, time: 1786027936, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 40, perf: 549.25, cpu: 8, memory: 75890 MiB, torchmem: 64011 MiB, time: 1785821696}
+  - {batch_size: 48, perf: 551.03, cpu: 8, memory: 86756 MiB, torchmem: 73625 MiB, time: 1785770655}
+  - {batch_size: 64, perf: 569.96, cpu: 8, memory: 107330 MiB, torchmem: 92858 MiB, time: 1785779940}
+  - {batch_size: 96, perf: 641.45, cpu: 8, memory: 149139 MiB, torchmem: 131342 MiB, time: 1785840373, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 96, perf: 563.83, cpu: 8, memory: 209864 MiB, torchmem: 131342 MiB, time: 1785851644, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}
+  - {batch_size: 96, perf: 664.36, cpu: 8, memory: 148795 MiB, torchmem: 131335 MiB, time: 1786201916, backend: 7.2.26015, flavor: rocm7.2, torch: 2.11.0}

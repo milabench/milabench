@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 from copy import deepcopy
 from hashlib import md5
 from typing import Dict, Generator, List, Tuple
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 import warnings
 
 from .. import pack
+from ..alt_async import destroy
 from ..fs import XPath
 from ..merge import merge
 from ..utils import select_nodes
@@ -452,11 +454,13 @@ class WorkingDir(WrapperCommand):
         env = {}
         extras = []
 
+        # Must match Package.make_env: HF_HOME is the data dir in prepare and
+        # run, otherwise HF caches written at prepare time are not found here.
         _merge_env(
             env,
             {
                 "XDG_CACHE_HOME": str(pack.dirs.cache),
-                "HF_HOME": str(pack.dirs.cache),
+                "HF_HOME": str(pack.dirs.data),
                 "TORCH_HOME": str(pack.dirs.cache),
             },
             source="cache dirs",
@@ -474,6 +478,18 @@ class WorkingDir(WrapperCommand):
 
         # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
         _merge_env(env, pack.config.get("env"), source="pack.env")
+
+        # `env -` clears everything the pack relies on (MILABENCH_DIR_*,
+        # MILABENCH_CONFIG, venv PATH, pack.make_env() ...): fill the gaps,
+        # without overriding anything set above.
+        for key, value in pack.full_env().items():
+            env.setdefault(str(key), str(value))
+
+        # `env -` also drops the DATA_FD voir's launcher sets for use_stdout();
+        # without it voir falls back to fd 3 (EBADF). Smuggle through stdout.
+        if self.options.get("use_stdout"):
+            env.setdefault("DATA_FD", "1")
+            env.setdefault("PYTHONUNBUFFERED", "1")
 
         # Allow callers (e.g. TorchtitanSrun.main_executor) to append extra
         # NAME=VALUE tokens after construction.
@@ -682,6 +698,12 @@ class SSHCommand(WrapperCommand):
         #         f"XDG_CACHE_HOME={str(self.pack.dirs.cache)}",
         #     ]
 
+        # Non-interactive SSH sessions skip most of ~/.bashrc (e.g. NCCL_IB_HCA
+        # set after the interactive guard), so forward system.env explicitly
+        system_env = (self.pack.config.get("system") or {}).get("env") or {}
+        if system_env:
+            envs = ["env", *(shlex.quote(f"{k}={v}") for k, v in system_env.items())]
+
         argv.extend(["-oPasswordAuthentication=no"])
         argv.extend(["-p", str(self.port)])
 
@@ -757,8 +779,12 @@ class TorchrunAllGPU(WrapperCommand):
 
         if self.should_wrap():
             # spawn,fork,forkserver
+            # Use the resolved device count, not the literal "gpu": torchrun
+            # only resolves "gpu" via CUDA (torch.cuda), which raises
+            # "Cuda is not available" on XPU. `devices` already comes from
+            # the accelerator-agnostic smi/torchcompat layer.
             multi_gpu_args = (
-                f"--nproc-per-node=gpu",
+                f"--nproc-per-node={nproc}",
             )
 
             if self.pack.config["plan"]["method"] == "per_gpu":
@@ -1155,6 +1181,115 @@ class SequenceCommand(ListCommand):
         return error_count
 
 
+class Service(ListCommand):
+    """Run *workload* while *service* runs in the background.
+
+    The service is started first; the workload starts once ``ready()`` succeeds.
+    If the service exits before the workload is done, the workload is stopped.
+    Whatever happens, the service is stopped once the workload is done: the
+    workload does not need to know about it (no trailing stop step that a failed
+    ``SequenceCommand`` would skip).
+
+    Arguments:
+        service: long running `Command` (e.g. an inference server)
+        workload: `Command` using the service
+        ready: async callable returning True once the service can be used,
+               defaults to ``service.ready`` when the service has one
+        stop: optional `Command` run at teardown, for processes milabench
+              cannot signal directly (e.g. started through srun/ssh)
+        ready_timeout: seconds to wait for ``ready()``
+    """
+
+    def __init__(self, service: Command, workload: Command, ready=None, stop: Command = None,
+                 ready_timeout=3600, poll_interval=5, **kwargs) -> None:
+        super().__init__(service, workload, **kwargs)
+        self.service = service
+        self.workload = workload
+        self.stop = stop
+        self.ready = ready or getattr(service, "ready", None)
+        self.ready_timeout = ready_timeout
+        self.poll_interval = poll_interval
+
+    @property
+    def pack(self):
+        # the workload owns the benchmark's metrics
+        return self.workload.pack
+
+    async def wait_ready(self, service_task) -> str | None:
+        """Wait for the service, return why it is not usable or None if it is"""
+        if self.ready is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.ready_timeout
+        while True:
+            if service_task.done():
+                return "service exited before being ready"
+            if await self.ready():
+                return None
+            if loop.time() > deadline:
+                return f"service not ready after {self.ready_timeout}s"
+            await asyncio.wait({service_task}, timeout=self.poll_interval)
+
+    async def service_error(self, message):
+        pack = self.workload.pack
+        await pack.send(event="config", data=pack.config)
+        await pack.send(event="error", data={"type": "ServiceError", "message": message})
+
+    async def execute(
+        self, phase="run", timeout=False, timeout_delay=600,
+        warden=None, resource_cleaner=True, with_gpu_warden=True, **kwargs
+    ):
+        run_kwargs = {
+            **self._kwargs,
+            **kwargs,
+            "phase": phase,
+            "timeout": timeout,
+            "timeout_delay": timeout_delay,
+        }
+        error_count = 0
+        with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+            service_task = asyncio.create_task(self.service.execute(**run_kwargs, warden=warden))
+            try:
+                if reason := await self.wait_ready(service_task):
+                    await self.service_error(reason)
+                    return 1
+
+                workload_task = asyncio.create_task(self.workload.execute(**run_kwargs, warden=warden))
+                done, _ = await asyncio.wait({service_task, workload_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                if workload_task not in done:
+                    await self.workload.pack.message("The service exited: stopping the workload")
+                    for pack in self.workload.packs():
+                        destroy(*[proc for proc in pack.processes if proc.poll() is None])
+
+                error_count = count_command_errors(await workload_task)
+                if workload_task not in done:
+                    error_count = max(1, error_count)
+            finally:
+                if self.stop is not None:
+                    await self.stop.execute(**run_kwargs, warden=warden)
+                for pack in self.service.packs():
+                    destroy(*[proc for proc in pack.processes if proc.poll() is None])
+                try:
+                    await asyncio.wait_for(service_task, timeout=60)
+                except Exception:
+                    service_task.cancel()
+
+        return error_count
+
+    def set_run_options(self, **kwargs):
+        self.workload.set_run_options(**kwargs)
+        return self
+
+    def copy(self, pack):
+        # the service keeps its own pack
+        copy = deepcopy(self)
+        copy.workload = self.workload.copy(pack)
+        copy._executors = (copy.service, copy.workload)
+        return copy
+
+
 class PerGPU(ListCommand):
     """Execute one instance of an `Command` on each gpu
 
@@ -1173,8 +1308,12 @@ class PerGPU(ListCommand):
 
         for gpu in self.devices:
             gid = gpu["device"]
+            # Keep only the trailing index so the device tag matches CUDA/ROCm
+            # (which report an int id -> D0/D1). XPU reports "level_zero:1" for
+            # ONEAPI_DEVICE_SELECTOR, so strip the backend prefix for the label.
+            dev_label = str(gid).split(":")[-1]
             gcfg = {
-                "tag": [*executor.pack.config["tag"], f"D{gid}"],
+                "tag": [*executor.pack.config["tag"], f"D{dev_label}"],
                 "device": gid,
                 "devices": [gid] if ngpus else [],
                 "env": {gpu["selection_variable"]: str(gid)},

@@ -1,0 +1,5 @@
+voir>=0.2.19,<0.3
+torch
+vllm
+vllm-omni==0.32.0; platform_machine == 'x86_64'
+vllm-omni==0.33.0rc1; platform_machine == 'aarch64'

@@ -1,0 +1,15 @@
+\section{Software stack}
+\label{sec:software}
+
+\begin{question}
+  \textbf{Is throughput where it should be?} Compared with expectations (single-node MFU, published
+  numbers for similar models and hardware), with the declared deviations accounted for.
+\end{question}
+
+\placeholder{table: our MFU vs.\ published MFU for dense models of similar size on H100 (TorchTitan,
+Megatron, vendor reports), with each source's batch, sequence length, precision and parallelism. Effect of
+each declared deviation: Muon vs.\ AdamW (optimizer step cost), MTP (extra FLOPs, an analytic correction
+shown as an estimate), FP8 for GLM-5.}
+
+\placeholder{software versions: TorchTitan 51b37c2, PyTorch 2.15.0.dev20261005+cu130, NCCL version,
+compile mode and its startup cost.}

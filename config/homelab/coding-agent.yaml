@@ -1,0 +1,131 @@
+# =============================================================================
+# Homelab — choosing a model for a coding agent
+#
+# For each serving candidate (text.yaml), the same model and engine flags plus what an agent needs:
+# prefix caching on, a 64k context, the model's tool-call and reasoning parsers. Its passes:
+#
+#   ctx32k-1 / ctx32k-4 / ctx60k-4   agent-shaped load: N sessions, each a long shared context
+#                     (32k / 60k tokens of real text) continued by short new turns (1k in, 512 out),
+#                     the turns of all sessions interleaved: with prefix caching only the new turn is
+#                     prefilled, as when an agent sends the repository context again with a command output
+#   swebench          mini-swe-agent on 50 SWE-bench Verified tasks (step limit 250, 4 sessions at a time):
+#                     solved (95% CI), sessions that looped or hit the step limit, agent hours per solved task
+#   quality           QualityBench full tier, thinking off and on (paired item-by-item with any other run)
+#
+# Hours per model (SWE-bench sessions, QualityBench full): not in all.yaml.
+#   milabench run --config homelab/coding-agent.yaml [--select <bench>]
+# Needs a container runtime on the client's machine, docker or podman (MILABENCH_CONTAINER picks one; podman is
+# used as is: its docker API socket is served for the pass if needed), for the SWE-bench environments and
+# QualityBench's code tasks;
+# the SWE-bench subset has arm64 images, so it runs natively on a DGX Spark.
+# =============================================================================
+
+include:
+  - text.yaml
+
+# agent-shaped server settings, merged into each model's own (YAML anchors: one definition, every bench)
+_agent_settings:
+  server:
+    argv: &agent_server
+      --no-enable-prefix-caching: null
+      --enable-prefix-caching: true
+      --max-model-len: 65536
+      --max-num-seqs: 32
+      --enable-auto-tool-choice: true
+  client:
+    passes: &agent_passes
+      - name: ctx32k-1
+        argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 32000, --prefix-repetition-suffix-len: 1000,
+               --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 1, --max-concurrency: 1, --num-warmups: 1, --num-prompts: 8}
+      - name: ctx32k-4
+        argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 32000, --prefix-repetition-suffix-len: 1000,
+               --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 4, --max-concurrency: 4, --num-warmups: 4, --num-prompts: 32}
+      - name: ctx60k-4
+        argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 60000, --prefix-repetition-suffix-len: 1000,
+               --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 4, --max-concurrency: 4, --num-warmups: 4, --num-prompts: 32}
+      - {name: swebench, swebench: {tier: quick, workers: 4, step_limit: 250, temperature: 0.0, config: swebench.yaml}}
+      - {name: quality, quality: {tier: full, thinking: ["off", "on"]}}
+
+homelab-agent-qwen36-35b-a3b-nvfp4-mtp:
+  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: qwen3_xml
+      --reasoning-parser: qwen3
+  client:
+    passes: *agent_passes
+
+homelab-agent-qwen3-coder-30b-a3b-awq:
+  inherits: homelab-vllm-qwen3-coder-30b-a3b-awq
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: qwen3_coder
+  client:
+    passes: *agent_passes
+
+homelab-agent-nemotron3-nano-30b-a3b-nvfp4:
+  inherits: homelab-vllm-nemotron3-nano-30b-a3b-nvfp4
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: nemotron_v3
+  client:
+    passes: *agent_passes
+
+homelab-agent-gemma4-26b-a4b-nvfp4-mtp:
+  inherits: homelab-vllm-gemma4-26b-a4b-nvfp4-mtp
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+  client:
+    passes: *agent_passes
+
+homelab-agent-qwen38-27b-nvfp4-dflash2:
+  inherits: homelab-vllm-qwen38-27b-nvfp4-dflash2
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+  client:
+    passes: *agent_passes
+
+homelab-agent-qwen36-27b-nvfp4:
+  inherits: homelab-vllm-qwen36-27b-nvfp4
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --tool-call-parser: qwen3_xml
+      --reasoning-parser: qwen3
+  client:
+    passes: *agent_passes
+
+homelab-agent-gptoss-120b-mxfp4:
+  inherits: homelab-vllm-gptoss-120b-mxfp4
+  max_duration: 86400
+  tags: [agent, coding-agent]
+  server:
+    argv:
+      <<: *agent_server
+      --max-num-seqs: 256
+      --tool-call-parser: openai
+      --reasoning-parser: openai_gptoss
+  client:
+    passes: *agent_passes

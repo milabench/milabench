@@ -1,0 +1,22 @@
+\section{Results}
+\label{app:results}
+
+\begin{table}[h]
+  \caption{Completed runs (measured only). L: layers; tok/GPU: sequences $\times$ length ($\times$
+    accumulation); leaves: nodes per leaf switch; mom.: AdamW moment dtype; p90/p10: step-time spread;
+    GiB: peak allocated / reserved; init and 1st: startup phases (s).}
+  \label{tab:results}
+  \centering
+  \begin{adjustbox}{max width=\linewidth}
+    \input{generated/tables/results}
+  \end{adjustbox}
+\end{table}
+
+\begin{table}[h]
+  \caption{Run ledger: every attempt since the current measurement path (2026-10-21), including failures.}
+  \label{tab:ledger}
+  \centering
+  \begin{adjustbox}{max width=\linewidth}
+    \input{generated/tables/ledger}
+  \end{adjustbox}
+\end{table}

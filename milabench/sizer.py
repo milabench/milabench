@@ -317,7 +317,8 @@ def _fit_torchmem_vs_batch(observations):
         _, alloc = pair
         batches.append(float(obs["batch_size"]))
         allocs.append(alloc)
-    if len(batches) < 2:
+    # two runs at the same batch size give no slope (singular fit)
+    if len(set(batches)) < 2:
         return None
     alpha, beta = np.polyfit(batches, allocs, deg=1)
     if alpha <= 0:
@@ -430,8 +431,8 @@ class Sizer:
         Returns ``None`` when there is not enough usable data (caller should
         keep the ``auto_batch`` default).
         """
-        if len(mem) <= 1:
-            syslog(f"Not enough data for {bench_name}")
+        if len(mem) <= 1 or len(set(size)) < 2:
+            syslog(f"Not enough data for {bench_name}: needs observations at two batch sizes")
             return None
 
         # Constant / all-zero memory (e.g. torchmem: 0 MiB) → singular LSTSQ.
@@ -472,6 +473,13 @@ class Sizer:
         if fixed is None or fit is None:
             return None
 
+        if (override := self.options.overhead_override) is not None:
+            override = str(override).strip()
+            if override.endswith("%"):
+                fixed = capacity * float(override[:-1]) / 100
+            else:
+                fixed = to_octet(override)
+
         alpha, beta = fit
         newsize_f = (capacity - fixed - beta) / alpha
         final_size = self._finalize_batch_size(newsize_f)
@@ -490,6 +498,23 @@ class Sizer:
         return final_size
 
     def auto_size(self, benchmark, capacity):
+        result = self._auto_size(benchmark, capacity)
+        if result is None or not self.options.cap_observed:
+            return result
+
+        config = self.benchscaling(benchmark) or {}
+        ran = [
+            int(obs["batch_size"])
+            for obs in config.get("observations", [])
+            if obs.get("batch_size") and (obs.get("perf") or 0) > 0
+        ]
+        if ran and result > max(ran):
+            if self.should_log(("cap", id(config))):
+                syslog("Sizer: capped predicted batch {} to the largest observed batch {}", result, max(ran))
+            return max(ran)
+        return result
+
+    def _auto_size(self, benchmark, capacity):
         capacity = self.get_capacity(capacity)
 
         if capacity is None:
@@ -498,8 +523,9 @@ class Sizer:
 
         config = self.benchscaling(benchmark)
 
+        # no profile for this benchmark: the caller keeps the configured batch size (not 1)
         if not config:
-            return 1
+            return None
 
         if isinstance(benchmark, str):
             bench_name = benchmark
@@ -664,6 +690,7 @@ class BenchStats:
     max_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     torchmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     jaxmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
+    oom: bool = False
 
     def max_memory_usage(self):
         for stream in (self.torchmem_usage, self.jaxmem_usage, self.max_usage):
@@ -673,6 +700,26 @@ class BenchStats:
 
     def has_stopped_early(self):
         return len(self.early_stopped) > 0 and self.early_stopped[-1]
+
+
+# Substrings that indicate a benchmark died from an out-of-memory condition on
+# any backend. Matched case-insensitively against stderr lines / error events.
+_OOM_MARKERS = (
+    "OutOfMemoryError",
+    "out of memory",
+    "OUT_OF_DEVICE_MEMORY",
+    "OUT_OF_RESOURCES",
+    "CUBLAS_STATUS_ALLOC_FAILED",
+    "insufficient memory",
+)
+
+
+def _is_oom(text) -> bool:
+    if not isinstance(text, str) or not text:
+        return False
+    low = text.lower()
+    return any(marker.lower() in low for marker in _OOM_MARKERS)
+
 
 class MemoryUsageExtractor(ValidationLayer):
     """Extract max memory usage per benchmark to populate the memory model"""
@@ -765,7 +812,28 @@ class MemoryUsageExtractor(ValidationLayer):
 
         if rate := entry.data.get("rate"):
             stat.perf += rate
- 
+
+    def on_line(self, entry):
+        # Detect OOM from the benchmark's stderr so we can record it even when
+        # the run fails and no memory observation is produced.
+        if self.filepath is None:
+            return
+        if getattr(entry, "pipe", None) != "stderr":
+            return
+        if _is_oom(entry.data):
+            stat = self.benchstat(entry.pack.config["name"])
+            stat.oom = True
+
+    def on_error(self, entry):
+        # In-process error events (type/message/trace) are another OOM signal.
+        if self.filepath is None:
+            return
+        d = entry.data or {}
+        blob = " ".join(str(d.get(k, "")) for k in ("type", "message", "trace"))
+        if _is_oom(blob):
+            stat = self.benchstat(entry.pack.config["name"])
+            stat.oom = True
+
     def on_stop(self, entry):
         stat = self.benchstat(entry.pack.config["name"])
         stat.early_stopped.append(True)
@@ -783,6 +851,17 @@ class MemoryUsageExtractor(ValidationLayer):
 
         stats.active_count -= 1
         stats.rc.append(rc)
+
+        # OOM: the model did not fit at this batch size. Record it in the scaling
+        # file instead of silently dropping the run, so callers can see which
+        # models are memory-limited (and at what batch size).
+        if stats.oom and sum(stats.rc) != 0 and stats.active_count <= 0:
+            self.push_oom(stats, entry.pack)
+            try:
+                self.save()
+            except Exception as err:
+                print(f"MemoryUsageExtractor: Could not save scaling file because of {err}")
+            return
 
         if stats.batch_size.current_count <= 0 and int(stats.batch_size.avg) == 0:
             syslog("MemoryUsageExtractor: Skipping missing batch_size {}", entry)
@@ -826,6 +905,28 @@ class MemoryUsageExtractor(ValidationLayer):
 
         observations.append(obs)
         config["observations"] = list(sorted(observations, key=lambda x: x["batch_size"]))
+
+    def push_oom(self, stats, pack=None):
+        # Record an out-of-memory event in the scaling file. Kept in a dedicated
+        # ``oom`` list (separate from ``observations``, which feed the memory fit)
+        # so a failed run cannot corrupt the predicted batch size.
+        config = self.memory.setdefault(stats.benchname, dict())
+        obs = {
+            "batch_size": int(stats.batch_size.avg) if stats.batch_size.current_count else None,
+            "time": int(time.time()),
+        }
+        if stats.max_usage.current_count > 0:
+            obs["memory"] = f"{int(stats.max_usage.max)} MiB"
+        if stats.torchmem_usage.current_count > 0:
+            obs["torchmem"] = f"{int(stats.torchmem_usage.max)} MiB"
+        obs.update(_torch_backend_info(pack))
+
+        ooms = config.setdefault("oom", [])
+        # one entry per batch size: overwrite if we already recorded this bs
+        ooms[:] = [o for o in ooms if o.get("batch_size") != obs["batch_size"]]
+        ooms.append(obs)
+        ooms.sort(key=lambda o: (o.get("batch_size") is None, o.get("batch_size")))
+        syslog("MemoryUsageExtractor: recorded OOM for {} at batch_size={}", stats.benchname, obs["batch_size"])
 
     def save(self):
         if self.filepath is not None:
@@ -986,6 +1087,11 @@ def new_argument_resolver(pack):
             return finalize_val(newvalue)
         except KeyError as err:
             syslog("Couldn't resolve {} because of {}", arg, err)
+            return arg
+        except (ValueError, IndexError) as err:
+            # Literal braces (jinja templates, inline JSON/python snippets)
+            # are not format fields: leave the argument untouched.
+            syslog("Couldn't format {} because of {}", arg, err)
             return arg
 
     return auto_eval

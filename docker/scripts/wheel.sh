@@ -1,68 +1,80 @@
+#!/bin/bash
+# Build GPU extension wheels (xformers, PyG, torchao) for one torch + CUDA combo.
+#
+# The canonical build lives in milabench/wheels (CI: build-cuda.yml); this is a
+# quick local fallback. Every version can be overridden from the environment:
+#
+#   PYTORCH_VERSION=2.15.0 CUDA_VERSION=132 bash wheel.sh
+#   CUDA_VERSION=13.0 UPLOAD=0 bash wheel.sh            # build only, no upload
+#
+# CUDA_VERSION accepts 132, 13.2, 13.2.0 or cu132.
+set -euo pipefail
 
-PYTORCH_VERSION="2.10.0"
-CUDA="cu130"
+PYTORCH_VERSION="${PYTORCH_VERSION:-2.15.0}"
+CUDA_VERSION="${CUDA_VERSION:-132}"
 
-pip install --extra-index-url https://download.pytorch.org/whl/$CUDA torch==$PYTORCH_VERSION+$CUDA
+CLUSTER_VERSION="${CLUSTER_VERSION:-1.6.3}"
+SPARSE_VERSION="${SPARSE_VERSION:-0.6.18}"
+SCATTER_VERSION="${SCATTER_VERSION:-2.1.2}"
+TORCH_AO_VERSION="${TORCH_AO_VERSION:-0.18.0}"
+XFORMER_VERSION="${XFORMER_VERSION:-0.0.35}"
 
-CLUSTER_VERSION=1.6.3
-SPARSE_VERSION=0.6.18
-SCATTER_VERSION=2.1.2
-TORCH_AO_VERSION=0.16.0
-XFORMER_VERSION=0.0.35
-PT_VER="pt210"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-7.5;8.0;8.6;8.9;9.0;10.0;12.0;12.1}"
 
-export TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0;12.0;12.1"
+WHEELS_DIR="${WHEELS_DIR:-$(pwd)/wheels}"
+UPLOAD="${UPLOAD:-1}"
+WHEELS_REPO="${WHEELS_REPO:-milabench/wheels}"
 
+# Derived names: cu132, pt215, release tag torch2.15-cu132 (wheels repo convention)
+_cuda="${CUDA_VERSION#cu}"
+if [[ "$_cuda" == *.* ]]; then
+    IFS=. read -r _cmaj _cmin _ <<< "$_cuda"
+    _cuda="${_cmaj}${_cmin}"
+fi
+CUDA="cu${_cuda}"
+IFS=. read -r TORCH_MAJOR TORCH_MINOR _ <<< "$PYTORCH_VERSION"
+PT_VER="pt${TORCH_MAJOR}${TORCH_MINOR}"
+RELEASE_TAG="${RELEASE_TAG:-torch${TORCH_MAJOR}.${TORCH_MINOR}-${CUDA}}"
+
+echo "==> torch ${PYTORCH_VERSION} + ${CUDA} -> ${WHEELS_DIR} (release ${RELEASE_TAG})"
+mkdir -p "$WHEELS_DIR"
+
+pip install --extra-index-url "https://download.pytorch.org/whl/${CUDA}" "torch==${PYTORCH_VERSION}+${CUDA}"
 pip install wheel setuptools cmake ninja
 
 (
-    git clone --recurse-submodules --branch v$XFORMER_VERSION https://github.com/facebookresearch/xformers.git
+    git clone --recurse-submodules --branch "v${XFORMER_VERSION}" https://github.com/facebookresearch/xformers.git
     cd xformers
-
-    # No cuda+130 for this
-    BUILD_VERSION="$XFORMER_VERSION" FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w ../wheels/
+    # No +cuXXX local version for this one
+    BUILD_VERSION="$XFORMER_VERSION" FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w "$WHEELS_DIR/"
     cd ..
     rm -rf xformers
 )
 
-(
-    git clone --recurse-submodules --branch $CLUSTER_VERSION --depth 1 https://github.com/rusty1s/pytorch_cluster.git
-    cd pytorch_cluster
-    sed -i "s/__version__ = '$CLUSTER_VERSION'/__version__ = '$CLUSTER_VERSION+${PT_VER}${CUDA}'/" setup.py
+# PyG extensions: version patched to X.Y.Z+pt215cu132
+build_pyg() {
+    local repo=$1 version=$2
+    git clone --recurse-submodules --branch "$version" --depth 1 "https://github.com/rusty1s/${repo}.git"
+    (
+        cd "$repo"
+        sed -i "s/__version__ = '${version}'/__version__ = '${version}+${PT_VER}${CUDA}'/" setup.py
+        FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w "$WHEELS_DIR/"
+    )
+    rm -rf "$repo"
+}
 
-    FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w ../wheels/
-    cd ..
-    rm -rf pytorch_cluster
-)
-
-(
-    # torch-sparse
-    git clone --recurse-submodules --branch $SPARSE_VERSION --depth 1 https://github.com/rusty1s/pytorch_sparse.git
-    cd pytorch_sparse
-    sed -i "s/__version__ = '$SPARSE_VERSION'/__version__ = '$SPARSE_VERSION+${PT_VER}${CUDA}'/" setup.py
-    FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w ../wheels/
-    cd ..
-    rm -rf pytorch_sparse
-)
+build_pyg pytorch_cluster "$CLUSTER_VERSION"
+build_pyg pytorch_sparse "$SPARSE_VERSION"
+build_pyg pytorch_scatter "$SCATTER_VERSION"
 
 (
-    # torch-scatter
-    git clone --recurse-submodules --branch $SCATTER_VERSION --depth 1 https://github.com/rusty1s/pytorch_scatter.git
-    cd pytorch_scatter
-    sed -i "s/__version__ = '$SCATTER_VERSION'/__version__ = '$SCATTER_VERSION+${PT_VER}${CUDA}'/" setup.py
-    FORCE_CUDA=1 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w ../wheels/
-    cd ..
-    rm -rf pytorch_scatter
-)
-
-(
-    # torchao
-    git clone --recurse-submodules --branch v$TORCH_AO_VERSION --depth 1 https://github.com/pytorch/ao.git
+    git clone --recurse-submodules --branch "v${TORCH_AO_VERSION}" --depth 1 https://github.com/pytorch/ao.git
     cd ao
-    FORCE_CUDA=1 VERSION_SUFFIX=+cu130 pip wheel . --no-cache-dir --no-deps --no-build-isolation -w ../wheels/
+    FORCE_CUDA=1 VERSION_SUFFIX="+${CUDA}" pip wheel . --no-cache-dir --no-deps --no-build-isolation -w "$WHEELS_DIR/"
     cd ..
     rm -rf ao
 )
 
-
-gh release upload cu130-wheels wheels/*.whl --repo milabench/wheels
+if [ "$UPLOAD" = "1" ]; then
+    gh release upload "$RELEASE_TAG" "$WHEELS_DIR"/*.whl --repo "$WHEELS_REPO"
+fi

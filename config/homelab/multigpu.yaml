@@ -1,0 +1,191 @@
+# =============================================================================
+# Homelab — everything that needs more than one GPU.
+#
+# 2-GPU vLLM experiment (TP=2 / DP=2) on the 2x Arc Pro B70 node.
+#
+# Adds tensor-parallel / data-parallel variants on top of the homelab text suite
+# (include) with identical client methodology, so results are directly
+# comparable to the single-GPU homelab numbers. Plus a trimmed smoke of
+# vllm-dense-physics-gpus (Mistral-Small-24B bf16, ~48 GB across 2 cards).
+#
+# vLLM-Omni diffusion, tensor parallel on 2 cards (bottom): BF16 once sharded (it beats FP8 on one card).
+#
+# Each LLM bench loads its server once and runs the passes of its single-GPU twin (conc1 / conc8 / conc32).
+#
+# Run with:  -c homelab/multigpu.yaml --select tp2
+# =============================================================================
+
+include:
+  - text.yaml
+  - image.yaml
+  - video.yaml
+
+# --- TP=2: Qwen3-8B-FP8 — baseline 2-GPU scaling probe (8B fits one card;
+# expect modest/compute-bound gain vs single-GPU 217.9 / 588.5 out-tok/s) ---
+homelab-tp2-qwen3-8b-fp8:
+  inherits: _h_vllm_qwen3_8b_fp8
+  enabled: true
+  weight: 1
+  tags:
+    - tp2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+
+# --- TP=2: Llama-3.1-8B w8a8 ---
+homelab-tp2-llama8b-w8a8:
+  inherits: _h_vllm_llama8b_w8a8
+  enabled: true
+  weight: 1
+  tags:
+    - tp2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+
+# --- TP=2: Gemma-4-26B-FP8 — the main prize: weights split ~13 GB/GPU, so the
+# KV pool grows far beyond the 1.25 GiB that capped conc32 single-GPU.
+# Keeps every single-GPU override (util 0.95, ctx 4096, batch 2048,
+# enforce-eager) + TP=2, to isolate the memory/KV effect of the split. ---
+homelab-tp2-gemma4-fp8:
+  inherits: _h_vllm_gemma4_fp8
+  enabled: true
+  weight: 1
+  tags:
+    - tp2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+
+# --- DP=2: Qwen3-8B-FP8, two replicas (one per GPU) behind one server —
+# aggregate-throughput probe. Pure probe, may not be supported on XPU. ---
+homelab-tp2-dp2-qwen3-8b-fp8:
+  inherits: _h_vllm_qwen3_8b_fp8
+  enabled: true
+  weight: 1
+  tags:
+    - tp2
+  client:
+    passes:
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 1024}}
+  server:
+    argv:
+      --data-parallel-size: 2
+
+# --- Trimmed vllm-dense-physics-gpus smoke: Mistral-Small-3.1-24B bf16,
+# TP=2 (~24 GB/GPU weights), GPQA-diamond prompts. Full pack wants 25k
+# prompts / 1 h; this smoke runs 32 + 128 prompts. Same server argv as the
+# main-suite pack, homelab client harness.
+# NOTE: gated-ish repo + mistral tokenizer mode + vision tower are
+# the three things this smoke is meant to de-risk. ---
+homelab-tp2-mistral-dense:
+  inherits: _serving_vllm_32gb
+  enabled: true
+  weight: 1
+  max_duration: 2400
+  tags:
+    - text
+    - dense
+    - tp2
+  url: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503
+  client:
+    argv:
+      --model: mistralai/Mistral-Small-3.1-24B-Instruct-2503
+      # real prompts of their own (GPQA-diamond): not the text corpus
+      --real-text: null
+      --dataset-name: hf
+      --dataset-path: hendrydong/gpqa_diamond
+      --hf-name: hendrydong/gpqa_diamond
+    passes:
+      - {name: conc16, argv: {--max-concurrency: 16, --num-warmups: 16, --num-prompts: 32}}
+      - {name: conc64, argv: {--max-concurrency: 64, --num-warmups: 64, --num-prompts: 128}}
+  server:
+    argv:
+      mistralai/Mistral-Small-3.1-24B-Instruct-2503: true
+      --tensor-parallel-size: 2
+      --max-num-seqs: 64
+      --tokenizer-mode: mistral
+      --config_format: mistral
+      --load_format: mistral
+      --tool-call-parser: mistral
+      --enable-auto-tool-choice: true
+      --limit-mm-per-prompt: '{"image":10}'
+
+# -----------------------------------------------------------------------------
+# vLLM-Omni diffusion, TP=2 (ComfyUI cannot split a model across cards). Same client settings as the
+# single-card benches in image.yaml / video.yaml.
+# -----------------------------------------------------------------------------
+
+homelab-tp2-omni-flux-dev:
+  inherits: homelab-omni-flux-dev-fp8
+  tags:
+    - tp2
+  server:
+    argv:
+      --quantization: null
+      --tensor-parallel-size: 2
+
+homelab-tp2-omni-flux-dev-cachedit:
+  inherits: homelab-tp2-omni-flux-dev
+  tags:
+    - cachedit
+  server:
+    argv:
+      --cache-backend: cache_dit
+
+homelab-tp2-omni-flux-schnell:
+  inherits: homelab-omni-flux-schnell-fp8
+  tags:
+    - tp2
+  server:
+    argv:
+      --quantization: null
+      --tensor-parallel-size: 2
+
+# TP must divide the model's attention heads (30) and MLP dim: 2 works, 4 does not
+homelab-tp2-omni-z-image-turbo:
+  inherits: homelab-omni-z-image-turbo
+  tags:
+    - tp2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+
+homelab-tp2-omni-wan22-5b-ti2v:
+  inherits: homelab-omni-wan22-5b-ti2v
+  tags:
+    - tp2
+  server:
+    argv:
+      --tensor-parallel-size: 2
+
+# --- Wan 2.2 A14B text-to-video (two 14B experts, 126 GB in BF16): FP8 + TP=2 to fit 2x32 GB.
+# Same settings as the ComfyUI workflow (640x640, 81 frames at 16 fps, 20 steps, CFG 3.5). ---
+homelab-tp2-omni-wan22-a14b-t2v:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  max_duration: 9000
+  tags:
+    - video
+    - tp2
+  url: https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers
+  voir:
+    options:
+      stop: 4
+  server:
+    argv:
+      Wan-AI/Wan2.2-T2V-A14B-Diffusers: true
+      --quantization: fp8
+      --tensor-parallel-size: 2
+  client:
+    argv:
+      --task: t2v
+      --width: 640
+      --height: 640
+      --num-frames: 81
+      --fps: 16
+      --steps: 20
+      --guidance: 3.5
+      --negative-prompt: "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部"
+      --max-steps: 5

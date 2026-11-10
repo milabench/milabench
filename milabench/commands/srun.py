@@ -107,6 +107,32 @@ class SrunExceptMain(SrunCommand):
             return self.exclude
         return _node_hostlist_token(_main_node(self.pack.config))
 
+class SlurmNodeRank(WrapperCommand):
+    """Give torchrun-style launchers their node rank from ``SLURM_NODEID``.
+
+    For launchers that do not go through ``benchrun`` (e.g. ``tune run``), which
+    otherwise default every worker to ``--node-rank=0`` and hang static
+    rendezvous. Workers run under ``srun -x main``, so the rank is
+    ``SLURM_NODEID + 1``; it is passed as ``PET_NODE_RANK`` (read by torchrun's
+    argparser). ``WorkingDir`` starts with ``env -``, which would drop it, so
+    it is also inserted right after the first ``-`` argument.
+    """
+
+    SCRIPT = (
+        'r=$((${SLURM_NODEID:-0} + 1)); export PET_NODE_RANK=$r; i=0\n'
+        'for a do\n'
+        '  [ $i = 0 ] && set --\n'
+        '  i=1\n'
+        '  set -- "$@" "$a"\n'
+        '  if [ "$a" = - ] && [ "$r" != "" ]; then set -- "$@" "PET_NODE_RANK=$r"; r=; fi\n'
+        'done\n'
+        'exec "$@"'
+    )
+
+    def __init__(self, executor: Command, **kwargs) -> None:
+        super().__init__(executor, "sh", "-c", self.SCRIPT, "sh", **kwargs)
+
+
 class ForeachSrun(ListCommand):
     """Run *executor* on the main node locally; dispatch the rest via srun.
 
