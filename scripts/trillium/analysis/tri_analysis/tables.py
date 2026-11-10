@@ -17,6 +17,8 @@ from .machine import (GLM_SEQS_PER_COPY, GLM_TOP_COPIES, GLM_TOP_NODES, GPU_MEMO
                       NET_LOW_PAIR_GBS, NET_NINE_HELD, NET_NINE_JOB)
 from . import glm_fp4
 from .flux import FROM_BLOCK as FLUX_FROM_BLOCK
+from .flux import GAP_TO as FLUX_TEN_TO
+from .flux import TEN_FROM as FLUX_TEN_FROM
 from .kimi import LOG_INTERVAL_S
 from .select import completed as _completed
 from .select import (NOISE_ASIDE, QWEN_BASE, REF_NODES, SLOW_NODES, bandwidth_group, checkpoints, drift, e1_changes, failed_runs, loss_gaps, pinned_blocked, qwen_base,
@@ -256,6 +258,21 @@ MACROS = ["TriMatmulBF", "TriMatmulFP", "TriNodesChecked", "TriNodesFlagged", "T
                                  "SmMin", "BlockFirst", "Above", "AboveRuns", "Below", "Inside", "Compared", "LateFrom", "LateLo",
                                  "LateHi", "TenFour", "TenEight", "TenPct", "FlTenFour", "FlTenEight", "FlTenPct", "PowerFourLo", "PowerFourHi",
                                  "BlocksMore", "GapFour", "GapEight")],
+          # FLUX.1 at 16 nodes (_flux_sixteen_numbers; FLUX-02 against Florida's 10 runs at 16 nodes, Fl*): as TriFx*, plus the steps 30-200
+          # window (ten-step), Florida's drift within a run (blocks 2-4 against 11 to the last), margins under 0.0001, per-node telemetry, and
+          # the scaling from 8 to 16 nodes (FLUX-01 to FLUX-02; Florida's over all pairs of their runs)
+          *[f"TriFxSixteen{m}" for m in ("Nodes", "Gpus", "Gbs", "Seed", "Ttt", "TttExact", "Samples", "Blocks", "Steps", "FirstAcc", "LastAcc",
+                                     "Init", "Val", "Tpb", "Step", "StepLo", "StepHi", "StepFirst", "StepEarly", "StepLate", "SpsGpu",
+                                     "Ten", "TenN", "TenEvals", "StepPct", "TenPct", "FlRuns", "FlTtt", "FlTttExact", "FlTttMean",
+                                     "FlTttLo", "FlTttHi", "FlBlocksLo", "FlBlocksHi", "FlBlocksMean", "BlocksMore", "FlFirstLo",
+                                     "FlFirstHi", "FlStep", "FlStepLo", "FlStepHi", "FlStepEarly", "FlStepLate", "FlSpsGpu", "FlTen",
+                                     "FlTenLo", "FlTenHi", "FlInitLo", "FlInitHi", "FlInitMed", "FlValLo", "FlValHi", "FlTpb", "FlSame",
+                                     "FlSameRuns", "AboveSame", "Extrap", "AboveExtrap", "Diff", "SplitBlocks", "SplitSpeed",
+                                     "SplitSpeedFirst", "SplitBlocksSecond", "Above", "AboveRuns", "Below", "Inside", "Compared", "Close",
+                                     "CloseLo", "CloseHi", "PowerLo", "PowerHi", "HotLo", "HotHi", "SmLo", "SmHi", "SmMin", "SmLoHost",
+                                     "SmLoGpu", "NodePowerLo", "NodePowerHi", "NodeHotLo", "NodeHotHi", "NodeSmLo", "NodeSmHi", "StepScale",
+                                     "FlStepScale", "TenEightWin", "FlTenEightWin", "TenScale", "FlTenScale", "TttRatio", "FlTttRatio",
+                                     "FlPairLo", "FlPairHi", "FlPairMed", "TpbRatio", "FlTpbRatio")],
           # FLUX.1, the step-time gap against Florida at 2 nodes (_flux_gap_numbers): job 1278802's five 200-step runs (ten-step step from step
           # 30 to 200, bootstrap 95 % range of each median; telemetry per node with the clock event reasons; the power and clock limits), Florida's
           # 10 runs at 2 nodes on the same window and statistic (GapFl*), and the earlier job 1277931 (GapOne*, its two nodes by SM clock)
@@ -2762,6 +2779,94 @@ def _flux_numbers(t) -> dict[str, tuple]:
 
 
 
+FLUX_SIXTEEN = "nw-flux-run16.1278821"
+FLUX_DRIFT = ((2, 4), (11, None))  # Florida's 16-node step within a run: blocks 2-4 (the steps 30-200 window) against blocks 11 to the last
+FLUX_CLOSE = 1e-4  # margins over Florida's highest or under their lowest below this: equal in effect
+
+
+def _flux_sixteen_numbers(t) -> dict[str, tuple]:
+    """FLUX.1 at 16 nodes, TriFxSixteen*: FLUX-02 against Florida's 16-node runs, as _flux_numbers (the split as estimates in both orders, by the
+    same conventions), plus the steps 30-200 window (ten-step), Florida's drift within a run, per-node telemetry, and the scaling from 8 to 16
+    nodes (FLUX-01 to FLUX-02, and Florida's olympic means, median times per block and every pair of their 16- and 8-node runs)."""
+    r, b = t.get("flux_runs", pd.DataFrame()), t.get("flux_blocks", pd.DataFrame())
+    out = {}
+    if r.empty or not (r.run == FLUX_SIXTEEN).any():
+        return out
+    x = r[(r.run == FLUX_SIXTEEN) & (r.job_state == "COMPLETED")]
+    fl = r[(r.source == "florida") & (r.nodes == 16)].sort_values("ttt_min")
+    if x.empty or x.iloc[0].status != "success" or len(fl) < 3:
+        return out
+    x = x.iloc[0]
+    oly = fl.iloc[1:-1]
+    tpb, ours_tpb = (fl.ttt_min / fl.blocks).median(), x.ttt_min / x.blocks
+    extrap, diff = x.blocks * tpb, x.ttt_min - oly.ttt_min.mean()
+    speed_first = oly.blocks.mean() * (ours_tpb - tpb)
+    fl_step, fl_ten = fl.steady_s.median(), fl.ten_gap_s.median()
+    same = fl[fl.blocks == x.blocks]
+    ob = b[b.run == FLUX_SIXTEEN].set_index("block")
+    fb = b[b.run.isin(set(fl.run))]
+    part = lambda c, lo, hi: c[(c.block >= lo) & ((c.block <= hi) if hi else True)].step_s.median()
+    early, late = ([part(ob.reset_index(), *w)] + [part(fb[fb.run == run], *w) for run in fl.run] for w in FLUX_DRIFT)
+    for name, v, fmt in (("Nodes", int(x.nodes), "d"), ("Gpus", int(x.gpus), "d"), ("Gbs", int(x.gbs), ",d"), ("Seed", int(x.seed), "d"),
+                         ("Ttt", x.ttt_min, ".1f"), ("TttExact", x.ttt_min, ".2f"), ("Samples", int(x.samples), ",d"), ("Blocks", int(x.blocks), "d"),
+                         ("Steps", int(x.samples // x.gbs), ",d"), ("FirstAcc", x.first_acc, ".3f"), ("LastAcc", x.last_acc, ".4f"),
+                         ("Init", x.init_s, ".0f"), ("Val", x.val_s, ".2f"), ("Tpb", ours_tpb, ".3f"),
+                         ("Step", x.steady_s, ".4f"), ("StepLo", x.steady_lo, ".4f"), ("StepHi", x.steady_hi, ".4f"), ("StepFirst", x.step_first, ".4f"),
+                         ("StepEarly", early[0], ".4f"), ("StepLate", late[0], ".4f"), ("SpsGpu", x.gbs / x.steady_s / x.gpus, ".1f"),
+                         ("Ten", x.ten_gap_s, ".4f"), ("TenN", int(x.ten_gap_n), "d"),
+                         ("TenEvals", (FLUX_TEN_TO - FLUX_TEN_FROM) // 10 - int(x.ten_gap_n), "d"),  # loss events every 10 steps
+                         ("StepPct", 100 * (x.steady_s / fl_step - 1), ".1f"), ("TenPct", 100 * (x.ten_gap_s / fl_ten - 1), ".1f"),
+                         ("FlRuns", len(fl), "d"), ("FlTtt", oly.ttt_min.mean(), ".1f"), ("FlTttExact", oly.ttt_min.mean(), ".2f"),
+                         ("FlTttMean", fl.ttt_min.mean(), ".2f"), ("FlTttLo", fl.ttt_min.min(), ".2f"), ("FlTttHi", fl.ttt_min.max(), ".2f"),
+                         ("FlBlocksLo", int(fl.blocks.min()), "d"), ("FlBlocksHi", int(fl.blocks.max()), "d"), ("FlBlocksMean", oly.blocks.mean(), ".1f"),
+                         ("BlocksMore", x.blocks - oly.blocks.mean(), ".1f"), ("FlFirstLo", fl.first_acc.min(), ".3f"), ("FlFirstHi", fl.first_acc.max(), ".3f"),
+                         ("FlStep", fl_step, ".4f"), ("FlStepLo", fl.steady_s.min(), ".4f"), ("FlStepHi", fl.steady_s.max(), ".4f"),
+                         ("FlStepEarly", pd.Series(early[1:]).median(), ".4f"), ("FlStepLate", pd.Series(late[1:]).median(), ".4f"), ("FlSpsGpu", x.gbs / fl_step / x.gpus, ".1f"),
+                         ("FlTen", fl_ten, ".4f"), ("FlTenLo", fl.ten_gap_s.min(), ".4f"), ("FlTenHi", fl.ten_gap_s.max(), ".4f"),
+                         ("FlInitLo", fl.init_s.min(), ".0f"), ("FlInitHi", fl.init_s.max(), ".0f"), ("FlInitMed", fl.init_s.median(), ".0f"),
+                         ("FlValLo", fl.val_s.min(), ".2f"), ("FlValHi", fl.val_s.max(), ".2f"), ("FlTpb", tpb, ".3f"),
+                         ("Extrap", extrap, ".2f"), ("AboveExtrap", 100 * (x.ttt_min / extrap - 1), ".1f"), ("Diff", diff, ".1f"),
+                         ("SplitBlocks", extrap - oly.ttt_min.mean(), ".2f"), ("SplitSpeed", x.ttt_min - extrap, ".2f"),
+                         ("SplitSpeedFirst", speed_first, ".2f"), ("SplitBlocksSecond", diff - speed_first, ".2f"),
+                         ("PowerLo", x.get("power_lo"), ".0f"), ("PowerHi", x.get("power_hi"), ".0f"), ("HotLo", x.get("hot_lo"), ".0f"),
+                         ("HotHi", x.get("hot_hi"), ".0f"), ("SmLo", x.get("sm_lo"), ",.0f"), ("SmHi", x.get("sm_hi"), ",.0f"), ("SmMin", x.get("sm_min"), ",.0f"),
+                         ("SmLoHost", x.get("sm_lo_host"), ""), ("SmLoGpu", int(x.get("sm_lo_gpu")), "d"),
+                         ("NodePowerLo", x.get("node_power_lo"), ".0f"), ("NodePowerHi", x.get("node_power_hi"), ".0f"),
+                         ("NodeHotLo", x.get("node_hot_lo"), ".0f"), ("NodeHotHi", x.get("node_hot_hi"), ".0f"),
+                         ("NodeSmLo", x.get("node_sm_lo"), ",.0f"), ("NodeSmHi", x.get("node_sm_hi"), ",.0f")):
+        out[f"TriFxSixteen{name}"] = (v, fmt, False)
+    if len(same):
+        out["TriFxSixteenFlSame"], out["TriFxSixteenFlSameRuns"] = (same.ttt_min.median(), ".2f", False), (len(same), "d", False)
+        out["TriFxSixteenAboveSame"] = (100 * (x.ttt_min / same.ttt_min.median() - 1), ".1f", False)
+    acc = fb.pivot(index="block", columns="run", values="accuracy")
+    common = [k for k in ob.index if k in acc.index]
+    above = {k: ob.accuracy[k] - acc.loc[k].max() for k in common if ob.accuracy[k] > acc.loc[k].max()}
+    below = {k: acc.loc[k].min() - ob.accuracy[k] for k in common if ob.accuracy[k] < acc.loc[k].min()}
+    close = {k: m for k, m in sorted({**above, **below}.items()) if m < FLUX_CLOSE}
+    out["TriFxSixteenAbove"] = (_and_list([str(k) for k in above]), "", False) if above else ("none", "", False)
+    out["TriFxSixteenAboveRuns"] = (_and_list([str(int(acc.loc[k].notna().sum())) for k in above]), "", False) if above else ("", "", False)
+    out["TriFxSixteenBelow"] = (_and_list([str(k) for k in below]), "", False) if below else ("none", "", False)
+    out["TriFxSixteenInside"] = (len(common) - len(above) - len(below), "d", False)
+    out["TriFxSixteenCompared"] = (len(common), "d", False)
+    if close:
+        out["TriFxSixteenClose"] = (_and_list([str(k) for k in close]), "", False)
+        out["TriFxSixteenCloseLo"], out["TriFxSixteenCloseHi"] = (min(close.values()), ".5f", False), (max(close.values()), ".5f", False)
+    x8, fl8 = r[(r.run == FLUX_RUN) & (r.job_state == "COMPLETED")], r[(r.source == "florida") & (r.nodes == 8)].sort_values("ttt_min")
+    if len(x8) and len(fl8) >= 3:
+        x8 = x8.iloc[0]
+        pairs = pd.Series([a / c for a in fl.ttt_min for c in fl8.ttt_min])  # every 16-node run against every 8-node run
+        for name, v, fmt in (("StepScale", f"{100 * (x.steady_s / x8.steady_s - 1):+.1f}", ""),
+                             ("FlStepScale", f"{100 * (fl_step / fl8.steady_s.median() - 1):+.1f}", ""),
+                             ("TenEightWin", x8.ten_gap_s, ".4f"), ("FlTenEightWin", fl8.ten_gap_s.median(), ".4f"),
+                             ("TenScale", f"{100 * (x.ten_gap_s / x8.ten_gap_s - 1):+.1f}", ""),
+                             ("FlTenScale", f"{100 * (fl_ten / fl8.ten_gap_s.median() - 1):+.1f}", ""),
+                             ("TttRatio", x.ttt_min / x8.ttt_min, ".3f"), ("FlTttRatio", oly.ttt_min.mean() / fl8.iloc[1:-1].ttt_min.mean(), ".3f"),
+                             ("FlPairLo", pairs.min(), ".3f"), ("FlPairHi", pairs.max(), ".3f"), ("FlPairMed", pairs.median(), ".3f"),
+                             ("TpbRatio", ours_tpb / (x8.ttt_min / x8.blocks), ".3f"), ("FlTpbRatio", tpb / (fl8.ttt_min / fl8.blocks).median(), ".3f")):
+            out[f"TriFxSixteen{name}"] = (v, fmt, False)
+    return out
+
+
 FLUX_GAP_BASE, FLUX_GAP_ONE = "gap.1278802/base", "gap1"
 FLUX_GAP_NAMES = {"gap.1278802/base": "Base", "gap.1278802/proto-simple": "Simple", "gap.1278802/pxn-off": "Pxn", "gap.1278802/cpu-default": "Cpu",
                   "gap.1278802/base2": "BaseTwo"}
@@ -2850,10 +2955,17 @@ def flux_gap_table(t) -> str:
 
 
 def flux_runs_table(t) -> str:
-    """FLUX-01 against Florida's runs at the same node count, one row per run (Florida's by time to train), and Florida's score."""
+    """FLUX-01 (8 nodes) and FLUX-02 (16 nodes), each against Florida's runs at the same node count, one row per run (Florida's by time to train),
+    and Florida's score."""
     x, fl, _, _ = _flux(t)
     if x is None or fl.empty:
         return ""
+    r = t["flux_runs"]
+    groups = [("FLUX-01", x, fl)]
+    x16 = r[(r.run == FLUX_SIXTEEN) & (r.job_state == "COMPLETED")]
+    fl16 = r[(r.source == "florida") & (r.nodes == 16)].sort_values("ttt_min")
+    if len(x16) and len(fl16):
+        groups.append(("FLUX-02", x16.iloc[0], fl16))
 
     def row(label, y):
         return (f"{label} & {int(y.seed)} & {y.ttt_min:.2f} & {int(y.blocks)} & {y.samples / 1e6:.2f} & {y.first_acc:.3f} & {y.last_acc:.4f} & "
@@ -2861,12 +2973,14 @@ def flux_runs_table(t) -> str:
 
     lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
              r"Run & Seed & Time to & Blocks & Samples & First & Final & Steady & Samples/s & Init \\",
-             r" & & train, min & & to target, M & eval & eval & step, s & per GPU & s \\", r"\midrule",
-             row(f"Ours, FLUX-01 ({int(x.nodes)} nodes)", x), r"\midrule"]
-    lines += [row(f"Florida, {y.run.split('/')[1].replace('_', ' ')}", y) for y in fl.itertuples()]
-    oly = fl.iloc[1:-1]
-    lines += [r"\midrule", f"Florida, score (olympic mean) & & {oly.ttt_min.mean():.2f} & {oly.blocks.mean():.2f} & & & & & & " + r"\\",
-              r"\bottomrule", r"\end{tabular}"]
+             r" & & train, min & & to target, M & eval & eval & step, s & per GPU & s \\"]
+    for name, y, f in groups:
+        oly = f.iloc[1:-1]
+        lines += [r"\midrule", r"\multicolumn{10}{l}{\textit{" + f"{int(y.nodes)} nodes" + "}} " + r"\\",
+                  row(f"Ours, {name}", y), r"\midrule"]
+        lines += [row(f"Florida, {z.run.split('/')[1].replace('_', ' ')}", z) for z in f.itertuples()]
+        lines += [r"\midrule", f"Florida, score (olympic mean) & & {oly.ttt_min.mean():.2f} & {oly.blocks.mean():.2f} & & & & & & " + r"\\"]
+    lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines) + "\n"
 
 
@@ -3206,6 +3320,7 @@ def key_numbers(t) -> dict[str, tuple]:
     out.update(_of3_numbers(t))
     out.update(_flux_numbers(t))
     out.update(_flux_gap_numbers(t))
+    out.update(_flux_sixteen_numbers(t))
     w = _completed(runs, "B-Q-weak")
     if len(w):
         g = w[w.layout != "fsdp"] if (w.layout != "fsdp").any() else w

@@ -1,5 +1,5 @@
-"""FLUX.1 training, MLPerf Training v5.1, with the University of Florida's submission code (FLUX-01: job 1276503, 8 nodes, one run to the
-quality target), against Florida's 10 published runs at 8 nodes, in tables of their own (``flux_*``). Also read: the 4-node real-data bring-up
+"""FLUX.1 training, MLPerf Training v5.1, with the University of Florida's submission code (FLUX-01: job 1276503, 8 nodes; FLUX-02: job 1278821,
+16 nodes; one run each to the quality target), against Florida's 10 published runs at the same node count, in tables of their own (``flux_*``). Also read: the 4-node real-data bring-up
 (job 1276381, 300 steps, for the step from 4 to 8 nodes) and Florida's 10 runs at 4 nodes. Ours from ``flux/runs/<run>/`` (the MLPerf log
 ``*_1.log`` and the nvidia-smi telemetry ``gpu-<host>.csv``; collect, from ``$SCRATCH/trillium/new/flux/runs/``); Florida's from
 ``flux/florida/n<nodes>/result_<i>.txt`` (public, mlcommons/training_results_v5.1, fetched by hand: see its README). Outside ``runs/``: the
@@ -9,7 +9,8 @@ From each log's ``:::MLLOG`` lines (rank 0 only): time to train = ``run_stop`` -
 the best and the worst); samples and status from ``run_stop``; one block per ``eval_accuracy`` (an evaluation every 262,144 samples);
 ``tracked_stats.train_step_time``, one value per block; the steady step = its median over blocks 4 to the last; init = ``run_start`` -
 ``init_start`` (untimed: CUDA graphs, warm-up steps). The ten-step step: the median interval between ``train_loss`` events (every 10 steps) from
-step 30, intervals holding an evaluation left out. GPU telemetry (nvidia-smi every 5 s, Trillium's local time) over [run_start, run_stop], per GPU.
+step 30, intervals holding an evaluation left out. GPU telemetry (nvidia-smi every 5 s, Trillium's local time) over [run_start, run_stop], per GPU
+and per node (pooled over its GPUs).
 
 The step-time gap against Florida at 2 nodes (``flux_gap``, ``flux_gap_nodes``): job 1278802's five 200-step runs, one after the other on the
 same two nodes (``flux/dev/gap.1278802/<run>/``), and the earlier job 1277931 (``flux/dev/gap1/``, 150 steps, Nsight Systems on rank 0), against
@@ -28,7 +29,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-RUNS = {"1276503": "FLUX-01", "1276381": "FLUX step 4"}  # keyed on the job; the synthetic-data bring-ups are not read
+RUNS = {"1276503": "FLUX-01", "1278821": "FLUX-02", "1276381": "FLUX step 4"}  # keyed on the job; the synthetic-data bring-ups are not read
 FROM_BLOCK = 4  # steady step: blocks 4 to the last (the first three are slower: data workers starting, a slow third block)
 TEN_FROM = 30  # ten-step intervals from step 30 on (the 4-node bring-up's convention: data workers starting before)
 HOT_W = 950  # share of 5 s samples at or above this draw
@@ -85,7 +86,8 @@ def _read(path: Path) -> tuple[dict, list[dict]]:
 
 
 def _gpu(run_dir: Path, t0_ms: float, t1_ms: float) -> dict:
-    """Per GPU over [t0, t1]: mean power, share of samples at or above HOT_W, median SM clock; ranges over the GPUs."""
+    """Per GPU over [t0, t1]: mean power, share of samples at or above HOT_W, median SM clock; ranges over the GPUs, the GPU with the lowest
+    median clock; the same per node (``node_*``, pooled over the node's GPUs)."""
     frames = []
     for path in sorted(run_dir.glob("gpu-*.csv")):
         g = pd.read_csv(path, skipinitialspace=True)
@@ -99,9 +101,12 @@ def _gpu(run_dir: Path, t0_ms: float, t1_ms: float) -> dict:
     g = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if g.empty:
         return {}
-    per = g.groupby(["host", "gpu"]).agg(p=("power_w", "mean"), hot=("power_w", lambda x: 100 * (x >= HOT_W).mean()), sm=("sm_mhz", "median"))
+    agg = dict(p=("power_w", "mean"), hot=("power_w", lambda x: 100 * (x >= HOT_W).mean()), sm=("sm_mhz", "median"))
+    per, node = g.groupby(["host", "gpu"]).agg(**agg), g.groupby("host").agg(**agg)
     return {"gpu_nodes": g.host.nunique(), "gpus_seen": len(per), "power_lo": per.p.min(), "power_hi": per.p.max(), "power_w": g.power_w.mean(),
-            "hot_lo": per.hot.min(), "hot_hi": per.hot.max(), "sm_lo": per.sm.min(), "sm_hi": per.sm.max(), "sm_min": g.sm_mhz.min()}
+            "hot_lo": per.hot.min(), "hot_hi": per.hot.max(), "sm_lo": per.sm.min(), "sm_hi": per.sm.max(), "sm_min": g.sm_mhz.min(),
+            "sm_lo_host": per.sm.idxmin()[0], "sm_lo_gpu": int(per.sm.idxmin()[1]), "node_power_lo": node.p.min(), "node_power_hi": node.p.max(),
+            "node_hot_lo": node.hot.min(), "node_hot_hi": node.hot.max(), "node_sm_lo": node.sm.min(), "node_sm_hi": node.sm.max()}
 
 
 def _boot_median(x: list[float], n: int = 10000) -> tuple[float, float]:

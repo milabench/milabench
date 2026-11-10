@@ -1394,37 +1394,43 @@ def qw_fp4_loss(t):
     return fig
 
 
+FLUX_ROWS = (("FLUX-01", 8.0), ("FLUX-02", 13.0))  # one row per run to the target; the right panel's first sample count, millions
+
+
 def flux(t):
-    """FLUX.1 training (FLUX-01) against Florida's runs at the same node count: the evaluation loss at each block (every 262,144 samples) until
-    the target. Left: every block; right: the last blocks, where the runs reach the target. Florida's runs end where they reach it."""
+    """FLUX.1 training (FLUX-01 at 8 nodes, FLUX-02 at 16) against Florida's runs at the same node count: the evaluation loss at each block
+    (every 262,144 samples) until the target, one row per run. Left: every block; right: the last blocks, where the runs reach the target.
+    Florida's runs end where they reach it."""
     r, b = t.get("flux_runs", pd.DataFrame()), t.get("flux_blocks", pd.DataFrame())
     if r.empty or b.empty:
         return None
     ours = r[(r.source == "ours") & (r.job_state == "COMPLETED") & (r.status == "success")]
-    if ours.empty:
+    rows = [(ours[ours.request == name].iloc[0], zoom_from) for name, zoom_from in FLUX_ROWS if (ours.request == name).any()]
+    if not rows:
         return None
-    x = ours.iloc[0]
-    fl = r[(r.source == "florida") & (r.nodes == x.nodes)]
-    target = x.target
-    fig, axes = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 2.6))
-    for ax, zoom in zip(axes, (False, True)):
-        for i, run in enumerate(fl.run):
-            c = b[b.run == run]
-            ax.plot(c.samples / 1e6, c.accuracy, color=MUTED, lw=0.7, alpha=0.8, label=f"Florida, {len(fl)} runs" if i == 0 else None)
-            ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=2.5, color=MUTED)
-        c = b[b.run == x.run]
-        ax.plot(c.samples / 1e6, c.accuracy, color=SERIES[0], lw=1.1, label=f"ours, FLUX-01 (seed {int(x.seed)})")
-        ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=3, color=SERIES[0])
-        ax.axhline(target, color=CRITICAL, lw=0.7, ls="--")
-        ax.annotate(f"target {target}", (0.02, target), xycoords=("axes fraction", "data"), ha="left", va="bottom", fontsize=6, color=CRITICAL)
-        ax.set_xlabel("samples (millions)" + (", last blocks" if zoom else ""))
-        if zoom:
-            ax.set_xlim(8.0, c.samples.max() / 1e6 + 0.2)
-            ax.set_ylim(target - 0.002, target + 0.010)
-        else:
-            ax.set_ylabel("evaluation loss (MLPerf eval_accuracy)")
-            ax.legend(loc="upper right", fontsize=6, frameon=False)
-        style.finish(ax, trim=False)
+    fig, grid = plt.subplots(len(rows), 2, figsize=(TEXT_WIDTH, 2.6 * len(rows)), squeeze=False)
+    for (x, zoom_from), axes in zip(rows, grid):
+        fl = r[(r.source == "florida") & (r.nodes == x.nodes)]
+        target = x.target
+        for ax, zoom in zip(axes, (False, True)):
+            for i, run in enumerate(fl.run):
+                c = b[b.run == run]
+                ax.plot(c.samples / 1e6, c.accuracy, color=MUTED, lw=0.7, alpha=0.8, label=f"Florida, {len(fl)} runs" if i == 0 else None)
+                ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=2.5, color=MUTED)
+            c = b[b.run == x.run]
+            ax.plot(c.samples / 1e6, c.accuracy, color=SERIES[0], lw=1.1, label=f"ours, {x.request} (seed {int(x.seed)})")
+            ax.plot(c.samples.iloc[-1] / 1e6, c.accuracy.iloc[-1], "o", ms=3, color=SERIES[0])
+            ax.axhline(target, color=CRITICAL, lw=0.7, ls="--")
+            ax.annotate(f"target {target}", (0.02, target), xycoords=("axes fraction", "data"), ha="left", va="bottom", fontsize=6, color=CRITICAL)
+            ax.set_xlabel("samples (millions)" + (", last blocks" if zoom else ""))
+            if zoom:
+                ax.set_xlim(zoom_from, c.samples.max() / 1e6 + 0.2)
+                ax.set_ylim(target - 0.002, target + 0.010)
+            else:
+                ax.set_ylabel("evaluation loss (MLPerf eval_accuracy)")
+                ax.legend(loc="upper right", fontsize=6, frameon=False)
+                ax.set_title(f"{int(x.nodes)} nodes", fontsize=7)
+            style.finish(ax, trim=False)
     fig.tight_layout()
     return fig
 
