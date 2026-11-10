@@ -108,6 +108,8 @@ unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
 # length: ~1.6 s each (GPU idle, llm-lora at 1/4 of H100). Put it last: flash / memory efficient
 # attention are used, cuDNN only for inputs they do not support. Read by torch in every process.
 export TORCH_CUDNN_SDPA_DEPRIORITIZED=1
+# Report: drop the benchmarks that did not run (--select subset) instead of listing them as empty rows
+export MILABENCH_REPORT_LEAN=1
 
 . $MILABENCH_ENV/bin/activate
 

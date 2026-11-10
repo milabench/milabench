@@ -22,10 +22,10 @@ export PYTORCH_VERSION="2.15.0"
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
 export MILABENCH_ARGS=""
-# Subset run: the benchmarks without B200 numbers yet (faster, fewer files checked out).
+# Subset run: last failures (llama, vllm) + torchtune benchmarks to check the cuDNN SDPA fix.
 # The prepare step keeps the full suite (its MILABENCH_ARGS is part of the environment key).
 # Remove this line to run everything again.
-export MILABENCH_ARGS="--select dinov2-giant-single,diffusion-gpus,diffusion-single,llama,txt-to-image-single,vllm-dense-physics-gpus,vllm-moe-code-gpus,whisper-transcribe-single"
+export MILABENCH_ARGS="--select llama,vllm-dense-physics-gpus,vllm-moe-code-gpus,llm-lora-single,llm-lora-ddp-gpus,llm-lora-mp-gpus,llm-full-mp-gpus"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -93,6 +93,8 @@ unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
 # length: ~1.6 s each (GPU idle, llm-lora at 1/4 of H100). Put it last: flash / memory efficient
 # attention are used, cuDNN only for inputs they do not support. Read by torch in every process.
 export TORCH_CUDNN_SDPA_DEPRIORITIZED=1
+# Report: drop the benchmarks that did not run (--select subset) instead of listing them as empty rows
+export MILABENCH_REPORT_LEAN=1
 
 . $MILABENCH_ENV/bin/activate
 

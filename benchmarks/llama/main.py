@@ -20,15 +20,45 @@ WIKITEXT_CONFIG = "wikitext-103-v1"
 WIKITEXT_REVISION = "a79fad1"
 
 
+def load_cached_wikitext(args, err):
+    """Train split saved by prepare, read from the datasets cache (no network).
+
+    Offline, datasets looks for the cache folder of config '<config>-data_dir=<config>', but the
+    online load saved it as '<config>-<hash of data_dir>', so load_dataset never finds it.
+    """
+    import glob
+    from datasets import Dataset, DatasetDict, concatenate_datasets
+    from datasets import config as ds_config
+
+    namespace, name = args.dataset_name.split("/")
+    pattern = os.path.join(
+        ds_config.HF_DATASETS_CACHE, f"{namespace}___{name}",
+        f"{args.dataset_config_name}*", "*", "*", "*-train*.arrow"
+    )
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise RuntimeError(f"no cached dataset in {pattern}") from err
+    builds = {os.path.dirname(f) for f in files}
+    if len(builds) > 1:
+        raise RuntimeError(f"several cached builds: {sorted(builds)}") from err
+    print(f"offline: loading {len(files)} cached arrow files from {builds.pop()}")
+    return DatasetDict({"train": concatenate_datasets([Dataset.from_file(f) for f in files])})
+
+
 def load_wikitext(args):
     from datasets import load_dataset
 
-    return load_dataset(
-        args.dataset_name,
-        args.dataset_config_name,
-        revision=args.dataset_rev,
-        data_dir=args.dataset_config_name,
-    )
+    try:
+        return load_dataset(
+            args.dataset_name,
+            args.dataset_config_name,
+            revision=args.dataset_rev,
+            data_dir=args.dataset_config_name,
+        )
+    except Exception as err:
+        if args.prepare:
+            raise
+        return load_cached_wikitext(args, err)
 
 
 def available_models():
