@@ -16,8 +16,8 @@ while [ $# -gt 0 ] && [ "$1" != -- ]; do args+=("$1"); shift; done
 [ $# -gt 0 ] && shift
 mkdir -p "$F/slurm"
 # the real sbatch: the site's filter refuses above 25 nodes, the admins asked for this one (2026-11-05).
-# trig0125, trig0132 (2026-11-07) and trig0150 (2026-11-08) never: one GPU without NVLink each
+# trig0114 never (ops/BRIEF.md); trig0125, trig0132 and trig0150 are back (as the K3 launchers, 460370a6)
 /opt/slurm/bin/.sbatch --export=NONE --get-user-env --parsable --job-name="$name" --account=rrg-bengioy-ad \
     --partition=compute_b200_full_node --gpus-per-node=b200:8 --reservation=b200-friendly-users --qos=bump \
-    --nodes="$nodes" --time="$time" --output="$F/slurm/%x-%j.out" --exclude=trig0125,trig0132,trig0150 \
+    --nodes="$nodes" --time="$time" --output="$F/slurm/%x-%j.out" --exclude=trig0114 \
     "$@" "$S/scripts/trillium/flux/${SCRIPT:-flux.sub}" "SRC=$S" "${args[@]}"

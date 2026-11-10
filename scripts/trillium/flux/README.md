@@ -264,6 +264,47 @@ compliance checker SUCCESS.
   not affected. During the drains (trig0106 14:22-14:27, trig0101 14:37-14:42) the blocks ran 0.659-0.663 s; the
   slowest block, 0.670 s, is block 8 at 14:08, before them.
 
+## FLUX-02 (16 nodes, job 1278821)
+
+Experiment coordinator's run: trig[0131-0143,0146,0148,0152], 19:13:29-20:11:28, completed, code 8fbd199d (telemetry every
+5 s without the clock event reasons: the power cap's share is not known for this run); Florida's 16-node config (GBS
+4,096, LR 1.85e-4, no warm-up), seed 28319; MLPerf log `runs/nw-flux-run16.1278821/261109191338477344660_1.log`,
+compliance checker SUCCESS. The earlier FLUX-02, job 1277885, was cancelled at 11 blocks (17:10): not a result.
+- Result: `run_stop` success, time to train 50.86 min; 17,825,792 samples, 68 evaluation blocks, 4,352 steps; first
+  evaluation 0.9390, last 0.5860. Florida: 47.72 min (olympic mean; mean 47.79, 47.03-49.15), 65-68 blocks. Init 312 s
+  (Florida 187).
+- Florida at 68 blocks: one run, 49.15 min (their 0.7240 min per block gives 49.23). Ours is 3.5 % above that run.
+- Steady step: per-block `train_step_time`, blocks 4-68: 0.6706 s (0.6672-0.6738) against Florida's 0.6500
+  (0.6492-0.6510), +3.2 %; steps 30-200, ten-step intervals (88c0006d's convention): 0.6698 against 0.6431
+  (0.6421-0.6433 over their 10 runs), +4.2 %. First block 0.7277 (Florida 0.679-0.707). Validation 1.86 s (1.77).
+- The 3.1 min above Florida's 47.72, extra blocks first: 49.23 - 47.72 = 1.5 min for 68 against 65.875 blocks (their
+  olympic runs' mean), then 50.86 - 49.23 = 1.6 min for slower blocks. Speed first: 1.6 + 1.6.
+- Convergence against Florida's 10 runs at the same sample counts: above all of them at blocks 24, 28, 30, 31, 46, 48,
+  53, 56, 58 and 64 (10 runs each), 66 (8), 67 and 68 (1); below all at 16 and 21. So ours sat on the slow side of their
+  spread from block 24 on and reached the target at their largest count. The data order is the same for any seed
+  (88c0006d), so their spread is model-side; one run cannot tell whether ours is systematic.
+- Power and clocks per node over the training window (5 s samples): 919-934 W mean per GPU, >= 950 W in 16-33 % of
+  samples, SM clock median 1,650-1,762 MHz (lowest 1,417); no node apart.
+- Boards: trig0137 holds one `-000` GPU (`hw/allnodes/parts_by_node.tsv`), as FLUX-01's trig0107 did. trig0137's GPU 2
+  ran the node's lowest clock median, 1,650 MHz at 934 W; but trig0139, with no `-000` GPU, has one at 1,657 MHz (GPU 3),
+  and trig0107's GPU 6 ran 1,650 in FLUX-01. Likely or not, not separated.
+- trig0131 and trig0132 were drained at 19:57 for `slurmstepd` high CPU (HW-01): not affected; blocks 49-53
+  (19:56-19:59) ran 0.670-0.674 s, inside the run's steady range.
+
+## Scaling, 8 to 16 nodes (FLUX-01 against FLUX-02)
+
+| | 8 nodes | 16 nodes | 8 to 16 | Florida 8 to 16 |
+|---|---|---|---|---|
+| step, steps 30-200 (ten-step median) | 0.6588 s | 0.6698 s | +1.7 % | 0.6301 to 0.6431 s, +2.1 % |
+| step, blocks 4 to end (median) | 0.6603 s | 0.6706 s | +1.6 % | 0.6303 to 0.6500 s, +3.1 % |
+| time to train | 67.58 min | 50.86 min | x 0.753 | 60.08 to 47.72 min (olympic), x 0.794 |
+| blocks to target | 46 | 68 | | 40-45 to 65-68 |
+| time per block | 1.469 min | 0.748 min | x 0.509 | 1.402 to 0.724 min, x 0.516 |
+
+Our step grows a little less than Florida's from 8 to 16 nodes, and our time per block scales about as theirs. Our time to
+train scales better (x 0.753 against x 0.794) mostly through the blocks: the 8-node run needed 46 blocks, above their
+range, the 16-node run 68, at the top of theirs.
+
 ## Step-time gap against Florida (FLUX_BRIEF.md, last section)
 
 Florida's step on the same window and statistic as ours (steps 30-200, median of ten-step intervals between
