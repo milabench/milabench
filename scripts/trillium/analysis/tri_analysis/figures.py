@@ -1394,12 +1394,12 @@ def qw_fp4_loss(t):
     return fig
 
 
-FLUX_ROWS = (("FLUX-01", 8.0), ("FLUX-02", 13.0))  # one row per run to the target; the right panel's first sample count, millions
+FLUX_ROWS = (("FLUX-03", 6.0), ("FLUX-01", 8.0), ("FLUX-02", 13.0))  # one row per run to the target; the right panel's first sample count, millions
 
 
 def flux(t):
-    """FLUX.1 training (FLUX-01 at 8 nodes, FLUX-02 at 16) against Florida's runs at the same node count: the evaluation loss at each block
-    (every 262,144 samples) until the target, one row per run. Left: every block; right: the last blocks, where the runs reach the target.
+    """FLUX.1 training (FLUX-03 at 4 nodes, FLUX-01 at 8, FLUX-02 at 16) against Florida's runs at the same node count: the evaluation loss at
+    each block (every 262,144 samples) until the target, one row per run. Left: every block; right: the last blocks, where the runs reach the target.
     Florida's runs end where they reach it."""
     r, b = t.get("flux_runs", pd.DataFrame()), t.get("flux_blocks", pd.DataFrame())
     if r.empty or b.empty:
@@ -1424,7 +1424,7 @@ def flux(t):
             ax.annotate(f"target {target}", (0.02, target), xycoords=("axes fraction", "data"), ha="left", va="bottom", fontsize=6, color=CRITICAL)
             ax.set_xlabel("samples (millions)" + (", last blocks" if zoom else ""))
             if zoom:
-                ax.set_xlim(zoom_from, c.samples.max() / 1e6 + 0.2)
+                ax.set_xlim(zoom_from, max(c.samples.max(), b[b.run.isin(set(fl.run))].samples.max()) / 1e6 + 0.2)  # to the last run's end
                 ax.set_ylim(target - 0.002, target + 0.010)
             else:
                 ax.set_ylabel("evaluation loss (MLPerf eval_accuracy)")

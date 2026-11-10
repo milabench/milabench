@@ -1,16 +1,16 @@
 """FLUX.1 training, MLPerf Training v5.1, with the University of Florida's submission code (FLUX-01: job 1276503, 8 nodes; FLUX-02: job 1278821,
-16 nodes; one run each to the quality target), against Florida's 10 published runs at the same node count, in tables of their own (``flux_*``). Also read: the 4-node real-data bring-up
-(job 1276381, 300 steps, for the step from 4 to 8 nodes) and Florida's 10 runs at 4 nodes. Ours from ``flux/runs/<run>/`` (the MLPerf log
-``*_1.log`` and the nvidia-smi telemetry ``gpu-<host>.csv``; collect, from ``$SCRATCH/trillium/new/flux/runs/``); Florida's from
-``flux/florida/n<nodes>/result_<i>.txt`` (public, mlcommons/training_results_v5.1, fetched by hand: see its README). Outside ``runs/``: the
-campaign's tables never see them.
+16 nodes; FLUX-03: job 1279253, 4 nodes; one run each to the quality target), against Florida's 10 published runs at the same node count, in
+tables of their own (``flux_*``). Also read: the 4-node real-data bring-up (job 1276381, 300 steps, for the step from 4 to 8 nodes) and
+Florida's 10 runs at 4 nodes. Ours from ``flux/runs/<run>/`` (the MLPerf log ``*_1.log`` and the nvidia-smi telemetry ``gpu-<host>.csv``;
+collect, from ``$SCRATCH/trillium/new/flux/runs/``); Florida's from ``flux/florida/n<nodes>/result_<i>.txt`` (public,
+mlcommons/training_results_v5.1, fetched by hand: see its README). Outside ``runs/``: the campaign's tables never see them.
 
 From each log's ``:::MLLOG`` lines (rank 0 only): time to train = ``run_stop`` - ``run_start`` (MLPerf's score is the olympic mean of 10: drop
 the best and the worst); samples and status from ``run_stop``; one block per ``eval_accuracy`` (an evaluation every 262,144 samples);
 ``tracked_stats.train_step_time``, one value per block; the steady step = its median over blocks 4 to the last; init = ``run_start`` -
 ``init_start`` (untimed: CUDA graphs, warm-up steps). The ten-step step: the median interval between ``train_loss`` events (every 10 steps) from
-step 30, intervals holding an evaluation left out. GPU telemetry (nvidia-smi every 5 s, Trillium's local time) over [run_start, run_stop], per GPU
-and per node (pooled over its GPUs).
+step 30, intervals holding an evaluation left out; over steps 30-200 (``ten_gap_s``), also the bootstrap 95 % range of its median. GPU
+telemetry (nvidia-smi every 5 s, Trillium's local time) over [run_start, run_stop], per GPU and per node (pooled over its GPUs).
 
 The step-time gap against Florida at 2 nodes (``flux_gap``, ``flux_gap_nodes``): job 1278802's five 200-step runs, one after the other on the
 same two nodes (``flux/dev/gap.1278802/<run>/``), and the earlier job 1277931 (``flux/dev/gap1/``, 150 steps, Nsight Systems on rank 0), against
@@ -29,7 +29,8 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-RUNS = {"1276503": "FLUX-01", "1278821": "FLUX-02", "1276381": "FLUX step 4"}  # keyed on the job; the synthetic-data bring-ups are not read
+RUNS = {"1276503": "FLUX-01", "1278821": "FLUX-02", "1279253": "FLUX-03",
+        "1276381": "FLUX step 4"}  # keyed on the job; the synthetic-data bring-ups are not read
 FROM_BLOCK = 4  # steady step: blocks 4 to the last (the first three are slower: data workers starting, a slow third block)
 TEN_FROM = 30  # ten-step intervals from step 30 on (the 4-node bring-up's convention: data workers starting before)
 HOT_W = 950  # share of 5 s samples at or above this draw
@@ -79,6 +80,7 @@ def _read(path: Path) -> tuple[dict, list[dict]]:
            "steady_hi": max(step[FROM_BLOCK - 1:]) if len(step) >= FROM_BLOCK else None,
            "ten_s": median(ten) if ten else None, "ten_n": len(ten), "val_s": median(val) if val else None,
            "ten_gap_s": median(ten_gap) if ten_gap else None, "ten_gap_n": len(ten_gap),
+           **dict(zip(("ten_gap_lo", "ten_gap_hi"), _boot_median(ten_gap) if ten_gap else (None, None))),  # bootstrap 95 % range of that median
            "run_start_ms": t0, "run_stop_ms": t1}
     blocks = [{"block": i + 1, "samples": e["metadata"]["samples_count"], "accuracy": e["value"],
                "step_s": step[i] if i < len(step) else None, "val_s": val[i] if i < len(val) else None} for i, e in enumerate(acc)]
