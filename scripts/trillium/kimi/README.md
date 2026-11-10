@@ -1042,46 +1042,59 @@ python3 -I src/scripts/trillium/kimi/stall_gaps.py runs/kimi-vllm-4n-tp8pp4-stal
 lowest SM clock and clock event reasons, GPM SM activity, InfiniBand GB/s, CPU), to set beside a stall.
 
 **Job 1278355**, `trig[0115-0118]` (PP0 `trig0115`, PP1 `trig0117`, PP2 `trig0118`, PP3 `trig0116`), 2026-11-09
-18:00:53-18:50:10 (49:17), `1a92add0`, COMPLETED, milabench exit 0 after 2934 s, all four nodes "GPUs free", none
-drained; nodemon closed cleanly on all four. Weights 488-888 s (cold), autotune as K3-INF-02, engine ready at 18:43:30.
+18:00:53-18:50:10 (49:17), `1a92add0`, COMPLETED, milabench exit 0 after 2934 s, all four nodes "GPUs free"; nodemon
+closed cleanly on all four. Weights 488-888 s (cold); "init engine (profile, create kv cache, warmup model) took 1353.23
+s", ended at 18:42:56.
 
-| pass | duration s | stalls s (`stall_gaps.py`, over 1 s) | output tok/s (derived: requests x 256 / duration) |
+| pass | duration s | stalls s (`stall_gaps.py`, over 1 s) | output tok/s (the client's `output_throughput`) |
 |---|---|---|---|
 | warmup | 22.5 | 18.77 | |
-| conc64-1 | 23.3 | 7.94 | 1406 |
-| conc64-2 | 14.8 | none | 2214 |
-| conc128-1 | 22.2 | none | 2952 |
-| conc128-2 | 22.7 | none | 2887 |
-| conc256-1 | 52.2 | 8.49 + 8.51 | 2511 |
-| conc256-2 | 37.1 | none | 3533 |
+| conc64-1 | 23.3 | 7.94 | 1408 |
+| conc64-2 | 14.8 | none | 2208 |
+| conc128-1 | 22.2 | none | 2954 |
+| conc128-2 | 22.7 | none | 2884 |
+| conc256-1 | 52.2 | 8.49 + 8.51 | 2509 |
+| conc256-2 | 37.1 | none | 3528 |
 
-The stalls reproduce, the same size as K3-INF-02's (conc256 8.51 + 8.46 there), in the first pass of each pair only;
-conc128 did not stall after two conc64 passes. Without the stall conc64 on 4 nodes gives 2214 tok/s against 2 nodes'
-2003 (K3-INF-01): K3-INF-02's conc64 "halving" (1112) was its 14.2-s stall (one run each, other nodes).
+The stalls reproduce, in the first pass of each pair only: conc256 the same size as K3-INF-02's (8.49 + 8.51 against
+8.51 + 8.46 s), conc64 shorter (7.94 against 14.18 s); conc128 did not stall after two conc64 passes. Without the stall
+conc64 on 4 nodes gives 2208 tok/s against 2 nodes' 2003 (+10%, K3-INF-01): K3-INF-02's conc64 "halving" (1112) was its
+14.2-s stall (one run each, other nodes).
 
 What lines up with each stall:
 - The engine (one line per batch): each stall is one batch, 7,947 ms (1 context request of 16 tokens + 11 decodes),
   8,486 and 8,509 ms (17 context requests, 16,352 and 16,336 tokens, + 32 and 48 decodes), 18,769 ms in the warm-up
-  (12 + 1), against 0.66 s for every other batch of 16k tokens. A batch of the same composition ran in 0.66 s two
-  batches before each conc256 stall (iterations 9866, 9870): the token and request counts alone do not set it off.
+  (12 + 1), against 0.655-0.677 s for the other batches of 16k tokens (one at 0.756 s, iteration 66). A batch of the
+  same composition ran in 0.66 s two batches before each conc256 stall (iterations 9866, 9870): the token and request
+  counts alone do not set it off. One more, before the warm-up: the bench's single-prompt test run (`Iteration(0)`,
+  1,024 tokens) took 11,775 ms (18:43:28-40), with the JIT monitor logging CuTeDSL `FlashAttentionForwardSm100`
+  compiles stage by stage, PP0 at :28, PP2 at :34, PP3 at :37: the same pattern, logged.
 - The nodes (nodemon, 1 s): at each stall's start all 32 GPUs go idle (util 0, idle power, 2.1 kW per node) for 1.5-4
   s. Then the stages wake one after the other in pipeline order, PP0, PP1, PP2, PP3, 2 s apart (4-5 s in the warm-up):
   conc64-1 at 18:44:46, :48, :50, work again at :52; conc256-1 at 18:47:52, :54, :56, :58 and 18:48:02, :04, :06, :08. From
   its turn on, a stage's 8 GPUs show 100% utilization at idle power with 1-4% SM activity (99% on PP0 in conc256-1),
   waiting, until the stall ends; the last stage stays idle until then. The CPU of a stage goes from 0.2-0.4% to 5-10% at
-  its turn (`trig0116`). No InfiniBand traffic in the stalls; SM clocks at 1965 MHz, no clock event reason but the power
-  cap bit (0x4) that busy GPUs show; host memory flat, no OOM kill; no kernel log line during the passes (`dmesg`: only
-  `knvlinkSendInbandData` at 18:05 and at the teardown).
-- The logs: nothing in any stall window. No JIT-monitor line (its last, Triton `layer_norm_gated_fwd_kernel`, at
-  18:44:36, 7 s before conc64-1's stall), no Triton autotune line (`TRITON_PRINT_AUTOTUNING=1`), no warning. vLLM does
-  not torch.compile this model (compilation mode NONE).
+  its turn (`trig0116`). InfiniBand about 0 in the stalls but for one second at each handoff, in pipeline order
+  (conc64-1 0.05-0.11 GB/s at :47, :49, :51; conc256-1 0.4-1.7 GB/s; warm-up 0.5-1.1 GB/s): each stage receives the
+  batch about 2 s before it runs it (conc256-1: PP1 receives at 18:47:51, its GPUs sit at 3-7% SM activity, it sends at
+  :53). SM clocks at 1965 MHz, dropping to 1635-1717 MHz with the power-cap bit (0x4) in the second each stage runs, no
+  other clock event reason; host memory flat, no OOM kill; no kernel log line during the passes (`dmesg`: 24 lines per
+  node, all `knvlinkSendInbandData`, at 18:05, two at 18:20 and at the teardown).
+- The logs: nothing in conc64-1's and conc256-1's stall windows: no JIT-monitor line (its last, Triton
+  `layer_norm_gated_fwd_kernel`, at 18:44:36, 7 s before conc64-1's stall), no Triton autotune line
+  (`TRITON_PRINT_AUTOTUNING=1`), no warning. In the warm-up's, between `Iteration(72)` at 18:43:43 and `Iteration(73)` at
+  18:44:01, two CuTeDSL `aux_data` warnings for a new `FlashAttentionForwardSm100` signature, from PP0 and PP2 (server
+  `.data` lines 918 and 922; PP3's copy is printed only at the teardown, line 17136): an FA4 compile in that stall,
+  which supports the FA4 lead (offline checks, below). vLLM does not torch.compile this model (compilation mode NONE).
 
-Inferred, not shown: a host-side cost that each pipeline stage pays in turn, about 2 s of CPU work with its GPUs idle
-before it runs the batch, the next stage starting only once it receives the batch, so the stall is about PP x 2 s (PP4
-7.9-8.5 s, PP2 4.4-4.6 s in K3-INF-01), paid once and not again in the repeated passes. Ruled out for these stalls: GPU
-compute, clocks and power (idle GPUs, no throttle), the fabric (no IB traffic, no link event), host memory, and the JITs
-vLLM's monitor watches. The host work itself is not determined: no log names it. Candidates, not checked: a JIT or
-lazily built object the monitor does not watch (kernel loading, CUDA graph or kernel-plan builds).
+Measured: each stage receives the batch (the IB second at its handoff) about 2 s before it runs it, with its GPUs idle
+and 8 cores busy meanwhile (offline checks, below). Inferred, not shown: a one-time compile per new kernel signature in
+each TP rank, paid by the stages in turn; it can come more than once per pass (conc256-1 stalled twice) and not again in
+the repeated passes. About 2 s per stage fits conc64-1 and conc256-1 only: the warm-up is 4 x 4-5 s, and K3-INF-02's
+10.94 and 14.18 s, the bring-up's 17.82 s and K3-INF-01's 8.64 s (ctx32k-c16) do not fit it. Ruled out for these stalls:
+GPU compute, clocks and power (idle GPUs, no throttle but the power-cap bit), the fabric (IB only at the handoffs, no
+link event), host memory. Candidates: a recompile of a kernel the JIT monitor has already logged once in that process (it
+logs a kernel name once), or work it does not watch (kernel loading, CUDA graph or kernel-plan builds); FA4 first.
 
 **Offline checks after job 1278355 (2026-11-09, no job).**
 - The CPU: nodemon's `busy_cores` counts 8 busy cores on a stage during its turn in all three stalls (0 before it, about
@@ -1102,7 +1115,7 @@ lazily built object the monitor does not watch (kernel loading, CUDA graph or ke
   and `seqlen_k_per_split`, the static-persistent scheduler (`max_m_blocks_leq_one`: every query within one tile), the
   batch-search aids (more than 256 sequences), tile and stage sizes. vLLM's start-up JIT warm-up compiles FA4's MLA
   prefill at batch size 1 only ("Batch is not a current FA4 MLA-prefill key field", `v1/attention/backends/mla/
-  prefill/flash_attn.py:43-51`). So two batches with the same token and request counts but other sequence lengths can
+  prefill/flash_attn.py:44-51`). So two batches with the same token and request counts but other sequence lengths can
   take different variants, a new one compiled once per worker (8 per stage) and logged by nobody. Not shown: no log names
   the work in the stall windows, and which key field changed between iterations 9866 and 9868 is not known.
 
