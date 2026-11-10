@@ -318,24 +318,28 @@ compliance checker SUCCESS.
 - Florida at 34 blocks: four runs, 93.10-93.23 min (their 2.7382 min per block gives 93.10). Ours is 5.2-5.3 % above.
 - Steady step: per-block `train_step_time`, blocks 4-34: 0.6504 s (0.6485-0.6524) against Florida's 0.6165
   (0.6159-0.6169), +5.5 %; steps 30-200, ten-step intervals: 0.6526 against 0.6159 (0.6150-0.6168), +6.0 %. Neither step
-  drifts much within a run (Florida 0.6160 at blocks 2-4, 0.6165 at 11-34; ours 0.650-0.652, then 0.6502). First block
+  drifts much within a run (Florida 0.6160 at blocks 2-4, 0.6165 at 11-34; ours 0.650-0.652, then 0.6502). At 4 nodes
+  steps 30-200 all fall inside block 1: our window is 0.3 % above our block median (0.6526 against 0.6504), Florida's
+  0.1 % below theirs (0.6159 against 0.6165); that 0.3 % is inside the window's noise (-0.52 to +0.29 %). First block
   0.6656 (Florida 0.622-0.634). Validation 6.36 s (6.26).
 - The 4.6 min above Florida's 93.46, extra blocks first: 93.10 - 93.46 = -0.36 min (34 blocks against 34.125, their
-  olympic runs' mean), then 98.07 - 93.10 = 4.98 min for slower blocks. Speed first, as FLUX-01's split (the speed
-  priced on Florida's 34.125 blocks, the blocks at our 2.884 min per block): 4.97 min for the speed, -0.36 for the
+  olympic runs' mean), then 98.07 - 93.10 = 4.97 min for slower blocks. Speed first, as FLUX-01's split (the speed
+  priced on Florida's 34.125 blocks, the blocks at our 2.885 min per block): 4.97 min for the speed, -0.36 for the
   blocks. So at 4 nodes all of the gap is speed.
 - Convergence against Florida's 10 runs at the same sample counts: above all of them at blocks 17, 19, 20, 24, 30, 31, 32
-  and 33 (10 runs each), by 0.00003-0.00053; at 24 and 31 the margin is 0.00003-0.00005, equal to their highest at 4
-  decimals; below all of them at no block. It reached the target at 34 blocks, inside their 33-36.
+  and 33 (10 runs each), by 0.00003-0.00053; at 24 and 31 the margin is 0.00003-0.00006 (block 31: 0.000055), equal to
+  their highest at 4 decimals; below all of them at no block. It reached the target at 34 blocks, inside their 33-36.
 - Power and clocks per GPU (not per node) over the training window (5 s samples): 925-935 W mean, >= 950 W in 20-32 %
   of samples, SM clock median 1,665-1,747 MHz (lowest 1,447). Per node: 929-932 W, 24-28 %, 1,702-1,725 MHz; no node
   apart.
 - Boards: 0 `-000` GPUs on all four nodes (`hw/allnodes/parts_by_node.tsv`). Address subnets 36 (trig0133, 0134, 0139)
   and 37 (trig0140).
-- Events: `sacctmgr show event` over the job's window has only DRAIN on trig0133 and trig0139, 21:57:14-21:57:41,
-  `health.chk.slurmstepd..high.cpu.root.process`, after `run_stop` (21:56:23) and the job's end (21:57:09); sacctmgr
-  records such drains at job end, and RUNS.md:206 found none at 21:58:29. The last blocks ran 0.649-0.650 s.
-- Not checked: whether our data shards hold the same content as Florida's.
+- Drains, not affecting the run: trig0139 drained from 20:57:52 (RUNS.md:202, `slurmstepd` high CPU) to 21:57:41;
+  `sacctmgr show event` holds only the DRAIN record written at job end, 21:57:14-21:57:41
+  (`health.chk.slurmstepd..high.cpu.root.process`), on trig0133 and trig0139. Blocks 14-34 (from 20:58:40) ran
+  0.6485-0.6524 s, the run's whole steady range. When trig0133's drain started is not known: not in RUNS.md, and sacctmgr
+  records it only at job end.
+- Not checked: step variation between node sets; whether our data shards hold the same content as Florida's.
 
 ## Scaling, 4 to 8 to 16 nodes (FLUX-03, FLUX-01, FLUX-02)
 
@@ -347,13 +351,20 @@ compliance checker SUCCESS.
 | against Florida | +6.0 % | +4.5 % | +4.2 % | |
 | time to train | 98.07 min | 67.58 min | 50.86 min | 93.46 / 60.08 / 47.72 min (olympic) |
 | blocks to target | 34 | 46 | 68 | 33-36 / 40-45 / 65-68 |
-| time per block | 2.884 min | 1.469 min | 0.748 min | 2.738 / 1.402 / 0.724 min |
+| time per block | 2.885 min | 1.469 min | 0.748 min | 2.738 / 1.402 / 0.724 min |
 
 - Step growth with nodes, blocks convention: ours +1.5 % (4 to 8) and +1.6 % (8 to 16), Florida's +2.2 % and +3.1 %.
   On steps 30-200 ours +0.9 % and +1.7 %, Florida's +2.3 % and +2.1 %; at 16 nodes their window misses their within-run
-  drift (FLUX-02, above), and one run's noise is +-0.3-0.7 %. So our step's gap to Florida narrows with the node count,
-  from +5.5 % at 4 nodes to +3.2 % at 16 (blocks convention), and our step grows less than theirs from 4 to 16 nodes
-  (+3.1 % against +5.4 %).
+  drift (FLUX-02, above), and one run's noise there is +-0.3-0.7 %.
+- On the blocks convention our step's gap to Florida narrows from 4 to 16 nodes by 2.3 points: +5.50, +4.76, +3.18 %.
+  Each change is larger than one run's bootstrap noise (+-0.05-0.12 %) and Florida's run-to-run spread (0.15-0.29 %), but
+  each size is one run on one set of nodes, and step variation between node sets is not measured: two 4-node sets differ
+  by 0.4 % on early windows (1276381 0.650 s, FLUX-03 0.6526). Part of the 8 to 16 narrowing is Florida's own step rising
+  within their 16-node runs. On steps 30-200 the gap narrows only 0.4 points from 8 to 16 nodes (4.55 to 4.15 %), inside
+  that window's noise. Our step grows less than theirs from 4 to 16 nodes on blocks (+3.1 % against +5.4 %), with the same
+  limits.
+- Observed, cause not determined: all three runs sit above all of Florida's runs at several late blocks, FLUX-01 at
+  38-45, FLUX-02 at 46-68, FLUX-03 at 30-33.
 - Time to train: our ratios x 0.689 (8/4), x 0.753 (16/8) and x 0.519 (16/4) fall inside Florida's own over all pairs
   of their runs: x 0.569-0.699 (median 0.637), x 0.745-0.876 (0.808), x 0.477-0.544 (0.513). The differences from their
   olympic ratios are the block counts (34, 46, 68 against 33-36, 40-45, 65-68), which depend on the seed.
