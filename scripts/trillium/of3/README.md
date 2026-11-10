@@ -343,7 +343,7 @@ Setup, from job.sbatch's start print and the run logs: 8 NVIDIA H100 80GB HBM3 (
 Differences from the Trillium runs besides the GPU: 2 x 56 Sapphire Rapids cores (feature `sapphire`) against 2 x 48,
 busy cores at 4,000 MHz median against 3,200; Nibi's `/scratch` (an NFS mount) for code, venv and data; the same
 package versions, subset, seed and 12 cores per rank. The first run took 1,066 s, 13 min of it before training
-started (cold imports and caches on Nibi's scratch; 23 s from Lightning's start to step 1).
+started (not measured; likely cold imports and caches on Nibi's scratch; 23 s from Lightning's start to step 1).
 
 Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step period beside it; B200 = 1273887
 (trig0145), the same samples at every step:
@@ -355,9 +355,10 @@ Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step pe
 | ds | job 2 | | 0.2166 | |
 
 - cuEquivariance + TF32 against published on the H100: 0.638 of the step (B200: 0.817). The B200's lead shrinks
-  from 32 % to 3 % with the fast kernels: the published step's small memory-bound kernels and FP32 SIMT GEMMs run
-  faster on the B200, and once cuEquivariance removes most of them, the step is held by the host's kernel launches
-  (B200 profile), where Nibi's CPUs run at 4.0 GHz against 3.2 (inferred, not measured: the H100 profile is in job 2).
+  from 32 % to 3 % with the fast kernels. Inferred, not measured (the H100 profile is in job 2): the published step's
+  small memory-bound kernels and FP32 SIMT GEMMs run faster on the B200, and once cuEquivariance removes most of them,
+  the step is held by the host's kernel launches (as in the B200 profile), where Nibi's CPUs run at 4.0 GHz against
+  3.2.
 - Same numerics: loss against B200 at the same steps, mean absolute 0.012 over 40 steps (both entries; largest
   0.086). Peak 31.5 GiB allocated, 33.3-33.4 reserved, as on B200.
 - Data loader: gap 2.4 % (published) and 3.3 % (cueq+tf32) of the time, mean over ranks (B200: 3.5, 4.8 %);
