@@ -18,6 +18,8 @@ root = os.path.dirname(__file__)
 WIKITEXT_DATASET = "Milabench/wikitext"
 WIKITEXT_CONFIG = "wikitext-103-v1"
 WIKITEXT_REVISION = "a79fad1"
+# LLAMA official tokenizer is gated, this one is the same and public
+TOKENIZER = "hf-internal-testing/llama-tokenizer"
 
 
 def load_cached_wikitext(args, err):
@@ -110,6 +112,9 @@ def huggingface_main(args, model, config):
     dataset = load_wikitext(args)
 
     if args.prepare:
+        # The run loads the tokenizer offline: it must be in the hub cache as well
+        println("Tokenizer")
+        LlamaTokenizerFast.from_pretrained(TOKENIZER)
         if args.pretrained:
             # The run loads the weights offline: they must be in the hub cache.
             # safetensors only, the repo also has the same weights as .bin
@@ -125,13 +130,17 @@ def huggingface_main(args, model, config):
 
     println("Tokenizer")
     # LLAMA tokenizer official tokenizer is hidden behind a login
-    tokenizer = WrappedTokenizer(
-        LlamaTokenizerFast.from_pretrained(
-            "hf-internal-testing/llama-tokenizer",
-            model_max_length=256,
-            truncation=True,
-        )
+    hf_tokenizer = LlamaTokenizerFast.from_pretrained(
+        TOKENIZER,
+        model_max_length=256,
+        truncation=True,
     )
+    # Offline, transformers 5 does not fail when the tokenizer files are missing: it returns an
+    # empty tokenizer (3 tokens) that encodes every prompt to nothing, and the model then generates
+    # from an empty prompt (slow, meaningless rate).
+    if len(hf_tokenizer) < 1000:
+        raise RuntimeError(f"{TOKENIZER} has {len(hf_tokenizer)} tokens: its files are missing from the cache (prepare)")
+    tokenizer = WrappedTokenizer(hf_tokenizer)
     
     # We do not download LLAMA because it takes too long
     # we just instantiate an untrained one

@@ -29,6 +29,9 @@ export PYTORCH_VERSION="2.15.0"
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
 export MILABENCH_ARGS=""
+# 1: do not run `milabench install` (the venv was installed by hand, e.g. when a package index is
+# down); the venv check, the fix-ups and the archive refresh still run. Not part of the cache key.
+export MILABENCH_SKIP_INSTALL=1
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -205,7 +208,9 @@ install_git_deps() {
 # The first pass creates the venv and installs everything else, the git dependencies fail to build;
 # they are then installed from the local cache and the second pass completes the install.
 INSTALL=(milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.prepare.yaml $MILABENCH_ARGS)
-if ! "${INSTALL[@]}"; then
+if [ -n "$MILABENCH_SKIP_INSTALL" ]; then
+    echo "MILABENCH_SKIP_INSTALL set: milabench install skipped, using the venv as it is"
+elif ! "${INSTALL[@]}"; then
     echo "install failed, installing the git dependencies from a local cache and retrying"
     install_git_deps
     # Same cache for the retry: uv still needs the git dependencies' metadata to resolve, even
