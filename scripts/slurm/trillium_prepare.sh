@@ -208,7 +208,10 @@ INSTALL=(milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION t
 if ! "${INSTALL[@]}"; then
     echo "install failed, installing the git dependencies from a local cache and retrying"
     install_git_deps
-    "${INSTALL[@]}"
+    # Same cache for the retry: uv still needs the git dependencies' metadata to resolve, even
+    # when they are installed, and rebuilding it in the scratch cache fails the same way.
+    # Most packages are installed by the first pass, so little is downloaded to the RAM disk.
+    UV_CACHE_DIR=$GIT_UV_CACHE UV_LINK_MODE=copy "${INSTALL[@]}"
 fi
 # milabench install can exit 0 when a benchmark's install crashed: check the venv is there
 if ! $BENCHMARK_VENV/bin/python -c "import torch, benchmate, voir"; then

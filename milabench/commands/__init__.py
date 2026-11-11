@@ -437,10 +437,10 @@ class WorkingDir(WrapperCommand):
     This wrapper is usefull for commands that executes remotely or inside a container where
     the environment or the working directory might be changed by the SSH command or the container.
 
-    ``env -`` starts from a clean environment, so GPU placement vars such as
-    ``CUDA_VISIBLE_DEVICES`` (set by ``PerGPU`` on the pack *after* this
-    wrapper is constructed) must be read from the current pack at argv time,
-    not baked in ``__init__``.
+    The inherited environment is kept; only the variables milabench sets are
+    passed explicitly. GPU placement vars such as ``CUDA_VISIBLE_DEVICES``
+    (set by ``PerGPU`` on the pack *after* this wrapper is constructed) must be
+    read from the current pack at argv time, not baked in ``__init__``.
     """
     #  Maybe we should wrap ALL the commands with it so it can be invariant for how it is executed 
     #  and we don't have to worry about it
@@ -472,21 +472,29 @@ class WorkingDir(WrapperCommand):
         if nccl_ifname:
             _merge_env(env, {"NCCL_SOCKET_IFNAME": nccl_ifname}, source="network.nccl_ifname")
 
-        # `env -` clears the process environment, so re-inject system.env
-        # (resolved at system-config load; also applied via pack.make_env).
+        # System env (resolved at system-config load; also applied via pack.make_env).
         _merge_env(env, (pack.config.get("system") or {}).get("env"), source="system.env")
 
         # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
         _merge_env(env, pack.config.get("env"), source="pack.env")
 
-        # `env -` clears everything the pack relies on (MILABENCH_DIR_*,
-        # MILABENCH_CONFIG, venv PATH, pack.make_env() ...): fill the gaps,
+        # Variables the pack relies on (MILABENCH_DIR_*, MILABENCH_CONFIG, ...),
         # without overriding anything set above.
-        for key, value in pack.full_env().items():
+        for key, value in pack.make_env().items():
             env.setdefault(str(key), str(value))
 
-        # `env -` also drops the DATA_FD voir's launcher sets for use_stdout();
-        # without it voir falls back to fd 3 (EBADF). Smuggle through stdout.
+        # The nox session env is a full copy of os.environ: only forward what
+        # the venv changes (VIRTUAL_ENV, PATH), not the whole inherited env.
+        session_env = pack.core._nox_session.env
+        for key in ("VIRTUAL_ENV", "PATH"):
+            if key in session_env:
+                env.setdefault(key, str(session_env[key]))
+        for key, value in session_env.items():
+            if os.environ.get(key) != value:
+                env.setdefault(str(key), str(value))
+
+        # DATA_FD for use_stdout(); without it voir falls back to fd 3 (EBADF).
+        # Smuggle through stdout.
         if self.options.get("use_stdout"):
             env.setdefault("DATA_FD", "1")
             env.setdefault("PYTHONUNBUFFERED", "1")
@@ -505,7 +513,6 @@ class WorkingDir(WrapperCommand):
             "env",
             "-C",
             str(pack.working_directory),
-            "-",
             *(f"{k}={v}" for k, v in env.items()),
             *extras,
         ]
