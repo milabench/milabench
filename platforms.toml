@@ -64,11 +64,12 @@ requires = ["nvidia-ml-py"]
 index-url = "https://pypi.org/simple"
 extra-index-url = [
     "https://download.pytorch.org/whl/cu{cuda}",
-    "https://flashinfer.ai/whl/cu{cuda}",
-    # flashinfer-cubin >= 0.7 (arch independent) is only published here, not on PyPI
-    "https://flashinfer.ai/whl",
 ]
 find-links = [
+    # flashinfer-cubin >= 0.7 and flashinfer-jit-cache(-sm*) are not on PyPI. Taken from the GitHub
+    # release, not the flashinfer.ai index: with unsafe-best-match uv queries an extra index for
+    # every package, and flashinfer.ai answers 429 Too Many Requests (failed installs)
+    "https://github.com/flashinfer-ai/flashinfer/releases/expanded_assets/v0.7.0.post1",
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
     "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
     "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html",
@@ -266,7 +267,7 @@ pydantic = ">=2,<3"
 # milabench wheel for pytorch.org torch 2.15 + cu132 (no official vLLM targets torch 2.15:
 # 0.32.0 pins 2.13; built with its torch pin stripped, same as torch2.15-rocm10.0)
 # flashinfer-jit-cache has no cu132 build: the cu130 one runs on CUDA 13.2 (minor version compatibility)
-"2.15.0,132" = { version = "0.32.0+cu132", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.15-cu132", extra-index-url = "https://flashinfer.ai/whl/cu130" }
+"2.15.0,132" = { version = "0.32.0+cu132", find-links = "https://github.com/milabench/wheels/releases/expanded_assets/torch2.15-cu132" }
 
 [vllm.cpu]
 # backend_version is the "cpu" placeholder from [vars] (always "0").
