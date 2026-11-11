@@ -22,10 +22,10 @@ export PYTORCH_VERSION="2.15.0"
 export CONFIG_PATH=config/all.yaml
 # extra milabench arguments, e.g. --select <bench>,<bench> for a subset
 export MILABENCH_ARGS=""
-# Subset run: last failures (llama, vllm) + torchtune benchmarks to check the cuDNN SDPA fix.
+# Subset run: llama (weights now in the archive) + vjepa (first run with the cuDNN SDPA fix).
 # The prepare step keeps the full suite (its MILABENCH_ARGS is part of the environment key).
 # Remove this line to run everything again.
-export MILABENCH_ARGS="--select llama,vllm-dense-physics-gpus,vllm-moe-code-gpus,llm-lora-single,llm-lora-ddp-gpus,llm-lora-mp-gpus,llm-full-mp-gpus"
+export MILABENCH_ARGS="--select llama,vjepa-single,vjepa-gpus"
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"

@@ -110,6 +110,16 @@ def huggingface_main(args, model, config):
     dataset = load_wikitext(args)
 
     if args.prepare:
+        if args.pretrained:
+            # The run loads the weights offline: they must be in the hub cache.
+            # safetensors only, the repo also has the same weights as .bin
+            from huggingface_hub import snapshot_download
+
+            println("Weights")
+            snapshot_download(
+                config["_name_or_path"],
+                allow_patterns=["*.json", "*.safetensors"],
+            )
         println("Prepare complete")
         return 0
 

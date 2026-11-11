@@ -227,6 +227,12 @@ if [ ! -f "$CHERRYBIN_DB" ]; then
     exit 1
 fi
 
+# Refresh the archive for the benches whose prepare changed (code folder or argv, recorded in
+# $CHERRYBIN_DB.fingerprints.json): prepared here (data mover, has internet), written to the
+# archive one at a time and deleted (--clean). Unchanged benches are skipped, so it is quick.
+milabench cherrybin update --only-stale --clean --shared "$CHERRYBIN_DB" \
+    --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.prepare.yaml $MILABENCH_ARGS
+
 # Tells the run step (and the next prepares) the environment is complete
 {
     echo "env=$ENV_DIR"
