@@ -31,7 +31,7 @@ export CONFIG_PATH=config/all.yaml
 export MILABENCH_ARGS=""
 # 1: do not run `milabench install` (the venv was installed by hand, e.g. when a package index is
 # down); the venv check, the fix-ups and the archive refresh still run. Not part of the cache key.
-export MILABENCH_SKIP_INSTALL=1
+export MILABENCH_SKIP_INSTALL=
 # ---
 
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"
@@ -51,11 +51,16 @@ mkdir -p $OUTPUT_DIRECTORY/meta
 SCRATCH="${SCRATCH:-$HOME/links/scratch}"
 PIPELINE_DIR="$SCRATCH/milabench/pipelines/${JR_PIPELINE_ID:?run this script as a pipeline step}"
 
-# Cache key of the environment: exact commits + everything that changes what gets installed
+# Cache key of the environment: the platform and the suite, NOT the commits. A push reuses the
+# environment: its checkout is moved to the new commit and `milabench install` runs again in the
+# same venv, uv only installs what changed (a code only push costs seconds, not a full install).
+# The commits are recorded in .prepared: a new commit is prepared again (install + archive refresh).
+# Bump ENV_GENERATION to start over from an empty environment.
+ENV_GENERATION=2
 MILABENCH_SHA=$(git ls-remote $MILABENCH_REPO refs/heads/$MILABENCH_BRANCH | cut -f1)
 CHERRYBIN_SHA=$(git ls-remote $CHERRYBIN_REPO refs/heads/$CHERRYBIN_BRANCH | cut -f1)
 : "${MILABENCH_SHA:?could not resolve $MILABENCH_BRANCH}" "${CHERRYBIN_SHA:?could not resolve $CHERRYBIN_BRANCH}"
-ENV_DESC="milabench=$MILABENCH_SHA cherrybin=$CHERRYBIN_SHA python=$PYTHON_VERSION arch=$MILABENCH_GPU_ARCH cuda=$CUDA_VERSION torch=$PYTORCH_VERSION config=$CONFIG_PATH args=$MILABENCH_ARGS cuda_archs=$TORCH_CUDA_ARCH_LIST"
+ENV_DESC="generation=$ENV_GENERATION python=$PYTHON_VERSION arch=$MILABENCH_GPU_ARCH cuda=$CUDA_VERSION torch=$PYTORCH_VERSION config=$CONFIG_PATH args=$MILABENCH_ARGS cuda_archs=$TORCH_CUDA_ARCH_LIST"
 ENV_KEY=$(echo "$ENV_DESC" | sha1sum | cut -c1-12)
 # Keep the path short: nox (milabench's venv creation) renames a venv to a hash when its path
 # is longer than 87 chars, then milabench does not find it and installs nothing (exit 0 !)
@@ -140,7 +145,9 @@ post_install() {
     fix_xformers || { echo "error: xformers is still not built for this torch" >&2; return 1; }
 }
 
-if [ -f "$MILABENCH_WORDIR/.prepared" ] && [ -z "$MILABENCH_FORCE_PREPARE" ]; then
+if [ -f "$MILABENCH_WORDIR/.prepared" ] && [ -z "$MILABENCH_FORCE_PREPARE" ] \
+    && grep -qx "milabench=$MILABENCH_SHA" $MILABENCH_WORDIR/.prepared \
+    && grep -qx "cherrybin=$CHERRYBIN_SHA" $MILABENCH_WORDIR/.prepared; then
     echo "environment already prepared, reusing $ENV_DIR"
     cat $MILABENCH_WORDIR/.prepared
     cp $PIN_GLOB $OUTPUT_DIRECTORY/meta/ || true
@@ -149,13 +156,14 @@ if [ -f "$MILABENCH_WORDIR/.prepared" ] && [ -z "$MILABENCH_FORCE_PREPARE" ]; th
 fi
 rm -f $MILABENCH_WORDIR/.prepared
 
-# milabench, at the commit of the cache key (a failed prepare resumes in the same folder)
+# milabench, at the requested commit (a failed prepare resumes in the same folder). -f: the
+# checkout is managed here, local edits are dropped
 if [ -d "$MILABENCH_SOURCE/.git" ]; then
     git -C $MILABENCH_SOURCE fetch origin $MILABENCH_BRANCH
 else
     git clone $MILABENCH_REPO -b $MILABENCH_BRANCH $MILABENCH_SOURCE
 fi
-git -C $MILABENCH_SOURCE checkout -B $MILABENCH_BRANCH $MILABENCH_SHA
+git -C $MILABENCH_SOURCE checkout -f -B $MILABENCH_BRANCH $MILABENCH_SHA
 git -C $MILABENCH_SOURCE log -1 --pretty=format:"%H %s%n" | tee $OUTPUT_DIRECTORY/meta/milabench_commit.txt
 
 if [ -d "$CHERRYBIN_SOURCE/.git" ]; then
@@ -163,7 +171,7 @@ if [ -d "$CHERRYBIN_SOURCE/.git" ]; then
 else
     git clone $CHERRYBIN_REPO -b $CHERRYBIN_BRANCH $CHERRYBIN_SOURCE
 fi
-git -C $CHERRYBIN_SOURCE checkout -B $CHERRYBIN_BRANCH $CHERRYBIN_SHA
+git -C $CHERRYBIN_SOURCE checkout -f -B $CHERRYBIN_BRANCH $CHERRYBIN_SHA
 
 $UV venv --allow-existing --python=$PYTHON_VERSION $MILABENCH_ENV
 . $MILABENCH_ENV/bin/activate
