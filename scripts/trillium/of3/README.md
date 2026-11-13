@@ -462,7 +462,7 @@ Against job 1's reading. Published, #27, H100 against the 1-node B200 (similar s
 - Launch calls: 3.23 against 1.07 s of CPU time (3.0 x); median 3.2 against 3.9 us; calls up to 20 us 0.84 against
   0.92 s. Launches meeting over 1 ms of queued work: 44 against 35 %.
 - Calls blocked by the queue (over 100 us, made while the GPU had over 1 ms of work queued): 2.16 s of the H100's
-  2.19 s of calls over 100 us (98.8-99.5 % blocked, median 53 ms of queued work), against 0.12 s on the B200, whose
+  2.19 s of calls over 100 us (98.8 % by time, median 53 ms of queued work; #28: 99.4 %), against 0.12 s on the B200, whose
   other calls over 100 us are mostly cudaMemcpyAsync meeting no backlog (synchronous copies). The H100's CPU waits on
   a full launch queue, not on a profiler or driver cost.
 - GPU-bound stretches (runs of consecutive calls meeting over 1 ms of queued work): 63 % of the step's CPU time on
