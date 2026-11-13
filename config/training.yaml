@@ -241,7 +241,7 @@ bert-fp32:
 bert-fp16:
   inherits: _bert-base
   argv:
-    --precision: 'fp16'
+    --precision: 'bf16'
 
 bert-tf32:
   inherits: _bert-base

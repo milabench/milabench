@@ -24,15 +24,18 @@ vllm_tt:
   # Benchmarking client Args
   client:
     argv:
-      --model: meta-llama/Llama-3.3-70B-Instruct
-      --served-model-name: meta-llama/Llama-3.3-70B-Instruct
+      # --model: meta-llama/Llama-3.2-3B-Instruct
+      # --served-model-name: meta-llama/Llama-3.2-3B-Instruct
       --request-rate: inf
       --dataset-name: random
       --label: milabench
       --backend: openai 
       --num-prompts: 198
+      --max-concurrency: 1
       --endpoint: /v1/completions
       --ready-check-timeout-sec: 1200
       --external: true
       --host: 127.0.0.1
       --port: 8000
+      --input-len: 4096
+      --output-len: 2048
