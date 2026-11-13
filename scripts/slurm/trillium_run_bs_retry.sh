@@ -91,7 +91,9 @@ export TORCHINDUCTOR_CACHE_DIR="$JOB_CACHE/inductor"
 # observations accumulate across runs: copy it back to config/scaling/B200.yaml.
 # (the first resize run used MI355X.yaml: it had no B200 data)
 export MILABENCH_SIZER_AUTO=1
-export MILABENCH_SIZER_CONFIG="$MILABENCH_SOURCE/config/scaling/B200.yaml"
+# predictions: B200 curves, with the H100 curve for the benches that have a single B200 point
+# (scripts/b200_h100_scaling.py). Observations are still saved to B200.yaml (SAVE below)
+export MILABENCH_SIZER_CONFIG="$MILABENCH_SOURCE/config/scaling/B200-H100.yaml"
 export MILABENCH_SIZER_SAVE="$JOB_CACHE/B200.yaml"
 # Reserve 10% of the B200 memory instead of the measured fixed overhead (NVML - torchmem):
 # the first resize run ran out of memory on 5 benchmarks with only that margin

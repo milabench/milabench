@@ -597,6 +597,17 @@ class DockerRunCommand(WrapperCommand):
         return self.config.command(argv)
 
 
+# pack.make_env entries forwarded to the remote node by SSHCommand (paths only, no secrets)
+SSH_FORWARDED_ENV = (
+    "XDG_CACHE_HOME",
+    "TORCH_HOME",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "FLASHINFER_CACHE_DIR",
+    "FLASHINFER_WORKSPACE_BASE",
+)
+
+
 class SSHCommand(WrapperCommand):
     """Execute an `Command` through ssh
 
@@ -707,7 +718,15 @@ class SSHCommand(WrapperCommand):
 
         # Non-interactive SSH sessions skip most of ~/.bashrc (e.g. NCCL_IB_HCA
         # set after the interactive guard), so forward system.env explicitly
-        system_env = (self.pack.config.get("system") or {}).get("env") or {}
+        system_env = dict((self.pack.config.get("system") or {}).get("env") or {})
+
+        # Cache locations set by pack.make_env for local runs: without them the remote process
+        # falls back to $HOME (read only on compute nodes, e.g. flashinfer >= 0.7 then fails to
+        # import: diffusion-nodes) and looks for the models outside of the prepared data folder.
+        for k in SSH_FORWARDED_ENV:
+            if k in env and k not in system_env:
+                system_env[k] = env[k]
+
         if system_env:
             envs = ["env", *(shlex.quote(f"{k}={v}") for k, v in system_env.items())]
 
