@@ -451,7 +451,7 @@ against 1273594) 1.146 over steps 7-100, 1.084 over steps 7-40, the H100's windo
 other node); both with the sync timing on. Traced steps against the same sample without the profiler: H100 1.164,
 B200 1.224 (4 nodes) and 1.314 (1 node).
 
-Not checked (needs Trillium access, down since 2026-11-13 06:35): 1273761/62/63's traces and prof.txt with the gap
+Not checked (needs Trillium access, refused since at least 2026-11-13 06:31): 1273761/62/63's traces and prof.txt with the gap
 split, hence the 1-node B200 idle by gap length; the B200 traces' launch-length distribution; the #28 mapping on the
 B200 by timestamp (it holds by duration).
 
