@@ -3,7 +3,8 @@ step ends: (t of the last step - t of step SKIP + 1) / steps between; traced ste
 median step period beside it, the step itself and the gap before it (waiting for the batch), samples/s per GPU
 (batch 1), peak memory over ranks, loss, crop sizes; from nodemon/nodes/*.tsv over the same window, GPU power and SM
 clock, CPU clock of the busy cores and CPU use, InfiniBand bytes sent per node and step. Steps after the first SKIP (default 5) only;
-in a run with a profile (prof/), steps 26-30 are left out of the step statistics (traced, then the trace written). With REF, a run of the same
+in a run with a profile (prof/), steps 26-30 are left out of the step statistics (26-27 the profiler's warm-up,
+28-29 traced, 30 the other ranks' wait for the trace export). With REF, a run of the same
 seed and data (same sample at each step), the median over those steps of this run's period over REF's, step by step.
 Usage: python summary.py RUN [SKIP [REF]]"""
 import csv

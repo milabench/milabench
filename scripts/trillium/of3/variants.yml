@@ -20,7 +20,8 @@ cueq-ds:
 triton:
   model_update: {custom: {settings: {memory: {train: {use_triton_triangle_kernels: true}}}}}
 
-# PyTorch profiler (OpenFold3's `profiler` block) over 2 steps after 27, Chrome traces per rank in the run's prof/
+# PyTorch profiler (OpenFold3's `profiler` block): warm-up over logged steps 26-27, traces of ProfilerStep#27-28 (logged
+# steps 28-29), exported during step 29; Chrome traces of each node's local rank 0 in the run's prof/
 prof:
   profiler: {enabled: true, dirpath: "@RUN@/prof", skip_first: 25, wait: 0, warmup: 2, active: 2, record_shapes: false,
              with_stack: false}

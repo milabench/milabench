@@ -192,7 +192,8 @@ per node.
 
 ### Where a step goes (profiles)
 
-`variant prof`: PyTorch's profiler over steps 27-28 on each node's local rank 0, `prof.py` on rank 0's trace (4 nodes:
+`variant prof`: PyTorch's profiler on each node's local rank 0, warm-up over logged steps 26-27 (tracing, results
+discarded), traces of ProfilerStep#27-28 = logged steps 28-29, `prof.py` on rank 0's trace (4 nodes:
 1273884; 2 nodes: 1273763, step-1 subset; 1 node: 1273761, 1273762). Traced steps take 7.0 s against 5.7 s (the
 profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes, per traced step:
 - About 190,000 kernels, median 2.9 us, 67 % under 10 us; 1.06 s of CPU time in launch calls.
@@ -300,6 +301,13 @@ allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 ov
   there and here, same md5: cut short upstream; `check_npz.py` over all 80,004 `.npz` of the subset finds only this
   one), and PDB 6x0v chain 1 ("No resolved atoms"). Cost: one failed attempt
   plus one more featurization in a worker, inside the prefetch.
+- Profile runs' step statistics leave out steps 26-30 (summary.py): 26-27 the profiler's warm-up (tracing on,
+  results discarded; per-step period 1.05 and 1.19 x the timing run's at 13 nodes), 28-29 traced, and 30 the wait for
+  the trace export (the profiling ranks' step 29 takes 26 s; the other ranks wait up to 20.3 s before step 30). Check
+  at 13 nodes, mean over the kept steps: rank 0's period 6.217 s against the slowest rank's compute and loader wait
+  plus the fastest rank's sync 6.218 s (6.217 against 6.219 leaving out 28-30 only; 6.201 against 6.813 with step 30
+  kept). Every profile run uses this exclusion; the check also holds at 4 nodes (5.861 against 5.861 s) and on the
+  H100 (7.127 against 7.132 s).
 - Gradient sync (profile run, last rank to arrive): 0.221 s, as at 4 nodes (0.219). The 1.473 GB all-reduce kernel:
   18.6 and 18.4 ms (17.9 and 18.2 at 4 nodes); the first count all-reduce holds rank 0's wait for the slowest rank
   (0.50 and 0.19 s). The per-GPU loss from 1 to 13 nodes (11.5 % for
@@ -448,7 +456,8 @@ the B200 (below), so the idle comparison partly reflects it.
 
 Limits: one run per entry. The profiler's own cost, untraced steps against a run without it: B200 1-node (1273761
 against 1273594) 1.146 over steps 7-100, 1.084 over steps 7-40, the H100's window; H100 1.032 (job 1's published,
-other node); both with the sync timing on. Traced steps against the same sample without the profiler: H100 1.164,
+other node; median of the per-step period ratio over steps 7-40 without 26-30; 1.034 leaving out only 28-30; ratio
+of the summed periods 1.029, or 1.033 without only 28-30); both with the sync timing on. Traced steps against the same sample without the profiler: H100 1.164,
 B200 1.224 (4 nodes) and 1.314 (1 node).
 
 Not checked (needs Trillium access, refused since at least 2026-11-13 06:31): 1273761/62/63's traces and prof.txt with the gap
