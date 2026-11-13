@@ -1,0 +1,21 @@
+{
+  "name": "TrilliumRunBSRetry",
+  "type": "pipeline",
+  "definition": {
+    "type": "sequential",
+    "name": "Main Sequence",
+    "jobs": [
+      {
+        "type": "job",
+        "script": "trillium_prepare.sh",
+        "profile": "trillium-gpu/datamover/datamover"
+      },
+      {
+        "type": "job",
+        "script": "trillium_run_bs_retry.sh",
+        "profile": "trillium-gpu/b200/8-gpu"
+      }
+    ]
+  },
+  "job_id": null
+}

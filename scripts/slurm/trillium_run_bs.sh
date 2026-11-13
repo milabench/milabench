@@ -4,8 +4,9 @@
 #
 # Same as trillium_run.sh, but the batch sizes are picked by the sizer (sizer.auto) to fill the
 # B200 memory, and the observations are saved to build config/scaling/B200.yaml:
-#   - predictions come from MI355X.yaml (we have no B200 data yet, MI355X covers every benchmark)
-#   - observations are saved to a B200 file only, never mixed with the MI355X ones
+#   - predictions come from config/scaling/B200.yaml (default batch runs + the first resize run,
+#     with OOM markers: the sizer bisects below a batch size that ran out of memory)
+#   - new observations (and OOM markers) are added to a copy of it
 # The result is in $OUTPUT_DIRECTORY/meta/B200.yaml (also $JOB_CACHE/B200.yaml): copy it to
 # config/scaling/B200.yaml in the repo.
 #
@@ -77,15 +78,16 @@ exec > >(tee -a $JOB_CACHE/job.stdout) 2> >(tee -a $JOB_CACHE/job.stderr >&2)
 export XDG_CACHE_HOME="$JOB_CACHE/cache"
 export TRITON_CACHE_DIR="$JOB_CACHE/triton"
 export TORCHINDUCTOR_CACHE_DIR="$JOB_CACHE/inductor"
-# Batch size: predicted from the MI355X memory observations, scaled to this GPU's capacity
-# (system.yaml), saved to a B200-only file. It starts from the B200 data of the milabench
-# checkout (if any) so observations accumulate across runs, each job writes its own copy.
+# Batch size: predicted from the B200 observations of the milabench checkout, scaled to this
+# GPU's capacity (system.yaml). Benchmarks with a single B200 batch size and no OOM marker keep
+# their default batch size. Each job writes its own copy, seeded from the checkout's file, so
+# observations accumulate across runs: copy it back to config/scaling/B200.yaml.
+# (the first resize run used MI355X.yaml: it had no B200 data)
 export MILABENCH_SIZER_AUTO=1
-export MILABENCH_SIZER_CONFIG="$MILABENCH_SOURCE/config/scaling/MI355X.yaml"
+export MILABENCH_SIZER_CONFIG="$MILABENCH_SOURCE/config/scaling/B200.yaml"
 export MILABENCH_SIZER_SAVE="$JOB_CACHE/B200.yaml"
-# The fixed overhead measured on MI355X (NVML - torchmem) is ROCm specific (the allocator caches
-# most of the device: 171G for llm-lora-single -> batch size 1): only keep the torchmem fit and
-# reserve 10% of the B200 memory instead
+# Reserve 10% of the B200 memory instead of the measured fixed overhead (NVML - torchmem):
+# the first resize run ran out of memory on 5 benchmarks with only that margin
 export MILABENCH_SIZER_OVERHEAD_OVERRIDE="10%"
 if [ -s "$MILABENCH_SOURCE/config/scaling/B200.yaml" ]; then
     cp "$MILABENCH_SOURCE/config/scaling/B200.yaml" "$MILABENCH_SIZER_SAVE"
