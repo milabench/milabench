@@ -7,6 +7,7 @@ it so Slurm's real launcher is used unchanged.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import sys
 from dataclasses import dataclass
@@ -81,8 +82,33 @@ def _exclude_host_count(args: list[str]) -> int:
     return 0
 
 
+def _nodelist_host_count(args: list[str]) -> int:
+    for flag in ("-w", "--nodelist"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 < len(args):
+                return max(len(expand_node_list(args[i + 1])), 1)
+    return 0
+
+
 def _shrink_srun_allocation_for_exclude(args: list[str]) -> list[str]:
-    """If excluding hosts, request only the remaining nodes from the job."""
+    """If excluding hosts, request only the remaining nodes from the job.
+
+    With ``-w`` (explicit node list), request exactly one task per listed
+    node; otherwise srun inherits the job's task count and may stack several
+    tasks on the listed nodes.
+    """
+    if _has_srun_nodes_override(args):
+        return args
+    n_listed = _nodelist_host_count(args)
+    if n_listed > 0:
+        return [
+            f"--nodes={n_listed}",
+            f"--ntasks={n_listed}",
+            "--ntasks-per-node=1",
+            *args,
+        ]
+
     n_excl = _exclude_host_count(args)
     if n_excl <= 0 or _has_srun_nodes_override(args):
         return args
@@ -174,8 +200,29 @@ def _ssh_argv(node: dict, command: list[str], sshkey: Optional[str] = None) -> l
     argv = ["ssh", *SSH_OPTIONS, "-p", str(port)]
     if key:
         argv.append(f"-i{key}")
-    argv.extend([target, "--", *command])
+    # ssh joins its argv with spaces and the remote shell re-parses it, so
+    # quote each word (args like batch_size=auto_batch(8), PS1=(env) ...)
+    argv.extend([target, "--", shlex.join(command)])
     return argv
+
+
+# Variables forwarded over ssh, by prefix: native srun exports the caller's whole environment (the
+# pack's MILABENCH_CONFIG, dirs, PYTHONPATH, ...), a remote ssh shell starts from the login one.
+_FORWARD_PREFIXES = (
+    "MILABENCH_", "BENCHMATE_", "VOIR_", "PYTHON", "HF_", "TRANSFORMERS_", "TORCH", "PYTORCH_", "TRITON_",
+    "OMP_", "CUDA_", "HIP_", "ROCM_", "ROCR_", "HSA_", "NCCL_", "RCCL_", "GLOO_", "MASTER_", "NVTE_", "MEGATRON_",
+    "TT_", "SLIME_", "RAY_", "VLLM_", "ATOM_", "AITER_", "XDG_CACHE_HOME", "LD_LIBRARY_PATH", "PATH",
+)
+# Never put secrets on an ssh command line: other users see it in `ps` on the remote node.
+_SECRET_WORDS = ("TOKEN", "KEY", "SECRET", "PASSWORD", "CREDENTIAL")
+
+
+def forwarded_env(environ=None) -> dict:
+    environ = os.environ if environ is None else environ
+    return {
+        k: v for k, v in environ.items()
+        if k.startswith(_FORWARD_PREFIXES) and not any(w in k.upper() for w in _SECRET_WORDS)
+    }
 
 
 def run_on_nodes(
@@ -184,6 +231,7 @@ def run_on_nodes(
     sshkey: Optional[str] = None,
     *,
     all_nodes: list[dict] | None = None,
+    env: dict | None = None,
 ) -> int:
     """SSH to each system node and run *command* via voir's Multiplexer.
 
@@ -191,6 +239,10 @@ def run_on_nodes(
     ``SLURM_NNODES`` from the full system list when provided. Step-local ids match
     native ``srun -x <main>`` numbering so ``benchrun`` can map them to global
     ranks via ``SLURM_NODEID + 1``.
+
+    The run environment (``forwarded_env``) and *env* (``system.env``) are forwarded explicitly: native srun exports the
+    caller's environment, but a non-interactive ssh shell does not (e.g. NCCL_*
+    set in ~/.bashrc after the interactive guard), and cross-node RCCL hangs.
     """
     rank_source = all_nodes or nodes
     nnodes = len(rank_source)
@@ -200,6 +252,8 @@ def run_on_nodes(
         label = node.get("name") or node["ip"]
         remote_cmd = [
             "env",
+            # system.env last: it wins over the caller's values
+            *(f"{k}={v}" for k, v in {**forwarded_env(), **(env or {})}.items()),
             f"SLURM_NODEID={step_id}",
             f"SLURM_PROCID={step_id}",
             f"SLURM_NNODES={nnodes}",
@@ -275,7 +329,11 @@ class SlurmRun(Command):
 
         print(f"[srun] {' '.join(command)}", file=sys.stderr, flush=True)
         return run_on_nodes(
-            nodes, command, sshkey=system.get("sshkey"), all_nodes=all_nodes
+            nodes,
+            command,
+            sshkey=system.get("sshkey"),
+            all_nodes=all_nodes,
+            env=system.get("env"),
         )
 
 

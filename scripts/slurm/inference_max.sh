@@ -7,8 +7,8 @@ export PYTHONUNBUFFERED=0
 export MILABENCH_ARGS=""
 export MILABENCH_CONFIG_NAME=llm_inference
 export MILABENCH_REPO=https://github.com/milabench/milabench.git
-export CUDA_VERSION=130
-export PYTORCH_VERSION=2.10.0
+export CUDA_VERSION="132"
+export PYTORCH_VERSION="2.15.0"
 
 export MILABENCH_PUBLISH_KEY="{{ secrets.MILABENCH_PUBLISH_KEY }}"
 export HF_TOKEN="{{ secrets.HF_TOKEN }}"

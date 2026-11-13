@@ -18,17 +18,49 @@ root = os.path.dirname(__file__)
 WIKITEXT_DATASET = "Milabench/wikitext"
 WIKITEXT_CONFIG = "wikitext-103-v1"
 WIKITEXT_REVISION = "a79fad1"
+# LLAMA official tokenizer is gated, this one is the same and public
+TOKENIZER = "hf-internal-testing/llama-tokenizer"
+
+
+def load_cached_wikitext(args, err):
+    """Train split saved by prepare, read from the datasets cache (no network).
+
+    Offline, datasets looks for the cache folder of config '<config>-data_dir=<config>', but the
+    online load saved it as '<config>-<hash of data_dir>', so load_dataset never finds it.
+    """
+    import glob
+    from datasets import Dataset, DatasetDict, concatenate_datasets
+    from datasets import config as ds_config
+
+    namespace, name = args.dataset_name.split("/")
+    pattern = os.path.join(
+        ds_config.HF_DATASETS_CACHE, f"{namespace}___{name}",
+        f"{args.dataset_config_name}*", "*", "*", "*-train*.arrow"
+    )
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise RuntimeError(f"no cached dataset in {pattern}") from err
+    builds = {os.path.dirname(f) for f in files}
+    if len(builds) > 1:
+        raise RuntimeError(f"several cached builds: {sorted(builds)}") from err
+    print(f"offline: loading {len(files)} cached arrow files from {builds.pop()}")
+    return DatasetDict({"train": concatenate_datasets([Dataset.from_file(f) for f in files])})
 
 
 def load_wikitext(args):
     from datasets import load_dataset
 
-    return load_dataset(
-        args.dataset_name,
-        args.dataset_config_name,
-        revision=args.dataset_rev,
-        data_dir=args.dataset_config_name,
-    )
+    try:
+        return load_dataset(
+            args.dataset_name,
+            args.dataset_config_name,
+            revision=args.dataset_rev,
+            data_dir=args.dataset_config_name,
+        )
+    except Exception as err:
+        if args.prepare:
+            raise
+        return load_cached_wikitext(args, err)
 
 
 def available_models():
@@ -80,18 +112,35 @@ def huggingface_main(args, model, config):
     dataset = load_wikitext(args)
 
     if args.prepare:
+        # The run loads the tokenizer offline: it must be in the hub cache as well
+        println("Tokenizer")
+        LlamaTokenizerFast.from_pretrained(TOKENIZER)
+        if args.pretrained:
+            # The run loads the weights offline: they must be in the hub cache.
+            # safetensors only, the repo also has the same weights as .bin
+            from huggingface_hub import snapshot_download
+
+            println("Weights")
+            snapshot_download(
+                config["_name_or_path"],
+                allow_patterns=["*.json", "*.safetensors"],
+            )
         println("Prepare complete")
         return 0
 
     println("Tokenizer")
     # LLAMA tokenizer official tokenizer is hidden behind a login
-    tokenizer = WrappedTokenizer(
-        LlamaTokenizerFast.from_pretrained(
-            "hf-internal-testing/llama-tokenizer",
-            model_max_length=256,
-            truncation=True,
-        )
+    hf_tokenizer = LlamaTokenizerFast.from_pretrained(
+        TOKENIZER,
+        model_max_length=256,
+        truncation=True,
     )
+    # Offline, transformers 5 does not fail when the tokenizer files are missing: it returns an
+    # empty tokenizer (3 tokens) that encodes every prompt to nothing, and the model then generates
+    # from an empty prompt (slow, meaningless rate).
+    if len(hf_tokenizer) < 1000:
+        raise RuntimeError(f"{TOKENIZER} has {len(hf_tokenizer)} tokens: its files are missing from the cache (prepare)")
+    tokenizer = WrappedTokenizer(hf_tokenizer)
     
     # We do not download LLAMA because it takes too long
     # we just instantiate an untrained one

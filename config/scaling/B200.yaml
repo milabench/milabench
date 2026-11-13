@@ -1,0 +1,160 @@
+bert-fp16:
+  observations:
+  - {batch_size: 32, perf: 784.44, cpu: 8, memory: 16232 MiB, torchmem: 13894 MiB, time: 1794509805, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 432, oom: true, cpu: 8, time: 1794442504, backend: '13.2', flavor: cu132, torch: 2.15.0}
+bert-fp32:
+  observations:
+  - {batch_size: 32, perf: 131.74, cpu: 8, memory: 21370 MiB, torchmem: 19103 MiB, time: 1794317434, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 296, perf: 142.21, cpu: 8, memory: 180702 MiB, torchmem: 162632 MiB, time: 1794509712, backend: '13.2', flavor: cu132, torch: 2.15.0}
+bert-tf32:
+  observations:
+  - {batch_size: 32, perf: 394.71, cpu: 8, memory: 21374 MiB, torchmem: 19103 MiB, time: 1794317614, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 296, perf: 441.1, cpu: 8, memory: 180706 MiB, torchmem: 162632 MiB, time: 1794509944, backend: '13.2', flavor: cu132, torch: 2.15.0}
+bert-tf32-fp16:
+  observations:
+  - {batch_size: 32, perf: 784.98, cpu: 8, memory: 16232 MiB, torchmem: 13894 MiB, time: 1794510045, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 432, oom: true, cpu: 8, time: 1794442726, backend: '13.2', flavor: cu132, torch: 2.15.0}
+brax:
+  observations:
+  - {batch_size: 1024, perf: 3042307.41, cpu: 0, memory: 4753 MiB, jaxmem: 548 MiB, time: 1794510795, backend: '13.2', flavor: cu132, torch: 2.15.0}
+convnext_large-fp16:
+  observations:
+  - {batch_size: 128, perf: 1039.99, cpu: 8, memory: 27644 MiB, torchmem: 24810 MiB, time: 1794316984, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 888, perf: 1237.46, cpu: 8, memory: 172484 MiB, torchmem: 164200 MiB, time: 1794508924, backend: '13.2', flavor: cu132, torch: 2.15.0}
+convnext_large-fp32:
+  observations:
+  - {batch_size: 128, perf: 165.71, cpu: 8, memory: 45816 MiB, torchmem: 43559 MiB, time: 1794316890, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 472, perf: 167.41, cpu: 8, memory: 170540 MiB, torchmem: 163070 MiB, time: 1794508778, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 488, perf: 167.3, cpu: 8, memory: 176028 MiB, torchmem: 168297 MiB, time: 1794441480, backend: '13.2', flavor: cu132, torch: 2.15.0}
+convnext_large-tf32:
+  observations:
+  - {batch_size: 128, perf: 368.08, cpu: 8, memory: 47576 MiB, torchmem: 43569 MiB, time: 1794317096, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 488, perf: 387.71, cpu: 8, memory: 173730 MiB, torchmem: 163430 MiB, time: 1794509121, backend: '13.2', flavor: cu132, torch: 2.15.0}
+convnext_large-tf32-fp16:
+  observations:
+  - {batch_size: 128, perf: 1038.02, cpu: 8, memory: 27644 MiB, torchmem: 24810 MiB, time: 1794317190, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 888, perf: 1236.04, cpu: 8, memory: 172484 MiB, torchmem: 164200 MiB, time: 1794509266, backend: '13.2', flavor: cu132, torch: 2.15.0}
+diffusion-gpus:
+  observations:
+  - {batch_size: 32, perf: 627.62, cpu: 8, memory: 59040 MiB, torchmem: 54231 MiB, time: 1794338164, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 120, perf: 699.24, cpu: 8, memory: 178876 MiB, torchmem: 160066 MiB, time: 1794511129, backend: '13.2', flavor: cu132, torch: 2.15.0}
+diffusion-single:
+  observations:
+  - {batch_size: 32, perf: 84.93, cpu: 8, memory: 54230 MiB, torchmem: 50934 MiB, time: 1794338047, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 120, perf: 92.0, cpu: 8, memory: 163818 MiB, torchmem: 156759 MiB, time: 1794510974, backend: '13.2', flavor: cu132, torch: 2.15.0}
+dimenet:
+  observations:
+  - {batch_size: 16, perf: 547.91, cpu: 0, memory: 6138 MiB, torchmem: 1029 MiB, time: 1794321181, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 3240, perf: 4746.26, cpu: 0, memory: 176462 MiB, torchmem: 164271 MiB, time: 1794513780, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 3248, perf: 4780.27, cpu: 0, memory: 183148 MiB, torchmem: 165346 MiB, time: 1794447945, backend: '13.2', flavor: cu132, torch: 2.15.0}
+dinov2-giant-gpus:
+  observations:
+  - {batch_size: 32, perf: 1713.76, cpu: 0, memory: 79224 MiB, torchmem: 54715 MiB, time: 1794326981, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 104, perf: 1816.24, cpu: 0, memory: 182712 MiB, torchmem: 160658 MiB, time: 1794512312, backend: '13.2', flavor: cu132, torch: 2.15.0}
+dinov2-giant-single:
+  observations:
+  - {batch_size: 32, perf: 215.81, cpu: 0, memory: 88150 MiB, torchmem: 66550 MiB, time: 1794338301, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 96, perf: 225.49, cpu: 0, memory: 183070 MiB, torchmem: 160902 MiB, time: 1794512176, backend: '13.2', flavor: cu132, torch: 2.15.0}
+dqn:
+  observations:
+  - {batch_size: 4096, perf: 944708.77, cpu: 128, memory: 2242 MiB, jaxmem: 369 MiB, time: 1794513186, backend: '13.2', flavor: cu132, torch: 2.15.0}
+lightning:
+  observations:
+  - {batch_size: 256, perf: 1351.36, cpu: 8, memory: 27262 MiB, torchmem: 23077 MiB, time: 1794318483, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1896, perf: 1403.97, cpu: 8, memory: 182252 MiB, torchmem: 164551 MiB, time: 1794511570, backend: '13.2', flavor: cu132, torch: 2.15.0}
+lightning-gpus:
+  observations:
+  - {batch_size: 256, perf: 9642.29, cpu: 8, memory: 28858 MiB, torchmem: 23304 MiB, time: 1794318593, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1888, perf: 10793.42, cpu: 8, memory: 183170 MiB, torchmem: 164091 MiB, time: 1794444617, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1896, perf: 10725.41, cpu: 8, memory: 182538 MiB, torchmem: 164781 MiB, time: 1794511995, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llava-single:
+  observations:
+  - {batch_size: 1, perf: 6.81, cpu: 4, memory: 71066 MiB, torchmem: 67670 MiB, time: 1794321479, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 24, perf: 24.65, cpu: 4, memory: 183270 MiB, torchmem: 148745 MiB, time: 1794514129, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llm-chat-completion:
+  observations:
+  - {batch_size: 32, perf: 32383.57, cpu: 0, memory: 22042 MiB, torchmem: 19355 MiB, time: 1794517058, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 2592, oom: true, cpu: 0, time: 1794451905, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llm-full-mp-gpus:
+  observations:
+  - {batch_size: 2, perf: 2194.95, cpu: 0, memory: 86936 MiB, torchmem: 73909 MiB, time: 1794513077, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llm-lora-ddp-gpus:
+  observations:
+  - {batch_size: 8, perf: 73146.75, cpu: 0, memory: 19042 MiB, torchmem: 13002 MiB, time: 1794355459, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 136, perf: 99032.12, cpu: 0, memory: 167000 MiB, torchmem: 157009 MiB, time: 1794512819, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llm-lora-mp-gpus:
+  observations:
+  - {batch_size: 8, perf: 8062.59, cpu: 0, memory: 39060 MiB, torchmem: 29783 MiB, time: 1794512954, backend: '13.2', flavor: cu132, torch: 2.15.0}
+llm-lora-single:
+  observations:
+  - {batch_size: 8, perf: 12224.88, cpu: 0, memory: 22078 MiB, torchmem: 20350 MiB, time: 1794512469, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 240, oom: true, cpu: 0, time: 1794445311, backend: '13.2', flavor: cu132, torch: 2.15.0}
+pna:
+  observations:
+  - {batch_size: 4096, perf: 8322.85, cpu: 0, memory: 39920 MiB, torchmem: 25762 MiB, time: 1794321080, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 25136, perf: 8147.28, cpu: 0, memory: 182684 MiB, torchmem: 165007 MiB, time: 1794513626, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 25424, perf: 8160.58, cpu: 0, memory: 182584 MiB, torchmem: 166907 MiB, time: 1794447793, backend: '13.2', flavor: cu132, torch: 2.15.0}
+ppo:
+  observations:
+  - {batch_size: 16, perf: 9431.87, cpu: 128, memory: 2107 MiB, jaxmem: 288 MiB, time: 1794513304, backend: '13.2', flavor: cu132, torch: 2.15.0}
+recursiongfn:
+  observations:
+  - {batch_size: 128, perf: 11748.41, cpu: 8, memory: 16267 MiB, torchmem: 3423 MiB, time: 1794513963, backend: '13.2', flavor: cu132, torch: 2.15.0}
+reformer:
+  observations:
+  - {batch_size: 32, perf: 176.94, cpu: 8, memory: 12892 MiB, torchmem: 10528 MiB, time: 1794317892, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 504, perf: 183.85, cpu: 8, memory: 177648 MiB, torchmem: 164474 MiB, time: 1794510452, backend: '13.2', flavor: cu132, torch: 2.15.0}
+regnet_y_128gf:
+  observations:
+  - {batch_size: 64, perf: 334.26, cpu: 8, memory: 52012 MiB, torchmem: 36673 MiB, time: 1794317289, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 520, perf: 371.5, cpu: 8, memory: 177472 MiB, torchmem: 163258 MiB, time: 1794509457, backend: '13.2', flavor: cu132, torch: 2.15.0}
+resnet152-ddp-gpus:
+  observations:
+  - {batch_size: 256, perf: 9602.32, cpu: 8, memory: 28657 MiB, torchmem: 22716 MiB, time: 1794316755, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1992, perf: 10327.64, cpu: 8, memory: 183243 MiB, torchmem: 172639 MiB, time: 1794441188, backend: '13.2', flavor: cu132, torch: 2.15.0}
+resnet50:
+  observations:
+  - {batch_size: 256, perf: 1990.41, cpu: 8, memory: 14060 MiB, torchmem: 10964 MiB, time: 1794316553, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 3888, perf: 1872.16, cpu: 8, memory: 180732 MiB, torchmem: 163895 MiB, time: 1794440757, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 3912, perf: 1903.92, cpu: 8, memory: 181908 MiB, torchmem: 164926 MiB, time: 1794507653, backend: '13.2', flavor: cu132, torch: 2.15.0}
+resnet50-noio:
+  observations:
+  - {batch_size: 256, perf: 6823.09, cpu: 8, memory: 27586 MiB, torchmem: 25768 MiB, time: 1794316654, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1640, perf: 7548.19, cpu: 8, memory: 166514 MiB, torchmem: 164530 MiB, time: 1794507852, backend: '13.2', flavor: cu132, torch: 2.15.0}
+rlhf-gpus:
+  observations:
+  - {batch_size: 64, perf: 8113.25, cpu: 0, memory: 49426 MiB, torchmem: 43502 MiB, time: 1794333342, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 368, perf: 17712.5, cpu: 0, memory: 175246 MiB, torchmem: 164119 MiB, time: 1794514660, backend: '13.2', flavor: cu132, torch: 2.15.0}
+rlhf-single:
+  observations:
+  - {batch_size: 64, perf: 2076.03, cpu: 0, memory: 35640 MiB, torchmem: 33261 MiB, time: 1794333117, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 384, perf: 3583.16, cpu: 0, memory: 130206 MiB, torchmem: 125877 MiB, time: 1794448678, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 512, perf: 3736.2, cpu: 0, memory: 167866 MiB, torchmem: 162885 MiB, time: 1794514529, backend: '13.2', flavor: cu132, torch: 2.15.0}
+t5:
+  observations:
+  - {batch_size: 16, perf: 189.23, cpu: 8, memory: 31514 MiB, torchmem: 28194 MiB, time: 1794317795, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 88, perf: 214.21, cpu: 8, memory: 163258 MiB, torchmem: 150226 MiB, time: 1794442845, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 96, perf: 215.94, cpu: 8, memory: 177894 MiB, torchmem: 163787 MiB, time: 1794510170, backend: '13.2', flavor: cu132, torch: 2.15.0}
+torchatari:
+  observations:
+  - {batch_size: 16, perf: 9293.23, cpu: 128, memory: 4098 MiB, torchmem: 2235 MiB, time: 1794515348, backend: '13.2', flavor: cu132, torch: 2.15.0}
+txt-to-image-single:
+  observations:
+  - {batch_size: 16, perf: 62.58, cpu: 0, memory: 37372 MiB, torchmem: 35416 MiB, time: 1794516926, backend: '13.2', flavor: cu132, torch: 2.15.0}
+vjepa-gpus:
+  observations:
+  - {batch_size: 24, perf: 442.89, cpu: 12, memory: 64417 MiB, torchmem: 49744 MiB, time: 1794515159, backend: '13.2', flavor: cu132, torch: 2.15.0}
+vjepa-single:
+  observations:
+  - {batch_size: 24, perf: 62.84, cpu: 12, memory: 60834 MiB, torchmem: 46976 MiB, time: 1794432797, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 88, perf: 86.44, cpu: 12, memory: 161844 MiB, torchmem: 127700 MiB, time: 1794449134, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 112, perf: 89.05, cpu: 12, memory: 182786 MiB, torchmem: 156119 MiB, time: 1794514996, backend: '13.2', flavor: cu132, torch: 2.15.0}
+whisper:
+  observations:
+  - {batch_size: 64, perf: 1407.13, cpu: 8, memory: 9278 MiB, torchmem: 7148 MiB, time: 1794317985, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1352, perf: 1374.91, cpu: 8, memory: 161686 MiB, torchmem: 146436 MiB, time: 1794443346, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 1520, perf: 1371.61, cpu: 8, memory: 181520 MiB, torchmem: 164594 MiB, time: 1794510690, backend: '13.2', flavor: cu132, torch: 2.15.0}
+whisper-transcribe-single:
+  observations:
+  - {batch_size: 64, perf: 10.83, cpu: 0, memory: 36630 MiB, torchmem: 34543 MiB, time: 1794516797, backend: '13.2', flavor: cu132, torch: 2.15.0}
+  - {batch_size: 624, oom: true, cpu: 0, time: 1794451110, backend: '13.2', flavor: cu132, torch: 2.15.0}

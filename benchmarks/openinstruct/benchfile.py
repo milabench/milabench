@@ -35,9 +35,10 @@ class OpenInstruct(Package):
         code = Path(__file__).resolve().parent
         if str(code) not in sys.path:
             sys.path.insert(0, str(code))
-        from compat import patch_upstream_model_utils
+        from compat import patch_upstream_flash_attn_probe, patch_upstream_model_utils
 
         patch_upstream_model_utils(source_destination / "open_instruct" / "model_utils.py")
+        patch_upstream_flash_attn_probe(source_destination / "open_instruct" / "model_utils.py")
 
         await self.pip_install("-e", str(source_destination), "--no-deps")
 

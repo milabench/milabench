@@ -1,0 +1,1053 @@
+bert-fp16:
+  observations:
+  - batch_size: 1
+    cpu: 8
+    memory: 3885 MiB
+    perf: 27.57
+    time: 1741967685
+  - batch_size: 1
+    cpu: 16
+    memory: 3885 MiB
+    perf: 28.08
+    time: 1741967714
+  - batch_size: 16
+    cpu: 8
+    memory: 9895 MiB
+    perf: 359.67
+    time: 1741955079
+  - batch_size: 24
+    cpu: 8
+    memory: 12421 MiB
+    perf: 442.6
+    time: 1741955155
+  - batch_size: 40
+    cpu: 8
+    memory: 19399 MiB
+    perf: 512.36
+    time: 1741955190
+  - batch_size: 48
+    cpu: 8
+    memory: 22889 MiB
+    perf: 527.14
+    time: 1741955201
+  - batch_size: 64
+    cpu: 8
+    memory: 29845 MiB
+    perf: 551.83
+    time: 1741985101
+  - batch_size: 64
+    cpu: 16
+    memory: 29845 MiB
+    perf: 550.77
+    time: 1741985148
+  - batch_size: 104
+    cpu: 8
+    memory: 47353 MiB
+    perf: 578.97
+    time: 1741955413
+  - batch_size: 136
+    cpu: 12
+    memory: 61365 MiB
+    perf: 590.7
+    time: 1741985791
+  - batch_size: 136
+    cpu: 16
+    memory: 61365 MiB
+    perf: 590.1
+    time: 1741985385
+  - batch_size: 136
+    cpu: 8
+    memory: 61365 MiB
+    perf: 592.36
+    time: 1741985319
+  - backend: '13.2'
+    batch_size: 432
+    cpu: 8
+    flavor: cu132
+    oom: true
+    time: 1794442504
+    torch: 2.15.0
+bert-fp32:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 8
+    flavor: cu132
+    memory: 21370 MiB
+    perf: 131.74
+    time: 1794317434
+    torch: 2.15.0
+    torchmem: 19103 MiB
+  - backend: '13.2'
+    batch_size: 296
+    cpu: 8
+    flavor: cu132
+    memory: 180702 MiB
+    perf: 142.21
+    time: 1794509712
+    torch: 2.15.0
+    torchmem: 162632 MiB
+bert-tf32:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 8
+    flavor: cu132
+    memory: 21374 MiB
+    perf: 394.71
+    time: 1794317614
+    torch: 2.15.0
+    torchmem: 19103 MiB
+  - backend: '13.2'
+    batch_size: 296
+    cpu: 8
+    flavor: cu132
+    memory: 180706 MiB
+    perf: 441.1
+    time: 1794509944
+    torch: 2.15.0
+    torchmem: 162632 MiB
+bert-tf32-fp16:
+  observations:
+  - batch_size: 1
+    cpu: 8
+    memory: 3885 MiB
+    perf: 27.64
+    time: 1741967801
+  - batch_size: 1
+    cpu: 16
+    memory: 3885 MiB
+    perf: 28.21
+    time: 1741967830
+  - batch_size: 16
+    cpu: 8
+    memory: 9895 MiB
+    perf: 361.64
+    time: 1741955197
+  - batch_size: 24
+    cpu: 8
+    memory: 12421 MiB
+    perf: 446.05
+    time: 1741955274
+  - batch_size: 40
+    cpu: 8
+    memory: 19399 MiB
+    perf: 512.75
+    time: 1741955314
+  - batch_size: 48
+    cpu: 8
+    memory: 22889 MiB
+    perf: 526.7
+    time: 1741955329
+  - batch_size: 64
+    cpu: 8
+    memory: 29845 MiB
+    perf: 551.81
+    time: 1741985230
+  - batch_size: 64
+    cpu: 16
+    memory: 29845 MiB
+    perf: 549.42
+    time: 1741985278
+  - batch_size: 104
+    cpu: 8
+    memory: 47353 MiB
+    perf: 578.4
+    time: 1741955555
+  - batch_size: 136
+    cpu: 12
+    memory: 61365 MiB
+    perf: 590.41
+    time: 1741985950
+  - batch_size: 136
+    cpu: 16
+    memory: 61365 MiB
+    perf: 590.03
+    time: 1741985536
+  - batch_size: 136
+    cpu: 8
+    memory: 61365 MiB
+    perf: 591.52
+    time: 1741985470
+  - backend: '13.2'
+    batch_size: 432
+    cpu: 8
+    flavor: cu132
+    oom: true
+    time: 1794442726
+    torch: 2.15.0
+brax:
+  observations:
+  - batch_size: 512
+    cpu: 0
+    memory: 2885 MiB
+    perf: 823634.9
+    time: 1741955657
+  - batch_size: 2048
+    cpu: 0
+    memory: 2885 MiB
+    perf: 1077575.13
+    time: 1741986656
+convnext_large-fp16:
+  observations:
+  - backend: '13.2'
+    batch_size: 128
+    cpu: 8
+    flavor: cu132
+    memory: 27644 MiB
+    perf: 1039.99
+    time: 1794316984
+    torch: 2.15.0
+    torchmem: 24810 MiB
+  - backend: '13.2'
+    batch_size: 888
+    cpu: 8
+    flavor: cu132
+    memory: 172484 MiB
+    perf: 1237.46
+    time: 1794508924
+    torch: 2.15.0
+    torchmem: 164200 MiB
+convnext_large-fp32:
+  observations:
+  - backend: '13.2'
+    batch_size: 128
+    cpu: 8
+    flavor: cu132
+    memory: 45816 MiB
+    perf: 165.71
+    time: 1794316890
+    torch: 2.15.0
+    torchmem: 43559 MiB
+  - backend: '13.2'
+    batch_size: 472
+    cpu: 8
+    flavor: cu132
+    memory: 170540 MiB
+    perf: 167.41
+    time: 1794508778
+    torch: 2.15.0
+    torchmem: 163070 MiB
+  - backend: '13.2'
+    batch_size: 488
+    cpu: 8
+    flavor: cu132
+    memory: 176028 MiB
+    perf: 167.3
+    time: 1794441480
+    torch: 2.15.0
+    torchmem: 168297 MiB
+convnext_large-tf32:
+  observations:
+  - backend: '13.2'
+    batch_size: 128
+    cpu: 8
+    flavor: cu132
+    memory: 47576 MiB
+    perf: 368.08
+    time: 1794317096
+    torch: 2.15.0
+    torchmem: 43569 MiB
+  - backend: '13.2'
+    batch_size: 488
+    cpu: 8
+    flavor: cu132
+    memory: 173730 MiB
+    perf: 387.71
+    time: 1794509121
+    torch: 2.15.0
+    torchmem: 163430 MiB
+convnext_large-tf32-fp16:
+  observations:
+  - backend: '13.2'
+    batch_size: 128
+    cpu: 8
+    flavor: cu132
+    memory: 27644 MiB
+    perf: 1038.02
+    time: 1794317190
+    torch: 2.15.0
+    torchmem: 24810 MiB
+  - backend: '13.2'
+    batch_size: 888
+    cpu: 8
+    flavor: cu132
+    memory: 172484 MiB
+    perf: 1236.04
+    time: 1794509266
+    torch: 2.15.0
+    torchmem: 164200 MiB
+diffusion-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 8
+    flavor: cu132
+    memory: 59040 MiB
+    perf: 627.62
+    time: 1794338164
+    torch: 2.15.0
+    torchmem: 54231 MiB
+  - backend: '13.2'
+    batch_size: 120
+    cpu: 8
+    flavor: cu132
+    memory: 178876 MiB
+    perf: 699.24
+    time: 1794511129
+    torch: 2.15.0
+    torchmem: 160066 MiB
+diffusion-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 8
+    flavor: cu132
+    memory: 54230 MiB
+    perf: 84.93
+    time: 1794338047
+    torch: 2.15.0
+    torchmem: 50934 MiB
+  - backend: '13.2'
+    batch_size: 120
+    cpu: 8
+    flavor: cu132
+    memory: 163818 MiB
+    perf: 92.0
+    time: 1794510974
+    torch: 2.15.0
+    torchmem: 156759 MiB
+dimenet:
+  observations:
+  - backend: '13.2'
+    batch_size: 16
+    cpu: 0
+    flavor: cu132
+    memory: 6138 MiB
+    perf: 547.91
+    time: 1794321181
+    torch: 2.15.0
+    torchmem: 1029 MiB
+  - backend: '13.2'
+    batch_size: 3240
+    cpu: 0
+    flavor: cu132
+    memory: 176462 MiB
+    perf: 4746.26
+    time: 1794513780
+    torch: 2.15.0
+    torchmem: 164271 MiB
+  - backend: '13.2'
+    batch_size: 3248
+    cpu: 0
+    flavor: cu132
+    memory: 183148 MiB
+    perf: 4780.27
+    time: 1794447945
+    torch: 2.15.0
+    torchmem: 165346 MiB
+dinov2-giant-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 0
+    flavor: cu132
+    memory: 79224 MiB
+    perf: 1713.76
+    time: 1794326981
+    torch: 2.15.0
+    torchmem: 54715 MiB
+  - backend: '13.2'
+    batch_size: 104
+    cpu: 0
+    flavor: cu132
+    memory: 182712 MiB
+    perf: 1816.24
+    time: 1794512312
+    torch: 2.15.0
+    torchmem: 160658 MiB
+dinov2-giant-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 0
+    flavor: cu132
+    memory: 88150 MiB
+    perf: 215.81
+    time: 1794338301
+    torch: 2.15.0
+    torchmem: 66550 MiB
+  - backend: '13.2'
+    batch_size: 96
+    cpu: 0
+    flavor: cu132
+    memory: 183070 MiB
+    perf: 225.49
+    time: 1794512176
+    torch: 2.15.0
+    torchmem: 160902 MiB
+dqn:
+  observations:
+  - backend: '13.2'
+    batch_size: 4096
+    cpu: 128
+    flavor: cu132
+    jaxmem: 369 MiB
+    memory: 2242 MiB
+    perf: 944708.77
+    time: 1794513186
+    torch: 2.15.0
+focalnet:
+  observations:
+  - batch_size: 1
+    cpu: 8
+    memory: 3911 MiB
+    perf: 14.15
+    time: 1741968126
+  - batch_size: 1
+    cpu: 16
+    memory: 3911 MiB
+    perf: 14.78
+    time: 1741968156
+  - batch_size: 64
+    cpu: 8
+    memory: 14277 MiB
+    perf: 600.13
+    time: 1741955537
+  - batch_size: 120
+    cpu: 8
+    memory: 23031 MiB
+    perf: 652.52
+    time: 1741955630
+  - batch_size: 136
+    cpu: 8
+    memory: 26071 MiB
+    perf: 662.44
+    time: 1741955695
+  - batch_size: 144
+    cpu: 8
+    memory: 26955 MiB
+    perf: 667.77
+    time: 1741955722
+  - batch_size: 160
+    cpu: 16
+    memory: 29653 MiB
+    perf: 680.08
+    time: 1741985695
+  - batch_size: 160
+    cpu: 8
+    memory: 29653 MiB
+    perf: 678.12
+    time: 1741985648
+  - batch_size: 256
+    cpu: 8
+    memory: 44975 MiB
+    perf: 711.0
+    time: 1741955780
+  - batch_size: 352
+    cpu: 16
+    memory: 60323 MiB
+    perf: 721.93
+    time: 1741986082
+  - batch_size: 352
+    cpu: 8
+    memory: 60323 MiB
+    perf: 725.45
+    time: 1741986014
+  - batch_size: 448
+    cpu: 8
+    memory: 75727 MiB
+    perf: 732.78
+    time: 1741956103
+  - batch_size: 480
+    cpu: 12
+    memory: 80919 MiB
+    perf: 742.25
+    time: 1741986537
+  - batch_size: 480
+    cpu: 16
+    memory: 80919 MiB
+    perf: 739.55
+    time: 1741986228
+  - batch_size: 480
+    cpu: 8
+    memory: 80919 MiB
+    perf: 741.64
+    time: 1741986163
+lightning:
+  observations:
+  - backend: '13.2'
+    batch_size: 256
+    cpu: 8
+    flavor: cu132
+    memory: 27262 MiB
+    perf: 1351.36
+    time: 1794318483
+    torch: 2.15.0
+    torchmem: 23077 MiB
+  - backend: '13.2'
+    batch_size: 1896
+    cpu: 8
+    flavor: cu132
+    memory: 182252 MiB
+    perf: 1403.97
+    time: 1794511570
+    torch: 2.15.0
+    torchmem: 164551 MiB
+lightning-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 256
+    cpu: 8
+    flavor: cu132
+    memory: 28858 MiB
+    perf: 9642.29
+    time: 1794318593
+    torch: 2.15.0
+    torchmem: 23304 MiB
+  - backend: '13.2'
+    batch_size: 1888
+    cpu: 8
+    flavor: cu132
+    memory: 183170 MiB
+    perf: 10793.42
+    time: 1794444617
+    torch: 2.15.0
+    torchmem: 164091 MiB
+  - backend: '13.2'
+    batch_size: 1896
+    cpu: 8
+    flavor: cu132
+    memory: 182538 MiB
+    perf: 10725.41
+    time: 1794511995
+    torch: 2.15.0
+    torchmem: 164781 MiB
+llava-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 1
+    cpu: 4
+    flavor: cu132
+    memory: 71066 MiB
+    perf: 6.81
+    time: 1794321479
+    torch: 2.15.0
+    torchmem: 67670 MiB
+  - backend: '13.2'
+    batch_size: 24
+    cpu: 4
+    flavor: cu132
+    memory: 183270 MiB
+    perf: 24.65
+    time: 1794514129
+    torch: 2.15.0
+    torchmem: 148745 MiB
+llm-chat-completion:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 0
+    flavor: cu132
+    memory: 22042 MiB
+    perf: 32383.57
+    time: 1794517058
+    torch: 2.15.0
+    torchmem: 19355 MiB
+  - backend: '13.2'
+    batch_size: 2592
+    cpu: 0
+    flavor: cu132
+    oom: true
+    time: 1794451905
+    torch: 2.15.0
+llm-full-mp-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 2
+    cpu: 0
+    flavor: cu132
+    memory: 86936 MiB
+    perf: 2194.95
+    time: 1794513077
+    torch: 2.15.0
+    torchmem: 73909 MiB
+llm-lora-ddp-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 8
+    cpu: 0
+    flavor: cu132
+    memory: 19042 MiB
+    perf: 73146.75
+    time: 1794355459
+    torch: 2.15.0
+    torchmem: 13002 MiB
+  - backend: '13.2'
+    batch_size: 136
+    cpu: 0
+    flavor: cu132
+    memory: 167000 MiB
+    perf: 99032.12
+    time: 1794512819
+    torch: 2.15.0
+    torchmem: 157009 MiB
+llm-lora-mp-gpus:
+  observations:
+  - batch_size: 1
+    cpu: 0
+    memory: 48961 MiB
+    perf: 404.79
+    time: 1741988122
+  - batch_size: 4
+    cpu: 0
+    memory: 52949 MiB
+    perf: 1696.39
+    time: 1741957975
+  - batch_size: 8
+    cpu: 0
+    memory: 59199 MiB
+    perf: 2478.66
+    time: 1741989194
+  - batch_size: 16
+    cpu: 0
+    memory: 72605 MiB
+    perf: 2950.86
+    time: 1741989685
+  - batch_size: 24
+    cpu: 0
+    memory: 81407 MiB
+    perf: 3234.96
+    time: 1741990390
+llm-lora-single:
+  observations:
+  - batch_size: 1
+    cpu: 0
+    memory: 17749 MiB
+    perf: 1114.2
+    time: 1741969854
+  - batch_size: 4
+    cpu: 0
+    memory: 23627 MiB
+    perf: 5901.85
+    time: 1741957377
+  - batch_size: 8
+    cpu: 0
+    memory: 31571 MiB
+    perf: 7021.84
+    time: 1741987554
+  - batch_size: 16
+    cpu: 0
+    memory: 44717 MiB
+    perf: 7535.2
+    time: 1741957824
+  - batch_size: 24
+    cpu: 0
+    memory: 65681 MiB
+    perf: 7672.89
+    time: 1741988352
+  - batch_size: 32
+    cpu: 0
+    memory: 71633 MiB
+    perf: 7751.83
+    time: 1741988761
+  - batch_size: 40
+    cpu: 0
+    memory: 81527 MiB
+    perf: 7795.55
+    time: 1741989252
+  - backend: '13.2'
+    batch_size: 240
+    cpu: 0
+    flavor: cu132
+    oom: true
+    time: 1794445311
+    torch: 2.15.0
+pna:
+  observations:
+  - backend: '13.2'
+    batch_size: 4096
+    cpu: 0
+    flavor: cu132
+    memory: 39920 MiB
+    perf: 8322.85
+    time: 1794321080
+    torch: 2.15.0
+    torchmem: 25762 MiB
+  - backend: '13.2'
+    batch_size: 25136
+    cpu: 0
+    flavor: cu132
+    memory: 182684 MiB
+    perf: 8147.28
+    time: 1794513626
+    torch: 2.15.0
+    torchmem: 165007 MiB
+  - backend: '13.2'
+    batch_size: 25424
+    cpu: 0
+    flavor: cu132
+    memory: 182584 MiB
+    perf: 8160.58
+    time: 1794447793
+    torch: 2.15.0
+    torchmem: 166907 MiB
+ppo:
+  observations:
+  - backend: '13.2'
+    batch_size: 16
+    cpu: 128
+    flavor: cu132
+    jaxmem: 288 MiB
+    memory: 2107 MiB
+    perf: 9431.87
+    time: 1794513304
+    torch: 2.15.0
+recursiongfn:
+  observations:
+  - backend: '13.2'
+    batch_size: 128
+    cpu: 8
+    flavor: cu132
+    memory: 16267 MiB
+    perf: 11748.41
+    time: 1794513963
+    torch: 2.15.0
+    torchmem: 3423 MiB
+reformer:
+  observations:
+  - backend: '13.2'
+    batch_size: 32
+    cpu: 8
+    flavor: cu132
+    memory: 12892 MiB
+    perf: 176.94
+    time: 1794317892
+    torch: 2.15.0
+    torchmem: 10528 MiB
+  - backend: '13.2'
+    batch_size: 504
+    cpu: 8
+    flavor: cu132
+    memory: 177648 MiB
+    perf: 183.85
+    time: 1794510452
+    torch: 2.15.0
+    torchmem: 164474 MiB
+regnet_y_128gf:
+  observations:
+  - backend: '13.2'
+    batch_size: 64
+    cpu: 8
+    flavor: cu132
+    memory: 52012 MiB
+    perf: 334.26
+    time: 1794317289
+    torch: 2.15.0
+    torchmem: 36673 MiB
+  - backend: '13.2'
+    batch_size: 520
+    cpu: 8
+    flavor: cu132
+    memory: 177472 MiB
+    perf: 371.5
+    time: 1794509457
+    torch: 2.15.0
+    torchmem: 163258 MiB
+resnet152-ddp-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 256
+    cpu: 8
+    flavor: cu132
+    memory: 28657 MiB
+    perf: 9602.32
+    time: 1794316755
+    torch: 2.15.0
+    torchmem: 22716 MiB
+  - backend: '13.2'
+    batch_size: 1992
+    cpu: 8
+    flavor: cu132
+    memory: 183243 MiB
+    perf: 10327.64
+    time: 1794441188
+    torch: 2.15.0
+    torchmem: 172639 MiB
+resnet50:
+  observations:
+  - backend: '13.2'
+    batch_size: 256
+    cpu: 8
+    flavor: cu132
+    memory: 14060 MiB
+    perf: 1990.41
+    time: 1794316553
+    torch: 2.15.0
+    torchmem: 10964 MiB
+  - backend: '13.2'
+    batch_size: 3888
+    cpu: 8
+    flavor: cu132
+    memory: 180732 MiB
+    perf: 1872.16
+    time: 1794440757
+    torch: 2.15.0
+    torchmem: 163895 MiB
+  - backend: '13.2'
+    batch_size: 3912
+    cpu: 8
+    flavor: cu132
+    memory: 181908 MiB
+    perf: 1903.92
+    time: 1794507653
+    torch: 2.15.0
+    torchmem: 164926 MiB
+resnet50-noio:
+  observations:
+  - backend: '13.2'
+    batch_size: 256
+    cpu: 8
+    flavor: cu132
+    memory: 27586 MiB
+    perf: 6823.09
+    time: 1794316654
+    torch: 2.15.0
+    torchmem: 25768 MiB
+  - backend: '13.2'
+    batch_size: 1640
+    cpu: 8
+    flavor: cu132
+    memory: 166514 MiB
+    perf: 7548.19
+    time: 1794507852
+    torch: 2.15.0
+    torchmem: 164530 MiB
+rlhf-gpus:
+  observations:
+  - backend: '13.2'
+    batch_size: 64
+    cpu: 0
+    flavor: cu132
+    memory: 49426 MiB
+    perf: 8113.25
+    time: 1794333342
+    torch: 2.15.0
+    torchmem: 43502 MiB
+  - backend: '13.2'
+    batch_size: 368
+    cpu: 0
+    flavor: cu132
+    memory: 175246 MiB
+    perf: 17712.5
+    time: 1794514660
+    torch: 2.15.0
+    torchmem: 164119 MiB
+rlhf-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 64
+    cpu: 0
+    flavor: cu132
+    memory: 35640 MiB
+    perf: 2076.03
+    time: 1794333117
+    torch: 2.15.0
+    torchmem: 33261 MiB
+  - backend: '13.2'
+    batch_size: 384
+    cpu: 0
+    flavor: cu132
+    memory: 130206 MiB
+    perf: 3583.16
+    time: 1794448678
+    torch: 2.15.0
+    torchmem: 125877 MiB
+  - backend: '13.2'
+    batch_size: 512
+    cpu: 0
+    flavor: cu132
+    memory: 167866 MiB
+    perf: 3736.2
+    time: 1794514529
+    torch: 2.15.0
+    torchmem: 162885 MiB
+t5:
+  observations:
+  - backend: '13.2'
+    batch_size: 16
+    cpu: 8
+    flavor: cu132
+    memory: 31514 MiB
+    perf: 189.23
+    time: 1794317795
+    torch: 2.15.0
+    torchmem: 28194 MiB
+  - backend: '13.2'
+    batch_size: 88
+    cpu: 8
+    flavor: cu132
+    memory: 163258 MiB
+    perf: 214.21
+    time: 1794442845
+    torch: 2.15.0
+    torchmem: 150226 MiB
+  - backend: '13.2'
+    batch_size: 96
+    cpu: 8
+    flavor: cu132
+    memory: 177894 MiB
+    perf: 215.94
+    time: 1794510170
+    torch: 2.15.0
+    torchmem: 163787 MiB
+torchatari:
+  observations:
+  - backend: '13.2'
+    batch_size: 16
+    cpu: 128
+    flavor: cu132
+    memory: 4098 MiB
+    perf: 9293.23
+    time: 1794515348
+    torch: 2.15.0
+    torchmem: 2235 MiB
+txt-to-image-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 16
+    cpu: 0
+    flavor: cu132
+    memory: 37372 MiB
+    perf: 62.58
+    time: 1794516926
+    torch: 2.15.0
+    torchmem: 35416 MiB
+vjepa-gpus:
+  observations:
+  - batch_size: 1
+    cpu: 16
+    memory: 25011 MiB
+    perf: 17.75
+    time: 1741990905
+  - batch_size: 1
+    cpu: 8
+    memory: 25095 MiB
+    perf: 18.1
+    time: 1741990755
+  - batch_size: 12
+    cpu: 12
+    memory: 43659 MiB
+    perf: 119.45
+    time: 1741960642
+  - batch_size: 16
+    cpu: 12
+    memory: 48371 MiB
+    perf: 133.12
+    time: 1741960780
+  - batch_size: 24
+    cpu: 16
+    memory: 62500 MiB
+    perf: 148.62
+    time: 1741992328
+  - batch_size: 24
+    cpu: 8
+    memory: 60738 MiB
+    perf: 149.33
+    time: 1741992139
+  - batch_size: 32
+    cpu: 12
+    memory: 76411 MiB
+    perf: 153.12
+    time: 1741962402
+  - batch_size: 32
+    cpu: 16
+    memory: 74833 MiB
+    perf: 153.45
+    time: 1741992861
+  - batch_size: 32
+    cpu: 8
+    memory: 74082 MiB
+    perf: 154.63
+    time: 1741992629
+  - batch_size: 40
+    cpu: 12
+    memory: 81497 MiB
+    perf: 156.63
+    time: 1741962031
+vjepa-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 24
+    cpu: 12
+    flavor: cu132
+    memory: 60834 MiB
+    perf: 62.84
+    time: 1794432797
+    torch: 2.15.0
+    torchmem: 46976 MiB
+  - backend: '13.2'
+    batch_size: 88
+    cpu: 12
+    flavor: cu132
+    memory: 161844 MiB
+    perf: 86.44
+    time: 1794449134
+    torch: 2.15.0
+    torchmem: 127700 MiB
+  - backend: '13.2'
+    batch_size: 112
+    cpu: 12
+    flavor: cu132
+    memory: 182786 MiB
+    perf: 89.05
+    time: 1794514996
+    torch: 2.15.0
+    torchmem: 156119 MiB
+whisper:
+  observations:
+  - backend: '13.2'
+    batch_size: 64
+    cpu: 8
+    flavor: cu132
+    memory: 9278 MiB
+    perf: 1407.13
+    time: 1794317985
+    torch: 2.15.0
+    torchmem: 7148 MiB
+  - backend: '13.2'
+    batch_size: 1352
+    cpu: 8
+    flavor: cu132
+    memory: 161686 MiB
+    perf: 1374.91
+    time: 1794443346
+    torch: 2.15.0
+    torchmem: 146436 MiB
+  - backend: '13.2'
+    batch_size: 1520
+    cpu: 8
+    flavor: cu132
+    memory: 181520 MiB
+    perf: 1371.61
+    time: 1794510690
+    torch: 2.15.0
+    torchmem: 164594 MiB
+whisper-transcribe-single:
+  observations:
+  - backend: '13.2'
+    batch_size: 64
+    cpu: 0
+    flavor: cu132
+    memory: 36630 MiB
+    perf: 10.83
+    time: 1794516797
+    torch: 2.15.0
+    torchmem: 34543 MiB
+  - backend: '13.2'
+    batch_size: 624
+    cpu: 0
+    flavor: cu132
+    oom: true
+    time: 1794451110
+    torch: 2.15.0

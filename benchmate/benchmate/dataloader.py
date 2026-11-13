@@ -35,7 +35,8 @@ def generate_tensors(batch_size, shapes, device):
 
 
 def generate_tensor_classification(original_model, batch_size, in_shape, device):
-    model = original_model.to(device=device)
+    # torchvision --optim inductor hands over a plain function (already on the device)
+    model = original_model.to(device=device) if hasattr(original_model, "to") else original_model
     inp = torch.randn((batch_size, *in_shape), device=device)
     out = torch.rand_like(model(inp))
     return inp, out

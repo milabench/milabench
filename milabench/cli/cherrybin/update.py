@@ -11,6 +11,9 @@ from milabench.common import CommonArguments, get_multipack
 
 from .util import (
     isolate_pack_dirs,
+    load_fingerprints,
+    pack_fingerprint,
+    save_fingerprint,
     mirror_isolated_to_standard,
     pack_roots,
     prepare_locally,
@@ -28,6 +31,12 @@ class Update(Command):
     One massive bench is indexed before the next download starts.
     Hardlinks into the standard data/cache dirs so `milabench run` works,
     unless --clean, which deletes the isolated download after it is in the db.
+
+    --only-stale skips the benches whose fingerprint (code folder + argv, see
+    pack_fingerprint) matches the one recorded when they were last written to the
+    archive (<archive>.fingerprints.json); a bench without a record is prepared.
+    --mark-only records the current fingerprints without preparing anything (to
+    start the records on an archive that is already up to date).
     """
 
     name = "update"
@@ -41,6 +50,8 @@ class Update(Command):
         clean     : bool            = False                 # Delete isolated downloads after they are in the db
         io_chunk  : int             = 16 * 1024 * 1024      # Stream I/O chunk size in bytes
         shortrace : bool            = False                 # On error show short stacktrace
+        only_stale: bool            = False                 # Skip the benches whose fingerprint did not change
+        mark_only : bool            = False                 # Record the fingerprints, prepare nothing
     # fmt: on
 
     @staticmethod
@@ -51,12 +62,23 @@ class Update(Command):
             return 1
 
         mp = get_multipack(args, run_name="cherrybin.update.{time}")
+        recorded = load_fingerprints(args.shared)
 
         # One bench at a time so a huge prepare is flushed to the archive
         # before the next download starts.
         for name, pack in mp.packs.items():
             if uses_generated_dataset(pack):
                 print(f"[{pack.config['name']}] generated dataset, skip archive")
+                continue
+
+            bench = pack.config["name"]
+            fingerprint = pack_fingerprint(pack)
+            if args.mark_only:
+                save_fingerprint(args.shared, bench, fingerprint)
+                print(f"[{bench}] fingerprint recorded")
+                continue
+            if args.only_stale and recorded.get(bench) == fingerprint:
+                print(f"[{bench}] unchanged since it was archived, skip")
                 continue
 
             orig_data, orig_cache = isolate_pack_dirs(pack)
@@ -75,6 +97,7 @@ class Update(Command):
                 f"{'updated' if stats.changed else 'unchanged'} {args.shared}, "
                 f"{stats.io.summary()}"
             )
+            save_fingerprint(args.shared, bench, fingerprint)
             if args.clean:
                 # Skip mirroring: hardlinks would keep the bytes on disk.
                 remove_isolated_trees(pack)

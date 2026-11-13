@@ -11,6 +11,27 @@ from torch.utils.data import DataLoader
 from benchmate.dataset import RepeatDataset
 
 
+def load_cached_webdataset(err):
+    """Train split of the webdataset built by prepare, read from the datasets cache (no network)"""
+    import glob
+    import os
+    from datasets import Dataset, concatenate_datasets
+    from datasets import config as ds_config
+
+    pattern = os.path.join(ds_config.HF_DATASETS_CACHE, "webdataset", "*", "*", "*", "webdataset-train*.arrow")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise RuntimeError(f"no cached webdataset in {pattern}") from err
+
+    # one build only: several would be mixed together
+    builds = {os.path.dirname(f) for f in files}
+    if len(builds) > 1:
+        raise RuntimeError(f"several cached webdataset builds: {sorted(builds)}") from err
+
+    print(f"offline: loading {len(files)} cached arrow files from {builds.pop()}")
+    return concatenate_datasets([Dataset.from_file(f) for f in files])
+
+
 whisper_defaults_generation_args = {
     # "max_new_tokens": 448,
     "num_beams": 1,
@@ -264,12 +285,17 @@ class FluxBenchmark(InferenceBenchmark):
         base_url = "https://huggingface.co/datasets/jackyhate/text-to-image-2M/resolve/main/data_512_2M/data_{i:06d}.tar"
         num_shards = 10  # Number of webdataset tar files
         urls = [base_url.format(i=i) for i in range(num_shards)]
-        dataset = load_dataset(
-            "webdataset", 
-            data_files={"train": urls}, 
-            split="train", 
-            streaming=False
-        )
+        try:
+            dataset = load_dataset(
+                "webdataset",
+                data_files={"train": urls},
+                split="train",
+                streaming=False
+            )
+        except Exception as err:
+            # Offline (HF_HUB_OFFLINE): URL data files are resolved through the Hub API even when
+            # the dataset was already built by prepare. Load the Arrow files of that build instead.
+            dataset = load_cached_webdataset(err)
         dataset = RepeatDataset(dataset)
         self.bs = args.batch_size
         self.dataset = observer.loader(self.dataloader(dataset, args), custom_step=self.custom_step)

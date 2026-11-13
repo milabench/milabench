@@ -3,7 +3,7 @@ import tempfile
 from milabench.fs import XPath
 from milabench.pack import Package
 from milabench.commands import TorchrunAllGPU, TorchrunAllNodes, ForeachNode
-from milabench.commands.srun import ForeachSrun
+from milabench.commands.srun import ForeachSrun, SlurmNodeRank
 from milabench.pack import BasePackage
 from milabench.commands import SimpleCommand, WorkingDir
 
@@ -48,6 +48,10 @@ class TorchtuneSrun(ForeachSrun):
             **kwargs,
         )
         super().__init__(WorkingDir(base_exec))
+
+    def worker_executor(self):
+        # tune run has no benchrun --node-rank injection
+        return SlurmNodeRank(super().worker_executor())
 
 
 class Llm(Package):

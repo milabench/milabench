@@ -1,0 +1,54 @@
+\section{Introduction}
+\label{sec:intro}
+
+Upcoming exascale clusters will be evaluated on large-scale LLM pre-training. The work started as the
+validation of two new milabench workloads at a scale they had never run at. Full access to Rorqual extends
+it: the same workloads serve as probes of how the cluster, and its network architecture in particular,
+behaves under large-scale training, which is what its administrators and the exascale evaluation need to
+know. Rorqual is compared with Fir and Tamia, two clusters with the same GPU nodes and
+four times the inter-node bandwidth per node (\cref{tab:clusters}).
+
+\begin{table}[h]
+  \caption{Clusters. All nodes have 4 H100 80\,GB GPUs connected by NVLink.}
+  \label{tab:clusters}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{llll}
+    \toprule
+    Cluster & Nodes used & Inter-node network per node & Role \\
+    \midrule
+    Rorqual & 66 (264 GPUs), 16 leaf switches & $1\times$ 200\,Gb/s HDR InfiniBand (50\,Gb/s per GPU) & target, full-access window \\
+    Fir     & leaves of 20 nodes & $4\times$ 200\,Gb/s (one per GPU) & preliminary runs \\
+    Tamia   & 5 leaves of 8--16 nodes & $4\times$ 200\,Gb/s & packed vs.\ spread placement \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\paragraph{Rorqual topology.} Two levels: 25 leaf switches under one spine switch. Of the 93 GPU nodes, 27
+are MIG-partitioned (9 leaves) and unusable here, leaving 66 full nodes: 13 leaves with 3 GPU nodes each,
+and three larger leaves with 7, 8 and 12 (ihpc218, ihpc217, ihpc316). Every leaf except ihpc316 also
+connects CPU nodes, whose jobs share its uplinks.
+
+\paragraph{Workloads.}
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+  \item \textbf{Qwen3.8-27B} (dense, 64 layers: 48 Gated DeltaNet + 16 gated attention), TorchTitan,
+        FSDP over all GPUs, $3 \times 4{,}096$ tokens per GPU per step (weak scaling), BF16 compute with
+        FP32 master weights and AdamW moments, full activation checkpointing, regional compilation.
+  \item \textbf{GLM-5} (mixture of experts), Megatron via slime: full model at about 208--264 GPUs,
+        truncated versions at smaller scale. \placeholder{configuration once the pipeline is fixed.}
+  \item \textbf{Communication benchmarks} (nccl-tests all-reduce and all-to-all) and \textbf{health
+        checks} before each allocation.
+\end{itemize}
+
+\paragraph{Questions.} Each section answers one question:
+(\cref{sec:hardware}) do nodes perform as expected and uniformly?
+(\cref{sec:fabric}) how much does the network limit training, and does placement on leaf switches matter?
+(\cref{sec:scaling}) how does throughput per GPU change from one switch to 264 GPUs?
+(\cref{sec:moe}) how does an MoE model behave at scale?
+(\cref{sec:software}) how does the software stack compare with expectations and published numbers?
+(\cref{sec:operations}) is the system ready for production runs (startup, failures, variance, stability)?
+
+\paragraph{Declared deviations} from the reference training recipe, valid for every result unless noted:
+AdamW instead of Muon; multi-token prediction (MTP) off; random tokens instead of a corpus; FP8 not
+used for Qwen (not supported on our TorchTitan pin; used for GLM-5).

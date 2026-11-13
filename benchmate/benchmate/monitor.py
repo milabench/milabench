@@ -15,13 +15,15 @@ from voir.instruments.monitor import monitor
 from voir.helpers import current_overseer
 
 
-from .metrics import sumggle_push, give_push, file_push
+from .metrics import sumggle_push, give_push, file_push, wandb_push, tee_push
 from .toggles import (
     get_poll_interval,
     log_pattern,
     get_observation_count,
     torchmem_enabled,
     jaxmem_enabled,
+    wandb_enabled,
+    wandb_all_ranks,
 )
 from .torchmem import torchmem_fetcher
 from .jaxmem import jaxmem_fetcher
@@ -74,6 +76,15 @@ def log_patterns():
 
 
 def auto_push():
+    push = _auto_push()
+
+    if wandb_enabled():
+        return tee_push(push, wandb_push())
+
+    return push
+
+
+def _auto_push():
     # use_stdout = int(os.getenv("MILABENCH_USE_STDOUT", 0))
     mb_managed = int(os.getenv("MILABENCH_MANAGED", 0))
 
@@ -82,8 +93,8 @@ def auto_push():
         # Using voir, DATA_FD is defined as well
         ov = current_overseer.get()
         if ov is not None:
-            return ov.give
-        
+            return give_push()
+
         # Not using Voir, using structured stdout
         if int(os.getenv("MILABENCH_USE_STDOUT", 0)) == 1:
             return sumggle_push()
@@ -168,6 +179,31 @@ def _smuggle_get(monitors):
     return get
 
 
+def metric_log():
+    """Event sink for this rank: rank 0 (or no rank) smuggles through stdout to milabench, the other ranks append to
+    their own rankstore file (their stdout is not read as metrics)."""
+    if get_rank() > 0:
+        from .rankstore import ranked_push, add_sink
+
+        if wandb_enabled() and wandb_all_ranks():
+            add_sink(wandb_push())  # this rank's own wandb run
+
+        def rank_log(data):
+            ranked_push(**data)
+
+        return rank_log
+
+    data_file = SmuggleWriter(sys.stdout)
+
+    def mblog(data):
+        try:
+            print(json.dumps(data), file=data_file)
+        except ValueError:
+            pass
+
+    return mblog
+
+
 def _smuggle_monitor(
     gpu_poll_interval=0.25,
     system_poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL,
@@ -178,14 +214,7 @@ def _smuggle_monitor(
     if worker_init is None:
         worker_init = init
 
-    data_file = SmuggleWriter(sys.stdout)
-
-    def mblog(data):
-        if data_file is not None:
-            try:
-                print(json.dumps(data), file=data_file)
-            except ValueError:
-                pass
+    mblog = metric_log()
 
     def push(entries):
         for entry in entries:
@@ -244,7 +273,7 @@ def smuggle_monitor(
             yield mblog
         finally:
             mon.stop()
-        
+
     else:
         # rank > 0
         yield
@@ -364,12 +393,12 @@ def voirfile_monitor(ov, options):
 
     if options.dash:
         ov.require(dash)
-    
+
     instruments = [
         log(
             *log_patterns(), context="task"
         )
-    ] 
+    ]
 
     rank = get_rank()
 
@@ -378,7 +407,7 @@ def voirfile_monitor(ov, options):
         instruments.append(
             early_stop(n=get_observation_count(options.stop), key="rate", task="train", signal="stop")
         )
-    
+
     gpu_poll = get_poll_interval(options.gpu_poll)
     system_poll = get_poll_interval(DEFAULT_SYSTEM_POLL_INTERVAL)
 
