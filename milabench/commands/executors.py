@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import traceback
 from contextlib import contextmanager
@@ -125,7 +126,8 @@ async def execute_command(
         for pack, argv, _kwargs in command.commands():
             await pack.send(event="config", data=pack.config)
 
-            meta_info = machine_metadata(pack)
+            # machine_metadata is shared by the packs of a venv: each event gets its own copy and date
+            meta_info = {**machine_metadata(pack), "date": datetime.datetime.utcnow().timestamp()}
             meta_info["overrides"] = overrides_snapshot()
 
             await pack.send(event="meta", data=meta_info)

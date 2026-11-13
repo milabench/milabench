@@ -1,0 +1,684 @@
+# Trillium B200 configs (8x B200 180 GB per node) for Qwen3.8-27B pre-training:
+# experiment groups A-Q, B-Q, C, F1 and R of scripts/trillium/DESIGN.md.
+#
+#   scripts/trillium/qwen/tt_trillium.sh --nodes 13 tri-aq-hsdp8-24k
+#
+# Entries do not fix the node count (num_machines: 999 = every node of the
+# allocation, capped by milabench), except B-Q-strong and R. Per GPU: sequences
+# of 4096 tokens; "12k / 24k / 48k" = 12,288 / 24,576 / 49,152 tokens per GPU per
+# step (global batch = tokens per GPU x GPUs, weak scaling). Defaults: selective
+# AC, compile regions (no CUDA graphs), fp32 gradient reduction, BF16, rows
+# stacked layout, 30 warm-up steps then a 5-minute measurement.
+#
+# Layouts (tt_native.configs.parallel_degrees):
+#   fsdp        FSDP over all GPUs
+#   hsdp8/16    shard over 8 / 16 GPUs (1 / 2 nodes), replicate across. hsdp16
+#               needs an even node count: not part of the 1-node runs (the
+#               launcher refuses it)
+#   tp2/4-fsdp  TP in a node (at most 4: 4 KV heads), FSDP over the rest. Per DP
+#               rank the microbatch is tp x the per-GPU tokens.
+#   pp2/4-fsdp  1F1B over 2 / 4 stages (stage = contiguous rank block, so a stage
+#               spans nodes), FSDP inside a stage. Pipeline microbatches of one
+#               sequence; pp x 3 / 6 / 12 of them per step keep the per-GPU tokens.
+# The torchtitan stacked layout needs the FSDP shard group to divide F = 17408
+# (fails at 104 or 416 GPUs): "rows" stays the default; tri-c-* use torchtitan
+# (hsdp8: shard group 8) so MXFP8 also covers feed_forward.w13.
+#
+# Expected memory per GPU (B200 180 GB ~ 178 GiB usable). Sharded state =
+# 16 B/param x 26.9e9 / shard group; activations scale with the tokens per GPU.
+# Rorqual measured ~12-18 GiB of working set at 12k with full AC (H100); selective
+# AC and 24k / 48k are extrapolated. All values are estimates (est.), none measured
+# on B200.
+#
+#   shard group   state     12k selective   24k selective   48k selective (est.)
+#   8 (hsdp8)     50 GiB    ~85             ~120            OOM risk: use -acfull
+#   16 (hsdp16)   25 GiB    ~60             ~95             ~165
+#   104 (13 n)    3.9 GiB   ~40             ~75             ~145
+#   416 (52 n)    1.0 GiB   ~37             ~72             ~142
+#
+# -acnone (no AC) roughly doubles the activations: expected to fit at 12k only.
+
+include:
+  - torchtitan_native.yaml
+
+_tri:
+  inherits: _tt_native
+  max_duration: 2400
+  num_machines: 999
+  voir:
+    options:
+      skip: 30
+      stop: 100
+      stop_seconds: 300
+  argv:
+    --flavor: 27B
+    --seq-len: 4096
+    --microbatch-sequences: 3
+    --compile: regions
+    --ac: selective
+    --dataset: fineweb
+    --samples: 500000
+    --max-documents: 64
+    --layout: fsdp
+
+# --- A-Q: layout x tokens per GPU ------------------------------------------
+# Variants: -rbf16 (bf16 gradient reduction), -acfull, -acnone.
+
+tri-aq-fsdp-12k:
+  inherits: _tri
+  argv:
+    --layout: fsdp
+    --microbatch-sequences: 3
+tri-aq-fsdp-12k-rbf16:
+  inherits: tri-aq-fsdp-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-fsdp-12k-acfull:
+  inherits: tri-aq-fsdp-12k
+  argv:
+    --ac: full
+tri-aq-fsdp-12k-acnone:
+  inherits: tri-aq-fsdp-12k
+  argv:
+    --ac: none
+
+tri-aq-fsdp-24k:
+  inherits: _tri
+  argv:
+    --layout: fsdp
+    --microbatch-sequences: 6
+tri-aq-fsdp-24k-rbf16:
+  inherits: tri-aq-fsdp-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-fsdp-24k-acfull:
+  inherits: tri-aq-fsdp-24k
+  argv:
+    --ac: full
+tri-aq-fsdp-24k-acnone:
+  inherits: tri-aq-fsdp-24k
+  argv:
+    --ac: none
+
+tri-aq-fsdp-48k:
+  inherits: _tri
+  argv:
+    --layout: fsdp
+    --microbatch-sequences: 12
+tri-aq-fsdp-48k-rbf16:
+  inherits: tri-aq-fsdp-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-fsdp-48k-acfull:
+  inherits: tri-aq-fsdp-48k
+  argv:
+    --ac: full
+tri-aq-fsdp-48k-acnone:
+  inherits: tri-aq-fsdp-48k
+  argv:
+    --ac: none
+
+tri-aq-hsdp8-12k:
+  inherits: _tri
+  argv:
+    --layout: hsdp8
+    --microbatch-sequences: 3
+tri-aq-hsdp8-12k-rbf16:
+  inherits: tri-aq-hsdp8-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp8-12k-acfull:
+  inherits: tri-aq-hsdp8-12k
+  argv:
+    --ac: full
+tri-aq-hsdp8-12k-acnone:
+  inherits: tri-aq-hsdp8-12k
+  argv:
+    --ac: none
+
+tri-aq-hsdp8-24k:
+  inherits: _tri
+  argv:
+    --layout: hsdp8
+    --microbatch-sequences: 6
+tri-aq-hsdp8-24k-rbf16:
+  inherits: tri-aq-hsdp8-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp8-24k-acfull:
+  inherits: tri-aq-hsdp8-24k
+  argv:
+    --ac: full
+tri-aq-hsdp8-24k-acnone:
+  inherits: tri-aq-hsdp8-24k
+  argv:
+    --ac: none
+
+tri-aq-hsdp8-48k:
+  inherits: _tri
+  argv:
+    --layout: hsdp8
+    --microbatch-sequences: 12
+tri-aq-hsdp8-48k-rbf16:
+  inherits: tri-aq-hsdp8-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp8-48k-acfull:
+  inherits: tri-aq-hsdp8-48k
+  argv:
+    --ac: full
+tri-aq-hsdp8-48k-acnone:
+  inherits: tri-aq-hsdp8-48k
+  argv:
+    --ac: none
+
+tri-aq-hsdp16-12k:
+  inherits: _tri
+  argv:
+    --layout: hsdp16
+    --microbatch-sequences: 3
+tri-aq-hsdp16-12k-rbf16:
+  inherits: tri-aq-hsdp16-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp16-12k-acfull:
+  inherits: tri-aq-hsdp16-12k
+  argv:
+    --ac: full
+tri-aq-hsdp16-12k-acnone:
+  inherits: tri-aq-hsdp16-12k
+  argv:
+    --ac: none
+
+tri-aq-hsdp16-24k:
+  inherits: _tri
+  argv:
+    --layout: hsdp16
+    --microbatch-sequences: 6
+tri-aq-hsdp16-24k-rbf16:
+  inherits: tri-aq-hsdp16-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp16-24k-acfull:
+  inherits: tri-aq-hsdp16-24k
+  argv:
+    --ac: full
+tri-aq-hsdp16-24k-acnone:
+  inherits: tri-aq-hsdp16-24k
+  argv:
+    --ac: none
+
+tri-aq-hsdp16-48k:
+  inherits: _tri
+  argv:
+    --layout: hsdp16
+    --microbatch-sequences: 12
+tri-aq-hsdp16-48k-rbf16:
+  inherits: tri-aq-hsdp16-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-hsdp16-48k-acfull:
+  inherits: tri-aq-hsdp16-48k
+  argv:
+    --ac: full
+tri-aq-hsdp16-48k-acnone:
+  inherits: tri-aq-hsdp16-48k
+  argv:
+    --ac: none
+
+tri-aq-tp2-fsdp-12k:
+  inherits: _tri
+  argv:
+    --layout: tp2-fsdp
+    --microbatch-sequences: 6
+tri-aq-tp2-fsdp-12k-rbf16:
+  inherits: tri-aq-tp2-fsdp-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp2-fsdp-12k-acfull:
+  inherits: tri-aq-tp2-fsdp-12k
+  argv:
+    --ac: full
+tri-aq-tp2-fsdp-12k-acnone:
+  inherits: tri-aq-tp2-fsdp-12k
+  argv:
+    --ac: none
+
+tri-aq-tp2-fsdp-24k:
+  inherits: _tri
+  argv:
+    --layout: tp2-fsdp
+    --microbatch-sequences: 12
+tri-aq-tp2-fsdp-24k-rbf16:
+  inherits: tri-aq-tp2-fsdp-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp2-fsdp-24k-acfull:
+  inherits: tri-aq-tp2-fsdp-24k
+  argv:
+    --ac: full
+tri-aq-tp2-fsdp-24k-acnone:
+  inherits: tri-aq-tp2-fsdp-24k
+  argv:
+    --ac: none
+
+tri-aq-tp2-fsdp-48k:
+  inherits: _tri
+  argv:
+    --layout: tp2-fsdp
+    --microbatch-sequences: 24
+tri-aq-tp2-fsdp-48k-rbf16:
+  inherits: tri-aq-tp2-fsdp-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp2-fsdp-48k-acfull:
+  inherits: tri-aq-tp2-fsdp-48k
+  argv:
+    --ac: full
+tri-aq-tp2-fsdp-48k-acnone:
+  inherits: tri-aq-tp2-fsdp-48k
+  argv:
+    --ac: none
+
+tri-aq-tp4-fsdp-12k:
+  inherits: _tri
+  argv:
+    --layout: tp4-fsdp
+    --microbatch-sequences: 12
+tri-aq-tp4-fsdp-12k-rbf16:
+  inherits: tri-aq-tp4-fsdp-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp4-fsdp-12k-acfull:
+  inherits: tri-aq-tp4-fsdp-12k
+  argv:
+    --ac: full
+tri-aq-tp4-fsdp-12k-acnone:
+  inherits: tri-aq-tp4-fsdp-12k
+  argv:
+    --ac: none
+
+tri-aq-tp4-fsdp-24k:
+  inherits: _tri
+  argv:
+    --layout: tp4-fsdp
+    --microbatch-sequences: 24
+tri-aq-tp4-fsdp-24k-rbf16:
+  inherits: tri-aq-tp4-fsdp-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp4-fsdp-24k-acfull:
+  inherits: tri-aq-tp4-fsdp-24k
+  argv:
+    --ac: full
+tri-aq-tp4-fsdp-24k-acnone:
+  inherits: tri-aq-tp4-fsdp-24k
+  argv:
+    --ac: none
+
+tri-aq-tp4-fsdp-48k:
+  inherits: _tri
+  argv:
+    --layout: tp4-fsdp
+    --microbatch-sequences: 48
+tri-aq-tp4-fsdp-48k-rbf16:
+  inherits: tri-aq-tp4-fsdp-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-tp4-fsdp-48k-acfull:
+  inherits: tri-aq-tp4-fsdp-48k
+  argv:
+    --ac: full
+tri-aq-tp4-fsdp-48k-acnone:
+  inherits: tri-aq-tp4-fsdp-48k
+  argv:
+    --ac: none
+
+tri-aq-pp2-fsdp-12k:
+  inherits: _tri
+  argv:
+    --layout: pp2-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 6
+tri-aq-pp2-fsdp-12k-rbf16:
+  inherits: tri-aq-pp2-fsdp-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp2-fsdp-12k-acfull:
+  inherits: tri-aq-pp2-fsdp-12k
+  argv:
+    --ac: full
+tri-aq-pp2-fsdp-12k-acnone:
+  inherits: tri-aq-pp2-fsdp-12k
+  argv:
+    --ac: none
+
+tri-aq-pp2-fsdp-24k:
+  inherits: _tri
+  argv:
+    --layout: pp2-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 12
+tri-aq-pp2-fsdp-24k-rbf16:
+  inherits: tri-aq-pp2-fsdp-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp2-fsdp-24k-acfull:
+  inherits: tri-aq-pp2-fsdp-24k
+  argv:
+    --ac: full
+tri-aq-pp2-fsdp-24k-acnone:
+  inherits: tri-aq-pp2-fsdp-24k
+  argv:
+    --ac: none
+
+tri-aq-pp2-fsdp-48k:
+  inherits: _tri
+  argv:
+    --layout: pp2-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 24
+tri-aq-pp2-fsdp-48k-rbf16:
+  inherits: tri-aq-pp2-fsdp-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp2-fsdp-48k-acfull:
+  inherits: tri-aq-pp2-fsdp-48k
+  argv:
+    --ac: full
+tri-aq-pp2-fsdp-48k-acnone:
+  inherits: tri-aq-pp2-fsdp-48k
+  argv:
+    --ac: none
+
+tri-aq-pp4-fsdp-12k:
+  inherits: _tri
+  argv:
+    --layout: pp4-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 12
+tri-aq-pp4-fsdp-12k-rbf16:
+  inherits: tri-aq-pp4-fsdp-12k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp4-fsdp-12k-acfull:
+  inherits: tri-aq-pp4-fsdp-12k
+  argv:
+    --ac: full
+tri-aq-pp4-fsdp-12k-acnone:
+  inherits: tri-aq-pp4-fsdp-12k
+  argv:
+    --ac: none
+
+tri-aq-pp4-fsdp-24k:
+  inherits: _tri
+  argv:
+    --layout: pp4-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 24
+tri-aq-pp4-fsdp-24k-rbf16:
+  inherits: tri-aq-pp4-fsdp-24k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp4-fsdp-24k-acfull:
+  inherits: tri-aq-pp4-fsdp-24k
+  argv:
+    --ac: full
+tri-aq-pp4-fsdp-24k-acnone:
+  inherits: tri-aq-pp4-fsdp-24k
+  argv:
+    --ac: none
+
+tri-aq-pp4-fsdp-48k:
+  inherits: _tri
+  argv:
+    --layout: pp4-fsdp
+    --microbatch-sequences: 1
+    --pp-microbatches: 48
+tri-aq-pp4-fsdp-48k-rbf16:
+  inherits: tri-aq-pp4-fsdp-48k
+  argv:
+    --grad-reduce: bf16
+tri-aq-pp4-fsdp-48k-acfull:
+  inherits: tri-aq-pp4-fsdp-48k
+  argv:
+    --ac: full
+tri-aq-pp4-fsdp-48k-acnone:
+  inherits: tri-aq-pp4-fsdp-48k
+  argv:
+    --ac: none
+
+# --- B-Q-strong: fixed global batch of 52 x 8 x 24k tokens (10.2M) ----------
+# Gradient accumulation of 24k microbatches: 4 at 13 nodes, 2 at 26, 1 at 52.
+# B-Q-weak uses the A-Q entries at 1-52 nodes. At 47 nodes the A-Q, C and F1 entries run as they are
+# (--nodes 47; hsdp16 needs an even count), but this batch does not divide: 2496 sequences on 376 GPUs is
+# 6.64 per GPU. No n47 entry (scripts/trillium/DESIGN.md, "If only 47 nodes").
+
+tri-bqs-fsdp-n13:
+  inherits: tri-aq-fsdp-24k
+  num_machines: 13
+  argv:
+    --grad-accum: 4
+
+tri-bqs-fsdp-n26:
+  inherits: tri-aq-fsdp-24k
+  num_machines: 26
+  argv:
+    --grad-accum: 2
+
+tri-bqs-fsdp-n52:
+  inherits: tri-aq-fsdp-24k
+  num_machines: 52
+  argv:
+    --grad-accum: 1
+
+# 39 nodes, the same batch: 8 sequences per GPU (32,768 tokens, more than the other points' 24k), no accumulation.
+tri-bqs-fsdp-n39:
+  inherits: tri-aq-fsdp-24k
+  num_machines: 39
+  argv:
+    --grad-accum: 1
+    --microbatch-sequences: 8
+
+tri-bqs-hsdp8-n13:
+  inherits: tri-aq-hsdp8-24k
+  num_machines: 13
+  argv:
+    --grad-accum: 4
+
+tri-bqs-hsdp8-n26:
+  inherits: tri-aq-hsdp8-24k
+  num_machines: 26
+  argv:
+    --grad-accum: 2
+
+tri-bqs-hsdp8-n52:
+  inherits: tri-aq-hsdp8-24k
+  num_machines: 52
+  argv:
+    --grad-accum: 1
+
+# --- C: precision -----------------------------------------------------------
+# hsdp8 + torchtitan stacked layout, 24k: MXFP8 on every target linear,
+# feed_forward.w13 included. C-speed at 1 and 52 nodes, C-loss at 13 nodes:
+# 500 steps from seed 1234 on FineWeb, all measured (no warm-up skipped, as
+# scripts/trillium/FORMAT.md asks), loss pushed every step (lr 3e-4, 10
+# warm-up steps, AdamW: tt_native.configs).
+
+tri-c-bf16:
+  inherits: _tri
+  argv:
+    --layout: hsdp8
+    --microbatch-sequences: 6
+    --stacked-layout: torchtitan
+
+tri-c-mxfp8:
+  inherits: tri-c-bf16
+  argv:
+    --precision: mxfp8
+
+# Selective AC also saves MXFP8's GEMMs (all of them: BF16 saves every second mm), which it otherwise recomputes.
+tri-c-mxfp8-savemm:
+  inherits: tri-c-mxfp8
+  argv:
+    --sac-save-scaled-mm: 1
+
+# Full recompute treats BF16 and MXFP8 alike: FP8 without the selective AC save-list asymmetry.
+tri-c-bf16-acfull:
+  inherits: tri-c-bf16
+  argv:
+    --ac: full
+
+tri-c-mxfp8-acfull:
+  inherits: tri-c-mxfp8
+  argv:
+    --ac: full
+
+tri-closs-bf16:
+  inherits: tri-c-bf16
+  max_duration: 5400
+  voir:
+    options:
+      skip: 0
+      stop: 500
+      stop_seconds: 0
+  argv:
+    --seed: 1234
+    # 500 steps x 104 GPUs x 24,576 tokens = 1.28e9 tokens: ~36 documents per GPU and step, 1.87 M documents (a sample
+    # of 6,000 documents through the packer), 18,940 at most for a GPU. _tri's 500,000 would repeat after ~134 steps.
+    # Staged in $SCRATCH/trillium/data (tt_trillium.sh, README.md)
+    --samples: 2000000
+
+tri-closs-mxfp8:
+  inherits: tri-closs-bf16
+  argv:
+    --precision: mxfp8
+
+# BF16 again, to compare the MXFP8 vs BF16 gap with the noise. Another seed:
+tri-closs-bf16-seed2:
+  inherits: tri-closs-bf16
+  argv:
+    --seed: 4321
+tri-closs-mxfp8-seed2:
+  inherits: tri-closs-bf16-seed2
+  argv:
+    --precision: mxfp8
+tri-closs-bf16-seed3:
+  inherits: tri-closs-bf16
+  argv:
+    --seed: 5678
+tri-closs-mxfp8-seed3:
+  inherits: tri-closs-bf16-seed3
+  argv:
+    --precision: mxfp8
+# The same seed: tri-closs-bf16 again with TT_REPETITION=2 (a leading argument of tt_trillium.sh).
+
+# --- F1: checkpoint save / load (after a short measurement) ------------------
+# Folder: $TT_CKPT_ROOT/<run name> ($SCRATCH/trillium/checkpoints, set by the launcher), deleted after the load
+# is timed. full = fp32 weights + AdamW moments + data loader state: 12 B/param
+# (measured on a truncated model, Rorqual), ~0.32 TB for 26.9e9 params (est.);
+# model = weights only in bf16, 2 B/param (~54 GB, est.), synchronous only.
+# Two save / load repetitions per run: the first async_with_pinned_mem save also
+# allocates the pinned host buffers (its blocked_s is an upper bound), the
+# second reuses them.
+
+tri-ckpt-full-sync:
+  inherits: _tri
+  voir:
+    options:
+      skip: 10
+      stop: 10
+      stop_seconds: 0
+  argv:
+    --layout: fsdp
+    --checkpoint: full
+    --checkpoint-async: disabled
+    --checkpoint-repeats: 2
+
+tri-ckpt-full-async:
+  inherits: _tri
+  voir:
+    options:
+      skip: 10
+      stop: 10
+      stop_seconds: 0
+  argv:
+    --layout: fsdp
+    --checkpoint: full
+    --checkpoint-async: async
+    --checkpoint-repeats: 2
+
+tri-ckpt-full-pinned:
+  inherits: _tri
+  voir:
+    options:
+      skip: 10
+      stop: 10
+      stop_seconds: 0
+  argv:
+    --layout: fsdp
+    --checkpoint: full
+    --checkpoint-async: async_with_pinned_mem
+    --checkpoint-repeats: 2
+
+tri-ckpt-model-sync:
+  inherits: _tri
+  voir:
+    options:
+      skip: 10
+      stop: 10
+      stop_seconds: 0
+  argv:
+    --layout: fsdp
+    --checkpoint: model
+    --checkpoint-async: disabled
+    --checkpoint-repeats: 2
+
+# --- F2: long run, the best layout at the top scale, >= 1 h of measured steps (stability, stragglers, clocks, power) --
+# hsdp8 24k: the best BF16 layout of A-Q at 50 nodes. 760 steps after the 30 warm-up steps, ~65 min at ~5.15 s
+# per step (est.); no checkpoint. run.experiment: TT_EXPERIMENT=F2 (a leading argument of tt_trillium.sh).
+
+tri-f2-hsdp8-24k:
+  inherits: tri-aq-hsdp8-24k
+  max_duration: 5400
+  voir:
+    options:
+      skip: 30
+      stop: 760
+      stop_seconds: 0
+
+# --- R: reference run (4 nodes, FSDP, 12k, every ~3 h through the window) ----
+
+tri-ref:
+  inherits: tri-aq-fsdp-12k
+  num_machines: 4
+  voir:
+    options:
+      skip: 30
+      stop: 100
+      stop_seconds: 300
+
+# --- Smoke tests (1 node, first 16 layers) -----------------------------------
+
+tri-smoke:
+  inherits: _tri
+  num_machines: 1
+  max_duration: 1200
+  voir:
+    options:
+      skip: 10
+      stop: 20
+      stop_seconds: 0
+  argv:
+    --n-layers: 16
+
+# MXFP8 (rows layout: feed_forward.w13 stays BF16) and with w13 (torchtitan layout).
+tri-smoke-mxfp8:
+  inherits: tri-smoke
+  argv:
+    --precision: mxfp8
+
+tri-smoke-mxfp8-tt:
+  inherits: tri-smoke-mxfp8
+  argv:
+    --stacked-layout: torchtitan

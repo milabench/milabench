@@ -211,6 +211,8 @@ megatron-glm5-frozen-smoke-2n-l40s:
   tags: [frozen, smoke, mila]
   num_machines: 2
   max_duration: 1800
+  placement:
+    gpus_per_node: 2
 
 # One A100 (40 GB or 80 GB): 2 layers (1 dense + 1 MoE), EP1 x DP1, experts frozen, about 20 GB of expert weights. Same
 # code path as the other smokes (rank store, placement event, a2a timers with a single-rank group), nothing multi-GPU.
@@ -726,3 +728,545 @@ megatron-glm5-check-fit-full-offload05-64n:
 megatron-glm5-check-fit-full-offload1-64n:
   inherits: megatron-glm5-check-fit-full-64n
   argv: *offload1_argv
+
+# --- Trillium B200 (scripts/trillium/DESIGN.md: A-G, B-G, C, F1) -----------------------------------------------------
+# 8 B200 per node, full training (no frozen parameters), full depth (78 layers), seq 8192, micro-batch 1, no VPP.
+# A model copy is PP x EP GPUs (EP is carved from one stage's data-parallel ranks): world % PP == 0, (world / PP) % EP
+# == 0, checked before launch (placement.check_layout). Global batch: the pipeline bubble is (PP - 1) / (m + PP - 1)
+# for m micro-batches per data-parallel rank, so the batch is set in micro-batches. Weak scaling (and the layout
+# comparison at a node count): 32 micro-batches per data-parallel rank of pp13-ep8, i.e. 256 x nodes / 13 (256, 512,
+# 768, 1024; bubble 12 / 44 = 27 %); the other layouts take the batch of their node count (12 nodes: 256, 48: 1024).
+# Strong scaling: 768 in total (96 / 48 / 32 / 24 micro-batches at 13 / 26 / 39 / 52 nodes: bubble 11 % to 33 %).
+# 64 per copy is the small-batch point. Every entry runs on exactly its num_machines nodes: submit each with that many.
+# Names: megatron-glm5-tri-<layout>-n<nodes>-gbs<global batch>[-sel][-<precision>].
+# Micro-batch is always 1: the GLM-5 plugin's attention takes THD input only (checked before launch).
+# Stage splits (first / middle x stages / last, 78 layers; the first stage holds the 3 dense layers, the last the loss):
+#   PP13 7 / 6 x 11 / 5     PP26 4 / 3 x 24 / 2     PP6 15 / 13 x 4 / 11     PP10 9 / 8 x 8 / 5     PP25 5 / 3 x 23 / 4
+# DSA index sharing off (as the Rorqual G runs: it only allows some stage boundaries). Run `deviations`: dsa_index_share.
+# Optimizer: as the Rorqual full runs (precision-aware: FP32 master weights, BF16 gradients and Adam moments).
+_tri_glm5:
+  inherits: _megatron_glm5
+  tags: [trillium, full]
+  data:
+    # 20 steps x 1024 sequences x 8 slots (the 52-node entries), with a margin: no wrap in the speed runs
+    samples: 200000
+  num_machines: 13
+  max_duration: 3600
+  frozen:
+    preset: none
+  placement:
+    nodes: as-is
+    gpus_per_node: 8
+    a2a_timing: true
+  model:
+    index_share: false
+  argv:
+    <<: *full_argv
+    --pipeline-model-parallel-size: 13
+    --decoder-first-pipeline-num-layers: 7
+    --decoder-last-pipeline-num-layers: 5
+    --expert-model-parallel-size: 8
+    --global-batch-size: 256
+    --train-iters: 20
+    --log-straggler: true
+    --log-interval: 5
+    # the last stage's first receive waits for every stage before it to compile its kernels: 573 s of Megatron's default 600 at PP13 (job 1242058)
+    --distributed-timeout-minutes: 30
+
+_tri_pp26: &tri_pp26
+  --pipeline-model-parallel-size: 26
+  --decoder-first-pipeline-num-layers: 4
+  --decoder-last-pipeline-num-layers: 2
+_tri_pp10: &tri_pp10
+  --pipeline-model-parallel-size: 10
+  --decoder-first-pipeline-num-layers: 9
+  --decoder-last-pipeline-num-layers: 5
+_tri_pp25: &tri_pp25
+  --pipeline-model-parallel-size: 25
+  --decoder-first-pipeline-num-layers: 5
+  --decoder-last-pipeline-num-layers: 4
+_tri_pp6: &tri_pp6
+  --pipeline-model-parallel-size: 6
+  --decoder-first-pipeline-num-layers: 15
+  --decoder-last-pipeline-num-layers: 11
+# selective recompute instead of full (activations of the MoE activation and the norms only). Not mla_up_proj: the GLM-5
+# plugin's attention never sets the checkpoint it asserts on (AssertionError in its forward, Rorqual 25574783)
+_tri_sel: &tri_sel
+  --recompute-granularity: selective
+  --recompute-modules: [moe_act, layernorm]
+  --recompute-method: null
+  --recompute-num-layers: null
+
+# --- A-G / B-G: layouts and copies (pp13-ep8 weak: 32 micro-batches per data-parallel rank; strong: 768 in total) ---
+megatron-glm5-tri-pp13-ep8-n13-gbs256:
+  inherits: _tri_glm5
+megatron-glm5-tri-pp13-ep8-n26-gbs512:
+  inherits: _tri_glm5
+  num_machines: 26
+  argv: {--global-batch-size: 512}
+# 39 nodes: weak and strong scaling share this run (768)
+megatron-glm5-tri-pp13-ep8-n39-gbs768:
+  inherits: _tri_glm5
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-pp13-ep8-n52-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+# strong scaling: 768 in total
+megatron-glm5-tri-pp13-ep8-n13-gbs768:
+  inherits: _tri_glm5
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-pp13-ep8-n26-gbs768:
+  inherits: _tri_glm5
+  num_machines: 26
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-pp13-ep8-n52-gbs768:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {--global-batch-size: 768}
+# small batch, 64 per copy (8 micro-batches for 13 stages)
+megatron-glm5-tri-pp13-ep8-n13-gbs64:
+  inherits: _tri_glm5
+  argv: {--global-batch-size: 64}
+# selective recompute
+megatron-glm5-tri-pp13-ep8-n13-gbs256-sel:
+  inherits: _tri_glm5
+  argv: {<<: *tri_sel}
+# Megatron's per-rank timers, for the send/recv between stages: a GPU sync at each timer and 2 barriers per step, so a
+# separate short run, to compare with gbs256
+megatron-glm5-tri-pp13-ep8-n13-gbs256-timers:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {--timing-log-level: 2, --timing-log-option: all, --train-iters: 11}
+megatron-glm5-tri-pp13-ep8-n52-gbs1024-sel:
+  inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
+  argv: {<<: *tri_sel}
+# expert groups across nodes: EP16 (2 nodes), EP32 (4 nodes)
+megatron-glm5-tri-pp13-ep16-n26-gbs512:
+  inherits: _tri_glm5
+  num_machines: 26
+  argv: {--expert-model-parallel-size: 16, --global-batch-size: 512}
+megatron-glm5-tri-pp13-ep16-n52-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {--expert-model-parallel-size: 16, --global-batch-size: 1024}
+megatron-glm5-tri-pp13-ep32-n52-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {--expert-model-parallel-size: 32, --global-batch-size: 1024}
+# deeper pipeline: PP26 (3 layers per middle stage)
+megatron-glm5-tri-pp26-ep8-n26-gbs512:
+  inherits: _tri_glm5
+  num_machines: 26
+  argv: {<<: *tri_pp26, --global-batch-size: 512}
+megatron-glm5-tri-pp26-ep8-n52-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 52
+  argv: {<<: *tri_pp26, --global-batch-size: 1024}
+# shallower pipeline: PP6 x EP16 (12 nodes per copy; 416 GPUs do not split in 6: 48 nodes for 4 copies)
+megatron-glm5-tri-pp6-ep16-n12-gbs256:
+  inherits: _tri_glm5
+  num_machines: 12
+  argv: {<<: *tri_pp6, --expert-model-parallel-size: 16}
+# Megatron's per-rank timers, as pp13-ep8-n13-gbs256-timers: EP across nodes, send/recv and all-to-all
+megatron-glm5-tri-pp6-ep16-n12-gbs256-timers:
+  inherits: megatron-glm5-tri-pp6-ep16-n12-gbs256
+  argv: {--timing-log-level: 2, --timing-log-option: all, --train-iters: 11}
+# if only 47 nodes are available (5 reserved for SciNet): the n48 substitute, 288 GPUs, 48 per stage, 3 copies
+megatron-glm5-tri-pp6-ep16-n36-gbs768:
+  inherits: _tri_glm5
+  num_machines: 36
+  argv: {<<: *tri_pp6, --expert-model-parallel-size: 16, --global-batch-size: 768}
+megatron-glm5-tri-pp6-ep16-n48-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 48
+  argv: {<<: *tri_pp6, --expert-model-parallel-size: 16, --global-batch-size: 1024}
+
+# node counts 13 does not divide: 50 is the most Slurm accepts while trig0122 and trig0146 are out. PP10: 25 micro-batches per
+# copy, bubble 9 / 34 = 26 %. PP25: 64, 24 / 88 = 27 %, the batches of pp26-ep8
+megatron-glm5-tri-pp10-ep8-n10-gbs200:
+  inherits: _tri_glm5
+  num_machines: 10
+  argv: {<<: *tri_pp10, --global-batch-size: 200}
+megatron-glm5-tri-pp10-ep8-n20-gbs400:
+  inherits: _tri_glm5
+  num_machines: 20
+  argv: {<<: *tri_pp10, --global-batch-size: 400}
+megatron-glm5-tri-pp10-ep8-n30-gbs600:
+  inherits: _tri_glm5
+  num_machines: 30
+  argv: {<<: *tri_pp10, --global-batch-size: 600}
+megatron-glm5-tri-pp10-ep8-n40-gbs800:
+  inherits: _tri_glm5
+  num_machines: 40
+  argv: {<<: *tri_pp10, --global-batch-size: 800}
+megatron-glm5-tri-pp10-ep8-n50-gbs1000:
+  inherits: _tri_glm5
+  num_machines: 50
+  argv: {<<: *tri_pp10, --global-batch-size: 1000}
+# F2: long run, the best layout at 50 nodes (51.50 s per step, job 1256251), >= 1 h of measured steps: 80 steps, 78
+# measured, ~67 min, + ~13 min startup (estimates). BF16, no checkpoint. 8,000 slots per step: the 200,000 documents wrap
+# after ~25 steps (data_loading.wrapped). run.experiment F2 (TT_EXPERIMENT, no launcher of its own)
+megatron-glm5-tri-f2-pp10-ep8-n50-gbs1000:
+  inherits: megatron-glm5-tri-pp10-ep8-n50-gbs1000
+  max_duration: 5700
+  argv: {--train-iters: 80}
+# F2 at 40 nodes, the compromise while only 49 are usable: pp10-ep8 x4 (51.00 s per step, job 1249100), the same 80 steps
+megatron-glm5-tri-f2-pp10-ep8-n40-gbs800:
+  inherits: megatron-glm5-tri-pp10-ep8-n40-gbs800
+  max_duration: 5700
+  argv: {--train-iters: 80}
+megatron-glm5-tri-pp25-ep8-n25-gbs512:
+  inherits: _tri_glm5
+  num_machines: 25
+  argv: {<<: *tri_pp25, --global-batch-size: 512}
+megatron-glm5-tri-pp25-ep8-n50-gbs1024:
+  inherits: _tri_glm5
+  num_machines: 50
+  argv: {<<: *tri_pp25, --global-batch-size: 1024}
+
+# --- C: precision. TransformerEngine FP8 (e4m3) recipes, bf16 master weights, MoE token counts padded for the FP8
+# grouped GEMM. On B200 blockwise needs no NVTE_FP8_BLOCK_SCALING_FP32_SCALES (Hopper only: the Rorqual _fp8 entries
+# set it). mxfp8 is Blackwell only: main.py stops at once on an older GPU. workload.precision / precision_detail ---
+_tri_fp8_tensorwise: &tri_fp8_tensorwise
+  --fp8-format: e4m3
+  --fp8-recipe: tensorwise
+  --moe-router-padding-for-quantization: true
+_tri_fp8_blockwise: &tri_fp8_blockwise
+  --fp8-format: e4m3
+  --fp8-recipe: blockwise
+  --moe-router-padding-for-quantization: true
+_tri_mxfp8: &tri_mxfp8
+  --fp8-format: e4m3
+  --fp8-recipe: mxfp8
+  --moe-router-padding-for-quantization: true
+
+megatron-glm5-tri-pp13-ep8-n13-gbs256-fp8-tensorwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-pp13-ep8-n13-gbs256-fp8-blockwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-pp13-ep8-n13-gbs256-mxfp8:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  argv: {<<: *tri_mxfp8}
+megatron-glm5-tri-pp13-ep8-n52-gbs1024-fp8-tensorwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-pp13-ep8-n52-gbs1024-fp8-blockwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-pp13-ep8-n52-gbs1024-mxfp8:
+  inherits: megatron-glm5-tri-pp13-ep8-n52-gbs1024
+  argv: {<<: *tri_mxfp8}
+
+# 39 nodes: for a 47-node window, in place of 52 (not run by default)
+megatron-glm5-tri-pp13-ep8-n39-gbs768-fp8-tensorwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-pp13-ep8-n39-gbs768-fp8-blockwise:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-pp13-ep8-n39-gbs768-mxfp8:
+  inherits: megatron-glm5-tri-pp13-ep8-n39-gbs768
+  argv: {<<: *tri_mxfp8}
+
+# C-loss: 500 steps from the same seed and data, a realistic learning rate (warm-up 50, cosine to 1/10). The loss of
+# every step comes from the last pipeline stage (`loss` events with `step`). Duration: BF16 took 28,004 s at 53.63 s per step, from 55.4 to 49.4 s over the run (job 1243850)
+_tri_loss: &tri_loss
+  --train-iters: 500
+  --seed: 1234
+  --lr: 3.0e-4
+  --lr-warmup-iters: 50
+  --lr-decay-style: cosine
+  --min-lr: 3.0e-5
+  --log-interval: 10
+  # the first step's forward crosses 12 stages with cold kernel caches, ~52 s each: past Megatron's default 10 minutes (job 1243941)
+  --distributed-timeout-minutes: 30
+megatron-glm5-tri-loss-bf16-n13:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  # 8 h 30, 30 minutes under the job's limit (30_c.sh, 09:00:00): milabench stops the run itself and the job ends cleanly
+  max_duration: 30600
+  # 500 steps x 256 sequences x 8 slots = 1,024,000 slots. A slot takes ~2 documents (1024 tokens, ~700 per document): with a
+  # stride of 4, 4.1 M documents and very few read twice. `data_loading` in the summary says how many, and if it wrapped
+  data:
+    samples: 4200000
+    doc_stride: 4
+  argv: {<<: *tri_loss}
+# the same recipe again, to compare the FP8 vs BF16 gap with the noise: the same seed (scheduling, reduction order), another
+# seed (initialization; the data order stays the same)
+megatron-glm5-tri-loss-bf16-rep2-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+megatron-glm5-tri-loss-bf16-seed2-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+  argv: {--seed: 4321}
+megatron-glm5-tri-loss-fp8-tensorwise-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-loss-fp8-blockwise-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-loss-mxfp8-n13:
+  inherits: megatron-glm5-tri-loss-bf16-n13
+  argv: {<<: *tri_mxfp8}
+
+# --- F1: checkpoint save then load (main.py `checkpoint:`), torch_dist format, into $TT_CKPT_DIR (set by the launcher,
+# which deletes it after the load: one checkpoint on disk at a time). The save runs at step 10 of 20, so an async
+# write overlaps 10 training steps; the load entries run 5 steps after loading. weights: model only (~2 bytes per
+# parameter); full: + optimizer (FP32 master weights, BF16 moments here) and RNG ---
+_tri_ckpt:
+  inherits: megatron-glm5-tri-pp13-ep8-n13-gbs256
+  tags: [trillium, full, checkpoint]
+  # an 8.9 TB write (12.0 B/param measured on a truncated model x 744B) at 5.8 GB/s (worst case), an estimate: 26 min, with startup and steps around it
+  max_duration: 7200
+  checkpoint:
+    dir: $TT_CKPT_DIR
+    op: save
+    content: weights
+    mode: sync
+    step: 10
+  argv:
+    # barriers wait for the slowest writer: 8.9 TB (estimate) does not fit Megatron's default 10 minutes
+    --distributed-timeout-minutes: 120
+_tri_ckpt_load: &tri_ckpt_load
+  --train-iters: 5
+
+megatron-glm5-tri-ckpt-weights-sync-save-n13:
+  inherits: _tri_ckpt
+megatron-glm5-tri-ckpt-weights-async-save-n13:
+  inherits: _tri_ckpt
+  checkpoint: {mode: async}
+megatron-glm5-tri-ckpt-weights-load-n13:
+  inherits: _tri_ckpt
+  checkpoint: {op: load}
+  argv: {<<: *tri_ckpt_load}
+megatron-glm5-tri-ckpt-full-sync-save-n13:
+  inherits: _tri_ckpt
+  checkpoint: {content: full}
+megatron-glm5-tri-ckpt-full-async-save-n13:
+  inherits: _tri_ckpt
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-ckpt-full-load-n13:
+  inherits: _tri_ckpt
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
+# 39 nodes: for a 47-node window, in place of 52 (not run by default)
+megatron-glm5-tri-ckpt-weights-sync-save-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-sync-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-weights-async-save-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-async-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-weights-load-n39:
+  inherits: megatron-glm5-tri-ckpt-weights-load-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-sync-save-n39:
+  inherits: megatron-glm5-tri-ckpt-full-sync-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-async-save-n39:
+  inherits: megatron-glm5-tri-ckpt-full-async-save-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+megatron-glm5-tri-ckpt-full-load-n39:
+  inherits: megatron-glm5-tri-ckpt-full-load-n13
+  num_machines: 39
+  argv: {--global-batch-size: 768}
+# Fallback if the full checkpoint does not fit at 13 nodes (a full save raised the training peak 1.5 x on H100, ~190 GiB
+# against 180 GB, an estimate): the expert state over twice the GPUs, pp13-ep16, one copy on 26 nodes
+_tri_ckpt_ep16:
+  inherits: _tri_ckpt
+  num_machines: 26
+  argv:
+    --expert-model-parallel-size: 16
+    --global-batch-size: 512
+megatron-glm5-tri-ckpt-full-ep16-sync-save-n26:
+  inherits: _tri_ckpt_ep16
+  checkpoint: {content: full}
+megatron-glm5-tri-ckpt-full-ep16-async-save-n26:
+  inherits: _tri_ckpt_ep16
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-ckpt-full-ep16-load-n26:
+  inherits: _tri_ckpt_ep16
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
+megatron-glm5-tri-ckpt-weights-sync-save-n52:
+  inherits: megatron-glm5-tri-ckpt-weights-sync-save-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+megatron-glm5-tri-ckpt-weights-async-save-n52:
+  inherits: megatron-glm5-tri-ckpt-weights-async-save-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+megatron-glm5-tri-ckpt-weights-load-n52:
+  inherits: megatron-glm5-tri-ckpt-weights-load-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+megatron-glm5-tri-ckpt-full-sync-save-n52:
+  inherits: megatron-glm5-tri-ckpt-full-sync-save-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+megatron-glm5-tri-ckpt-full-async-save-n52:
+  inherits: megatron-glm5-tri-ckpt-full-async-save-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+megatron-glm5-tri-ckpt-full-load-n52:
+  inherits: megatron-glm5-tri-ckpt-full-load-n13
+  num_machines: 52
+  argv: {--global-batch-size: 1024}
+
+# --- pre-window checks on Rorqual (H100, 4 GPUs per node): the Trillium code paths on a truncated model ---
+# 8 layers (1 dense + 7 MoE), 64 experts top-8, seq 4096, PP2 (5 / 3) x EP4: one copy = 2 nodes. Batch 16 per copy.
+_tri_test:
+  inherits: _tri_glm5
+  tags: [trillium, full, smoke]
+  num_machines: 2
+  max_duration: 1500
+  placement:
+    gpus_per_node: 4
+  model:
+    argv:
+      --num-layers: 8
+      --moe-layer-freq: "[0]*1+[1]*7"
+      --num-experts: 64
+  argv:
+    --seq-length: 4096
+    --max-position-embeddings: 4096
+    --pipeline-model-parallel-size: 2
+    --decoder-first-pipeline-num-layers: 5
+    --decoder-last-pipeline-num-layers: 3
+    --expert-model-parallel-size: 4
+    --global-batch-size: 16
+    --train-iters: 10
+megatron-glm5-tri-test-n2-gbs16:
+  inherits: _tri_test
+megatron-glm5-tri-test-n4-gbs32:
+  inherits: _tri_test
+  num_machines: 4
+  argv: {--global-batch-size: 32}
+megatron-glm5-tri-test-n4-gbs16:
+  inherits: _tri_test
+  num_machines: 4
+megatron-glm5-tri-test-n2-gbs16-sel:
+  inherits: _tri_test
+  argv: {<<: *tri_sel}
+# FP8 on H100: blockwise needs FP32 block scales there (as the Rorqual _fp8 entries); mxfp8 must stop at once
+megatron-glm5-tri-test-n2-gbs16-fp8-tensorwise:
+  inherits: _tri_test
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-test-n2-gbs16-fp8-blockwise:
+  inherits: _tri_test
+  env:
+    NVTE_FP8_BLOCK_SCALING_FP32_SCALES: "1"
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-test-n2-gbs16-mxfp8:
+  inherits: _tri_test
+  argv: {<<: *tri_mxfp8}
+# C-loss in small: 50 steps, warm-up 5
+megatron-glm5-tri-test-loss-bf16:
+  inherits: _tri_test
+  argv: {<<: *tri_loss, --train-iters: 50, --lr-warmup-iters: 5}
+megatron-glm5-tri-test-loss-fp8-tensorwise:
+  inherits: megatron-glm5-tri-test-loss-bf16
+  argv: {<<: *tri_fp8_tensorwise}
+# F1 in small
+_tri_test_ckpt:
+  inherits: _tri_test
+  tags: [trillium, full, smoke, checkpoint]
+  checkpoint:
+    dir: $TT_CKPT_DIR
+    op: save
+    content: weights
+    mode: sync
+    step: 5
+  argv:
+    --distributed-timeout-minutes: 120
+megatron-glm5-tri-test-ckpt-weights-sync-save:
+  inherits: _tri_test_ckpt
+megatron-glm5-tri-test-ckpt-weights-async-save:
+  inherits: _tri_test_ckpt
+  checkpoint: {mode: async}
+megatron-glm5-tri-test-ckpt-weights-load:
+  inherits: _tri_test_ckpt
+  checkpoint: {op: load}
+  argv: {<<: *tri_ckpt_load}
+megatron-glm5-tri-test-ckpt-full-sync-save:
+  inherits: _tri_test_ckpt
+  checkpoint: {content: full}
+megatron-glm5-tri-test-ckpt-full-async-save:
+  inherits: _tri_test_ckpt
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-test-ckpt-full-load:
+  inherits: _tri_test_ckpt
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
+# Full load on 80 GB GPUs: it holds the loaded and the current optimizer state at once, PP2 x EP4 runs out of memory (Fir
+# 2302534). Same model at half the state per GPU: PP2 x EP8, 4 nodes, one copy.
+_tri_test_ckpt_ep8:
+  inherits: _tri_test_ckpt
+  num_machines: 4
+  argv:
+    --expert-model-parallel-size: 8
+    --global-batch-size: 32
+megatron-glm5-tri-test-ckpt-ep8-full-sync-save:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full}
+megatron-glm5-tri-test-ckpt-ep8-full-async-save:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-test-ckpt-ep8-full-load:
+  inherits: _tri_test_ckpt_ep8
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}
+# --- B200, 2 nodes: the same truncated model on 8 GPUs per node, PP2 x EP8, one stage per node as pp13-ep8. The entries above
+# assume 4 GPUs per node (the n2 ones would run 16 ranks at EP4, the ep8 ones want 4 nodes), and their blockwise sets the
+# Hopper-only NVTE_FP8_BLOCK_SCALING_FP32_SCALES ---
+_tri_test_b200:
+  inherits: _tri_test
+  placement: {gpus_per_node: 8}
+  argv:
+    --expert-model-parallel-size: 8
+    --global-batch-size: 32
+megatron-glm5-tri-test-b200-n2-gbs32:
+  inherits: _tri_test_b200
+megatron-glm5-tri-test-b200-n2-gbs32-fp8-tensorwise:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_fp8_tensorwise}
+megatron-glm5-tri-test-b200-n2-gbs32-fp8-blockwise:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_fp8_blockwise}
+megatron-glm5-tri-test-b200-n2-gbs32-mxfp8:
+  inherits: _tri_test_b200
+  argv: {<<: *tri_mxfp8}
+# 32 micro-batches per data-parallel rank as pp13-ep8 at 256, long enough to read clocks and power
+megatron-glm5-tri-test-b200-n2-gbs256:
+  inherits: _tri_test_b200
+  argv:
+    --global-batch-size: 256
+    --train-iters: 30
+_tri_test_b200_ckpt:
+  inherits: _tri_test_ckpt_ep8
+  num_machines: 2
+  placement: {gpus_per_node: 8}
+megatron-glm5-tri-test-b200-ckpt-weights-sync-save:
+  inherits: _tri_test_b200_ckpt
+megatron-glm5-tri-test-b200-ckpt-weights-async-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {mode: async}
+megatron-glm5-tri-test-b200-ckpt-weights-load:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {op: load}
+  argv: {<<: *tri_ckpt_load}
+megatron-glm5-tri-test-b200-ckpt-full-sync-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full}
+megatron-glm5-tri-test-b200-ckpt-full-async-save:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full, mode: async}
+megatron-glm5-tri-test-b200-ckpt-full-load:
+  inherits: _tri_test_b200_ckpt
+  checkpoint: {content: full, op: load}
+  argv: {<<: *tri_ckpt_load}

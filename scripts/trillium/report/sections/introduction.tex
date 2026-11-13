@@ -1,0 +1,48 @@
+\section{Introduction}
+\label{sec:intro}
+
+Trillium's B200 partition gives our group, among other users, a reservation of 52 nodes of 8 B200 GPUs. We use it to measure how well the partition trains large language models, and which configurations use it best. \Cref{tab:machine} lists the machine as we found it, and \cref{sec:machine} what differs from its description.
+
+\begin{table}[h]
+  \caption{Trillium's B200 partition, as measured or read during the campaign.}
+  \label{tab:machine}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{lll}
+    \toprule
+    & Known & Source \\
+    \midrule
+    Nodes & 52 (\texttt{trig0101}--\texttt{trig0152}), 43 usable and 40 clean until November~6, then all 52, 51 once \texttt{trig0114} stopped responding, 50 once \texttt{trig0138} left, 46 once four more went out, three with a GPU that lost NVLink and one with GPU memory errors, 48 once \texttt{trig0138} and \texttt{trig0146} came back on November~9, all 52 from 14:57 that day, 51 from 15:45, with \texttt{trig0114} out again for slow collectives, and 50 from 21:57, when \texttt{trig0118} lost a GPU (\cref{sec:machine}) & \texttt{sinfo}, health checks \\
+    Per node & 8 B200, 179.1\,GiB each, on NVLink, 1,000\,W limit; 2 $\times$ 48-core Intel, about 2\,TB RAM, liquid cooled & health checks; SciNet talk \\
+    Network & InfiniBand; NCCL uses 4 ports at 400\,Gb/s, 1,600\,Gb/s per node. GPUs 0, 2, 4, 6 share a PCIe switch with a port; 1, 3, 5, 7 have none & \cref{sec:network} \\
+    Switch layout & unknown. Two bandwidth groups, \texttt{trig0101--0128} and \texttt{trig0129--0152}, on November~4 and~7; a different pattern for about 12 minutes on November~7 & \cref{sec:network} \\
+    Shared with others & distributed filesystem and interconnect (CPU and H100 nodes stay in production), and the reservation itself & user, SciNet \\
+    Storage & \texttt{/scratch}: VAST over NFS (65\,PB). Diskless nodes; \texttt{/tmp} is RAM & health checks, \texttt{df} \\
+    Slurm & partition \texttt{compute\_b200\_full\_node}, 1-day limit, no topology information & \texttt{sinfo}, \texttt{scontrol} \\
+    Software & driver 595.91.07, \texttt{module load cuda/12.9} & health checks \\
+    Matmul ($8192^2$) & measured: FP8 2,991--3,053, BF16 1,580--1,637\,TFLOP/s. SciNet: 3,041 and 1,668 & \cref{sec:precision} \\
+    Window & reservation until December~3, 2026 & \texttt{scontrol} \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\paragraph{What sets the partition apart.}
+\begin{enumerate}[leftmargin=*, itemsep=1pt]
+  \item \textbf{Network per FLOP.} 200\,Gb/s per GPU for 1,668\,TFLOP/s of BF16 matmul, about 0.12\,Gb/s per TFLOP/s, twice Rorqual's (0.064), on nodes twice as large (8 GPUs on NVLink instead of 4). Point-to-point traffic is far slower than that (\cref{sec:network}).
+  \item \textbf{FP8 and MXFP8.} Low precision nearly doubles the matmul rate but not the network. How much of that survives in a training step is one of our questions.
+  \item \textbf{Memory.} 180\,GB per GPU. Qwen3.8-27B fits on one node. One copy of GLM-5 takes 13 nodes at \texttt{pp13-ep8}, 90\,GiB per GPU.
+  \item \textbf{Power.} Under high GPU power the CPUs throttle on nearly every node (\cref{sec:machine}). It affects every Qwen result in this report except pipeline layouts, and no GLM-5 result. We did not expect this before access.
+\end{enumerate}
+
+\paragraph{Questions.} Each section answers one question:
+(\cref{sec:machine}) what is different about this machine?
+(\cref{sec:network}) are all GPUs and links alike, and does the fabric have a structure?
+(\cref{sec:interference}) can jobs run side by side without slowing each other?
+(\cref{sec:layouts}) which parallel layout should each workload use?
+(\cref{sec:scaling}) how far does each workload scale?
+(\cref{sec:precision}) what do FP8 and MXFP8 buy, and do they train the same?
+(\cref{sec:operations}) what do checkpoints, startup and energy cost, and is throughput stable?
+
+\paragraph{Declared deviations} from the reference training recipes, valid for every result unless noted:
+GLM-5's indexer (DSA) shares its index across layers in the reference model; this sharing is turned off, as on Rorqual, because it only allows some pipeline-stage boundaries. GLM-5 stays at micro-batch 1 (\cref{sec:method}). Qwen's data packing limits a micro-batch to 64 document segments, which pads the largest micro-batches (\cref{sec:layouts}).

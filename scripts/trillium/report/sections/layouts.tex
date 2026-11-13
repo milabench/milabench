@@ -1,0 +1,109 @@
+\section{Parallel layouts}
+\label{sec:layouts}
+
+\begin{question}
+  \textbf{Which parallel layout should each workload use on this partition?} For Qwen3.8-27B: which layout,
+  at which batch per GPU, and which lever (batch, gradient-reduction dtype, pipeline parallelism,
+  activation checkpointing) buys the most? How much of the step is spent in exposed communication? For
+  GLM-5: should expert parallelism stay inside a node or cross nodes?
+\end{question}
+
+\paragraph{Qwen3.8-27B (A-Q), answer.} Use 24k tokens per GPU, and \texttt{fsdp} or \texttt{hsdp8}: they tie. At 13 nodes, the four best configurations are all at 24k and within \TriLayoutTopGap\,\% of each other (\cref{tab:qwen_layouts}), a gap the same as the repeats of those configurations (up to \TriLayoutTopRepeat\,\%), so the ranking among them means little. \texttt{\TriQwenBestLayout} at \TriQwenBestTokens{} tops the table at \TriQwenBestTokS{} tokens/s per GPU (\TriQwenBestMFU\,\% MFU). Tokens per GPU buy the most (\TriLevTokens\,\% from 12k to 24k). Tensor and pipeline parallelism cost throughput. All Qwen step times here are throttled by the CPU clock drop (\cref{sec:machine}), except under PP, which stays below it.
+
+\paragraph{What was measured.} Each configuration at 13 nodes, on two fixed sets of nodes in the same bandwidth group, one run per set; 5 minutes after 30 warm-up steps. Factors in \cref{tab:aq}. The full cross was reduced as results came in: 48k tokens per GPU with selective recompute was skipped, its memory projected at 223--329\,GiB from the 12k and 24k peaks (an estimate). \texttt{hsdp16} ran on 12 nodes, because 104 GPUs do not split in 16: compare it per GPU only. 1, 2 and 8 nodes are the runs of \cref{sec:scaling} and a few of the levers.
+
+\begin{table}[h]
+  \caption{Factors of the Qwen layout experiment (A-Q).}
+  \label{tab:aq}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{ll}
+    \toprule
+    Factor & Levels \\
+    \midrule
+    Layout & \texttt{fsdp} / \texttt{hsdp8} / \texttt{hsdp16} / \texttt{tp2-fsdp} / \texttt{tp4-fsdp} /
+             \texttt{pp2-fsdp} / \texttt{pp4-fsdp} \\
+    Tokens per GPU & 12k ($4096\times3$) / 24k ($4096\times6$) / 48k ($4096\times12$) \\
+    Gradient reduction & FP32 / BF16 (on \texttt{fsdp} and \texttt{hsdp8}, 24k) \\
+    Activation checkpointing & selective (default) / full / none \\
+    Nodes & 13 (cross); 1, 2 for some levers; the top scale for \texttt{fsdp} and \texttt{hsdp8} \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\begin{figure}[h]
+  \centering\fig{qwen_layouts}
+  \caption{Qwen3.8-27B valid tokens/s per GPU by layout (rows) and tokens per GPU per step (color), by number of nodes (panels), median over runs; the MFU of the fastest configuration of each panel is written next to it. Red cross: a configuration that failed, here \texttt{tp2-fsdp} and \texttt{tp4-fsdp} at 24k. Above 13 nodes, only the layouts of \cref{sec:scaling} ran. \syntheticnote{qwen_layouts}}
+  \label{fig:qwen_layouts}
+\end{figure}
+
+\begin{table}[h]
+  \caption{Qwen3.8-27B at 13 nodes (FP32 gradient reduction, selective recomputation, BF16): valid tokens/s per GPU (MFU, \%), and peak GPU memory in GiB, by layout and tokens per GPU. Median over the runs of each configuration; memory, largest of those runs. Empty: not run.}
+  \label{tab:qwen_layouts}
+  \centering\small
+  \IfFileExists{generated/tables/qwen_layouts.tex}{\input{generated/tables/qwen_layouts}}{\textit{No data yet.}}
+\end{table}
+
+\textbf{Counting tokens.} Throughput counts valid tokens, as the benchmark's rate does. A micro-batch of $4096\times12$ slots reaches the packer's limit of 64 document segments and leaves about \TriPaddingPct\,\% padding, so \texttt{fsdp} and \texttt{hsdp8} at 48k, \texttt{tp2-fsdp} at 24k and \texttt{tp4-fsdp} at 12k process fewer real tokens than their name says. That is a limit of the data packing, not of the layout, and a larger limit could change these four. It changes the answer: counted in declared tokens, \texttt{fsdp} at 48k with full recompute looks fastest (5,068 tokens/s per GPU); it is \TriTokFortyEight{} in valid tokens.
+
+\paragraph{Levers.} \Cref{fig:qwen_levers} compares runs differing in one lever. With \texttt{fsdp} at 12k as a base: \texttt{hsdp8} \TriLevHsdp\,\%, \texttt{tp2-fsdp} \TriLevTwoLarge\,\%, \texttt{tp4-fsdp} \TriLevFourLarge\,\% (\TriTokTpFour{} tokens/s per GPU, with padding), \texttt{pp2-fsdp} \TriLevPpTwo\,\%, \texttt{pp4-fsdp} \TriLevPpFour\,\%. At 24k, \texttt{hsdp8} against \texttt{fsdp} is \TriLevHsdpLarge\,\%, within the mean-against-median difference below. A BF16 gradient reduction gives \TriLevReduce\,\% (\TriTokReduce{} against \TriTokFsdp) and lowers peak memory from \TriMemFsdp{} to \TriMemReduce\,GiB; at \TriLevReduceTopNodes{} nodes it gives \TriLevReduceTop\,\% (\TriTokReduceTop{} against \TriTokFsdpTop, \TriMemReduceTop{} against \TriMemFsdpTop\,GiB). The gain does not grow with scale, so the expected effect of less traffic is not separated from noise. Full recompute costs \TriLevFull\,\% and needs \TriMemFull\,GiB. Memory also tells \texttt{hsdp8} (\TriMemHsdp\,GiB) from \texttt{fsdp}. The best pipeline layout, \texttt{pp2-fsdp} at 48k (\TriTokPpBest{}, no padding), stays \TriLevPpBest\,\% below \texttt{fsdp} at 24k.
+
+\begin{figure}[h]
+  \centering\fig{qwen_levers}
+  \caption{Change in throughput from one lever at a time, at 13 nodes: each bar compares two configurations that differ only in that lever. Selective recompute, FP32 reduction, unless the bar says otherwise. \syntheticnote{qwen_levers}}
+  \label{fig:qwen_levers}
+\end{figure}
+
+\textbf{Failures, and what they answer.} Activation checkpointing \texttt{none} ran out of memory at 12k and at 24k, and \texttt{tp4-fsdp} at 24k did too: each at 178\,GiB, the GPU's limit, in the job's log. So recompute cannot be dropped on this model, even at 12k. \texttt{tp2-fsdp} at 24k hit its job's time limit twice, at 36--39\,s per step; both ran with a cold compile cache, and a cold cache is also what made an \texttt{hsdp8} run slow in another test (13.5\,s against about 4.8\,s). So \textbf{``TP2 does not work at 24k'' is not established}, and this point was not rerun. \texttt{tp4-fsdp} at 12k has a second run left out, the one beside a pipeline job (\cref{sec:interference}).
+
+\textbf{Repeats.} The two runs of a configuration differ by \TriLayoutRepeatMedian\,\% at the median and by up to \TriLayoutRepeatMax\,\% (\texttt{tp2-fsdp} at 12k), in mean step time; one run with a stall on \texttt{trig0101} (3.275\,s against about 3.0\,s) is left out of that count. Under the CPU clock drop, steps are irregular and the official median and the mean differ by 1--2\,\%, in opposite directions for \texttt{fsdp} and \texttt{hsdp8} at 24k (median step 5.06 and 4.95\,s, mean 5.00 and 5.01\,s). Differences this small are not results. Most runs had another 13-node job in their group at the time; the pipeline runs did not, except one with no visible change (4.908\,s against 4.900\,s). The case of \cref{sec:interference} is a job beside a pipeline run; the pipeline run itself did not slow down.
+
+\paragraph{Where the step time goes.} \Cref{fig:step_decomposition} splits the step time into compute and the rest. The compute part is an estimate: the step time of a 1-node \texttt{fsdp} run at the same tokens per GPU, applied to every layout. It is throttled too, and it ignores what a layout changes in the compute itself. The rest of the measured step is exposed communication, plus the pipeline bubble for PP layouts; also an estimate. With \texttt{fsdp} at 13 nodes and 24k tokens per GPU, the rest is \TriQwenFsdpCommPct\,\% of the step \est{}, far below the design's arithmetic of at least 1.1\,s of a 4\,s step \est{}; the CPU drop may hide part of it, since a 1-node run is slowed by the drop as well.
+
+\begin{figure}[h]
+  \centering\fig[0.85\linewidth]{step_decomposition}
+  \caption{Step time of Qwen3.8-27B (24k tokens per GPU) by layout and number of nodes, medians. Hatched: compute (est., 1-node \texttt{fsdp} step); shaded: exposed communication and pipeline bubble (est., the remainder of the measured step). \syntheticnote{step_decomposition}}
+  \label{fig:step_decomposition}
+\end{figure}
+
+\textbf{At \TriLevReduceTopNodes{} nodes}, one run each: \texttt{hsdp8} \TriWeakHTopTok, \texttt{fsdp} \TriWeakFTopTok{} and \texttt{fsdp} with a BF16 gradient reduction \TriTokReduceTop{} tokens/s per GPU, so \texttt{hsdp8} is ahead by about 3\,\%, as at 39 nodes (\cref{sec:scaling}). These are the planned 50-node layout points.
+
+\paragraph{GLM-5 (A-G), answer so far.} Keep expert parallelism inside a node. At 12--13 nodes, \texttt{pp13-ep8} (expert groups inside a node) reaches \TriGlmThirteenTok{} tokens/s per GPU and \texttt{pp6-ep16} (expert groups across 2 nodes) \TriGlmSixTok: a factor of \TriGlmEpRatio. Expert all-to-all takes \TriGlmThirteenAtoa\,s of a \TriGlmThirteenStep\,s step in the first and \TriGlmSixAtoa\,s of \TriGlmSixStep\,s in the second (\TriGlmSixAtoaPct\,\%, median expert group; \cref{fig:glm_layouts}). This agrees with all-to-all being the weakest collective across nodes (\cref{sec:network}). The two layouts also differ in stages, 13 against 6, so that ratio alone is not the evidence.
+
+\textbf{The clean comparison} is at 26 nodes, with the same 13 stages, batch and nodes: \texttt{pp13-ep8} reaches \TriGlmEpEightTok{} tokens/s per GPU and \texttt{pp13-ep16} \TriGlmEpSixteenTok, a factor of \TriGlmEpTwoSixRatio. Expert all-to-all takes \TriGlmEpEightAtoa\,s of \TriGlmEpEightStep\,s in the first and \TriGlmEpSixteenAtoa\,s of \TriGlmEpSixteenStep\,s in the second, which is \TriGlmEpAtoaShare\,\% of the difference in step time; we have not measured the rest. One run of each, and the first is 2 copies against 1.
+
+The gap also holds with scale. At 36 nodes on 3 copies, \texttt{pp6-ep16} keeps \TriGlmThirtySixEff\,\% of one copy, \TriGlmThirtySixTok{} tokens/s per GPU, with all-to-all still \TriGlmThirtySixAtoa\,s of \TriGlmThirtySixStep\,s, and \texttt{pp13-ep8} at 39 nodes is $\times$\TriGlmEpRatioTop{} as fast. At 48 nodes on 4 copies, its planned largest run, \texttt{pp6-ep16} keeps \TriGlmFortyEightEff\,\%, \TriGlmFortyEightTok{} tokens/s per GPU, with all-to-all \TriGlmFortyEightAtoa\,s of \TriGlmFortyEightStep\,s. It peaks at \TriGlmThirtySixMem\,GiB at 36 nodes and \TriGlmFortyEightMem\,GiB at 48, against \TriGlmSixMem\,GiB on one copy. One run at each scale, and the one-copy runs predate the reboots. GLM-5 stays below the CPU clock drop, so its step times are not throttled by it (\cref{sec:machine}).
+
+\paragraph{What was measured.} Every layout at a node count takes that count's weak-scaling batch, so a comparison holds at one node count. A model copy is $P\times E$ GPUs, and expert groups can only use the GPUs of one stage, so each layout has its own smallest run (\cref{tab:ag}). Two repetitions of \texttt{pp13-ep8} at 13 nodes and \texttt{pp6-ep16} at 12 nodes, one of \texttt{pp10-ep8} at 10 nodes. The first of those \texttt{pp13-ep8} runs lost its summary to a garbled log line, and the summary was recovered from that line, as for one checkpoint run. Each run measures 19 steps after the first.
+
+\begin{table}[h]
+  \caption{GLM-5 layouts (A-G). Smallest run: one model copy. Batch: global, in sequences. Bubble: the 1F1B formula. 52-node layouts are not run yet.}
+  \label{tab:ag}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{llllr}
+    \toprule
+    Layout & Expert group & Smallest run (copies), batch & Largest run (copies), batch & Bubble \est{} \\
+    \midrule
+    \texttt{pp13-ep8}  & in a node (NVLink) & 13 nodes (1), 256 & 39 nodes (3), 768; 52 (4), 1{,}024 & 27\,\% \\
+    \texttt{pp13-ep16} & across 2 nodes & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 27\,\% \\
+    \texttt{pp13-ep32} & across 4 nodes & 52 nodes (1), 1{,}024 & same & 27\,\% \\
+    \texttt{pp26-ep8}  & in a node & 26 nodes (1), 512 & 52 nodes (2), 1{,}024 & 28\,\% \\
+    \texttt{pp6-ep16} (13 layers per stage) & across 2 nodes & 12 nodes (1), 256 & 36 nodes (3), 768; 48 (4), 1{,}024 & 24\,\% \\
+    \texttt{pp10-ep8} (8 layers per middle stage) & in a node & 10 nodes (1), 200 & 40 nodes (4), 800; 50 (5), 1{,}000 & 26\,\% \\
+    \texttt{pp25-ep8} (3 layers per middle stage) & in a node & 25 nodes (1), 512 & 50 nodes (2), 1{,}024 & 27\,\% \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+\begin{figure}[h]
+  \centering\fig{glm_layouts}
+  \caption{GLM-5 by layout and variant: tokens/s per GPU (left) and expert all-to-all time per step (right, median over expert groups), by node count (color). Batch 64: the small-batch point at 13 nodes. Red cross: selective recompute, out of memory. \syntheticnote{glm_layouts}}
+  \label{fig:glm_layouts}
+\end{figure}
+
+\textbf{Other points.} Twice the stages cost little: at 26 nodes, \texttt{pp13-ep8} is $\times$\TriGlmPpRatio{} as fast as \texttt{pp26-ep8} (\TriGlmPpTwoSixTok{} tokens/s per GPU), and \texttt{pp26-ep8} peaks at \TriGlmPpTwoSixMem\,GiB against \TriGlmEpEightMem. One copy against 2, one run each. \texttt{pp25-ep8} at 25 nodes is slower, \TriGlmPpTwoFiveTok{} tokens/s per GPU at \TriGlmPpTwoFiveMem\,GiB, with a step \TriGlmPpStepPct\,\% longer than \texttt{pp26-ep8}'s (\TriGlmPpTwoFiveStep\,s). Its first stage holds 5 layers against 4, a similar ratio, so the largest stage may set the pace (inferred, one run each). At 50 nodes, on 2 copies, \texttt{pp25-ep8} reaches \TriGlmPpTwoFiveFiftyTok{} tokens/s per GPU, \TriGlmPpTwoFiveFiftyEff\,\% of one copy, at \TriGlmPpTwoFiveFiftyMem\,GiB. \texttt{pp10-ep8} at 10 nodes reaches \TriGlmTenTok{} tokens/s per GPU, a tie with \texttt{pp13-ep8}, at \TriGlmTenMem\,GiB against \TriGlmThirteenMem\,GiB. At 20, 30 and 40 nodes, on 2, 3 and 4 copies, it reaches \TriGlmTwentyTok, \TriGlmThirtyTok{} and \TriGlmFortyTok{} tokens/s per GPU, \TriGlmTwentyEff, \TriGlmThirtyEff{} and \TriGlmFortyEff\,\% of one copy; at 39 nodes \texttt{pp13-ep8} reaches \TriGlmWeakThreeTok, within 1\,\% of the 40-node point. At 50 nodes, on 5 copies, \texttt{pp10-ep8} reaches \TriGlmFiftyTok, \TriGlmFiftyEff\,\% of one copy, at \TriGlmFiftyStep\,s per step. Memory falls to \TriGlmTwentyMem, \TriGlmThirtyMem, \TriGlmFortyMem{} and \TriGlmFiftyMem\,GiB. Expert all-to-all stays at \TriGlmFiftyAtoa\,s per step up to 50 nodes: these groups sit inside a node. One run each, and the 10-node run predates the reboots, so these percentages are less clean than the ones between later runs. The best layout so far runs at \TriGlmThirteenMfu\,\% MFU, an overestimate, since attention counts as dense. A small batch of 64 sequences (8 micro-batches for 13 stages) gives $\times$\TriGlmSmallRatio{} the rate of batch 256, and the 1F1B formula gives $\times$\TriGlmSmallFormula{} \est{}, so the bubble accounts for it. Selective recompute ran out of memory in the first forward, at 169.7--171.1\,GiB on stage 0, so GLM-5 stays on full recompute. In timed runs, send and receive calls take 9.5--29.5\,\% of forward-backward by stage (mean 19.7\,\%, waits included); the slowest transfer steady state gives at least about 19\,GB/s per node (derived), so the send and receive drop of \cref{sec:network} does not dominate at 13 nodes.
+
+\textbf{Still to come:} at 52 nodes, the rest, including EP~32.

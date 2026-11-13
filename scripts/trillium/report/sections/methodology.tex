@@ -1,0 +1,77 @@
+\section{Methodology}
+\label{sec:method}
+
+\paragraph{Workloads.} \Cref{tab:workloads} summarizes the two training workloads. Both train every
+parameter (memory allows it; no frozen experts in GLM-5).
+
+\begin{table}[h]
+  \caption{Workloads.}
+  \label{tab:workloads}
+  \centering\small
+  \begin{adjustbox}{max width=\linewidth}
+  \begin{tabular}{lll}
+    \toprule
+    & Qwen3.8-27B (dense) & GLM-5 (744B MoE, 256 experts, top-8) \\
+    \midrule
+    Framework & TorchTitan & Megatron-LM \\
+    Parallelism today & FSDP, HSDP, TP (at most 4: 4 KV heads) & EP, PP, DP; TP $=1$ and CP $=1$ \\
+    Added for Trillium & PP, MXFP8, gradient-reduction dtype, checkpointing, loss per step
+           & 8 GPUs per node, checkpoint save / load, FP8 / MXFP8, B200 layouts, loss per step \\
+    Precision recipes & BF16, MXFP8 & BF16, FP8 tensorwise, FP8 blockwise, MXFP8 \\
+    Sequence & $3\times4{,}096$ per GPU (12{,}288 tokens) by default & 8{,}192, micro-batch 1 (the only one possible) \\
+    Global batch & grows with the GPUs (weak scaling) & weak: 256 per copy (13 nodes each); \\
+                 & & strong: 768 at any node count; small-batch point: 64 at 13 nodes \\
+    Recompute & selective by default; full, none & full by default; selective (MoE activation and norms) \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table}
+
+The pinned TorchTitan version removed its Float8 tensorwise and rowwise recipes (2026-10-01), so Qwen
+compares BF16 with MXFP8 only. On B200, GLM-5's FP8 blockwise recipe runs as MXFP8 matrix multiplications.
+GLM-5 stays at micro-batch 1: its plugin's attention takes THD input only, so the global batch is chosen in micro-batches.
+With $P$ stages and $m$ micro-batches per data-parallel rank, the 1F1B pipeline bubble is $(P-1)/(m+P-1)$ \est{} (the
+formula, to compare with the runs). Weak scaling keeps 32 micro-batches per data-parallel rank, a bubble of 27\,\%; strong scaling
+keeps 768 sequences in total: 96, 48, 32 and 24 micro-batches, bubbles of 11, 20, 27 and 33\,\%; the small batch of 64 has 8 micro-batches, 60\,\%.
+
+\paragraph{Network arithmetic for Qwen \est{}.} Any data-parallel layout (FSDP, HSDP, TP + FSDP) moves
+about 8 bytes per parameter per node per step: BF16 parameter gathers in the forward and backward
+passes, and an FP32 gradient reduction. That is about 215\,GB, or at least 1.1\,s per step at 1,600\,Gb/s,
+against about 3\,s of compute at 12{,}288 tokens per GPU and 50\,\% of 1{,}668\,TFLOP/s. The levers that
+change this ratio are the tokens per GPU, a BF16 gradient reduction (about 6 bytes per parameter), and
+pipeline parallelism across nodes (volume divided by the number of stages). HSDP instead of FSDP changes
+when the traffic happens, not its volume.
+
+\paragraph{Layouts.} Qwen layouts are named after their parallel dimensions: \texttt{fsdp} shards over
+all GPUs; \texttt{hsdp8} and \texttt{hsdp16} shard within 1 or 2 nodes and replicate across;
+\texttt{tp2-fsdp} and \texttt{tp4-fsdp} add tensor parallelism of 2 or 4; \texttt{pp2-fsdp} and
+\texttt{pp4-fsdp} add 2 or 4 pipeline stages. GLM-5 layouts are written \texttt{pp}$P$\texttt{-ep}$E$:
+$P$ pipeline stages and expert groups of $E$ GPUs. Megatron carves the expert groups out of each stage's
+data-parallel ranks: on $N$ nodes, $8N$ must be divisible by $P$, and $8N/P$ by $E$. A model copy is
+therefore $P\times E$ GPUs. With 13 stages (the 78 layers split 7, then 11 stages of 6, then 5: the first
+stage holds the dense layers, the last the loss) and EP8, one copy uses $13\times8=104$ GPUs, 13 nodes (\texttt{pp13-ep8}), and peaks at 90\,GiB per GPU in the first 20 steps.
+
+\paragraph{Throughput.} Qwen runs skip 30 warm-up steps (compilation, allocator growth), then measure for
+5 minutes. GLM-5 runs train 20 iterations and leave out the first. The official throughput is the median
+of the per-step global rates of valid tokens over the measured steps, reported per GPU (tokens/s per GPU). Padding is not counted. Under the CPU clock drop Qwen's steps are irregular, so the median and the mean differ by 1--2\,\%; where a comparison uses means, as the hardware reruns do, it says so.
+
+\paragraph{MFU} $= \text{FLOPs per token} \times \text{tokens/s per GPU} / \text{peak}$, with the dense
+BF16 peak of the B200 specification, $2.25\times10^{15}$\,FLOP/s per GPU, for every precision recipe. For
+context, SciNet measured 1{,}668\,TFLOP/s for an $8192^2$ BF16 matmul, 74\,\% of that peak. MFU is
+derived from a measured rate and an analytic FLOP count.
+
+\paragraph{Telemetry and health.} Every node of every job is sampled once a second by the node monitor
+(GPU clocks, throttle reasons, power, temperature and duty cycle, XID and ECC errors, NVLink, InfiniBand,
+CPU clocks). Nodes were health-checked twice (\cref{sec:network}), and a node is used whole or not at all.
+
+\paragraph{Reference runs and repetitions.} A reference run (Qwen, 4 nodes, FSDP, 12{,}288 tokens per GPU, 10 minutes) is repeated through the window, to tell changes in our configurations from changes in the shared fabric and filesystem (\cref{sec:interference}). Layout experiments ran on two fixed sets of nodes, one run each. Checkpoints repeat inside a run (Qwen) or across runs (GLM-5). GLM-5's \texttt{pp13-ep8} runs at 13 and 39 nodes serve two experiments rather than being repeated, and so does the 26-node one.
+
+\paragraph{Fixed node sets.} Runs within an experiment use fixed sets of nodes, so that they compare: \texttt{trig0101--0113}, \texttt{trig0114--0121} with \texttt{0124--0128}, both in the first bandwidth group, and \texttt{trig0129--0132}, \texttt{0136}, \texttt{0137}, \texttt{0139}, \texttt{0141}, \texttt{0142}, \texttt{0144}, \texttt{0147}, \texttt{0149}, \texttt{0150} in the second. The slow and capped nodes are outside them (\cref{sec:machine}). Two GLM-5 loss runs came later: FP8 blockwise on the 13 nodes returned or fixed on November~6, and the FP8 tensorwise rerun on the second set with \texttt{trig0136} in place of \texttt{trig0114}, so it crosses the bandwidth groups and its loss compares but its step times do not.
+
+\paragraph{Measured and estimated values.} Everything in this report's figures is measured, unless marked ``(est.)'', as the compute part of \cref{fig:step_decomposition} or the bubble formula are. Estimates never replace measurements. A point not run yet is absent, and listed in \cref{app:plan}.
+
+\paragraph{Data.} Raw results are written to \texttt{\$SCRATCH/trillium/} on Trillium and copied
+read-only to the analysis machine; every figure, table and number here is regenerated from them by one
+command. Formats: \texttt{scripts/analysis/FORMAT.md}, with the Trillium additions in
+\texttt{scripts/trillium/FORMAT.md} (layout and precision fields, loss per step, checkpoint events,
+collective sweeps). \Cref{tab:ledger} lists every run, including failures, and says which enter the figures: the campaign's runs; not bring-up, tests of one thing, or hardware reruns, which appear only in \cref{sec:machine}.
