@@ -313,9 +313,11 @@ allocated, 35.7 reserved; no NaN; the three timing runs' losses agree to 0.01 ov
   CPU: busy cores at 3,200 MHz median, 3,084-3,134 minimum: no drop.
 - Profile at 13 nodes, rank 0, published, traced steps 27 / 28: elementwise 1.73 / 1.45 s, copies 0.81 / 0.72, layer
   norm 0.62 / 0.53, FP32 SIMT GEMM 0.60 / 0.58, BF16 GEMM 0.38 / 0.33, softmax 0.29 / 0.27; triangle attention 36-38 %
-  of compute kernels, diffusion 23-25 %; 193,989 / 179,342 kernels; 1.89 / 1.86 s of 10-100 us gaps. Step 27 matches
-  4 nodes within 0.01 s in every compute class, though the two traced different samples (7lhv, 2,191 atoms, here;
-  4xit, 1,869 atoms, at 4 nodes); NCCL does not: 0.522 against 0.071 s, rank 0's wait for the slowest rank.
+  of compute kernels, diffusion 23-25 %; 193,989 / 179,342 kernels; 1.89 / 1.86 s of 10-100 us gaps. ProfilerStep#27
+  matches 4 nodes within 0.01 s in every compute class; it is the logged step 28 (on every trace, a ProfilerStep#N
+  lasts as logged step N + 1 plus the gap before it; #28 is step 29, whose trace export follows), and the two traced
+  similar samples: MGYP002639174100, 2,890 atoms, here; MGYP002718610066, 2,933 atoms, at 4 nodes. NCCL does not
+  match: 0.522 against 0.071 s, rank 0's wait for the slowest rank.
 - Nodemon near each run's end (about 210 W, 0 % use): after the run's last step, outside the step window the numbers
   above use (1.2-2.2 % of in-window samples, all nodes, have 0 % instantaneous use): Lightning's teardown and exit, then prof.py (profile run)
   or the next run's 4-min start. Each run's sampler was also left running until the job's end (job.sbatch killed the
@@ -387,8 +389,53 @@ Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step pe
   median 1,965 MHz; its cueq+tf32 run had 18 of 1,168 samples at the software power cap (reason 0x4), down to
   1,897 MHz; use 83 and 65 %.
 - Limits: one run per variant and side, 34 timed steps, one node; H100 run-to-run spread not measured.
-- Not yet (job 26618631, pending): `ds` on H100 (DeepSpeed's kernel built for sm_90) and the H100 profile (kernel
-  classes, gaps, where the published step's 32 % goes), which would test the reading above.
+
+### Second job: ds and the profile (26618631, g5, 2026-11-13 05:57-06:24, commit e3b83808)
+
+g5 instead of g26. The start print is the same (8 H100 80GB HBM3, driver 580.196.07, 700 W), and so is the NUMA
+placement (NCCL's affinity lines: GPU 0's rank inside its domain, GPUs 5 and 6 partly, the other five outside). Busy
+cores at 3,968 MHz median (minimum 3,509 and 3,402) against 4,000 on g26. Job 2 has no `uniform` or `cueq+tf32` entry,
+so the node's effect is not measured. Samples equal on all 8 ranks at all 40 steps to B200's `ds`, to job 1's two
+runs and to the profile run.
+
+| | H100 s per step (median) | H100 samples/s per GPU | B200 samples/s per GPU | B200 / H100 |
+|---|---|---|---|---|
+| ds (g5) | 5.674 (5.671) | 0.1762 | 0.2166 | 1.229 |
+
+- On the H100, ds is 0.819 of job 1's published step and 1.284 x its cueq+tf32 step (other node); on the B200, 0.880
+  and 1.078. DeepSpeed's attention gains more on the H100 (18 % against 12 %).
+- Loss against B200's ds: 0.012 mean absolute over 40 steps (largest 0.086), as job 1; against job 1's published on
+  the H100: 0.002 (largest 0.006). Peak 31.5 GiB allocated, 33.3 reserved. Loader: gap 2.8 % (worst rank 3.4 %);
+  featurization median 2.5 s, max 31 s, workers busy 3 %.
+- GPUs: 420 W mean, 588 max (ds), 409 and 591 W (profile run), of 700 W; SM clock 1,980 MHz in every sample,
+  clock-event reasons 0x0 in every sample (no cap, on both), 57 C at most; use 91 and 92 %.
+
+Profile (`uniform,prof`, published with the profiler, rank 0, ProfilerStep#27 and #28 with prof.py, as the B200
+profile in "Where a step goes": 4 nodes, 1273884). #27 is the logged step 28: 6olg, 2,795 atoms, 3 recycles (B200
+#27: MGYP002718610066, 2,933 atoms); #28 is step 29 (1ppr, 894 atoms; B200: 2a3v, 3,778 atoms). H100 / B200 per traced step, #27 then #28:
+
+| | H100 | B200 (4 nodes) |
+|---|---|---|
+| traced span | 8.93 / 7.48 s | 7.04 / 7.01 s |
+| GPU busy (share of span) | 6.81 / 5.69 s (76 / 76 %) | 4.63 / 4.23 s (66 / 60 %) |
+| idle: gaps < 10 us, 10-100 us, 0.1-1 ms, > 1 ms | 0.58, 1.30, 0.05, 0.20 / 0.46, 1.15, 0.05, 0.13 s | 0.34, 1.82, 0.10, 0.14 / 0.35, 1.89, 0.12, 0.43 s |
+| kernels, median | 210,295, 2.5 us / 177,137, 2.9 us | 193,989, 2.9 us / 185,895, 2.8 us |
+| launch calls, CPU time | 3.23 / 2.63 s | 1.06 / 1.06 s |
+| elementwise; copies; layer norm; softmax | 2.58; 1.42; 0.82; 0.34 / 2.08; 1.20; 0.65; 0.29 s | 1.73; 0.82; 0.62; 0.29 / 1.55; 0.78; 0.55; 0.24 s |
+| GEMMs | 1.50 / 1.36 s ("other": prof.py's FP32 SIMT pattern matches 0.003 s on the H100, so its FP32 GEMMs are in here, not separated) | FP32 SIMT 0.60 / 0.61 s, BF16 0.38 / 0.33 s |
+| the 1.473 GB all-reduce | 5.7 / 5.6 ms (NVLink, one node) | 17.9 / 18.2 ms (InfiniBand, 4 nodes) |
+
+Against job 1's reading: consistent with it, and it does not test it. The H100's kernels take 1.3-1.5 x longer
+and its GPU idles less between them (1.8-2.1 s of the traced span against 2.4-2.8 s), mostly in the 10-100 us gaps
+between small kernels: the B200 waits more. But the traces cover the published configuration only (no cueq+tf32
+profile on either side for these samples: the reading was about cueq+tf32), different nodes and node counts, and
+samples that differ at #28; on the H100 the launch calls take 3 x the CPU time (cause not determined), so the traced
+steps' gaps are not like for like.
+
+Limits: one run per entry; the profiler's own cost: on the B200 the traced steps took 7.0 s against 5.7 s at 4
+nodes and the untraced steps of the 1-node profile run 1.146 x those of a run without it (1273761, with the sync
+timing); on the H100 the untraced steps 1.032 x job 1's published (other node), the traced ones 8.93 / 7.48 s
+against that run's 7.69 / 6.97 s at the same steps (step plus gap).
 
 ## Not tested yet
 
