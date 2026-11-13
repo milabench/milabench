@@ -210,10 +210,14 @@ profiler's per-module hooks); kernel times are the GPU's own. Published, 4 nodes
   published, by wall clock) is the wait for the slowest of more samples (est.: the period grows while the sync stays flat).
 - The GPU's idle time (16 % by nodemon in the timing run): in the traced steps, 0.34 s of gaps under 10 us between
   kernels, 1.8-1.9 s of 10-100 us gaps, 0.1 s of 0.1-1 ms, 0.14-0.43 s over 1 ms (`prof.py` bins gaps by length
-  only). The launch calls (`trace_gaps.py`, the same traced steps) are short: median 3.9 us, 0.87-0.89 s in calls up
-  to 20 us and 0.15-0.17 s in calls over 100 us per traced step. 31-35 % of the launches meet over 1 ms of GPU work
-  already queued: GPU-bound stretches; between them the GPU idles in the 10-100 us gaps while the CPU issues one small
-  kernel after another: launch-bound stretches. Inferred: the gaps over 1 ms are the gradient sync's copies and Python
+  only). `trace_gaps.py` on the same traced steps: the launch calls are short (median 3.9 us; 0.87-0.89 s in calls up
+  to 20 us, 0.15-0.17 s in calls over 100 us per traced step), and 31-35 % of the launches meet over 1 ms of GPU work
+  already queued: GPU-bound stretches, 38-43 % of the step's CPU time (runs of such calls; 11-14 over 10 ms, the
+  longest 0.38 s). Every gap of 10 us or more ends at GPU work whose launch call returned inside the gap (100 % of
+  the gap time, on all six B200 traces): there the GPU waits on the host. The launch calls themselves cover only
+  16-17 % of the 10-100 us gap time (0.30 / 0.31 of 1.82 / 1.89 s), the rest is host time between calls: host-bound
+  stretches. All of this is under the profiler: this traced step takes 7.05 s against 5.76 s for the same sample
+  untraced, and the GPU idles about 35 % of it against 16 % untraced. Inferred: the gaps over 1 ms are the gradient sync's copies and Python
   loop and the `.item()` syncs; measured: the all-reduce (18 ms) and the data loader's gap (0.11 s) are minor. With cuEquivariance (2 nodes) kernel time falls
   from 5.07 to 2.98 s per traced step, and GPU use from 83 to 65-68 %: the step gains only 18-20 % (wall clock).
 - DeepSpeed's attention (1 node): its kernels take 0.79 s, elementwise falls from 1.73 to 0.76 s.
@@ -386,8 +390,9 @@ Wall clock, (t40 - t6) / 34 of rank 0's step ends, as OF3-01; the median step pe
   from 32 % to 3 % with the fast kernels. Estimates from GPU use x step period: with cueq+tf32 the GPUs are busy
   3.73 s per step on the H100 against 2.76 s on the B200 (1.35x; published 1.48x), and idle 0.69 s against 1.52 s.
   So the lead shrinks because the B200 waits while the H100 stays 84 % busy; the faster CPU clock is not needed to
-  explain it. Inferred, not measured, until job 2's H100 profile: the B200's waiting is the host's kernel launches
-  (inferred from the B200 profile's gaps).
+  explain it. What the B200 waits on: in its traced cueq+tf32 steps (job 2's section below), on the host; in steps
+  without the profiler (about 35 % idle, est. from GPU use x period), that is still an inference. The H100's
+  cueq+tf32 steps are not profiled.
 - Loss tracks B200's: 0.012 mean absolute over 40 steps (largest 0.086, step 21; loss 6.5-15.3), ten times a same-seed
   B200 pair (1273594 `published` against 1273761 `published,prof`, step-1 subset, profiler on in the second; loss
   averaged over ranks per step, steps 1-40: 0.0012, max 0.0043) or cueq+tf32 on either GPU: the GPU moves the loss
@@ -442,26 +447,41 @@ H100 / B200 per traced step, #27 then #28:
 | launch calls, CPU time | 3.23 / 2.63 s | 1.06 / 1.06 s | 1.07 / 1.05 s |
 | launch calls: median; up to 20 us; over 100 us | 3.2 us; 0.84 / 0.70 s; 2.19 / 1.75 s | 3.9 us; 0.89 / 0.87 s; 0.15 / 0.17 s | 3.9 us; 0.92 / 0.88 s; 0.14 / 0.16 s |
 | launches meeting over 1 ms of queued GPU work | 44 / 45 % | 35 / 31 % | 35 / 31 % |
+| busy without NCCL kernels | 6.80 / 5.69 s | 4.56 / 4.21 s | 4.56 / 4.19 s |
+| calls over 100 us blocked by the queue | 2.16 / 1.74 s | 0.13 / 0.14 s | 0.12 / 0.13 s |
+| GPU-bound stretches: share of CPU time, over 10 ms, longest | 63 / 63 %, 12 / 12, 2.16 / 1.78 s | 43 / 38 %, 14 / 11, 0.38 / 0.38 s | 39 / 39 %, 13 / 10, 0.38 / 0.39 s |
 | elementwise; copies; layer norm; softmax | 2.58; 1.42; 0.82; 0.34 / 2.08; 1.20; 0.65; 0.29 s | 1.73; 0.82; 0.62; 0.29 / 1.55; 0.78; 0.55; 0.24 s | 1.73; 0.83; 0.62; 0.29 / 1.54; 0.78; 0.55; 0.24 s |
 | GEMMs | 1.50 / 1.36 s ("other": prof.py's FP32 SIMT pattern matches 0.003 s on the H100, so its FP32 GEMMs are in here, not separated) | FP32 SIMT 0.60 / 0.61 s, BF16 0.38 / 0.33 s | FP32 SIMT 0.59 / 0.60 s, BF16 0.38 / 0.33 s |
 | the 1.473 GB all-reduce | 5.7 / 5.6 ms (NVLink, one node) | 17.9 / 18.2 ms (InfiniBand, 4 nodes) | not listed in that analysis |
 
-Against job 1's reading. Published, #27 against the 1-node B200 (similar samples): the H100's kernels take 1.37 x
-longer (6.81 against 4.97 s) and its GPU idles less (2.12 against 2.84 s of the traced span), mostly in the 10-100 us
-gaps between small kernels (1.30 against 1.90 s): the B200 waits more. On the H100 the launch calls take 3.0 / 2.5 x
-the B200's CPU time: 2.19 / 1.75 s of the 3.23 / 2.63 s are calls over 100 us, 99-100 % of them made while the GPU
-already had more than 1 ms of work queued (median 53 ms). The CPU is blocked on a full launch queue, waiting for the
-GPU, not paying a profiler or driver cost: its median call takes 3.2 us (B200 3.9), and its calls up to 20 us total
-0.84 / 0.70 s (B200 0.88-0.92). 44-45 % of the H100's launches meet over 1 ms of queued work, against 31-35 % on the
-B200, whose blocked calls total only 0.14-0.17 s: the B200's queue drains between them. So the H100's published step
-is GPU-bound for long stretches, the B200's for shorter ones.
+Against job 1's reading. Published, #27, H100 against the 1-node B200 (similar samples: 6olg, 2,795 atoms, and 6tdz,
+2,896, both PDB with 3 recycles; `trace_gaps.py`):
+- The H100's GPU is busy 1.49 x longer without NCCL kernels (6.804 against 4.559 s), 1.47 x counting non-NCCL kernels
+  only (6.352 against 4.311 s). The B200's busy 4.97 s includes 0.415 s of NCCL, rank 0 waiting for the other ranks
+  (H100: 0.008 s). The H100 idles less: 2.12 against 2.84 s of the traced span, 1.30 against 1.90 s in 10-100 us gaps.
+- Launch calls: 3.23 against 1.07 s of CPU time (3.0 x); median 3.2 against 3.9 us; calls up to 20 us 0.84 against
+  0.92 s. Launches meeting over 1 ms of queued work: 44 against 35 %.
+- Calls blocked by the queue (over 100 us, made while the GPU had over 1 ms of work queued): 2.16 s of the H100's
+  2.19 s of calls over 100 us (98.8-99.5 % blocked, median 53 ms of queued work), against 0.12 s on the B200, whose
+  other calls over 100 us are mostly cudaMemcpyAsync meeting no backlog (synchronous copies). The H100's CPU waits on
+  a full launch queue, not on a profiler or driver cost.
+- GPU-bound stretches (runs of consecutive calls meeting over 1 ms of queued work): 63 % of the step's CPU time on
+  the H100, 12 of them over 10 ms, the longest 2.16 s; on the B200 38.7 %, 13 over 10 ms, the longest 0.38 s.
+#28 traced different samples (H100: 1ppr, 894 atoms; 1-node B200: 5tga, 3,703 atoms): launch calls 2.63 against
+1.05 s (2.5 x), up to 20 us 0.70 against 0.88 s, 45 against 31 % of launches meeting over 1 ms of queued work, blocked
+calls 1.74 against 0.13 s, GPU-bound stretches 63 against 38.5 % of the step's CPU time (longest 1.78 against 0.39 s).
+So under the profiler the H100's published step is GPU-bound for most of its CPU time, in long stretches, and the
+B200's for about 40 %, in stretches under 0.4 s.
 
-With cueq+tf32, measured on the B200 only (1273761, 1 node, step-1 subset; 1273763, 2 nodes): the GPU is busy 37-42 %
-of the traced span (2.40-2.98 s), idle 2.78-2.97 s in 10-100 us gaps and 0.64-0.72 s in 0.1-1 ms gaps; launch calls
-median 3.9 us, 0.02-0.03 s in calls over 100 us, and only 4-6 % of the launches meet over 1 ms of queued work: the
-B200 waits on the host's launches. That half of job 1's reading is now measured; the H100's side with cueq+tf32 is
-not profiled. The profiler also adds more idle time on the B200 (below), so the idle comparisons partly reflect it.
-`ds` on the B200 (1273762) sits between: busy 53-57 %, 16-17 % of launches meeting over 1 ms of queued work.
+With cueq+tf32, traced on the B200 only (1273761, 1 node, step-1 subset; 1273763, 2 nodes): the GPU is busy 37 / 37 %
+of the traced span on 1 node (NCCL 0.005 s) and 35 / 34 % on 2 nodes without NCCL (0.44 / 0.57 s of NCCL kernels;
+41-42 % with them); 58-63 % of the span is idle, 2.78-2.97 s of it in 10-100 us gaps; the launch calls take
+0.82-0.88 s (median 3.9 us, 0.02-0.03 s in calls over 100 us), only 4-6 % of the launches meet over 1 ms of queued
+work, and every gap of 10 us or more ends at GPU work launched inside it: in these traced steps the B200 waits on the
+host. That holds under the profiler only; for steps without it (about 35 % idle, est. from GPU use x period, job 1)
+it is still an inference, and the H100's cueq+tf32 is not profiled. The profiler also adds more idle time on the
+B200 (below), so the idle comparisons partly reflect it. `ds` on the B200 (1273762) sits between: busy 57 / 53 % of
+the span with NCCL (0.52 / 0.13 s of it), 49 / 51 % without; 16-17 % of launches meeting over 1 ms of queued work.
 
 Limits: one run per entry. The profiler's own cost, untraced steps against a run without it: B200 1-node (1273761
 against 1273594) 1.146 over steps 7-100, 1.084 over steps 7-40, the H100's window; H100 1.032 (job 1's published,
