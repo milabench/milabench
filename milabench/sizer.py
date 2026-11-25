@@ -987,6 +987,11 @@ def new_argument_resolver(pack):
         except KeyError as err:
             syslog("Couldn't resolve {} because of {}", arg, err)
             return arg
+        except (ValueError, IndexError) as err:
+            # Literal braces (jinja templates, inline JSON/python snippets)
+            # are not format fields: leave the argument untouched.
+            syslog("Couldn't format {} because of {}", arg, err)
+            return arg
 
     return auto_eval
 

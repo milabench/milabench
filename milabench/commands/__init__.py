@@ -452,11 +452,13 @@ class WorkingDir(WrapperCommand):
         env = {}
         extras = []
 
+        # Must match Package.make_env: HF_HOME is the data dir in prepare and
+        # run, otherwise HF caches written at prepare time are not found here.
         _merge_env(
             env,
             {
                 "XDG_CACHE_HOME": str(pack.dirs.cache),
-                "HF_HOME": str(pack.dirs.cache),
+                "HF_HOME": str(pack.dirs.data),
                 "TORCH_HOME": str(pack.dirs.cache),
             },
             source="cache dirs",
@@ -474,6 +476,18 @@ class WorkingDir(WrapperCommand):
 
         # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
         _merge_env(env, pack.config.get("env"), source="pack.env")
+
+        # `env -` clears everything the pack relies on (MILABENCH_DIR_*,
+        # MILABENCH_CONFIG, venv PATH, pack.make_env() ...): fill the gaps,
+        # without overriding anything set above.
+        for key, value in pack.full_env().items():
+            env.setdefault(str(key), str(value))
+
+        # `env -` also drops the DATA_FD voir's launcher sets for use_stdout();
+        # without it voir falls back to fd 3 (EBADF). Smuggle through stdout.
+        if self.options.get("use_stdout"):
+            env.setdefault("DATA_FD", "1")
+            env.setdefault("PYTHONUNBUFFERED", "1")
 
         # Allow callers (e.g. TorchtitanSrun.main_executor) to append extra
         # NAME=VALUE tokens after construction.

@@ -42,7 +42,10 @@ import time
 
 
 def is_head(head_hostname: str) -> bool:
-    return socket.gethostname() == head_hostname
+    # milabench records the head as an FQDN (rg21701.rorqual.calcul.quebec) while gethostname() can return the
+    # short name (rg21701): compare the first label so both spellings match.
+    short = lambda name: name.split(".", 1)[0].lower()
+    return short(socket.gethostname()) == short(head_hostname)
 
 
 def wait_ray_ready(ray_bin: str, address: str, timeout_s: int) -> bool:

@@ -81,8 +81,33 @@ def _exclude_host_count(args: list[str]) -> int:
     return 0
 
 
+def _nodelist_host_count(args: list[str]) -> int:
+    for flag in ("-w", "--nodelist"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 < len(args):
+                return max(len(expand_node_list(args[i + 1])), 1)
+    return 0
+
+
 def _shrink_srun_allocation_for_exclude(args: list[str]) -> list[str]:
-    """If excluding hosts, request only the remaining nodes from the job."""
+    """If excluding hosts, request only the remaining nodes from the job.
+
+    With ``-w`` (explicit node list), request exactly one task per listed
+    node; otherwise srun inherits the job's task count and may stack several
+    tasks on the listed nodes.
+    """
+    if _has_srun_nodes_override(args):
+        return args
+    n_listed = _nodelist_host_count(args)
+    if n_listed > 0:
+        return [
+            f"--nodes={n_listed}",
+            f"--ntasks={n_listed}",
+            "--ntasks-per-node=1",
+            *args,
+        ]
+
     n_excl = _exclude_host_count(args)
     if n_excl <= 0 or _has_srun_nodes_override(args):
         return args
