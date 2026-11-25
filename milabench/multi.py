@@ -97,7 +97,7 @@ async def copy_base_to_workers(setup):
         # we copy the entire content of base
         #   FIXME: handle custom (venv, cache, data, etc...) directories
         #  
-        copy_plan = copy_folder(setup, SystemConfig().base)
+        copy_plan = copy_folder(setup, SystemConfig().base, mirror=("venv",))
         remote_task = asyncio.create_task(copy_plan.execute())
         await asyncio.wait([remote_task])
 

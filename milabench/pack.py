@@ -583,6 +583,8 @@ class Package(BasePackage):
         env["MILABENCH_CONFIG"] = json.dumps(self.config)
         # directory of this run (runs/<run_name>), next to the voir .data file
         env["MILABENCH_DIR_RUN"] = str(self.logdir)
+        # wandb writes its run data in $WANDB_DIR/wandb (default: the cwd, i.e. the benchmark's code folder)
+        env["WANDB_DIR"] = os.environ.get("WANDB_DIR", str(self.logdir))
 
         # Extra env vars from the system config (already resolved at load time).
         for k, v in (self.config.get("system") or {}).get("env", {}).items():

@@ -30,7 +30,7 @@ def scp(node, folder, dest=None) -> list:
     ]
 
 
-def rsync(node, folder, dest=None) -> list:
+def rsync(node, folder, dest=None, delete=False) -> list:
     """Copy a folder from local node to remote node"""
     host = node["ip"]
     user = node["user"]
@@ -41,6 +41,7 @@ def rsync(node, folder, dest=None) -> list:
     return [
         "rsync",
         "-av",
+        *(["--delete"] if delete else []),
         "-e",
         "ssh -oCheckHostIP=no -oStrictHostKeyChecking=no",
         folder,
@@ -104,11 +105,22 @@ def sshnode(node, cmd):
     return SSHCommand(cmd, user=user, host=host, port=port)
 
 
-def copy_folder(pack, folder, setup_for="worker"):
+def copy_folder(pack, folder, setup_for="worker", mirror=()):
+    """Copy ``folder`` to the workers.
+
+    Subfolders listed in ``mirror`` are synced again with ``--delete`` so they
+    match the main node exactly (stale ``*.dist-info`` of upgraded packages
+    otherwise accumulate in the worker venvs and report the wrong versions).
+    """
     def copy_to_worker(nodepack, node):
         return [
              sshnode(node, CmdCommand(nodepack, "mkdir", "-p", folder)),
-             CmdCommand(nodepack, *rsync(node, folder))
+             CmdCommand(nodepack, *rsync(node, folder)),
+             *(
+                 CmdCommand(nodepack, *rsync(node, os.path.join(folder, sub, ""), os.path.join(folder, sub), delete=True))
+                 for sub in mirror
+                 if os.path.isdir(os.path.join(folder, sub))
+             ),
         ]
     return worker_commands(pack, copy_to_worker, setup_for=setup_for)
 

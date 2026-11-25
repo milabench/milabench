@@ -62,11 +62,27 @@ def wait_ray_ready(ray_bin: str, address: str, timeout_s: int) -> bool:
     return False
 
 
+def ip_towards(head_ip: str) -> str:
+    """This node's address on the interface that reaches the head (no packet is sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect((head_ip, 9))
+        return s.getsockname()[0]
+
+
+def set_vllm_host_ip(ip: str) -> None:
+    # vLLM's get_ip() follows the default route (the public interface on multi-homed nodes), not the address Ray
+    # knows the node by: the driver then finds no worker on its node and maps ranks to the wrong GPUs. Ray actors
+    # inherit it from `ray start`; vLLM never copies it between nodes (WORKER_SPECIFIC_ENV_VARS). Always this node's own
+    # address, even when the launcher passed the head's.
+    os.environ["VLLM_HOST_IP"] = ip
+
+
 def run_head(
     ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
     extra_args: list[str] = (),
 ) -> int:
     print(f"[rayrun] this node ({head_ip}) is head, starting ray --block", flush=True)
+    set_vllm_host_ip(head_ip)
     if os.path.exists(marker):
         os.remove(marker)
 
@@ -97,16 +113,20 @@ def run_worker(
     ray_bin: str, head_ip: str, port: int, marker: str, timeout_s: int,
     extra_args: list[str] = (),
 ) -> int:
-    print(f"[rayrun] waiting for head marker at {marker}", flush=True)
-    waited = 0
-    while not os.path.exists(marker):
-        if waited >= timeout_s:
-            print(f"[rayrun] ERROR: head marker never appeared after {timeout_s}s", file=sys.stderr)
+    # The marker needs a filesystem shared with the head; without one (nodes with local disks, the venv
+    # rsynced by milabench) the head is ready once `ray status` reaches it.
+    address = f"{head_ip}:{port}"
+    print(f"[rayrun] waiting for head marker at {marker} or for {address} to answer", flush=True)
+    start = time.time()
+    while not os.path.exists(marker) and not wait_ray_ready(ray_bin, address, 0.1):
+        if time.time() - start >= timeout_s:
+            print(f"[rayrun] ERROR: head never became ready after {timeout_s}s", file=sys.stderr)
             return 1
         time.sleep(1)
-        waited += 1
+    waited = int(time.time() - start)
 
-    print(f"[rayrun] head marker seen after {waited}s, joining {head_ip}:{port} --block", flush=True)
+    print(f"[rayrun] head ready after {waited}s, joining {address} --block", flush=True)
+    set_vllm_host_ip(ip_towards(head_ip))
     cmd = [ray_bin, "start", f"--address={head_ip}:{port}", *extra_args, "--block"]
     print("[rayrun] +", " ".join(cmd), flush=True)
     # Nothing runs after this, so replace this process with ray's instead of
@@ -123,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head-hostname", required=True, help="Head node hostname (for role detection)")
     parser.add_argument("--port", type=int, required=True, help="Ray GCS port")
     parser.add_argument(
-        "--ready-marker", required=True, help="Shared-filesystem path signaling head readiness"
+        "--ready-marker", required=True, help="Shared-filesystem path signaling head readiness (workers also poll the head with `ray status`)"
     )
     parser.add_argument(
         "--timeout", type=int, default=600, help="Seconds to wait for readiness (default: 600)"
@@ -141,6 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.extra_ray_args[:1] == ["--"]:
         args.extra_ray_args = args.extra_ray_args[1:]
+
+    # A failed run leaves this node's raylet up (its teardown `ray stop` never ran); it then joins the next
+    # cluster too, which counts its GPUs twice and can never place a full-size placement group.
+    subprocess.run([args.ray_bin, "stop", "--force"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Ray >= 2.5x enables token auth as soon as ~/.ray/auth_token exists on a node (any local ray.init() writes one),
+    # and the token is per node: the other nodes then fail with InvalidAuthToken. The cluster is internal to the job.
+    os.environ.setdefault("RAY_AUTH_MODE", "disabled")
 
     if is_head(args.head_hostname):
         return run_head(

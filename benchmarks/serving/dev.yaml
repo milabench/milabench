@@ -1,0 +1,146 @@
+# milabench run --config benchmarks/serving/dev.yaml --select serving-smoke-vllm
+#
+# Same config schema as benchmarks/vllm (server / client / variants / client.passes); the difference is
+# that milabench runs the server (milabench.commands.serving) and main.py is only the client:
+#
+#   Service(InferenceServer(backend), SequenceCommand(eval client, perf client))
+#
+# server.backend picks the server command: vllm, atom, sglang (or server.command for an explicit one).
+
+include:
+  - ../../config/_defaults.yaml
+
+_serving_base:
+  inherits: _defaults
+  definition: .
+  group: serving
+  install_group: torch
+  enabled: true
+  num_machines: 1
+  max_duration: 1800
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - multigpu
+  voir:
+    options:
+      # several passes push many more rate events than one: do not stop after the first ones
+      stop: 1000000
+
+  server:
+    backend: vllm
+    argv:
+      --served-model-name: model
+
+  client:
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+      --served-model-name: model
+      --request-rate: inf
+      --dataset-name: random
+      --label: milabench
+      --backend: openai
+      --num-prompts: 16
+      --max-concurrency: 8
+      --ready-check-timeout-sec: 1200
+
+# one perf run, no passes
+serving-smoke-vllm:
+  inherits: _serving_base
+  tags:
+    - smoke
+  server:
+    argv:
+      meta-llama/Llama-3.1-8B-Instruct: true
+      --dtype: bfloat16
+      --tensor-parallel-size: 1
+      --max-model-len: 8192
+      --gpu-memory-utilization: 0.7
+
+# eval and perf passes: two clients against one server (results <name>.eval / <name>.perf)
+serving-smoke-atom:
+  inherits: _serving_base
+  tags:
+    - smoke
+  client:
+    argv:
+      --ignore-eos: true
+      --random-range-ratio: 0.0
+    passes:
+      - {name: conc4,    argv: {--max-concurrency: 4, --num-prompts: 16, --random-input-len: 1024, --random-output-len: 256}}
+      - {name: ctx4k-c4, argv: {--max-concurrency: 4, --num-prompts: 8,  --random-input-len: 4096, --random-output-len: 512}}
+      - name: eval
+        eval:
+          tasks: [milabench_gsm8k, milabench_arc_challenge, milabench_gpqa_diamond]
+          limit: 20
+          num_concurrent: 16
+          gen_kwargs: {max_gen_toks: 2048, temperature: 0}
+  server:
+    backend: atom
+    argv:
+      --model: meta-llama/Llama-3.1-8B-Instruct
+      -tp: 1
+      --max-model-len: 8192
+      --enforce-eager: true
+
+# multi-node data parallel: coordinator on the main node, server_worker.py on the others
+serving-smoke-atom-2n-dp2:
+  inherits: serving-smoke-atom
+  num_machines: 2
+  tags:
+    - multinode
+  requires_capabilities:
+    - "len(nodes) >= ${..num_machines}"
+  server:
+    multinode: dp
+    dp_local: 1
+    argv:
+      -tp: "{gpu_count}"
+
+serving-kimi-k3-mxfp4-gpus:
+  inherits: _serving_base
+  max_duration: 7200
+  tags:
+    - moe
+    - mxfp4
+  requires_capabilities:
+    - "arch in ('cuda', 'rocm')"
+    - "gpu.get('count', 0) >= 8"
+  url: https://huggingface.co/moonshotai/Kimi-K3
+
+  client:
+    argv:
+      --model: moonshotai/Kimi-K3
+      --trust-remote-code: true
+      --num-prompts: 64
+      --max-concurrency: 64
+      --ready-check-timeout-sec: 7200
+
+  variants:
+    cuda:
+      server:
+        backend: vllm
+        argv:
+          moonshotai/Kimi-K3: true
+          --trust-remote-code: true
+          --tensor-parallel-size: "{gpu_count}"
+          --max-model-len: 16384
+          --gpu-memory-utilization: 0.9
+
+    rocm:
+      server:
+        backend: atom
+        argv:
+          --model: moonshotai/Kimi-K3
+          -tp: "{gpu_count}"
+          --kv_cache_dtype: fp8
+          --trust-remote-code: true
+          --max-model-len: 16384
+          --max-num-seqs: 64
+          --max-num-batched-tokens: 16384
+          --gpu-memory-utilization: 0.93
+          --block-size: 128
+          --no-enable_prefix_caching: true
+          --enforce-eager: true

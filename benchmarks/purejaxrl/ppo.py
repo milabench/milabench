@@ -395,7 +395,10 @@ def main(args: Arguments = None):
 
     with bench_monitor():
         with jax_profiler():
-            out = compiled_fn(rng)
+            # Dispatch is async: wait for the scan and its debug.callbacks, or XLA
+            # threads call back into Python while the interpreter finalizes
+            out = jax.block_until_ready(compiled_fn(rng))
+            jax.effects_barrier()
 
 if __name__ == "__main__":
     main()
