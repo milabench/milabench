@@ -933,3 +933,114 @@ class TestStatStreamUsage:
         assert s.avg == 42.0
         assert s.current_count == 1
         assert s.sd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# OOM markers: {batch_size: N, oom: true} bound the predicted batch size
+# ---------------------------------------------------------------------------
+
+def _oom_obs(batch, time_=0):
+    return {"batch_size": batch, "oom": True, "cpu": 8, "time": time_}
+
+
+def _oom_sizer(tmp_path, observations, **options):
+    profile = tmp_path / "scaling.yaml"
+    profile.write_text(yaml.dump({"bench": {"observations": observations}}))
+    return Sizer(sizer=SizerOptions(auto=True, **options), config=str(profile))
+
+
+class TestOOMMarkers:
+    # 1000 MiB per batch, 1000 MiB fixed: 40000 MiB predicts ~39 without markers
+    OK = [_pair_obs(8, 9000, 8000, perf=10), _pair_obs(16, 17000, 16000, perf=20)]
+
+    def test_marker_is_not_fitted(self, tmp_path):
+        without = _oom_sizer(tmp_path, self.OK)._auto_size("bench", "40000 MiB")
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(64)])
+        assert sizer._auto_size("bench", "40000 MiB") == without
+
+    def test_prediction_below_marker_is_kept(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(64)])
+        expected = _oom_sizer(tmp_path, self.OK).auto_size("bench", "40000 MiB")
+        assert sizer.auto_size("bench", "40000 MiB") == expected < 64
+
+    def test_bisects_between_completed_and_oom(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(32)])
+        # predicted ~39 >= 32: halfway between 16 (completed) and 32 (OOM)
+        assert sizer.auto_size("bench", "40000 MiB") == 24
+
+    def test_smallest_marker_wins(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(48), _oom_obs(32)])
+        # halfway between 16 and 32, not 16 and 48
+        assert sizer.auto_size("bench", "40000 MiB") == 24
+
+    def test_converged_uses_largest_completed(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(17)])
+        assert sizer.auto_size("bench", "40000 MiB") == 16
+
+    def test_multiple_rounding_does_not_reach_oom(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(32)], multiple=8)
+        assert sizer.auto_size("bench", "40000 MiB") == 24
+
+    def test_outdated_marker_ignored(self, tmp_path):
+        """An OOM at a batch size that later completed no longer bounds the prediction."""
+        sizer = _oom_sizer(tmp_path, self.OK + [_oom_obs(12)])
+        expected = _oom_sizer(tmp_path, self.OK).auto_size("bench", "40000 MiB")
+        assert sizer.auto_size("bench", "40000 MiB") == expected
+
+    def test_single_point_bisects_without_fit(self, tmp_path):
+        """One completed batch size cannot be fitted: bisect between it and the OOM one."""
+        sizer = _oom_sizer(tmp_path, [_pair_obs(8, 9000, 8000, perf=10), _oom_obs(240)])
+        assert sizer.auto_size("bench", "40000 MiB") == 120
+
+    def test_single_point_without_marker_keeps_default(self, tmp_path):
+        sizer = _oom_sizer(tmp_path, [_pair_obs(8, 9000, 8000, perf=10)])
+        assert sizer.auto_size("bench", "40000 MiB") is None
+
+    def test_dedupe_keeps_latest_marker(self):
+        scaling = {"bench": {"observations": self.OK + [_oom_obs(32, 1), _oom_obs(32, 5)]}}
+        obs = deduplicate_observation(scaling)["bench"]["observations"]
+        ooms = [o for o in obs if o.get("oom")]
+        assert len(ooms) == 1 and ooms[0]["time"] == 5
+        assert len(obs) == 3
+
+    def test_marker_dumped_compact(self):
+        out = io.StringIO()
+        _dump_scaling_yaml({"bench": {"observations": [_oom_obs(32)]}}, out)
+        assert "{batch_size: 32, oom: true, cpu: 8, time: 0}" in out.getvalue()
+
+
+class TestExtractorRecordsOOM:
+    def _extractor(self, tmp_path, monkeypatch):
+        save_path = tmp_path / "out.yaml"
+        monkeypatch.setattr(
+            SizerOptions,
+            "instance",
+            classmethod(lambda cls: SizerOptions(save=str(save_path), config=None)),
+        )
+        monkeypatch.setattr("milabench.sizer._torch_backend_info", lambda pack=None: {})
+        extractor = MemoryUsageExtractor()
+        extractor.memory = {}
+        return extractor, save_path
+
+    def _entry(self, event, data):
+        pack = SimpleNamespace(config={"name": "bench"})
+        return SimpleNamespace(pack=pack, event=event, data=data, tag=[])
+
+    def _run(self, extractor, lines, rc):
+        pack = SimpleNamespace(config={"name": "bench"})
+        extractor.on_batch_size_set(pack, None, 64)
+        extractor(self._entry("start", {}))
+        for line in lines:
+            extractor(self._entry("line", line))
+        extractor(self._entry("end", {"return_code": rc}))
+
+    def test_oom_failure_records_marker(self, tmp_path, monkeypatch):
+        extractor, path = self._extractor(tmp_path, monkeypatch)
+        self._run(extractor, ["torch.OutOfMemoryError: CUDA out of memory. Tried to allocate"], rc=1)
+        obs = yaml.safe_load(path.read_text())["bench"]["observations"]
+        assert obs == [{"batch_size": 64, "oom": True, "cpu": 0, "time": obs[0]["time"]}]
+
+    def test_other_failure_records_nothing(self, tmp_path, monkeypatch):
+        extractor, path = self._extractor(tmp_path, monkeypatch)
+        self._run(extractor, ["ValueError: something else"], rc=1)
+        assert "bench" not in extractor.memory

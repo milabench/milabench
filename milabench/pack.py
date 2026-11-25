@@ -612,6 +612,9 @@ class Package(BasePackage):
             env["HF_HOME"] = str(self.dirs.data)
             env["HF_HUB_CACHE"] = str(self.dirs.data / "hub")
             env["FLASHINFER_CACHE_DIR"] = str(self.dirs.cache / "flashinfer")
+            # flashinfer >= 0.7 ignores FLASHINFER_CACHE_DIR: it writes <base>/.cache/flashinfer/<version>
+            # with base = FLASHINFER_WORKSPACE_BASE or $HOME (read only on compute nodes)
+            env["FLASHINFER_WORKSPACE_BASE"] = str(self.dirs.cache)
         return env
 
     def full_env(self, env={}):

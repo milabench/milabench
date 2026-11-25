@@ -317,6 +317,12 @@ class SizerOptions:
     # in the scaling config: the memory fit is linear and extrapolates far past what works
     cap_observed: bool = defaultfield("sizer.cap_observed", int, 0)
 
+    # Replace the fixed overhead (median NVML - allocator gap of the observations) used by the
+    # torchmem fit: "8192 MiB" or a share of the capacity "10%". The measured gap is specific to
+    # the GPU / software stack of the observations (on ROCm the allocator caches most of the
+    # device), set this when sizing a GPU from another GPU's scaling file.
+    overhead_override: str = defaultfield("sizer.overhead_override", str, None)
+
     @property
     def autoscale(self):
         return self.enabled and self.multiple or self.capacity

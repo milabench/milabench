@@ -354,6 +354,11 @@ class MultiPackage:
         benchmarks_dir = here.parent / "benchmarks"
         pin_dir = here.parent / ".pin"
 
+        # Only the benchmarks of the config (after --select / --exclude), not every
+        # benchmark of the repository: one incompatible benchmark would block the pin
+        include = {XPath(pack.config["definition"]).name for pack in self.packs.values()}
+        print(f"Pinning the dependencies of: {', '.join(sorted(include))}")
+
         await pin_all(
             platform_config=platform_config,
             benchmarks_dir=benchmarks_dir,
@@ -361,6 +366,7 @@ class MultiPackage:
             from_scratch=from_scratch,
             extra_compile_args=extra_compile_args,
             overrides=version_overrides,
+            include=include,
         )
         return True
 

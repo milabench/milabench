@@ -85,7 +85,9 @@ class ServerCommand(SingleCmdCommand):
         if self.arch == "cuda":
             cache = self.pack.dirs.cache
             env["FLASHINFER_CACHE_DIR"] = str(cache / "flashinfer")
-            env["FLASHINFER_CUBIN_DIR"] = str(cache / "flashinfer" / "cubins")
+            # flashinfer >= 0.7 writes <base>/.cache/flashinfer/<version>, base defaults to $HOME
+            env["FLASHINFER_WORKSPACE_BASE"] = str(cache)
+            # No FLASHINFER_CUBIN_DIR: cubins come from the flashinfer-cubin package (offline nodes)
         return env
 
     def dp_flags(self, nnodes, dp_local, master_ip, rank=0, master_port=29550) -> List:
