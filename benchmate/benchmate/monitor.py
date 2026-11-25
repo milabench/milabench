@@ -168,6 +168,22 @@ def _smuggle_get(monitors):
     return get
 
 
+def metric_log():
+    """Event sink of the monitor: smuggles each entry through stdout to milabench.
+
+    Looked up at call time so benchmarks can wrap it (vllm routes the samples of a pass to that pass's file).
+    """
+    data_file = SmuggleWriter(sys.stdout)
+
+    def mblog(data):
+        try:
+            print(json.dumps(data), file=data_file)
+        except ValueError:
+            pass
+
+    return mblog
+
+
 def _smuggle_monitor(
     gpu_poll_interval=0.25,
     system_poll_interval=DEFAULT_SYSTEM_POLL_INTERVAL,
@@ -178,14 +194,7 @@ def _smuggle_monitor(
     if worker_init is None:
         worker_init = init
 
-    data_file = SmuggleWriter(sys.stdout)
-
-    def mblog(data):
-        if data_file is not None:
-            try:
-                print(json.dumps(data), file=data_file)
-            except ValueError:
-                pass
+    mblog = metric_log()
 
     def push(entries):
         for entry in entries:
