@@ -1,0 +1,29 @@
+# vLLM-Omni (diffusion serving: image / video / audio, TTS). Its releases follow vLLM's: the vLLM version
+# comes from platforms.toml ([vllm.cuda]: 0.32.0 for torch 2.15 + cu132 on x86_64, 0.33.0 for torch 2.14 +
+# cu130, the aarch64 stack), vllm-omni is pinned to the matching release.
+# Own venv (install_group homelab-omni): it pins diffusers / transformers of its own.
+
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "torch",
+    "vllm",
+    "vllm-omni==0.32.0; platform_machine == 'x86_64'",
+    "vllm-omni==0.33.0rc1; platform_machine == 'aarch64'",
+]
+
+[cuda]
+dependencies = []
+
+[rocm]
+dependencies = []
+
+[cpu]
+enabled = false
+
+[hpu]
+enabled = false
+
+[xpu]
+# vLLM for XPU is provisioned by hand (see config/homelab/_base.yaml); add vllm-omni to that venv.
+enabled = false

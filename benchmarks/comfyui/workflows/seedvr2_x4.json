@@ -1,0 +1,220 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__INPUT__"
+    }
+  },
+  "2": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "center"
+    }
+  },
+  "3": {
+    "class_type": "ImageAddNoise",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "seed": "__SEED__",
+      "strength": 0.0
+    }
+  },
+  "4": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "input": [
+        "3",
+        0
+      ],
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 4.0,
+      "scale_method": "lanczos"
+    }
+  },
+  "5": {
+    "class_type": "SeedVR2Preprocess",
+    "inputs": {
+      "resized_images": [
+        "4",
+        0
+      ]
+    }
+  },
+  "6": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "__VAE__"
+    }
+  },
+  "7": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "__UNET__",
+      "weight_dtype": "default"
+    }
+  },
+  "8": {
+    "class_type": "VAEEncodeTiled",
+    "inputs": {
+      "pixels": [
+        "5",
+        0
+      ],
+      "vae": [
+        "6",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8
+    }
+  },
+  "9": {
+    "class_type": "SeedVR2Conditioning",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "vae_conditioning": [
+        "8",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 1,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "9",
+        1
+      ],
+      "latent_image": [
+        "8",
+        0
+      ],
+      "denoise": 1.0
+    }
+  },
+  "11": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "samples": [
+        "10",
+        0
+      ],
+      "vae": [
+        "6",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8
+    }
+  },
+  "12": {
+    "class_type": "SeedVR2PostProcessing",
+    "inputs": {
+      "images": [
+        "11",
+        0
+      ],
+      "original_resized_images": [
+        "4",
+        0
+      ],
+      "color_correction_method": "none"
+    }
+  },
+  "13": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 4096,
+      "height": 4096,
+      "crop": "disabled"
+    }
+  },
+  "14": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "13",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "15": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "12",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "16": {
+    "class_type": "ImageStitch",
+    "inputs": {
+      "image1": [
+        "14",
+        0
+      ],
+      "image2": [
+        "15",
+        0
+      ],
+      "direction": "right",
+      "match_image_size": true,
+      "spacing_width": 8,
+      "spacing_color": "white"
+    }
+  },
+  "17": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "16",
+        0
+      ],
+      "filename_prefix": "milabench"
+    }
+  }
+}

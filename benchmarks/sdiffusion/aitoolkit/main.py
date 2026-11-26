@@ -1,8 +1,15 @@
 #!/usr/bin/env python
 """ai-toolkit (ostris) fine-tuning benchmark.
 
-Runs a fixed number of SDXL LoRA training steps with `python run.py <job.yaml>`
+Runs a fixed number of LoRA training steps with `python run.py <job.yaml>`
 on a vendored checkout of https://github.com/ostris/ai-toolkit.
+
+The base model's architecture is ``--arch`` (ai-toolkit's model.arch: sdxl, the default, or flux, zimage,
+flux2_klein_4b, qwen_image_2, wan22_5b); flow-matching models train with ``--noise_scheduler flowmatch`` (their
+default), SDXL with ddpm. ``--quantize`` / ``--qtype`` / ``--quantize_te`` quantize the frozen base (optimum-quanto,
+e.g. qfloat8 / uint4), ``--assistant_lora_path`` loads a training adapter (Z-Image Turbo's de-distill adapter),
+``--num_frames`` sets the frames per clip of a video dataset. Unknown flags are an error: a misspelt option would
+otherwise train another job than the one asked for.
 """
 
 import os
@@ -30,6 +37,35 @@ class Arguments:
     num_workers: int = 8
     mixed_precision: str = "bf16"
     output: str = None
+    arch: str = "sdxl"
+    noise_scheduler: str = None
+    quantize: bool = False
+    qtype: str = None
+    quantize_te: bool = False
+    qtype_te: str = None
+    assistant_lora_path: str = None
+    num_frames: int = None
+
+
+# ai-toolkit model.arch values this driver knows; every one but sdxl is a flow-matching model
+ARCHS = ("sdxl", "flux", "zimage", "flux2_klein_4b", "qwen_image_2", "wan22_5b")
+
+
+def model_config(args: Arguments) -> dict:
+    model = {"name_or_path": args.model, "arch": args.arch}
+    if args.arch == "flux":
+        model["is_flux"] = True  # older ai-toolkit checkouts read is_flux instead of arch
+    if args.quantize:
+        model["quantize"] = True
+        if args.qtype:
+            model["qtype"] = args.qtype
+    if args.quantize_te:
+        model["quantize_te"] = True
+        if args.qtype_te:  # else ai-toolkit's default (qfloat8)
+            model["qtype_te"] = args.qtype_te
+    if args.assistant_lora_path:
+        model["assistant_lora_path"] = args.assistant_lora_path
+    return model
 
 
 def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
@@ -47,6 +83,7 @@ def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
                     "caption_dropout_rate": 0.0,
                     "cache_latents_to_disk": False,
                     "resolution": [args.resolution],
+                    **({"num_frames": args.num_frames} if args.num_frames else {}),
                 }],
                 "train": {
                     "train_unet": True,
@@ -57,16 +94,13 @@ def build_job(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
                     "lr": args.learning_rate,
                     "lr_scheduler": "constant",
                     "optimizer": "adamw",
-                    "noise_scheduler": "ddpm",
+                    "noise_scheduler": args.noise_scheduler or ("ddpm" if args.arch == "sdxl" else "flowmatch"),
                     "dtype": args.mixed_precision,
                     "gradient_checkpointing": True,
                     "skip_first_sample": True,
                     "disable_sampling": True,
                 },
-                "model": {
-                    "name_or_path": args.model,
-                    "arch": "sdxl",
-                },
+                "model": model_config(args),
                 "lora": {
                     "type": "lora",
                     "linear": args.lora_rank,
@@ -85,7 +119,11 @@ def main():
 
     parser = ArgumentParser()
     parser.add_arguments(Arguments)
-    args, _ = parser.parse_known_args()
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        raise SystemExit(f"aitoolkit: unrecognized arguments: {' '.join(unknown)}")
+    if args.arch not in ARCHS:
+        raise SystemExit(f"aitoolkit: --arch {args.arch!r}: choose from {', '.join(ARCHS)}")
 
     if args.cache:
         os.environ.setdefault("XDG_CACHE_HOME", str(args.cache))
@@ -113,7 +151,7 @@ def main():
     )
 
     seconds = diffusion.timed_run(
-        [sys.executable, "run.py", str(job_file)], cwd=repo, env=env
+        [sys.executable, "run.py", str(job_file)], cwd=repo, env=env, steps=args.steps, tool="ai-toolkit"
     )
 
     diffusion.report_metrics(

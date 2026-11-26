@@ -1,0 +1,248 @@
+# =============================================================================
+# Homelab — diffusion fine-tuning: LoRA across tools and base models, plus one full fine-tune point
+#
+# Reuses the existing trainers (no new training code):
+#   benchmarks/sdiffusion/{kohya,aitoolkit,simpletuner}   vendored trainer repos, one venv per tool
+#                                                         (install_group sdiffusion-<tool>), cloned into
+#                                                         {milabench_cache}/sdiffusion/vendor at prepare
+#   benchmarks/diffusion                                  SD2 UNet full fine-tune (torch venv)
+#
+# Data: the suite's own generations from Apache-2.0 models (Z-Image Turbo, FLUX.1 [schnell]: 14 train / 2 val
+# images at 1024 px, 4 English prompts; Wan 2.2 TI2V 5B: 4 clips), built once on the CPU by
+#   python benchmarks/sdiffusion/homelab_dataset.py --runs $MILABENCH_BASE/runs --cache $MILABENCH_BASE/cache
+# into {milabench_cache}/sdiffusion/datasets/homelab-suite-apache (the packs' materialize_dataset sees its
+# .complete marker and does not download lambdalabs/naruto-blip-captions).
+#
+# Job (sdiffusion's common one): LoRA rank 16, constant LR 1e-4, bf16, 1024 px, 200 steps, batch 1,
+# gradient checkpointing, text encoders frozen. The SD2 full fine-tune: 512 px, batch 32, 60 steps.
+#
+# Metrics today: steps/s and images/s (samples_per_second) over the trainer subprocess' wall clock (it includes
+# model load and latent / text-embedding caching), the SD2 bench: images/s per step. Memory / energy: the
+# run's nodemon samples (report.py: node_mem_peak_gib, energy_j). benchmate.diffusion.timed_run also reads the
+# trainer's progress bar: a finetune_summary event with the training-step window (window_start / window_end, for
+# energy over the steps only), step time p50 / p90 and loss_first / loss_last.
+#
+#   milabench run --config homelab/finetune-diffusion.yaml [--select sdxl-lora | full-vs-lora]
+#
+# Not in all.yaml yet (draft).
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_ftd:
+  inherits: _defaults
+  enabled: false  # only leaf jobs enable
+  install_variant: unpinned
+  num_machines: 1
+  max_duration: 3600
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - training
+    - diffusion
+    - finetune
+    - homelab
+    - monogpu
+  argv:
+    --cache: "{milabench_cache}"
+    --dataset: homelab-suite-apache
+    --steps: 200
+    --batch_size: 1
+    --resolution: 1024
+    --lora_rank: 16
+    --learning_rate: 1.0e-4
+    --mixed_precision: bf16
+    --num_workers: 4
+
+_ftd_kohya:
+  inherits: _ftd
+  definition: ../../benchmarks/sdiffusion/kohya
+  group: sdiffusion-kohya
+  install_group: sdiffusion-kohya
+  tags: [kohya]
+
+_ftd_aitoolkit:
+  inherits: _ftd
+  definition: ../../benchmarks/sdiffusion/aitoolkit
+  group: sdiffusion-aitoolkit
+  install_group: sdiffusion-aitoolkit
+  tags: [aitoolkit]
+
+_ftd_simpletuner:
+  inherits: _ftd
+  definition: ../../benchmarks/sdiffusion/simpletuner
+  group: sdiffusion-simpletuner
+  install_group: sdiffusion-simpletuner
+  tags: [simpletuner]
+
+# --- SDXL LoRA (stabilityai/stable-diffusion-xl-base-1.0, 14.2 GB fp32 diffusers download, openrail++):
+# the classic baseline, the same job in the three tools (the tool comparison of config/sdiffusion.yaml) ---
+
+homelab-ftd-sdxl-lora-kohya:
+  inherits: _ftd_kohya
+  enabled: true
+  weight: 1
+  tags: [sdxl-lora, full-vs-lora]
+  url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+  argv:
+    --model: stabilityai/stable-diffusion-xl-base-1.0
+
+homelab-ftd-sdxl-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: true
+  weight: 1
+  tags: [sdxl-lora]
+  url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+  argv:
+    --model: stabilityai/stable-diffusion-xl-base-1.0
+
+homelab-ftd-sdxl-lora-simpletuner:
+  inherits: _ftd_simpletuner
+  enabled: true
+  weight: 1
+  tags: [sdxl-lora]
+  url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+  argv:
+    --model: stabilityai/stable-diffusion-xl-base-1.0
+
+# --- SD2 UNet full fine-tune (Milabench/stable-diffusion-2, 5.2 GB): the "full vs LoRA" point. 512 px,
+# batch 32, 60 steps (the bench's early stop), the same images through a Hugging Face imagefolder ---
+
+homelab-ftd-sd2-full:
+  inherits: _ftd
+  definition: ../../benchmarks/diffusion
+  group: diffusion
+  install_group: torch
+  enabled: true
+  weight: 1
+  tags: [full-vs-lora, full-finetune]
+  url: https://huggingface.co/Milabench/stable-diffusion-2
+  argv:
+    --model: Milabench/stable-diffusion-2
+    --dataset: "{milabench_cache}/sdiffusion/datasets/homelab-suite-apache/train/images"
+    --steps: null
+    --lora_rank: null
+    --learning_rate: null
+    --resolution: 512
+    --batch_size: 32
+    --num_workers: 4
+    --mixed_precision: bf16
+
+# =============================================================================
+# Newer bases with ai-toolkit — DISABLED (downloads, and the ai-toolkit job keys are untested on these bases).
+# aitoolkit/main.py takes --arch, --quantize / --qtype / --quantize_te, --noise_scheduler (flowmatch default for
+# every flow model), --assistant_lora_path, --num_frames, and refuses unknown flags. The Wan entry also needs a
+# video folder (the suite clips), which materialize_dataset does not build yet.
+# =============================================================================
+
+# FLUX.1 [dev] (12B, cached: 33.7 GB diffusers; FLUX.1-dev non-commercial license, gated "auto"): bf16 base
+homelab-ftd-flux1-dev-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [flux-lora, lora-vs-qlora]
+  url: https://huggingface.co/black-forest-labs/FLUX.1-dev
+  argv:
+    --model: black-forest-labs/FLUX.1-dev
+    --arch: flux
+    --noise_scheduler: flowmatch
+
+# the same with an 8-bit float base (optimum-quanto qfloat8, ai-toolkit's "quantize: true" 24 GB recipe)
+homelab-ftd-flux1-dev-lora-fp8base-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [flux-lora, lora-vs-qlora, quantized-base]
+  url: https://huggingface.co/black-forest-labs/FLUX.1-dev
+  argv:
+    --model: black-forest-labs/FLUX.1-dev
+    --arch: flux
+    --noise_scheduler: flowmatch
+    --quantize: true
+    --qtype: qfloat8
+    --quantize_te: true
+
+# and a 4-bit integer base (quanto uint4): the QLoRA-like point
+homelab-ftd-flux1-dev-lora-int4base-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [flux-lora, lora-vs-qlora, quantized-base]
+  url: https://huggingface.co/black-forest-labs/FLUX.1-dev
+  argv:
+    --model: black-forest-labs/FLUX.1-dev
+    --arch: flux
+    --noise_scheduler: flowmatch
+    --quantize: true
+    --qtype: uint4
+    --quantize_te: true
+
+# Z-Image Turbo (6B, cached: 32.8 GB, Apache-2.0): distilled, so ai-toolkit trains through its de-distill
+# training adapter (ostris/zimage_turbo_training_adapter, 0.5 GB)
+homelab-ftd-zimage-turbo-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [newer-base]
+  url: https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+  argv:
+    --model: Tongyi-MAI/Z-Image-Turbo
+    --arch: zimage
+    --noise_scheduler: flowmatch
+    --assistant_lora_path: ostris/zimage_turbo_training_adapter
+
+# FLUX.2 [klein] base 4B (Jan 2026, Apache-2.0, 16 GB): the current BFL generation at a size that downloads;
+# FLUX.2 [dev] (32B + Mistral-Small-3.1 24B text encoder, 113 GB) is left out for disk
+homelab-ftd-flux2-klein-base-4b-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet; 16 GB download
+  weight: 1
+  tags: [newer-base]
+  url: https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B
+  argv:
+    --model: black-forest-labs/FLUX.2-klein-base-4B
+    --arch: flux2_klein_4b
+    --noise_scheduler: flowmatch
+
+# Qwen-Image 2.1 (Sep 2026, 33 GB, Qwen license): the largest open image model here; fp8 base
+homelab-ftd-qwen-image-21-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet; 33 GB download
+  weight: 1
+  tags: [newer-base, quantized-base]
+  url: https://huggingface.co/Qwen/Qwen-Image-2.1
+  argv:
+    --model: Qwen/Qwen-Image-2.1
+    --arch: qwen_image_2
+    --noise_scheduler: flowmatch
+    --quantize: true
+    --qtype: qfloat8
+    --quantize_te: true
+
+# Wan 2.2 TI2V 5B video LoRA (cached: 34.2 GB, Apache-2.0): the 4 suite clips, 1280x704 -> 480 px, 33 frames
+homelab-ftd-wan22-5b-video-lora-aitoolkit:
+  inherits: _ftd_aitoolkit
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [video-lora, newer-base]
+  url: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  argv:
+    --model: Wan-AI/Wan2.2-TI2V-5B-Diffusers
+    --arch: wan22_5b
+    --noise_scheduler: flowmatch
+    --resolution: 480
+    --num_frames: 33
+    --steps: 100
+
+# SDXL LoRA with an fp8 base in kohya (sd-scripts --fp8_base): quantized-base point for the classic model
+homelab-ftd-sdxl-lora-fp8base-kohya:
+  inherits: _ftd_kohya
+  enabled: false  # off: not run yet
+  weight: 1
+  tags: [sdxl-lora, quantized-base]
+  url: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+  argv:
+    --model: stabilityai/stable-diffusion-xl-base-1.0
+    --fp8_base: true

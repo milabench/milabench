@@ -1,0 +1,424 @@
+# =============================================================================
+# DRAFT, NOT RUN YET: Homelab: larger image / video generation models for a 128 GB unified-memory
+# card (DGX Spark, GB10). Run on its own (-c homelab/image-big.yaml); no other config includes it.
+#
+#   FLUX series      FLUX.1 dev -> FLUX.2 dev -> FLUX 3 Klein, ComfyUI, matched settings
+#   Qwen-Image 2.1   ComfyUI bf16 / int8, vLLM-Omni bf16 / fp8
+#   HunyuanImage 3   vLLM-Omni AutoRound MXFP4 / MXFP8 (bf16 does not fit: 169 GB)
+#   Wan 2.2 A14B     ComfyUI fp16 (fp8 is video.yaml's homelab-comfyui-wan22-a14b-t2v),
+#                    vLLM-Omni int4 AutoRound
+#
+# Settings match image.yaml so results line up: 1024x1024, the shared prompts and seeds
+# (benchmate.prompts: generation i uses prompt i and seed i in every model and engine).
+# "matched" entries use the FLUX.1 dev settings (20 steps, guidance 3.5 where the model takes
+# one, no prompt upsampler). "-rec" entries use the model's own recommended settings.
+# Wan uses video.yaml's A14B settings (640x640, 81 frames at 16 fps, 20 steps, CFG 3.5).
+#
+# enabled: false = needs a change first (see each entry's NEEDS line).
+# New ComfyUI workflows (workflows/flux1_dev_bf16.json, flux2_dev.json, qwen_image_21.json,
+# flux3_klein.json) are drafted outside the repo and still have to be added.
+# Steps and guidance go in through --set (__STEPS__ / __GUIDANCE__): ComfyUI casts the strings
+# to INT / FLOAT when it validates the prompt.
+# ComfyUI downloads its files at run time (no prepare step): pre-fetch the big ones with `hf download`.
+# =============================================================================
+
+include:
+  - _base.yaml
+
+# -----------------------------------------------------------------------------
+# FLUX series: FLUX.1 dev -> FLUX.2 dev -> FLUX 3 Klein, ComfyUI, same prompt / seed /
+# 1024x1024 / 20 steps / euler. The FLUX.1 dev fp8 baseline is image.yaml's
+# homelab-comfyui-flux-dev-fp8 (and homelab-omni-flux-dev-fp8 on vLLM-Omni).
+# -----------------------------------------------------------------------------
+
+# FLUX.1 dev in BF16 (split files): the bf16 point of the series. The transformer is already in the
+# HF cache (black-forest-labs/FLUX.1-dev, from the omni benches), the VAE too (Z-Image's ae.safetensors
+# is the same file); only the text encoders are new (~10 GB).
+homelab-comfyui-flux1-dev-bf16:
+  name: homelab-comfyui-flux1-dev-bf16
+  tags:
+    - image
+    - flux-series
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/flux1_dev_bf16.json
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.1-dev:flux1-dev.safetensors
+      - text_encoders:comfyanonymous/flux_text_encoders:clip_l.safetensors
+      - text_encoders:comfyanonymous/flux_text_encoders:t5xxl_fp16.safetensors
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+    --set:
+      - UNET=flux1-dev.safetensors
+      - CLIP_L=clip_l.safetensors
+      - T5=t5xxl_fp16.safetensors
+      - VAE=ae.safetensors
+
+# FLUX.2 dev (32B transformer + Mistral Small 3 24B text encoder), BF16. About 100 GB of weights:
+# the largest that fits. If it runs out of memory, switch TE to the fp8 encoder (the fp8 entry's).
+homelab-comfyui-flux2-dev-bf16:
+  name: homelab-comfyui-flux2-dev-bf16
+  tags:
+    - image
+    - flux-series
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  max_duration: 7200
+  # roughly 1.5-3 min per image here: 30 images do not fit
+  voir:
+    options:
+      stop: 10
+  argv:
+    --max-steps: 11
+    --workflow: workflows/flux2_dev.json
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-dev:flux2-dev.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_bf16.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2-dev.safetensors
+      - TE=mistral_3_small_flux2_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - GUIDANCE=3.5
+
+# FLUX.2 dev at BFL's recommended settings (50 steps, guidance 4; the ComfyUI template uses 20 / 4)
+homelab-comfyui-flux2-dev-bf16-rec:
+  name: homelab-comfyui-flux2-dev-bf16-rec
+  inherits: homelab-comfyui-flux2-dev-bf16
+  voir:
+    options:
+      stop: 5
+  argv:
+    --max-steps: 6
+    --set:
+      - UNET=flux2-dev.safetensors
+      - TE=mistral_3_small_flux2_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=50
+      - GUIDANCE=4.0
+
+# FP8: Comfy-Org's fp8mixed transformer (ComfyUI's own quant format), fp8 text encoder
+homelab-comfyui-flux2-dev-fp8:
+  name: homelab-comfyui-flux2-dev-fp8
+  inherits: homelab-comfyui-flux2-dev-bf16
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/Flux-2-Dev:split_files/diffusion_models/flux2_dev_fp8mixed.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2_dev_fp8mixed.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - GUIDANCE=3.5
+
+# NVFP4: BFL's mixed NVFP4/BF16 transformer (ComfyUI quant format, comfy-kitchen kernels), same fp8
+# text encoder as the fp8 entry, so the two differ only in the transformer
+homelab-comfyui-flux2-dev-nvfp4:
+  name: homelab-comfyui-flux2-dev-nvfp4
+  inherits: homelab-comfyui-flux2-dev-bf16
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-dev-NVFP4:flux2-dev-nvfp4-mixed.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2-dev-nvfp4-mixed.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - GUIDANCE=3.5
+
+# NVFP4, pure: BFL's all-NVFP4 transformer from the same repo (no BF16 layers; the mixed entry above keeps a small
+# set of weights in BF16), same fp8 text encoder: the two NVFP4 entries differ only in those layers
+homelab-comfyui-flux2-dev-nvfp4-pure:
+  name: homelab-comfyui-flux2-dev-nvfp4-pure
+  inherits: homelab-comfyui-flux2-dev-bf16
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-dev-NVFP4:flux2-dev-nvfp4.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2-dev-nvfp4.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - GUIDANCE=3.5
+
+# FLUX 3 Klein (5.6B distilled transformer + Qwen3-VL-4B text encoder), BF16, matched settings:
+# 20 steps, no prompt upsampler (as krea2 in image.yaml). Distilled: no guidance, cfg 1.
+# NEEDS: a ComfyUI release with FLUX 3 (released 2026-11-02; the checkout here is v0.37.0+46 of
+# 2026-09-28: no CLIPLoader type "flux3", no Flux3LayoutPrompt). Rerun the FLUX.1 / FLUX.2 entries
+# on the same ComfyUI so the series compares one engine version.
+homelab-comfyui-flux3-klein-bf16:
+  name: homelab-comfyui-flux3-klein-bf16
+  tags:
+    - image
+    - flux-series
+  inherits: _comfyui
+  enabled: false
+  weight: 1
+  argv:
+    --workflow: workflows/flux3_klein.json
+    --model:
+      - diffusion_models:black-forest-labs/flux-3-image-klein-comfy:diffusion_models/flux3-image-klein-bf16.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:black-forest-labs/flux-3-image-klein-comfy:vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux3-image-klein-bf16.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+
+# NVFP4 (BFL's own, the same quantization as variants/nvfp4 in black-forest-labs/flux-3-image-klein)
+homelab-comfyui-flux3-klein-nvfp4:
+  name: homelab-comfyui-flux3-klein-nvfp4
+  inherits: homelab-comfyui-flux3-klein-bf16
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/flux-3-image-klein-comfy:diffusion_models/flux3-image-klein-nvfp4.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:black-forest-labs/flux-3-image-klein-comfy:vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux3-image-klein-nvfp4.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+
+# Klein at BFL's recommended settings: 16 steps, prompt upsampler on (int8 upsampler, the workflows'
+# default). Time per image includes the upsampler's caption.
+# NEEDS: the ComfyUI update above, plus workflows/flux3_klein_pup.json: BFL's
+# workflows/flux3_klein_bf16_t2i.json (flux-3-image-klein-comfy) exported in API format, with
+# __PROMPT__ / __SEED__ / __UNET__ / __TE__ / __VAE__ / __PUP__ / __STEPS__ placeholders.
+homelab-comfyui-flux3-klein-bf16-rec:
+  name: homelab-comfyui-flux3-klein-bf16-rec
+  inherits: homelab-comfyui-flux3-klein-bf16
+  argv:
+    --workflow: workflows/flux3_klein_pup.json
+    --model:
+      - diffusion_models:black-forest-labs/flux-3-image-klein-comfy:diffusion_models/flux3-image-klein-bf16.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3vl_4b_bf16.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors
+      - vae:black-forest-labs/flux-3-image-klein-comfy:vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux3-image-klein-bf16.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - PUP=qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=16
+
+# -----------------------------------------------------------------------------
+# Qwen-Image 2.1 (no CFG, prompt enhancer off). ComfyUI: Comfy-Org's repack.
+# -----------------------------------------------------------------------------
+
+homelab-comfyui-qwen-image-21-bf16:
+  name: homelab-comfyui-qwen-image-21-bf16
+  tags:
+    - image
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/qwen_image_21.json
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-2.1:diffusion_models/qwen_image_2.1_bf16.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image-2.1:text_encoders/qwen3vl_8b_bf16.safetensors
+      - vae:Comfy-Org/Qwen-Image-2.1:vae/qwen_image_2.1_vae_bf16.safetensors
+    --set:
+      - UNET=qwen_image_2.1_bf16.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - STEPS=20
+
+# Qwen's recommended 40 steps (the ComfyUI template uses 25)
+homelab-comfyui-qwen-image-21-bf16-rec:
+  name: homelab-comfyui-qwen-image-21-bf16-rec
+  inherits: homelab-comfyui-qwen-image-21-bf16
+  argv:
+    --set:
+      - UNET=qwen_image_2.1_bf16.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - STEPS=40
+
+# int8 (ComfyUI's convrot int8 transformer; there is no ComfyUI-format fp8 or nvfp4 build)
+homelab-comfyui-qwen-image-21-int8:
+  name: homelab-comfyui-qwen-image-21-int8
+  inherits: homelab-comfyui-qwen-image-21-bf16
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-2.1:diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image-2.1:text_encoders/qwen3vl_8b_bf16.safetensors
+      - vae:Comfy-Org/Qwen-Image-2.1:vae/qwen_image_2.1_vae_bf16.safetensors
+    --set:
+      - UNET=qwen_image_2.1_int8_convrot.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - STEPS=20
+
+# vLLM-Omni (QwenImage21Pipeline): one 33 GB snapshot for bf16 and online fp8
+homelab-omni-qwen-image-21-bf16:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  tags:
+    - image
+  url: https://huggingface.co/Qwen/Qwen-Image-2.1
+  server:
+    argv:
+      Qwen/Qwen-Image-2.1: true
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 20
+
+homelab-omni-qwen-image-21-fp8:
+  inherits: homelab-omni-qwen-image-21-bf16
+  server:
+    argv:
+      --quantization: fp8
+
+# -----------------------------------------------------------------------------
+# HunyuanImage 3.0 (80B MoE, ~13B active): BF16 is 169 GB and does not fit. The quantized builds
+# that load in an installed engine are Intel's AutoRound ones (vLLM-Omni INC path: CUTLASS / Marlin
+# MXFP4 MoE on CUDA). They are the Instruct-Distil model (8 steps by default), not the base one.
+# DiT-only pipeline (plain text-to-image, no AR "think / recaption" stage).
+# NEEDS: a one-device deploy file: the stock hunyuan_image3_dit.yaml wants 4 GPUs (TP=4 + EP).
+# Draft: benchmarks/omni/deploy/hunyuan_image3_dit_1gpu.yaml (not added yet).
+# -----------------------------------------------------------------------------
+
+homelab-omni-hunyuan-image3-mxfp4:
+  inherits: _omni
+  enabled: false
+  weight: 1
+  max_duration: 5400
+  tags:
+    - image
+  url: https://huggingface.co/intel-ai/HunyuanImage-3.0-Instruct-Distil-MXFP4-Mixed-AutoRound
+  voir:
+    options:
+      stop: 10
+  server:
+    argv:
+      intel-ai/HunyuanImage-3.0-Instruct-Distil-MXFP4-Mixed-AutoRound: true
+      --deploy-config: deploy/hunyuan_image3_dit_1gpu.yaml
+      --trust-remote-code: true
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 20
+      --max-steps: 11
+
+# its own setting: 8 steps (generation_config diff_infer_steps)
+homelab-omni-hunyuan-image3-mxfp4-rec:
+  inherits: homelab-omni-hunyuan-image3-mxfp4
+  client:
+    argv:
+      --steps: 8
+
+# MXFP8 (91 GB): much closer to BF16 than the MXFP4 build (Intel's card: MXFP4 SSIM 0.67 vs BF16),
+# but near the memory limit
+# (not inherited from the mxfp4 entry: omni/prepare.py takes the first non-flag argv value with a "/"
+# as the model, so the model must come before --deploy-config's path)
+homelab-omni-hunyuan-image3-mxfp8:
+  inherits: _omni
+  enabled: false
+  weight: 1
+  max_duration: 5400
+  tags:
+    - image
+  url: https://huggingface.co/intel-ai/HunyuanImage-3.0-Instruct-Distil-MXFP8-AutoRound
+  voir:
+    options:
+      stop: 10
+  server:
+    argv:
+      intel-ai/HunyuanImage-3.0-Instruct-Distil-MXFP8-AutoRound: true
+      --deploy-config: deploy/hunyuan_image3_dit_1gpu.yaml
+      --trust-remote-code: true
+  client:
+    argv:
+      --task: t2i
+      --width: 1024
+      --height: 1024
+      --steps: 20
+      --max-steps: 11
+
+# -----------------------------------------------------------------------------
+# Wan 2.2 T2V A14B (two 14B experts), video.yaml's A14B settings. The fp8 point is video.yaml's
+# homelab-comfyui-wan22-a14b-t2v (already run here).
+# -----------------------------------------------------------------------------
+
+# fp16 experts, same fp8 text encoder and VAE as the fp8 entry (cached): only the experts differ
+homelab-comfyui-wan22-a14b-t2v-fp16:
+  name: homelab-comfyui-wan22-a14b-t2v-fp16
+  tags:
+    - video
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  max_duration: 10800
+  voir:
+    options:
+      stop: 4
+  argv:
+    --max-steps: 5
+    --workflow: workflows/wan22_t2v_14b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp16.safetensors
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp16.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan_2.1_vae.safetensors
+    --set:
+      - UNET_HIGH=wan2.2_t2v_high_noise_14B_fp16.safetensors
+      - UNET_LOW=wan2.2_t2v_low_noise_14B_fp16.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan_2.1_vae.safetensors
+
+# vLLM-Omni, Intel's int4 (W4A16, group 128) AutoRound experts: quantization read from the checkpoint
+homelab-omni-wan22-a14b-t2v-int4:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  max_duration: 9000
+  tags:
+    - video
+  url: https://huggingface.co/Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound
+  voir:
+    options:
+      stop: 4
+  server:
+    argv:
+      Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound: true
+  client:
+    argv:
+      --task: t2v
+      --width: 640
+      --height: 640
+      --num-frames: 81
+      --fps: 16
+      --steps: 20
+      --guidance: 3.5
+      # Wan's default negative prompt (its own list is in Chinese), translated term by term
+      --negative-prompt: "garish colors, overexposed, static, blurry details, subtitles, style, artwork, painting, frame, still, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands"
+      --max-steps: 5
+
+# vLLM-Omni BF16 (loaded in bf16, ~70 GB in memory): fits, but the repo stores the experts in fp32,
+# a 126 GB snapshot (vLLM wants it complete), over the ~120 GB disk budget.
+homelab-omni-wan22-a14b-t2v-bf16:
+  inherits: homelab-omni-wan22-a14b-t2v-int4
+  enabled: false
+  url: https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers
+  server:
+    argv:
+      Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound: null
+      Wan-AI/Wan2.2-T2V-A14B-Diffusers: true

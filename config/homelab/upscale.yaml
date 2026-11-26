@@ -1,0 +1,247 @@
+# =============================================================================
+# Homelab — image upscaling / super-resolution, 1024x1024 -> 4096x4096 (x4), DRAFT (2026-11-16)
+#
+#   homelab-comfyui-sr-realesrgan          Real-ESRGAN x4plus (GAN, 17M params): the classic baseline
+#   homelab-comfyui-sr-nomos2-dat2         4xNomos2_hq_dat2 (DAT2 transformer): a strong transformer upscaler
+#   homelab-comfyui-sr-ultrasharpv2        4x-UltraSharpV2 (DAT2): the most used community upscaler (non-commercial)
+#   homelab-comfyui-seedvr2-{3b,7b}-*      SeedVR2 one-step diffusion restoration (ByteDance-Seed, Apache-2.0):
+#                                          3B fp16 / NVFP4, 7B fp16 / NVFP4 (/ FP8, off): the quantization comparison
+#   homelab-comfyui-pid-flux1-4step        PiD (NVIDIA): pixel-space diffusion decoder, a FLUX-VAE latent -> 4x pixels
+#                                          in 4 distilled steps (the image's latent here, Z-Image's VAE)
+#   homelab-comfyui-zimage-refine          Real-ESRGAN x4, then Z-Image-Turbo img2img at 4096 (denoise 0.33,
+#                                          5 steps): ComfyUI's diffusion "creative upscale" template at x4
+#
+# All ComfyUI-native (v0.37): UpscaleModelLoader (spandrel 0.4.2: ESRGAN, DAT, SwinIR, HAT, RealPLKSR, ...),
+# SeedVR2 and PiD nodes, no custom node.
+# Input: one pinned photo collage (Tongyi-MAI/Z-Image-Turbo assets/showcase_realistic.png: faces, text, fur,
+# fireworks), center crop scaled to 1024x1024 (lanczos): the low-resolution input. Linked into ComfyUI's input
+# folder by the --input spec. A no-op seeded ImageAddNoise (strength 0) keeps ComfyUI's cache
+# from skipping the upscale between generations.
+# Kept output: a side-by-side crop (512 px region at 4096: lanczos x4 | the model) for the report; the 4096 image
+# itself is not saved (a 48 MB PNG per generation), the time is the upscale.
+# Metrics: gen_seconds (seconds per image), img_per_s, GPU memory peak, power, energy (J per image).
+# Not in all.yaml: milabench run --config homelab/upscale.yaml [--select <bench>]
+# =============================================================================
+
+include:
+  - _base.yaml
+
+# --- GAN / transformer upscalers (ImageUpscaleWithModel, 512 px tiles) ---
+_h_sr_model:
+  inherits: _comfyui
+  tags:
+    - upscale
+  # DAT2 (transformer) at 16 MP out: up to a minute per image on a GB10; 15 images
+  voir:
+    options:
+      stop: 15
+  argv:
+    --max-steps: 16
+    --workflow: workflows/upscale_model_x4.json
+
+homelab-comfyui-sr-realesrgan:
+  name: homelab-comfyui-sr-realesrgan
+  inherits: _h_sr_model
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Comfy-Org/Real-ESRGAN
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - upscale_models:Comfy-Org/Real-ESRGAN:RealESRGAN_x4plus.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - UPSCALER=RealESRGAN_x4plus.safetensors
+
+# CC-BY-4.0 (Phips / Philip Hofmann, Oct 2024)
+homelab-comfyui-sr-nomos2-dat2:
+  name: homelab-comfyui-sr-nomos2-dat2
+  inherits: _h_sr_model
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Phips/4xNomos2_hq_dat2
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - upscale_models:Phips/4xNomos2_hq_dat2:4xNomos2_hq_dat2.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - UPSCALER=4xNomos2_hq_dat2.safetensors
+
+# CC-BY-NC-SA-4.0 (Kim2091, May 2025): non-commercial
+homelab-comfyui-sr-ultrasharpv2:
+  name: homelab-comfyui-sr-ultrasharpv2
+  inherits: _h_sr_model
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Kim2091/UltraSharpV2
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - upscale_models:Kim2091/UltraSharpV2:4x-UltraSharpV2.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - UPSCALER=4x-UltraSharpV2.safetensors
+
+# --- SeedVR2 (ComfyUI template utility_seedvr2_*_upscale_image): lanczos x4, then one DiT step at 4096 with a
+# tiled VAE (512 px tiles). Comfy-Org repacks: fp16, FP8, MXFP8, NVFP4 (Blackwell-native), int8 ---
+_h_seedvr2:
+  inherits: _comfyui
+  tags:
+    - upscale
+  # tens of seconds per 4096 image: 15 images
+  voir:
+    options:
+      stop: 15
+  url: https://huggingface.co/ByteDance-Seed/SeedVR2-7B
+  argv:
+    --max-steps: 16
+    --workflow: workflows/seedvr2_x4.json
+
+homelab-comfyui-seedvr2-3b-fp16:
+  name: homelab-comfyui-seedvr2-3b-fp16
+  inherits: _h_seedvr2
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/ByteDance-Seed/SeedVR2-3B
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/SeedVR2:vae/seedvr2_ema_vae_fp16.safetensors
+      - diffusion_models:Comfy-Org/SeedVR2:diffusion_models/seedvr2_3b_fp16.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - VAE=seedvr2_ema_vae_fp16.safetensors
+      - UNET=seedvr2_3b_fp16.safetensors
+
+homelab-comfyui-seedvr2-3b-nvfp4:
+  name: homelab-comfyui-seedvr2-3b-nvfp4
+  inherits: _h_seedvr2
+  enabled: true
+  weight: 1
+  tags:
+    - quant-compare
+  url: https://huggingface.co/ByteDance-Seed/SeedVR2-3B
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/SeedVR2:vae/seedvr2_ema_vae_fp16.safetensors
+      - diffusion_models:Comfy-Org/SeedVR2:diffusion_models/seedvr2_3b_nvfp4.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - VAE=seedvr2_ema_vae_fp16.safetensors
+      - UNET=seedvr2_3b_nvfp4.safetensors
+
+homelab-comfyui-seedvr2-7b-fp16:
+  name: homelab-comfyui-seedvr2-7b-fp16
+  inherits: _h_seedvr2
+  enabled: true
+  weight: 1
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/SeedVR2:vae/seedvr2_ema_vae_fp16.safetensors
+      - diffusion_models:Comfy-Org/SeedVR2:diffusion_models/seedvr2_7b_fp16.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - VAE=seedvr2_ema_vae_fp16.safetensors
+      - UNET=seedvr2_7b_fp16.safetensors
+
+homelab-comfyui-seedvr2-7b-nvfp4:
+  name: homelab-comfyui-seedvr2-7b-nvfp4
+  inherits: _h_seedvr2
+  enabled: true
+  weight: 1
+  tags:
+    - quant-compare
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/SeedVR2:vae/seedvr2_ema_vae_fp16.safetensors
+      - diffusion_models:Comfy-Org/SeedVR2:diffusion_models/seedvr2_7b_nvfp4.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - VAE=seedvr2_ema_vae_fp16.safetensors
+      - UNET=seedvr2_7b_nvfp4.safetensors
+
+# off: 8.2 GB more on a tight disk; the fp16 / NVFP4 pair already spans the range
+homelab-comfyui-seedvr2-7b-fp8:
+  name: homelab-comfyui-seedvr2-7b-fp8
+  inherits: _h_seedvr2
+  enabled: false
+  weight: 1
+  tags:
+    - quant-compare
+  argv:
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/SeedVR2:vae/seedvr2_ema_vae_fp16.safetensors
+      - diffusion_models:Comfy-Org/SeedVR2:diffusion_models/seedvr2_7b_fp8_e4m3fn.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - VAE=seedvr2_ema_vae_fp16.safetensors
+      - UNET=seedvr2_7b_fp8_e4m3fn.safetensors
+
+# --- PiD (NVIDIA, NSCL v1: non-commercial; template utility_pid_latent_upscale_dit): the FLUX.1-VAE latent of the
+# input (Z-Image's ae.safetensors, already cached) -> 4096 px, 4 steps (lcm), text encoder Gemma-2-2B (fp8) for
+# the empty prompt. The PiD 1.5 files (pid_1.5_*) are newer than this ComfyUI's templates: not used ---
+homelab-comfyui-pid-flux1-4step:
+  name: homelab-comfyui-pid-flux1-4step
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  tags:
+    - upscale
+  url: https://huggingface.co/Comfy-Org/PixelDiT
+  argv:
+    --workflow: workflows/pid_x4.json
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+      - text_encoders:Comfy-Org/PixelDiT:text_encoders/gemma_2_2b_it_elm_fp8_scaled.safetensors
+      - diffusion_models:Comfy-Org/PixelDiT:diffusion_models/pid_flux1_1024_to_4096_4step_bf16.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - AE=ae.safetensors
+      - TE=gemma_2_2b_it_elm_fp8_scaled.safetensors
+      - UNET=pid_flux1_1024_to_4096_4step_bf16.safetensors
+
+# --- Real-ESRGAN x4, then Z-Image-Turbo (the suite's image model, cached) img2img over the whole 4096 image:
+# 5 steps at denoise 0.33 (template utility_z_image_turbo_2k_upscaler, here at x4 instead of x2). 65k latent
+# tokens per step: minutes per image ---
+homelab-comfyui-zimage-refine:
+  name: homelab-comfyui-zimage-refine
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  tags:
+    - upscale
+  voir:
+    options:
+      stop: 6
+  url: https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+  argv:
+    --max-steps: 7
+    --workflow: workflows/zimage_turbo_refine_x4.json
+    --input:
+      - Tongyi-MAI/Z-Image-Turbo:assets/showcase_realistic.png
+    --model:
+      - upscale_models:Comfy-Org/Real-ESRGAN:RealESRGAN_x4plus.safetensors
+      - diffusion_models:Comfy-Org/z_image_turbo:split_files/diffusion_models/z_image_turbo_bf16.safetensors
+      - text_encoders:Comfy-Org/z_image_turbo:split_files/text_encoders/qwen_3_4b.safetensors
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+    --set:
+      - INPUT=showcase_realistic.png
+      - UPSCALER=RealESRGAN_x4plus.safetensors
+      - UNET=z_image_turbo_bf16.safetensors
+      - TE=qwen_3_4b.safetensors
+      - VAE=ae.safetensors

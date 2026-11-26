@@ -10,8 +10,10 @@ Tasks:
   t2i  POST /v1/images/generations (JSON)
   t2v  POST /v1/videos/sync (multipart, returns the video bytes)
 """
+import base64
 import itertools
 import json
+import threading
 import os
 import random
 import sys
@@ -22,16 +24,7 @@ from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 
 
-PROMPTS = [
-    "a red fox in a snowy forest at golden hour, photorealistic",
-    "a lighthouse on a rocky coast during a storm, dramatic clouds, oil painting",
-    "a bowl of ramen on a wooden table, steam rising, close-up food photography",
-    "an astronaut riding a horse across a desert at sunset, cinematic",
-    "a cozy reading nook with a cat sleeping on a pile of books, soft window light",
-    "a futuristic city street at night with neon signs reflected in puddles",
-    "a hummingbird drinking from a red flower, macro photograph, shallow depth of field",
-    "a mountain lake at sunrise with mist over the water, wide angle landscape",
-]
+# prompts: benchmate.prompts (shared with the ComfyUI image workflows)
 
 
 def post_json(url, payload, timeout):
@@ -49,6 +42,43 @@ def post_multipart(url, fields, timeout):
     req = urllib.request.Request(url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+KEEP_OUTPUTS = int(os.environ.get("MILABENCH_KEEP_OUTPUTS", "4"))
+_kept = {"count": 0, "lock": threading.Lock()}
+
+
+def keep_output(args, prompt, body):
+    """The first few generations next to the run's results, <bench>.outputs/, with their prompts
+    (prompts.json): the report shows what the model made, not only how fast."""
+    run_dir = os.environ.get("MILABENCH_DIR_RUN")
+    if not run_dir:
+        return
+    with _kept["lock"]:
+        if _kept["count"] >= KEEP_OUTPUTS:
+            return
+        _kept["count"] += 1
+        index = _kept["count"]
+    try:
+        name = json.loads(os.environ.get("MILABENCH_CONFIG", "{}")).get("name") or "omni"
+    except ValueError:
+        name = "omni"
+    dest = os.path.join(run_dir, f"{name}.outputs")
+    os.makedirs(dest, exist_ok=True)
+    if args.task == "t2i":  # OpenAI images API: {"data": [{"b64_json": ...}]}
+        item = (json.loads(body).get("data") or [{}])[0]
+        if not item.get("b64_json"):
+            return
+        data, filename = base64.b64decode(item["b64_json"]), f"omni_{index:03d}.png"
+    else:  # /v1/videos/sync answers the MP4 itself
+        data, filename = body, f"omni_{index:03d}.mp4"
+    with open(os.path.join(dest, filename), "wb") as f:
+        f.write(data)
+    with _kept["lock"]:
+        index_file = os.path.join(dest, "prompts.json")
+        prompts = json.load(open(index_file)) if os.path.exists(index_file) else {}
+        prompts[filename] = prompt
+        json.dump(prompts, open(index_file, "w"), indent=1)
 
 
 def request(args, prompt, seed):
@@ -70,11 +100,30 @@ def request(args, prompt, seed):
             "prompt": prompt, "width": args.width, "height": args.height,
             "num_frames": args.num_frames, "fps": args.fps, **params,
         }, args.timeout)
-    return time.perf_counter() - start, len(out)
+    elapsed = time.perf_counter() - start
+    try:
+        keep_output(args, prompt, out)
+    except (OSError, ValueError) as exc:  # a sample is nice to have, never worth failing the benchmark
+        print(f"could not keep the output: {exc}", flush=True)
+    return elapsed, len(out)
+
+
+_generation = {"index": 0, "lock": threading.Lock()}
+
+
+def next_generation():
+    """Generation i: the shared prompt i and seed i (benchmate.prompts), the same in every image model and engine,
+    so the outputs each benchmark keeps (its first ones) compare prompt by prompt."""
+    from benchmate.prompts import generation_seed, image_prompt
+
+    with _generation["lock"]:
+        index = _generation["index"]
+        _generation["index"] += 1
+    return image_prompt(index), generation_seed(index)
 
 
 def run_step(pool, args, count):
-    jobs = [pool.submit(request, args, random.choice(PROMPTS), random.randrange(2**31)) for _ in range(count)]
+    jobs = [pool.submit(request, args, *next_generation()) for _ in range(count)]
     return [job.result() for job in jobs]
 
 

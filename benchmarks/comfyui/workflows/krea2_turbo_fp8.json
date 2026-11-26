@@ -182,7 +182,7 @@
   },
   "64": {
     "inputs": {
-      "value": "Two friends riding bicycles along a country road in late afternoon, one looking back while the other races ahead, clear expressive silhouettes and graphic European comic composition, strong sunlight filtering through rows of trees, bright patches of light flickering across the road and clothing, foliage and motion rendered with broken Impressionist brushwork, Luminism \u00d7 Impressionism \u00d7 European Graphic Novel, warm yellow, leafy green, pale blue and faded coral, joyful cinematic adventure illustration"
+      "value": "__PROMPT__"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {

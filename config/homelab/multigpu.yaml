@@ -10,7 +10,7 @@
 #
 # vLLM-Omni diffusion, tensor parallel on 2 cards (bottom): BF16 once sharded (it beats FP8 on one card).
 #
-# Each LLM bench loads its server once and runs the passes of its single-GPU twin (conc1 / conc8 / conc32).
+# Each LLM bench loads its server once and runs the passes of its single-GPU twin (single / fill4k / conc8 / conc32).
 #
 # Run with:  -c homelab/multigpu.yaml --select tp2
 # =============================================================================
@@ -45,7 +45,7 @@ homelab-tp2-llama8b-w8a8:
 
 # --- TP=2: Gemma-4-26B-FP8 — the main prize: weights split ~13 GB/GPU, so the
 # KV pool grows far beyond the 1.25 GiB that capped conc32 single-GPU.
-# Keeps every single-GPU override (util 0.95, ctx 4096, batch 2048,
+# Keeps every single-GPU override (util 0.95, ctx 4096, batch 4096,
 # enforce-eager) + TP=2, to isolate the memory/KV effect of the split. ---
 homelab-tp2-gemma4-fp8:
   inherits: _h_vllm_gemma4_fp8
@@ -67,7 +67,7 @@ homelab-tp2-dp2-qwen3-8b-fp8:
     - tp2
   client:
     passes:
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 1024}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
       --data-parallel-size: 2
@@ -187,5 +187,6 @@ homelab-tp2-omni-wan22-a14b-t2v:
       --fps: 16
       --steps: 20
       --guidance: 3.5
-      --negative-prompt: "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部"
+      # Wan's default negative prompt (its own list is in Chinese), translated term by term
+      --negative-prompt: "garish colors, overexposed, static, blurry details, subtitles, style, artwork, painting, frame, still, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands"
       --max-steps: 5

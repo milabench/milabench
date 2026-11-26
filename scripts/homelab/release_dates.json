@@ -1,0 +1,106 @@
+{
+ "exaone-4.5-33b": {
+  "repo": "LGAI-EXAONE/EXAONE-4.5-33B",
+  "date": "2026-04-04"
+ },
+ "gemma-4-26b-a4b": {
+  "repo": "google/gemma-4-26B-A4B-it",
+  "date": "2026-03-11"
+ },
+ "gemma-4-31b": {
+  "repo": "google/gemma-4-31B-it",
+  "date": "2026-03-11"
+ },
+ "gemma-4-e2b": {
+  "repo": "google/gemma-4-E2B-it",
+  "date": "2026-03-02"
+ },
+ "gemma-4-e4b": {
+  "repo": "google/gemma-4-E4B-it",
+  "date": "2026-03-02"
+ },
+ "glm-5.3-flash": {
+  "repo": "zai-org/GLM-5.3-Flash",
+  "date": "2026-08-25"
+ },
+ "gpt-oss-120b": {
+  "repo": "openai/gpt-oss-120b",
+  "date": "2025-08-04"
+ },
+ "gpt-oss-20b": {
+  "repo": "openai/gpt-oss-20b",
+  "date": "2025-08-04"
+ },
+ "inkling-2-mini": {
+  "repo": "thinkingmachines/Inkling-2-Mini",
+  "date": "2026-11-17"
+ },
+ "kimi-linear-48b-a3b": {
+  "repo": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+  "date": "2025-10-30"
+ },
+ "llama-3.1-8b": {
+  "repo": "meta-llama/Llama-3.1-8B-Instruct",
+  "date": "2024-07-18"
+ },
+ "muse-glimmer-30b": {
+  "repo": "meta-models/Muse-Glimmer-30B",
+  "date": "2026-08-09"
+ },
+ "nemotron-3-nano-30b-a3b": {
+  "repo": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+  "date": "2025-12-04"
+ },
+ "nemotron-3-super-120b-a12b": {
+  "repo": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+  "date": "2026-03-10"
+ },
+ "nemotron-3.5-bolt-74b-a9b": {
+  "repo": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-BF16",
+  "date": "2026-10-09"
+ },
+ "nemotron-3.5-bolt-74b-a9b-24gb": {
+  "repo": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-BF16",
+  "date": "2026-10-09"
+ },
+ "nvidia_openreasoning-nemotron-32b": {
+  "repo": "nvidia/OpenReasoning-Nemotron-32B",
+  "date": "2025-07-15"
+ },
+ "opencodereasoning-nemotron-1.1-32b": {
+  "repo": "nvidia/OpenCodeReasoning-Nemotron-1.1-32B",
+  "date": "2025-06-12"
+ },
+ "qwen3-30b-a3b-2507": {
+  "repo": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+  "date": "2025-07-28"
+ },
+ "qwen3-8b": {
+  "repo": "Qwen/Qwen3-8B",
+  "date": "2025-04-27"
+ },
+ "qwen3-coder-30b-a3b": {
+  "repo": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+  "date": "2025-07-31"
+ },
+ "qwen3-coder-next": {
+  "repo": "Qwen/Qwen3-Coder-Next-FP8",
+  "date": "2026-02-01"
+ },
+ "qwen3.6-27b": {
+  "repo": "Qwen/Qwen3.6-27B",
+  "date": "2026-04-21"
+ },
+ "qwen3.6-35b-a3b": {
+  "repo": "Qwen/Qwen3.6-35B-A3B",
+  "date": "2026-04-15"
+ },
+ "qwen3.8-27b": {
+  "repo": "Qwen/Qwen3.8-27B",
+  "date": "2026-08-05"
+ },
+ "xbai-o4": {
+  "repo": "MetaStoneTec/XBai-o4",
+  "date": "2025-08-01"
+ }
+}

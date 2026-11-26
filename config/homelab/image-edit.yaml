@@ -1,0 +1,544 @@
+# =============================================================================
+# DRAFT, NOT RUN YET: Homelab: instruction-based image editing (image in + English instruction in -> image out),
+# for a 128 GB unified-memory card (DGX Spark, GB10). Run on its own (-c homelab/image-edit.yaml); no other
+# config includes it.
+#
+#   homelab-comfyui-edit-*   ComfyUI (benchmarks/comfyui_edit: the ComfyUI pack's driver, one input image +
+#                            instruction per generation): Qwen-Image 2.1 (+ Turbo), Qwen-Image-Edit 2511
+#                            (+ Lightning), FLUX.2 klein 4B / 9B, FLUX.2 dev, FLUX.1 Kontext dev;
+#                            later (newer ComfyUI): FLUX 3 Klein, MiniMax H3-Image, Fibo 2.0 edit
+#   homelab-omni-edit-*      vLLM-Omni /v1/images/edits (benchmarks/omni_edit): the same edits on the other engine
+#
+# Inputs and edits: benchmarks/comfyui_edit/edits.json. Four 1024x1024 input images (the first four shared
+# prompts' Z-Image-Turbo outputs from homelab-comfyui-z-image-turbo, Apache-2.0 model) and eight English
+# instructions (attribute, weather, add, replace, remove, style, text, time of day), two per image. Edit i
+# uses edits[i % 8] and seed benchmate.prompts.generation_seed(i) in every model and engine; each bench keeps
+# its first 8 outputs (the warmup is edit 1), so the report can show rows = models, columns = edits.
+# Resolution: 1024x1024 out (the input's size) everywhere.
+# Steps: 20 for the undistilled models (as image-big.yaml's "matched" entries); step-distilled models at their
+# own count (klein 4, Lightning 4, Qwen 2.1 Turbo 8, H3-Image 6, Fibo turbo 4): 20 steps is not a setting
+# they are made for. Guidance: each model's template value (cfg 1 where it is distilled / has no CFG).
+# Prompt enhancers / upsamplers off everywhere (the time is the edit, not an LLM rewriting the instruction).
+#
+# Metrics: the ComfyUI / omni packs' gen_seconds (s per edit: ComfyUI's execution_start -> execution_success,
+# i.e. image load + text/vision encode + VAE encode + sampling + decode) and img_per_s (edits / s); the
+# report's s / kJ / peak-memory columns come from those and the GPU monitor as for text-to-image.
+#
+# enabled: false = needs a change first (see each entry's NEEDS line), or a disk choice (DISK line).
+# ComfyUI downloads its files at run time (no prepare step): pre-fetch the big ones with `hf download`.
+# Files shared with image-big.yaml (same repo + path, one copy in the HF cache): Qwen-Image 2.1 bf16 / int8 /
+# qwen3vl_8b / VAE, FLUX.2 dev fp8mixed / NVFP4 / mistral fp8 / flux2-vae, FLUX 3 Klein, clip_l / t5xxl_fp16.
+# Already cached: Z-Image's qwen_3_4b (= klein 4B's text encoder, same sha256) and ae.safetensors (FLUX.1 VAE),
+# Krea 2's qwen_image_vae (= Qwen-Image-Edit's VAE, same sha256).
+# ComfyUI links files into models/<dir>/ by basename, first one wins: every FLUX.2 / FLUX 3 entry uses
+# Comfy-Org/Flux-2-Dev's flux2-vae.safetensors (as image-big's FLUX.2 entries).
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_comfyui_edit:
+  inherits: _comfyui
+  definition: ../../benchmarks/comfyui_edit
+  tags:
+    - image-edit
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# Qwen-Image 2.1 (Sep 2026, ~7B DiT + Qwen3-VL 8B encoder): one model for generation and editing (the input as
+# reference image 1 of TextEncodeQwenImage21), #3 open-weights on the Artificial Analysis editing arena.
+# License: Qwen research license (non-commercial).
+# -----------------------------------------------------------------------------
+
+homelab-comfyui-edit-qwen-image-21-bf16:
+  name: homelab-comfyui-edit-qwen-image-21-bf16
+  inherits: _comfyui_edit
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/qwen_image_21_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-2.1:diffusion_models/qwen_image_2.1_bf16.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image-2.1:text_encoders/qwen3vl_8b_bf16.safetensors
+      - vae:Comfy-Org/Qwen-Image-2.1:vae/qwen_image_2.1_vae_bf16.safetensors
+    --set:
+      - UNET=qwen_image_2.1_bf16.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - STEPS=20
+      - CFG=1.0
+
+# int8 (ComfyUI's convrot int8 transformer, the edit template's default; no ComfyUI fp8 / nvfp4 build); same
+# bf16 text encoder so the two differ only in the transformer
+homelab-comfyui-edit-qwen-image-21-int8:
+  name: homelab-comfyui-edit-qwen-image-21-int8
+  inherits: homelab-comfyui-edit-qwen-image-21-bf16
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-2.1:diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image-2.1:text_encoders/qwen3vl_8b_bf16.safetensors
+      - vae:Comfy-Org/Qwen-Image-2.1:vae/qwen_image_2.1_vae_bf16.safetensors
+    --set:
+      - UNET=qwen_image_2.1_int8_convrot.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - STEPS=20
+      - CFG=1.0
+
+# Turbo (step-distilled), int8: the template's 8 manual sigmas and CFG 8 (CFGGuider: two passes per step)
+homelab-comfyui-edit-qwen-image-21-turbo-int8:
+  name: homelab-comfyui-edit-qwen-image-21-turbo-int8
+  inherits: homelab-comfyui-edit-qwen-image-21-bf16
+  argv:
+    --workflow: workflows/qwen_image_21_turbo_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-2.1:diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image-2.1:text_encoders/qwen3vl_8b_bf16.safetensors
+      - vae:Comfy-Org/Qwen-Image-2.1:vae/qwen_image_2.1_vae_bf16.safetensors
+    --set:
+      - UNET=qwen_image_2.1_turbo_int8_convrot.safetensors
+      - TE=qwen3vl_8b_bf16.safetensors
+      - VAE=qwen_image_2.1_vae_bf16.safetensors
+      - CFG=8.0
+
+# -----------------------------------------------------------------------------
+# Qwen-Image-Edit 2511 (Dec 2025, 20B MMDiT + Qwen2.5-VL 7B): the dedicated edit model, the most used open edit
+# model (Apache-2.0). Template settings: AuraFlow shift 3.1, CFGNorm, true CFG 4 (two passes per step).
+# VAE: Krea 2's qwen_image_vae (cached, same file).
+# -----------------------------------------------------------------------------
+
+homelab-comfyui-edit-qwen-image-edit-2511-fp8:
+  name: homelab-comfyui-edit-qwen-image-edit-2511-fp8
+  inherits: _comfyui_edit
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  # ~2-3 min per edit here (20B, CFG): one round of the 8 edits
+  voir:
+    options:
+      stop: 8
+  argv:
+    --max-steps: 9
+    --workflow: workflows/qwen_image_edit_2511.json
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-Edit:split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image_ComfyUI:split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+      - vae:Comfy-Org/Krea-2:vae/qwen_image_vae.safetensors
+      - loras:lightx2v/Qwen-Image-Edit-2511-Lightning:Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+    --set:
+      - UNET=qwen_image_edit_2511_fp8mixed.safetensors
+      - TE=qwen_2.5_vl_7b_fp8_scaled.safetensors
+      - VAE=qwen_image_vae.safetensors
+      - LORA=Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+      - LORA_STRENGTH=0.0
+      - STEPS=20
+      - CFG=4.0
+
+# Lightning (lightx2v's 4-step distillation LoRA on the same fp8 transformer): 4 steps, no CFG
+homelab-comfyui-edit-qwen-image-edit-2511-lightning-fp8:
+  name: homelab-comfyui-edit-qwen-image-edit-2511-lightning-fp8
+  inherits: homelab-comfyui-edit-qwen-image-edit-2511-fp8
+  max_duration: 3600
+  voir:
+    options:
+      stop: 30
+  argv:
+    --max-steps: 31
+    --set:
+      - UNET=qwen_image_edit_2511_fp8mixed.safetensors
+      - TE=qwen_2.5_vl_7b_fp8_scaled.safetensors
+      - VAE=qwen_image_vae.safetensors
+      - LORA=Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+      - LORA_STRENGTH=1.0
+      - STEPS=4
+      - CFG=1.0
+
+# BF16 transformer: the precision baseline for the fp8 entry (~53 GB in memory, fits)
+# DISK: +41 GB for one file; enable when the disk allows
+homelab-comfyui-edit-qwen-image-edit-2511-bf16:
+  name: homelab-comfyui-edit-qwen-image-edit-2511-bf16
+  inherits: homelab-comfyui-edit-qwen-image-edit-2511-fp8
+  enabled: false
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/Qwen-Image-Edit:split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors
+      - text_encoders:Comfy-Org/Qwen-Image_ComfyUI:split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors
+      - vae:Comfy-Org/Krea-2:vae/qwen_image_vae.safetensors
+      - loras:lightx2v/Qwen-Image-Edit-2511-Lightning:Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+    --set:
+      - UNET=qwen_image_edit_2511_bf16.safetensors
+      - TE=qwen_2.5_vl_7b_fp8_scaled.safetensors
+      - VAE=qwen_image_vae.safetensors
+      - LORA=Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors
+      - LORA_STRENGTH=0.0
+      - STEPS=20
+      - CFG=4.0
+
+# -----------------------------------------------------------------------------
+# FLUX.2 family, one workflow (workflows/flux2_edit.json: the input as a reference latent, the klein edit
+# templates' graph). klein = step-distilled (4 steps, cfg 1); dev = guidance-distilled (20 steps, guidance 4).
+# -----------------------------------------------------------------------------
+
+# klein 4B (Jan 2026, Apache-2.0): the small / fast point. BFL's fp8; text encoder = Z-Image's qwen_3_4b (cached)
+homelab-comfyui-edit-flux2-klein-4b-fp8:
+  name: homelab-comfyui-edit-flux2-klein-4b-fp8
+  inherits: _comfyui_edit
+  enabled: true
+  weight: 1
+  argv:
+    --workflow: workflows/flux2_edit.json
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-klein-4b-fp8:flux-2-klein-4b-fp8.safetensors
+      - text_encoders:Comfy-Org/z_image_turbo:split_files/text_encoders/qwen_3_4b.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux-2-klein-4b-fp8.safetensors
+      - TE=qwen_3_4b.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# NVFP4 (BFL's own): Blackwell's native FP4, same text encoder
+homelab-comfyui-edit-flux2-klein-4b-nvfp4:
+  name: homelab-comfyui-edit-flux2-klein-4b-nvfp4
+  inherits: homelab-comfyui-edit-flux2-klein-4b-fp8
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-klein-4b-nvfp4:flux-2-klein-4b-nvfp4.safetensors
+      - text_encoders:Comfy-Org/z_image_turbo:split_files/text_encoders/qwen_3_4b.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux-2-klein-4b-nvfp4.safetensors
+      - TE=qwen_3_4b.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# klein 9B (#7 open-weights on the AA editing arena). Gated (accept the FLUX non-commercial license, HF_TOKEN).
+# Text encoder: Comfy-Org's fp8mixed Qwen3 8B
+homelab-comfyui-edit-flux2-klein-9b-fp8:
+  name: homelab-comfyui-edit-flux2-klein-9b-fp8
+  inherits: homelab-comfyui-edit-flux2-klein-4b-fp8
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-klein-9b-fp8:flux-2-klein-9b-fp8.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Klein-9B:split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux-2-klein-9b-fp8.safetensors
+      - TE=qwen_3_8b_fp8mixed.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+homelab-comfyui-edit-flux2-klein-9b-nvfp4:
+  name: homelab-comfyui-edit-flux2-klein-9b-nvfp4
+  inherits: homelab-comfyui-edit-flux2-klein-4b-fp8
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-klein-9b-nvfp4:flux-2-klein-9b-nvfp4.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Klein-9B:split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux-2-klein-9b-nvfp4.safetensors
+      - TE=qwen_3_8b_fp8mixed.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# FLUX.2 dev (32B + Mistral Small 3 24B encoder): the largest FLUX, the AA arena's Elo anchor. Same files as
+# image-big.yaml's homelab-comfyui-flux2-dev-fp8 (fp8mixed transformer, fp8 encoder): nothing new to download
+# once image-big has run. ~58 GB in memory.
+homelab-comfyui-edit-flux2-dev-fp8:
+  name: homelab-comfyui-edit-flux2-dev-fp8
+  inherits: _comfyui_edit
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  # ~2 min per edit here (32B, 2x tokens with the reference): one round of the 8 edits
+  voir:
+    options:
+      stop: 8
+  argv:
+    --max-steps: 9
+    --workflow: workflows/flux2_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/Flux-2-Dev:split_files/diffusion_models/flux2_dev_fp8mixed.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2_dev_fp8mixed.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# NVFP4 (BFL's mixed NVFP4/BF16 transformer, as image-big's homelab-comfyui-flux2-dev-nvfp4)
+homelab-comfyui-edit-flux2-dev-nvfp4:
+  name: homelab-comfyui-edit-flux2-dev-nvfp4
+  inherits: homelab-comfyui-edit-flux2-dev-fp8
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-dev-NVFP4:flux2-dev-nvfp4-mixed.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2-dev-nvfp4-mixed.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# NVFP4, pure (all-NVFP4 transformer, as image-big's homelab-comfyui-flux2-dev-nvfp4-pure)
+homelab-comfyui-edit-flux2-dev-nvfp4-pure:
+  name: homelab-comfyui-edit-flux2-dev-nvfp4-pure
+  inherits: homelab-comfyui-edit-flux2-dev-fp8
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/FLUX.2-dev-NVFP4:flux2-dev-nvfp4.safetensors
+      - text_encoders:Comfy-Org/Flux-2-Dev:split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux2-dev-nvfp4.safetensors
+      - TE=mistral_3_small_flux2_fp8.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+      - CFG=1.0
+      - GUIDANCE=4.0
+
+# -----------------------------------------------------------------------------
+# FLUX.1 Kontext dev (Jun 2025, 12B): the first open edit model of the FLUX line, the baseline the others are
+# measured against. Comfy-Org fp8_scaled; clip_l / t5xxl_fp16 as image-big's FLUX.1 bf16 entry, Z-Image's ae
+# (cached). Template settings: guidance 2.5, 20 steps. FLUX.1 dev non-commercial license.
+# -----------------------------------------------------------------------------
+
+homelab-comfyui-edit-flux1-kontext-fp8:
+  name: homelab-comfyui-edit-flux1-kontext-fp8
+  inherits: _comfyui_edit
+  enabled: true
+  weight: 1
+  voir:
+    options:
+      stop: 16
+  argv:
+    --max-steps: 17
+    --workflow: workflows/flux1_kontext_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/Flux-1-Kontext-Dev:split_files/diffusion_models/flux1-dev-kontext_fp8_scaled.safetensors
+      - text_encoders:comfyanonymous/flux_text_encoders:clip_l.safetensors
+      - text_encoders:comfyanonymous/flux_text_encoders:t5xxl_fp16.safetensors
+      - vae:Comfy-Org/z_image_turbo:split_files/vae/ae.safetensors
+    --set:
+      - UNET=flux1-dev-kontext_fp8_scaled.safetensors
+      - CLIP_L=clip_l.safetensors
+      - T5=t5xxl_fp16.safetensors
+      - VAE=ae.safetensors
+      - STEPS=20
+      - GUIDANCE=2.5
+
+# -----------------------------------------------------------------------------
+# NEEDS a newer ComfyUI: the checkout here (v0.37.0+46, 2026-09-28) has no FLUX 3 (CLIPLoader "flux3",
+# ReferenceMultiLatent), no MiniMaxH3ImageConditioning, no TextEncodeFibo2 / CLIPLoader "fibo2". The workflows
+# (flux3_klein_edit.json, minimax_h3_image_edit.json, fibo2_edit.json) follow the official templates
+# (Comfy-Org/workflow_templates); check the new nodes' widget names against /object_info after the update.
+# -----------------------------------------------------------------------------
+
+# FLUX 3 Klein (Oct 2026, 5.6B distilled + Qwen3-VL 4B): #4 open-weights on the AA editing arena; image-big's
+# files. 20 steps (image-big's matched setting; BFL's edit template: 16), prompt upsampler off.
+homelab-comfyui-edit-flux3-klein-bf16:
+  name: homelab-comfyui-edit-flux3-klein-bf16
+  inherits: _comfyui_edit
+  enabled: false
+  weight: 1
+  argv:
+    --workflow: workflows/flux3_klein_edit.json
+    --model:
+      - diffusion_models:black-forest-labs/flux-3-image-klein-comfy:diffusion_models/flux3-image-klein-bf16.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux3-image-klein-bf16.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+
+homelab-comfyui-edit-flux3-klein-nvfp4:
+  name: homelab-comfyui-edit-flux3-klein-nvfp4
+  inherits: homelab-comfyui-edit-flux3-klein-bf16
+  argv:
+    --model:
+      - diffusion_models:black-forest-labs/flux-3-image-klein-comfy:diffusion_models/flux3-image-klein-nvfp4.safetensors
+      - text_encoders:black-forest-labs/flux-3-image-klein-comfy:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=flux3-image-klein-nvfp4.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=20
+
+# MiniMax H3-Image (Nov 2026, ~20B pruned DiT + Qwen3-VL 32B encoder): #1 open-weights on the AA editing arena.
+# The template's int8 transformer + int8 encoder (~52 GB in memory), 6 steps, prompt enhancer off.
+# License: MiniMax H3-Image community license (written authorization above 1M USD revenue / for hosted services).
+homelab-comfyui-edit-minimax-h3-image-int8:
+  name: homelab-comfyui-edit-minimax-h3-image-int8
+  inherits: _comfyui_edit
+  enabled: false
+  weight: 1
+  max_duration: 5400
+  voir:
+    options:
+      stop: 16
+  argv:
+    --max-steps: 17
+    --workflow: workflows/minimax_h3_image_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/MiniMax-H3-Image:diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors
+      - text_encoders:Comfy-Org/MiniMax-H3-Image:text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
+      - vae:Comfy-Org/MiniMax-H3-Image:vae/minimax_h3_image_vae_fp16.safetensors
+    --set:
+      - UNET=minimax_h3_image_pruned_int8_convrot.safetensors
+      - TE=qwen3vl_32b_minimax_h3_int8_convrot.safetensors
+      - VAE=minimax_h3_image_vae_fp16.safetensors
+      - STEPS=6
+
+# 4-bit point: w4a8 transformer + NVFP4 (AWQ) encoder (~32 GB in memory)
+homelab-comfyui-edit-minimax-h3-image-w4a8:
+  name: homelab-comfyui-edit-minimax-h3-image-w4a8
+  inherits: homelab-comfyui-edit-minimax-h3-image-int8
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/MiniMax-H3-Image:diffusion_models/minimax_h3_image_pruned_w4a8.safetensors
+      - text_encoders:Comfy-Org/MiniMax-H3-Image:text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+      - vae:Comfy-Org/MiniMax-H3-Image:vae/minimax_h3_image_vae_fp16.safetensors
+    --set:
+      - UNET=minimax_h3_image_pruned_w4a8.safetensors
+      - TE=qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+      - VAE=minimax_h3_image_vae_fp16.safetensors
+      - STEPS=6
+
+# BF16 transformer (40 GB) + int8 encoder: ~72 GB in memory, fits. DISK: +40 GB
+homelab-comfyui-edit-minimax-h3-image-bf16:
+  name: homelab-comfyui-edit-minimax-h3-image-bf16
+  inherits: homelab-comfyui-edit-minimax-h3-image-int8
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/MiniMax-H3-Image:diffusion_models/minimax_h3_image_pruned_bf16.safetensors
+      - text_encoders:Comfy-Org/MiniMax-H3-Image:text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors
+      - vae:Comfy-Org/MiniMax-H3-Image:vae/minimax_h3_image_vae_fp16.safetensors
+    --set:
+      - UNET=minimax_h3_image_pruned_bf16.safetensors
+      - TE=qwen3vl_32b_minimax_h3_int8_convrot.safetensors
+      - VAE=minimax_h3_image_vae_fp16.safetensors
+      - STEPS=6
+
+# Fibo 2.0 edit turbo (Bria, Oct 2026, ~8B + Qwen3-VL 4B): #2 open-weights on the AA editing arena. 4 steps,
+# VLM prompt expander off. License: CC BY-NC 4.0.
+homelab-comfyui-edit-fibo2-turbo-bf16:
+  name: homelab-comfyui-edit-fibo2-turbo-bf16
+  inherits: _comfyui_edit
+  enabled: false
+  weight: 1
+  argv:
+    --workflow: workflows/fibo2_edit.json
+    --model:
+      - diffusion_models:Comfy-Org/Fibo-2.0:diffusion_models/fibo2_edit_turbo_bf16.safetensors
+      - text_encoders:Comfy-Org/Fibo-2.0:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=fibo2_edit_turbo_bf16.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+
+homelab-comfyui-edit-fibo2-turbo-int8:
+  name: homelab-comfyui-edit-fibo2-turbo-int8
+  inherits: homelab-comfyui-edit-fibo2-turbo-bf16
+  argv:
+    --model:
+      - diffusion_models:Comfy-Org/Fibo-2.0:diffusion_models/fibo2_edit_turbo_int8_convrot.safetensors
+      - text_encoders:Comfy-Org/Fibo-2.0:text_encoders/qwen3vl_4b_bf16.safetensors
+      - vae:Comfy-Org/Flux-2-Dev:split_files/vae/flux2-vae.safetensors
+    --set:
+      - UNET=fibo2_edit_turbo_int8_convrot.safetensors
+      - TE=qwen3vl_4b_bf16.safetensors
+      - VAE=flux2-vae.safetensors
+      - STEPS=4
+
+# -----------------------------------------------------------------------------
+# vLLM-Omni (benchmarks/omni_edit: POST /v1/images/edits, the same edits / seeds / 1024x1024 / steps as the
+# ComfyUI entries, so the two engines compare directly). Diffusers repos, downloaded by the prepare step.
+# -----------------------------------------------------------------------------
+
+_omni_edit:
+  inherits: _omni
+  definition: ../../benchmarks/omni_edit
+  tags:
+    - image-edit
+  enabled: false
+
+# Qwen-Image 2.1 BF16 (QwenImage21Pipeline): image-big's homelab-omni-qwen-image-21-bf16 snapshot (33 GB)
+homelab-omni-edit-qwen-image-21-bf16:
+  inherits: _omni_edit
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Qwen/Qwen-Image-2.1
+  server:
+    argv:
+      Qwen/Qwen-Image-2.1: true
+  client:
+    argv:
+      --width: 1024
+      --height: 1024
+      --steps: 20
+
+homelab-omni-edit-qwen-image-21-fp8:
+  inherits: homelab-omni-edit-qwen-image-21-bf16
+  server:
+    argv:
+      --quantization: fp8
+
+# FLUX.2 klein 4B (Flux2KleinPipeline, Apache-2.0, 24 GB snapshot): the small point on the other engine
+homelab-omni-edit-flux2-klein-4b:
+  inherits: _omni_edit
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/black-forest-labs/FLUX.2-klein-4B
+  server:
+    argv:
+      black-forest-labs/FLUX.2-klein-4B: true
+  client:
+    argv:
+      --width: 1024
+      --height: 1024
+      --steps: 4
+      --guidance: 1.0
+
+# Qwen-Image-Edit 2511 (QwenImageEditPlusPipeline): true CFG 4, 20 steps, as the ComfyUI fp8 entry; online fp8
+# (the 58 GB BF16 snapshot is one download for both). DISK: +58 GB
+homelab-omni-edit-qwen-image-edit-2511-fp8:
+  inherits: _omni_edit
+  enabled: false
+  weight: 1
+  max_duration: 5400
+  url: https://huggingface.co/Qwen/Qwen-Image-Edit-2511
+  voir:
+    options:
+      stop: 8
+  server:
+    argv:
+      Qwen/Qwen-Image-Edit-2511: true
+      --quantization: fp8
+  client:
+    argv:
+      --width: 1024
+      --height: 1024
+      --steps: 20
+      --true-cfg: 4.0
+      --negative-prompt: " "
+      --max-steps: 9

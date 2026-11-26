@@ -1,0 +1,19 @@
+{
+  "about": "Image-editing benchmarks (comfyui_edit, omni_edit): edit i uses edits[i % len] with seed benchmate.prompts.generation_seed(i), so every model gets the same input image, instruction and seed in the same order and their kept outputs compare edit by edit. The inputs are 1024x1024 Z-Image-Turbo outputs (Apache-2.0 model) from homelab-comfyui-z-image-turbo, run of 2026-11-11: the first four shared prompts of benchmate.prompts.IMAGE_PROMPTS with their seeds 1000-1003.",
+  "inputs": {
+    "fox.png": {"prompt": "a red fox in a snowy forest at golden hour, photorealistic", "seed": 1000, "model": "Comfy-Org/z_image_turbo (Z-Image-Turbo bf16, 8 steps)"},
+    "lighthouse.png": {"prompt": "a lighthouse on a rocky coast during a storm, dramatic clouds, oil painting", "seed": 1001, "model": "Comfy-Org/z_image_turbo (Z-Image-Turbo bf16, 8 steps)"},
+    "ramen.png": {"prompt": "a bowl of ramen on a wooden table, steam rising, close-up food photography", "seed": 1002, "model": "Comfy-Org/z_image_turbo (Z-Image-Turbo bf16, 8 steps)"},
+    "astronaut.png": {"prompt": "an astronaut riding a horse across a desert at sunset, cinematic", "seed": 1003, "model": "Comfy-Org/z_image_turbo (Z-Image-Turbo bf16, 8 steps)"}
+  },
+  "edits": [
+    {"kind": "attribute", "image": "fox.png", "instruction": "Change the fox's fur to pure white, like an arctic fox. Keep everything else the same."},
+    {"kind": "weather / lighting", "image": "lighthouse.png", "instruction": "Make it a calm sunny day with a clear blue sky and a smooth sea. Keep the lighthouse, the house and the oil painting style."},
+    {"kind": "add object", "image": "ramen.png", "instruction": "Add a pair of red chopsticks resting across the top of the bowl."},
+    {"kind": "replace object", "image": "astronaut.png", "instruction": "Replace the horse with a camel. Keep the astronaut, his pose and the desert at sunset."},
+    {"kind": "remove object", "image": "fox.png", "instruction": "Remove the fox, leaving only the snowy forest."},
+    {"kind": "style", "image": "lighthouse.png", "instruction": "Turn this oil painting into a realistic photograph of the same scene."},
+    {"kind": "text", "image": "ramen.png", "instruction": "Write the word \"RAMEN\" in bold white letters on the side of the bowl."},
+    {"kind": "time of day", "image": "astronaut.png", "instruction": "Make it night: a dark starry sky with a full moon, the desert lit by moonlight."}
+  ]
+}

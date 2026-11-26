@@ -427,3 +427,99 @@ def test_memory_fraction_cap(monkeypatch):
     # a lower value in the config stays
     assert cap_memory_fraction(["--gpu-memory-utilization", "0.5"]) == ["--gpu-memory-utilization", "0.5"]
     assert VLLMServer(_stub(arch="cuda"), "m", "--gpu-memory-utilization", "0.95").argv()[-1] == "0.75"
+
+
+def test_kv_cache_sized_for_the_passes(monkeypatch, tmp_path):
+    import json as _json
+    from milabench.commands import serving
+
+    # Qwen3-8B: 36 layers, 8 KV heads of 128: 72 KiB per token with an fp8 KV cache
+    snap = tmp_path / "hub" / "models--Qwen--Qwen3-8B" / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text(_json.dumps({"num_hidden_layers": 36, "num_attention_heads": 32,
+                                                   "num_key_value_heads": 8, "head_dim": 128}))
+    (snap / "model.safetensors").write_bytes(b"0" * 1000)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    monkeypatch.setenv("MILABENCH_GPU_MEMORY_FRACTION_MAX", "0.65")
+    monkeypatch.setattr(serving, "memory_total", lambda: 120 * 2**30)
+    assert serving.kv_bytes_per_token(_json.loads((snap / "config.json").read_text()), "fp8") == 72 * 1024
+
+    config = {"name": "b", "tag": ["b"], "system": {"arch": "cuda"},
+              "client": {"argv": {"--random-range-ratio": 0.0},
+                         "passes": [{"name": "c32", "argv": {"--max-concurrency": 32, "--random-input-len": 1024,
+                                                             "--random-output-len": 1024}},
+                                    {"name": "quality", "quality": {"thinking": ["off"]}}]}}
+    argv = ["Qwen/Qwen3-8B", "--max-model-len", "8192", "--max-num-seqs", "32", "--kv-cache-dtype", "fp8"]
+    # 32 x 2048 tokens (perf) vs 16 x 6144 (QualityBench, thinking off): 98304 tokens, x1.5
+    assert serving.tokens_in_flight(config, 8192, 32) == 98304
+    assert serving.kv_cache_budget(config, argv) == int(98304 * 72 * 1024 * 1.5)
+
+    # never more than the memory cap leaves next to the weights (but always one full sequence)
+    long = dict(config, client={"passes": [{"name": "s", "swebench": {"workers": 32}}]})
+    budget = serving.kv_cache_budget(long, ["Qwen/Qwen3-8B", "--max-model-len", "65536", "--max-num-seqs", "32",
+                                            "--kv-cache-dtype", "fp8"])
+    assert budget == int(0.65 * 120 * 2**30 - 1000 - serving.runtime_overhead(1000))
+
+    # only with MILABENCH_KV_CACHE_FIT, only when the config does not size it itself
+    pack = _stub(arch="cuda", **config)
+    assert "--kv-cache-memory-bytes" not in VLLMServer(pack, *argv).argv()
+    monkeypatch.setenv("MILABENCH_KV_CACHE_FIT", "1")
+    assert VLLMServer(pack, *argv).argv()[-2:] == ["--kv-cache-memory-bytes", str(int(98304 * 72 * 1024 * 1.5))]
+    assert VLLMServer(pack, *argv, "--kv-cache-memory-bytes", "5").argv().count("--kv-cache-memory-bytes") == 1
+
+    # page cache eviction: eager safetensors loading (mmapped shards can't be evicted), unless configured
+    assert "--safetensors-load-strategy" not in VLLMServer(pack, *argv).argv()
+    monkeypatch.setenv("MILABENCH_EVICT_PAGE_CACHE", "/hub")
+    full = VLLMServer(pack, *argv).argv()
+    assert full[full.index("--safetensors-load-strategy") + 1] == "eager"
+    assert full[-2:] == ["--kv-cache-memory-bytes", str(int(98304 * 72 * 1024 * 1.5))]
+    assert VLLMServer(pack, *argv, "--safetensors-load-strategy", "lazy").argv().count("--safetensors-load-strategy") == 1
+    # unknown model: vLLM's own sizing
+    assert serving.kv_cache_budget(config, ["Org/unknown", "--max-model-len", "8192"]) is None
+
+
+def test_hybrid_models_count_attention_layers_only():
+    from milabench.commands.serving import kv_bytes_per_token
+
+    nemotron = {"num_hidden_layers": 52, "num_attention_heads": 32, "num_key_value_heads": 2, "head_dim": 128,
+                "hybrid_override_pattern": "M-M-M-MM*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM*-M-M-M-M*-M-M-M-M*-M-M-M-M*-"}
+    assert kv_bytes_per_token(nemotron, "fp8") == 2 * 8 * 2 * 128  # 8 attention layers (*)
+    qwen_next = {"num_hidden_layers": 48, "num_attention_heads": 16, "num_key_value_heads": 2, "head_dim": 256,
+                 "layer_types": ["linear_attention"] * 3 * 12 + ["full_attention"] * 12}
+    assert kv_bytes_per_token(qwen_next, None) == 2 * 12 * 2 * 256 * 2
+    gemma = {"text_config": {"num_hidden_layers": 30, "num_attention_heads": 16, "num_key_value_heads": 8,
+                             "head_dim": 256}, "architectures": ["Gemma4ForConditionalGeneration"]}
+    assert kv_bytes_per_token(gemma, "fp8") == 2 * 30 * 8 * 256
+
+
+def test_sliding_window_and_shared_kv_layers():
+    """Gemma 4: most layers keep only the last `sliding_window` tokens; the full-attention ones have their own
+    head size; the last num_kv_shared_layers reuse another layer's KV"""
+    from milabench.commands import serving
+
+    gemma31 = {"text_config": {"num_hidden_layers": 60, "num_attention_heads": 32, "num_key_value_heads": 16,
+                               "head_dim": 256, "global_head_dim": 512, "num_global_key_value_heads": 4,
+                               "sliding_window": 1024, "num_kv_shared_layers": 0,
+                               "layer_types": (["sliding_attention"] * 5 + ["full_attention"]) * 10}}
+    layout = serving.kv_layout(gemma31, "fp8")
+    assert layout == {"full": 2 * 10 * 4 * 512, "sliding": 2 * 50 * 16 * 256, "window": 1024}
+    # 32 sequences of 3072 tokens: the sliding layers keep 1024 of each
+    assert serving.kv_bytes(layout, 32 * 3072, 32) == 32 * 3072 * layout["full"] + 32 * 1024 * layout["sliding"]
+    # a short sequence: every layer keeps all of it
+    assert serving.kv_bytes(layout, 500, 1) == 500 * (layout["full"] + layout["sliding"])
+
+    e4b = {"text_config": {"num_hidden_layers": 42, "num_attention_heads": 8, "num_key_value_heads": 2,
+                           "head_dim": 256, "global_head_dim": 512, "sliding_window": 512,
+                           "num_kv_shared_layers": 18,
+                           "layer_types": (["sliding_attention"] * 5 + ["full_attention"]) * 7}}
+    layout = serving.kv_layout(e4b, None)
+    # 24 layers own a KV cache: 20 sliding, 4 full
+    assert layout == {"full": 2 * 4 * 2 * 512 * 2, "sliding": 2 * 20 * 2 * 256 * 2, "window": 512}
+
+
+def test_server_model_dirs(monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", "/hub")
+    server = VLLMServer(_stub(arch="cuda"), "nvidia/Gemma-4-26B-A4B-NVFP4", "--speculative-config",
+                        '{"model": "google/gemma-4-26B-A4B-it-assistant", "num_speculative_tokens": 3}')
+    assert server.model_dirs() == ["/hub/models--nvidia--Gemma-4-26B-A4B-NVFP4",
+                                   "/hub/models--google--gemma-4-26B-A4B-it-assistant"]

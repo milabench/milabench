@@ -157,7 +157,7 @@ class Serving(Package):
         scores, not a rate: nolog, or the report counts them as failed runs."""
         name = spec["name"]
         # lm-eval / QualityBench / SWE-bench report scores, not a rate
-        extra = ["nolog"] if any(kind in spec for kind in ("eval", "quality", "swebench")) else []
+        extra = ["nolog"] if any(kind in spec for kind in ("eval", "quality", "swebench", "terminalbench", "bfcl")) else []
         tag = [f"{self.config['tag'][0]}.{name}", *self.config["tag"][1:], *extra]
         return self.copy(cmd.clone_with(self.config, {"name": f"{self.config['name']}.{name}", "tag": tag}))
 

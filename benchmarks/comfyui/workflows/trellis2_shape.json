@@ -1,0 +1,358 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__INPUT__"
+    }
+  },
+  "2": {
+    "class_type": "ImageAddNoise",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "seed": "__SEED__",
+      "strength": 0.0
+    }
+  },
+  "3": {
+    "class_type": "LoadBackgroundRemovalModel",
+    "inputs": {
+      "bg_removal_name": "__BGREMOVAL__"
+    }
+  },
+  "4": {
+    "class_type": "RemoveBackground",
+    "inputs": {
+      "bg_removal_model": [
+        "3",
+        0
+      ],
+      "image": [
+        "2",
+        0
+      ]
+    }
+  },
+  "5": {
+    "class_type": "ImageCropToMask",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "masks": [
+        "4",
+        0
+      ],
+      "width": 1024,
+      "height": 1024,
+      "pad_factor": 1.1,
+      "grow_mask": 0,
+      "background": "#000000"
+    }
+  },
+  "6": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "__CLIPV__"
+    }
+  },
+  "7": {
+    "class_type": "Trellis2Conditioning",
+    "inputs": {
+      "clip_vision_model": [
+        "6",
+        0
+      ],
+      "image": [
+        "5",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "__UNET__",
+      "weight_dtype": "default"
+    }
+  },
+  "9": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "__SHAPEVAE__"
+    }
+  },
+  "10": {
+    "class_type": "CFGOverride",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "cfg": 1.0,
+      "start_percent": 0.667,
+      "end_percent": 1.0
+    }
+  },
+  "11": {
+    "class_type": "RescaleCFG",
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "multiplier": 0.7
+    }
+  },
+  "12": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": [
+        "11",
+        0
+      ],
+      "shift": 5.0
+    }
+  },
+  "13": {
+    "class_type": "EmptyTrellis2LatentStructure",
+    "inputs": {
+      "batch_size": 1
+    }
+  },
+  "14": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "12",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 12,
+      "cfg": 7.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "7",
+        1
+      ],
+      "latent_image": [
+        "13",
+        0
+      ],
+      "denoise": 1.0
+    }
+  },
+  "15": {
+    "class_type": "VaeDecodeStructureTrellis2",
+    "inputs": {
+      "samples": [
+        "14",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "resolution": "32"
+    }
+  },
+  "16": {
+    "class_type": "CFGOverride",
+    "inputs": {
+      "model": [
+        "8",
+        0
+      ],
+      "cfg": 1.0,
+      "start_percent": 0.769,
+      "end_percent": 1.0
+    }
+  },
+  "17": {
+    "class_type": "RescaleCFG",
+    "inputs": {
+      "model": [
+        "16",
+        0
+      ],
+      "multiplier": 0.5
+    }
+  },
+  "18": {
+    "class_type": "Trellis2ShapeStage",
+    "inputs": {
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "7",
+        1
+      ],
+      "voxel": [
+        "15",
+        0
+      ]
+    }
+  },
+  "19": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "17",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 20,
+      "cfg": 7.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "positive": [
+        "18",
+        0
+      ],
+      "negative": [
+        "18",
+        1
+      ],
+      "latent_image": [
+        "18",
+        2
+      ],
+      "denoise": 1.0
+    }
+  },
+  "20": {
+    "class_type": "Trellis2UpsampleStage",
+    "inputs": {
+      "positive": [
+        "18",
+        0
+      ],
+      "negative": [
+        "18",
+        1
+      ],
+      "shape_latent": [
+        "19",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "target_resolution": 1536
+    }
+  },
+  "21": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "17",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 12,
+      "cfg": 7.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": [
+        "20",
+        0
+      ],
+      "negative": [
+        "20",
+        1
+      ],
+      "latent_image": [
+        "20",
+        2
+      ],
+      "denoise": 1.0
+    }
+  },
+  "22": {
+    "class_type": "VaeDecodeShapeTrellis",
+    "inputs": {
+      "samples": [
+        "21",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    }
+  },
+  "23": {
+    "class_type": "MeshSmoothNormals",
+    "inputs": {
+      "mesh": [
+        "22",
+        0
+      ],
+      "crease_angle": 180.0
+    }
+  },
+  "24": {
+    "class_type": "SaveGLB",
+    "inputs": {
+      "mesh": [
+        "23",
+        0
+      ],
+      "filename_prefix": "3d/milabench"
+    }
+  },
+  "25": {
+    "class_type": "CreateCameraInfo",
+    "inputs": {
+      "mode": "orbit",
+      "mode.yaw": 35.0,
+      "mode.pitch": 20.0,
+      "mode.distance": 2.5,
+      "target_x": 0.0,
+      "target_y": 0.0,
+      "target_z": 0.0,
+      "roll": 0.0,
+      "fov": 35.0,
+      "zoom": 1.0,
+      "camera_type": "perspective"
+    }
+  },
+  "26": {
+    "class_type": "RenderMesh",
+    "inputs": {
+      "mesh": [
+        "23",
+        0
+      ],
+      "mode": "normal",
+      "width": 1024,
+      "height": 1024,
+      "background": "#848484",
+      "camera_info": [
+        "25",
+        0
+      ]
+    }
+  },
+  "27": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "26",
+        0
+      ],
+      "filename_prefix": "milabench"
+    }
+  }
+}

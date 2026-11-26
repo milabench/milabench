@@ -6,11 +6,16 @@ API-format workflow repeatedly over its HTTP API, and pushes per-image
 generation times to the milabench observer.
 
 Workflow JSONs contain placeholder strings patched at submit time:
-  "__SEED__"  -> fresh random seed (int)
+  "__SEED__"  -> the generation's seed (benchmate.prompts.generation_seed: fixed per generation index)
+  "...__PROMPT__..." -> the generation's shared prompt (benchmate.prompts.image_prompt), in image workflows
   "__NAME__"  -> value from --set NAME=value (e.g. checkpoint filenames)
+
+--input REPO:FILE (or a local path) links an input file (a LoadImage image) into COMFY_ROOT/input under its
+basename: --set INPUT=<basename> names it in the workflow.
 """
 import itertools
 import json
+import shutil
 import os
 import random
 import socket
@@ -49,6 +54,13 @@ def free_port():
 def link_model(dest_dir, cached_path, filename):
     target = os.path.join(dest_dir, os.path.basename(filename))
     os.makedirs(os.path.dirname(target), exist_ok=True)
+    if os.path.islink(target) and os.readlink(target) != cached_path:
+        # a dangling link (the cache entry it pointed to is gone), or one to another repo's file of the same name
+        # (Fibo 2.0's and FLUX 3 Klein's qwen3vl_4b_bf16, Flux-2-Dev's and Klein's flux2-vae differ): point it at
+        # the file this bench asked for, not whichever bench linked the name first
+        if os.path.exists(target):
+            print(f"model relinked: {target} -> {cached_path} (was {os.readlink(target)})", flush=True)
+        os.unlink(target)
     if not os.path.exists(target):
         os.symlink(cached_path, target)
     return target
@@ -69,16 +81,42 @@ def fetch_models(models):
     return paths
 
 
-def patch(node, sets, seed):
+def fetch_inputs(inputs):
+    """--input REPO:FILE (hf_hub_download) or a local path, linked into COMFY_ROOT/input under its basename."""
+    paths = []
+    for spec in inputs:
+        for item in [s for s in spec.split(",") if s]:
+            if os.path.exists(item):
+                source = os.path.abspath(item)
+            else:
+                repo, sep, filename = item.partition(":")
+                if not sep:
+                    raise SystemExit(f"--input {item!r}: neither a local file nor REPO:FILE")
+                from huggingface_hub import hf_hub_download
+
+                source = hf_hub_download(repo_id=repo, filename=filename)
+            paths.append(link_model(os.path.join(COMFY_ROOT, "input"), source, source))
+            print(f"input ready: {paths[-1]}", flush=True)
+    return paths
+
+
+def patch(node, sets, seed, prompt=None):
     if isinstance(node, dict):
-        return {k: patch(v, sets, seed) for k, v in node.items()}
+        return {k: patch(v, sets, seed, prompt) for k, v in node.items()}
     if isinstance(node, list):
-        return [patch(v, sets, seed) for v in node]
+        return [patch(v, sets, seed, prompt) for v in node]
     if node == "__SEED__":
         return seed
     if isinstance(node, str) and node in sets:
         return sets[node]
+    if isinstance(node, str) and "__PROMPT__" in node and prompt is not None:
+        return node.replace("__PROMPT__", prompt)
     return node
+
+
+# generations so far: generation i uses the shared prompt i and seed i (benchmate.prompts), the same in every
+# image model, so their kept outputs compare prompt by prompt
+_generation = {"index": 0}
 
 
 class ComfyServer:
@@ -123,17 +161,55 @@ class ComfyServer:
 
 
 def submit_prompt(server, workflow, sets):
-    seed = random.randrange(2**31)
-    graph = patch(json.load(open(workflow)), sets, seed)
+    from benchmate.prompts import generation_seed, image_prompt
+
+    index = _generation["index"]
+    _generation["index"] += 1
+    seed, prompt = generation_seed(index), image_prompt(index)
+    text = open(workflow).read()
+    graph = patch(json.loads(text), sets, seed, prompt)
     resp = http_json(
         f"http://127.0.0.1:{server.port}/prompt",
         {"prompt": graph, "client_id": str(uuid.uuid4())},
     )
-    return resp["prompt_id"], time.perf_counter()
+    # the prompt only when the workflow takes one (__PROMPT__): audio and video workflows keep their own
+    return resp["prompt_id"], (time.perf_counter(), prompt if "__PROMPT__" in text else None)
 
 
 def run_prompt(server, workflow, sets, timeout=3600):
     return run_batch(server, workflow, sets, 1, timeout)[0]
+
+
+def keep_outputs(entry, limit, prompt=None):
+    """Copy a generation's files (images, videos, audio) next to the run's results, <bench>.outputs/, the first
+    `limit` of them: the report shows what the model made, not only how fast."""
+    run_dir = os.environ.get("MILABENCH_DIR_RUN")
+    if not run_dir or limit <= 0:
+        return
+    try:
+        name = json.loads(os.environ.get("MILABENCH_CONFIG", "{}")).get("name") or "comfyui"
+    except ValueError:
+        name = "comfyui"
+    dest = os.path.join(run_dir, f"{name}.outputs")
+    os.makedirs(dest, exist_ok=True)
+    kept = len([f for f in os.listdir(dest) if f != "prompts.json"])
+    for node in (entry.get("outputs") or {}).values():
+        for kind in ("images", "gifs", "videos", "audio"):
+            for item in node.get(kind) or []:
+                if kept >= limit or item.get("type", "output") != "output":
+                    return
+                src = os.path.join(COMFY_ROOT, "output", item.get("subfolder", ""), item["filename"])
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(dest, os.path.basename(src)))
+                    kept += 1
+                    if prompt:  # which prompt made which file, for the report's side-by-side view
+                        index_file = os.path.join(dest, "prompts.json")
+                        prompts = json.load(open(index_file)) if os.path.exists(index_file) else {}
+                        prompts[os.path.basename(src)] = prompt
+                        json.dump(prompts, open(index_file, "w"), indent=1)
+
+
+KEEP_OUTPUTS = int(os.environ.get("MILABENCH_KEEP_OUTPUTS", "4"))
 
 
 def run_batch(server, workflow, sets, count, timeout=3600):
@@ -152,11 +228,16 @@ def run_batch(server, workflow, sets, count, timeout=3600):
             status = entry.get("status", {})
             if status.get("status_str") == "error":
                 raise RuntimeError(f"workflow execution failed: {json.dumps(status)[:2000]}")
-            elapsed = time.perf_counter() - pending[prompt_id]
+            started, prompt = pending[prompt_id]
+            elapsed = time.perf_counter() - started
             if "execution_start" in status and "execution_success" in status:
                 elapsed = (status["execution_success"] - status["execution_start"]) / 1000.0
             results[prompt_id] = elapsed
             del pending[prompt_id]
+            try:
+                keep_outputs(entry, KEEP_OUTPUTS, prompt)
+            except OSError as exc:  # a sample is nice to have, never worth failing the benchmark
+                print(f"could not keep outputs: {exc}", flush=True)
         if pending and server.proc.poll() is not None:
             raise RuntimeError("comfyui server died during generation")
         time.sleep(0.25)
@@ -188,6 +269,10 @@ def main(argv=None):
         "--model", action="append", default=[],
         help="DEST:REPO:FILE downloaded+symlinked into the comfy models dir",
     )
+    parser.add_argument(
+        "--input", action="append", default=[], dest="inputs",
+        help="REPO:FILE (or a local path) symlinked into the comfy input dir under its basename",
+    )
     parser.add_argument("--set", action="append", default=[], dest="sets",
                         help="placeholder replacement NAME=VALUE")
     parser.add_argument("--device", default=os.environ.get("MILABENCH_GPU_ID", "0"))
@@ -207,6 +292,7 @@ def main(argv=None):
     args, _ = parser.parse_known_args(argv)
 
     fetch_models(args.model)
+    fetch_inputs(args.inputs)
     kvs = [kv for entry in args.sets for kv in entry.split(",") if kv]
     sets = {f"__{kv.split('=', 1)[0]}__": kv.split("=", 1)[1] for kv in kvs}
 

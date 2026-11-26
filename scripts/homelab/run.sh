@@ -13,8 +13,13 @@
 #   memguard.log           benchmarks stopped before they ran the machine out of memory
 #
 # Unified memory (DGX Spark: the GPU allocates from system RAM, NVML reports no memory): the servers'
-# memory fraction is capped (MILABENCH_GPU_MEMORY_FRACTION_MAX, default 0.75) and memguard kills a
-# benchmark when the machine runs out of memory, instead of letting it swap until it freezes.
+# memory fraction is capped (MILABENCH_GPU_MEMORY_FRACTION_MAX, default 0.65) and memguard kills a
+# benchmark when the machine runs out of memory or the NVIDIA driver reports one of its allocations
+# failed, instead of letting it run on until the machine freezes.
+#
+# Quarantine ($MILABENCH_BASE/homelab-quarantine.json, scripts/homelab/quarantine.py): benchmarks this
+# machine hung on (found automatically: running when it went down) or cannot run are excluded;
+# INCLUDE_QUARANTINED=1 runs them anyway.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -45,7 +50,15 @@ if [[ -z ${MILABENCH_CONTAINER:-} ]] && podman info >/dev/null 2>&1; then export
 
 # unified memory: NVML has no memory total for the GPU
 if nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | grep -q "N/A"; then
-    export MILABENCH_GPU_MEMORY_FRACTION_MAX=${MILABENCH_GPU_MEMORY_FRACTION_MAX:-0.75}
+    # 0.75 hung a GB10 (2026-11-10): with ~20 GiB still available, the NVIDIA driver failed one of its own
+    # allocations at a vLLM server's start (NVRM ... NV_ERR_NO_MEMORY) and the machine froze 10 min later
+    export MILABENCH_GPU_MEMORY_FRACTION_MAX=${MILABENCH_GPU_MEMORY_FRACTION_MAX:-0.65}
+    # vLLM's KV cache sized for what the benchmark's passes keep in flight (--kv-cache-memory-bytes), not a
+    # fraction of the machine: an 8B model then takes ~25 GiB instead of ~80 (milabench/commands/serving.py)
+    export MILABENCH_KV_CACHE_FIT=${MILABENCH_KV_CACHE_FIT:-1}
+    # kernels compiled at a server's start (FlashInfer JIT for an arch it ships no cubins for, e.g. sm_121):
+    # ninja's default is a compiler per core, ~6 GiB each: 22 of them ran a GB10 out of memory (2026-11-11)
+    export MAX_JOBS=${MAX_JOBS:-4}
     # the model caches' page cache counts as used memory: dropped before each server starts
     export MILABENCH_EVICT_PAGE_CACHE=${MILABENCH_EVICT_PAGE_CACHE:-${HF_HUB_CACHE:-$MILABENCH_BASE/data/hub}:$MILABENCH_BASE/data}
     UNIFIED=1
@@ -79,32 +92,47 @@ STEPS=${STEPS:-install prepare run report}
 ARGS=(--base "$MILABENCH_BASE" --config "$MILABENCH_CONFIG" --system "$MILABENCH_SYSTEM")
 SEL=()
 [[ -n ${SELECT:-} ]] && SEL=(--select "$SELECT")
-[[ -n ${EXCLUDE:-} ]] && SEL+=(--exclude "$EXCLUDE")
+PREP_SEL=("${SEL[@]}")
+[[ -n ${EXCLUDE:-} ]] && PREP_SEL+=(--exclude "$EXCLUDE")
+QUARANTINE=(python3 -I "$HERE/quarantine.py")
 
 step() { echo; echo "===== [$(date '+%F %T')] $* ====="; }
 has() { [[ " $STEPS " == *" $1 "* ]]; }
 
 step "homelab on $(hostname) | run=$RUN_NAME | config=$MILABENCH_CONFIG | src=$MILABENCH_SRC@$(git -C "$MILABENCH_SRC" rev-parse --short HEAD 2>/dev/null)"
 nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
-echo "unified memory: $UNIFIED | memory fraction cap: ${MILABENCH_GPU_MEMORY_FRACTION_MAX:-none} | page cache eviction: ${MILABENCH_EVICT_PAGE_CACHE:-none} | containers: ${MILABENCH_CONTAINER:-auto}"
+echo "unified memory: $UNIFIED | memory fraction cap: ${MILABENCH_GPU_MEMORY_FRACTION_MAX:-none} | KV cache fit: ${MILABENCH_KV_CACHE_FIT:-no} | page cache eviction: ${MILABENCH_EVICT_PAGE_CACHE:-none} | containers: ${MILABENCH_CONTAINER:-auto}"
 df -h "$MILABENCH_BASE" | tail -1
 
 rc_install=- rc_prepare=- rc_run=-
 if has install; then
     for try in 1 2 3; do
-        step "install (try $try) ${INSTALL_ARGS[*]}"; "$MB" install "${ARGS[@]}" "${SEL[@]}" "${INSTALL_ARGS[@]}"; rc_install=$?
+        step "install (try $try) ${INSTALL_ARGS[*]}"; "$MB" install "${ARGS[@]}" "${PREP_SEL[@]}" "${INSTALL_ARGS[@]}"; rc_install=$?
         [[ $rc_install == 0 ]] && break
         sleep 120
     done
 fi
-has prepare && { step "prepare"; "$MB" prepare "${ARGS[@]}" "${SEL[@]}"; rc_prepare=$?; }
+has prepare && { step "prepare"; "$MB" prepare "${ARGS[@]}" "${PREP_SEL[@]}"; rc_prepare=$?; }
 
 if has run; then
+    # benchmarks the machine died on in the latest runs, then everything quarantined, out of this run
+    mapfile -t RECENT < <(ls -dt "$MILABENCH_BASE"/runs/homelab.* "$RUN_DIR" 2>/dev/null | grep -v '\.\(log\|status\)$' | sort -u | head -5)
+    [[ ${#RECENT[@]} -gt 0 ]] && "${QUARANTINE[@]}" detect "${RECENT[@]}"
+    QUARANTINED=$("${QUARANTINE[@]}" exclude)
+    if [[ -n $QUARANTINED && -z ${INCLUDE_QUARANTINED:-} ]]; then
+        echo "quarantined (not run, INCLUDE_QUARANTINED=1 to run them): $QUARANTINED"
+        EXCLUDE=${EXCLUDE:+$EXCLUDE,}$QUARANTINED
+    fi
+    [[ -n ${EXCLUDE:-} ]] && SEL+=(--exclude "$EXCLUDE")
     mkdir -p "$RUN_DIR"
+    # the run's plan (benchmarks and passes in order), for the report's progress view
+    "$PY" "$HERE/plan.py" "$MILABENCH_CONFIG" --exclude "${EXCLUDE:-}" --out "$RUN_DIR/report/plan.json" 2>&1 | grep -v "monitor tag" | tail -1
     # the node sampler: one process for the whole run, its own folder per attempt
     NODEMON_DIR=$RUN_DIR/nodemon/$STAMP
     "$PY" -m benchmate.nodemon --out "$NODEMON_DIR" --bench "$RUN_NAME" > "$RUN_DIR/nodemon.$STAMP.log" 2>&1 &
     NODEMON=$!
+    # black box for hard hangs: kernel messages + GPU readings fsync'ed every second (one per boot, outlives the run)
+    pgrep -f "scripts/homelab/blackbox.py" > /dev/null || nohup python3 "$HERE/blackbox.py" "$MILABENCH_BASE/runs" > /dev/null 2>&1 &
 
     step "run ${SEL[*]}"
     "$MB" run "${ARGS[@]}" "${SEL[@]}" --run-name "$RUN_NAME" &

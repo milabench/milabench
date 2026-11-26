@@ -1,0 +1,223 @@
+# =============================================================================
+# Homelab — 3D asset generation (image -> 3D), DRAFT (2026-11-16)
+#
+#   homelab-comfyui-trellis2-int8-textured  TRELLIS.2 4B (int8): the full asset, the template's chain: mesh,
+#                                           remesh, decimate (700k faces), UV unwrap, PBR + normal + AO bake (2048 px), GLB
+#   homelab-comfyui-trellis2-{int8,bf16}    TRELLIS.2 4B, the mesh only (geometry stages), int8 vs bf16 weights
+#   homelab-comfyui-pixal3d-int8            Pixal3D (TencentARC, TRELLIS.2-based, MoGe camera estimate), the mesh only
+#   homelab-comfyui-hunyuan3d21             Hunyuan3D 2.1 shape model (DiT + ShapeVAE, octree 256), the mesh only
+#   homelab-comfyui-idol / -triposplat      Idol (TripoSplat fine-tune) / TripoSplat: 262k Gaussians (.spz), plus a
+#                                           mesh from the splat (SplatToMesh)
+#
+# All ComfyUI-native (v0.37, no custom node): the 3D code there is plain PyTorch + scipy (sparse convolutions
+# by torch hash maps, CPU UV unwrap / bake), no nvdiffrast / kaolin / custom rasterizer / flash-attn build, so it
+# runs on aarch64 (GB10) as is. The upstream repos (microsoft/TRELLIS.2: o-voxel, flex_gemm, cumesh, nvdiffrast;
+# Hunyuan3D-2.1: custom_rasterizer, mesh_inpaint_processor, bpy for the paint stage) need CUDA extensions built
+# for sm_121 / aarch64: not used here. Hunyuan3D 2.1's texture (PBR paint) model has no ComfyUI-native path.
+#
+# Input: one pinned object image (tencent/Hunyuan3D-2 assets/demo.png, 500x500 RGBA), background removed by
+# BiRefNet and cropped to the object (1024 px), as the templates do. The bench's --input spec links it into
+# ComfyUI's input folder. Each generation: a new seed, and a no-op
+# ImageAddNoise (strength 0, seeded) after LoadImage, so ComfyUI's cache does not skip the preprocessing.
+# Kept outputs: a rendered view of each asset (RenderMesh / RenderSplat, 1024 px) for the report; the GLB / .spz
+# files stay in ComfyUI's output/3d (keep_outputs copies images only).
+# Metrics: gen_seconds (= seconds per asset), img_per_s (assets/s), GPU memory peak, power, energy (report:
+# energy / assets = J per asset).
+# Not in all.yaml: milabench run --config homelab/3d.yaml [--select <bench>]
+# =============================================================================
+
+include:
+  - _base.yaml
+
+# --- TRELLIS.2 (Microsoft, MIT, 4B, Dec 2025): image -> textured mesh, the open image-to-3D leader ---
+homelab-comfyui-trellis2-int8-textured:
+  name: homelab-comfyui-trellis2-int8-textured
+  tags:
+    - 3d
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  # minutes per asset (3 diffusion stages + CPU remesh / unwrap / bake): 8 assets
+  voir:
+    options:
+      stop: 8
+  url: https://huggingface.co/microsoft/TRELLIS.2-4B
+  argv:
+    --max-steps: 9
+    --workflow: workflows/trellis2_textured.json
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - clip_vision:Comfy-Org/TRELLIS.2:clip_vision/dino_v3_vit_l.safetensors
+      - diffusion_models:Comfy-Org/TRELLIS.2:diffusion_models/trellis_2_int8_convrot.safetensors
+      - vae:Comfy-Org/TRELLIS.2:vae/trellis_2_shape_vae_bf16.safetensors
+      - vae:Comfy-Org/TRELLIS.2:vae/trellis_2_texture_vae_bf16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CLIPV=dino_v3_vit_l.safetensors
+      - UNET=trellis_2_int8_convrot.safetensors
+      - SHAPEVAE=trellis_2_shape_vae_bf16.safetensors
+      - TEXVAE=trellis_2_texture_vae_bf16.safetensors
+
+# the geometry only (structure 12 steps, shape 20, shape at 1536 12): the GPU part, comparable with Hunyuan3D
+homelab-comfyui-trellis2-int8:
+  name: homelab-comfyui-trellis2-int8
+  tags:
+    - 3d
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  voir:
+    options:
+      stop: 15
+  url: https://huggingface.co/microsoft/TRELLIS.2-4B
+  argv:
+    --max-steps: 16
+    --workflow: workflows/trellis2_shape.json
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - clip_vision:Comfy-Org/TRELLIS.2:clip_vision/dino_v3_vit_l.safetensors
+      - diffusion_models:Comfy-Org/TRELLIS.2:diffusion_models/trellis_2_int8_convrot.safetensors
+      - vae:Comfy-Org/TRELLIS.2:vae/trellis_2_shape_vae_bf16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CLIPV=dino_v3_vit_l.safetensors
+      - UNET=trellis_2_int8_convrot.safetensors
+      - SHAPEVAE=trellis_2_shape_vae_bf16.safetensors
+
+# the same in bf16 (10.3 GB): what the int8 (convrot) build costs or saves
+homelab-comfyui-trellis2-bf16:
+  name: homelab-comfyui-trellis2-bf16
+  tags:
+    - 3d
+    - quant-compare
+  inherits: homelab-comfyui-trellis2-int8
+  argv:
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - clip_vision:Comfy-Org/TRELLIS.2:clip_vision/dino_v3_vit_l.safetensors
+      - diffusion_models:Comfy-Org/TRELLIS.2:diffusion_models/trellis_2_bf16.safetensors
+      - vae:Comfy-Org/TRELLIS.2:vae/trellis_2_shape_vae_bf16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CLIPV=dino_v3_vit_l.safetensors
+      - UNET=trellis_2_bf16.safetensors
+      - SHAPEVAE=trellis_2_shape_vae_bf16.safetensors
+
+# --- Pixal3D (TencentARC, MIT, Apr 2026): TRELLIS.2 architecture conditioned on pixel-aligned features and the
+# camera field of view (MoGe-2 estimate); ComfyUI's template default. Same stages and shape VAE as TRELLIS.2 ---
+homelab-comfyui-pixal3d-int8:
+  name: homelab-comfyui-pixal3d-int8
+  tags:
+    - 3d
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  voir:
+    options:
+      stop: 15
+  url: https://huggingface.co/TencentARC/Pixal3D
+  argv:
+    --max-steps: 16
+    --workflow: workflows/pixal3d_shape.json
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - geometry_estimation:Comfy-Org/MoGe:geometry_estimation/moge_2_vitl_normal_fp16.safetensors
+      - clip_vision:Comfy-Org/Pixal3D:clip_vision/dino_v3_L_naf_fp32.safetensors
+      - diffusion_models:Comfy-Org/Pixal3D:diffusion_models/pixal3d_int8_convrot.safetensors
+      - vae:Comfy-Org/TRELLIS.2:vae/trellis_2_shape_vae_bf16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - MOGE=moge_2_vitl_normal_fp16.safetensors
+      - CLIPV=dino_v3_L_naf_fp32.safetensors
+      - UNET=pixal3d_int8_convrot.safetensors
+      - SHAPEVAE=trellis_2_shape_vae_bf16.safetensors
+
+# --- Hunyuan3D 2.1 shape (Tencent, Jun 2025; Tencent Hunyuan Community License: not licensed in the EU, UK and
+# South Korea, >1M MAU needs a license): 30 steps, CFG 5, octree 256, as ComfyUI's template. Mesh only ---
+homelab-comfyui-hunyuan3d21:
+  name: homelab-comfyui-hunyuan3d21
+  tags:
+    - 3d
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  voir:
+    options:
+      stop: 15
+  url: https://huggingface.co/tencent/Hunyuan3D-2.1
+  argv:
+    --max-steps: 16
+    --workflow: workflows/hunyuan3d21_shape.json
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - checkpoints:Comfy-Org/Hunyuan-3D-2.1:hunyuan_3d_v2.1.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CKPT=hunyuan_3d_v2.1.safetensors
+
+# --- Idol (speridlabs, Apache-2.0, Oct 2026; trending image-to-3D): a TripoSplat fine-tune, 262k Gaussians in
+# seconds (~7 GB). Comfy-Org's repack runs on the TripoSplat nodes. Splat (.spz) + a mesh from it ---
+homelab-comfyui-idol:
+  name: homelab-comfyui-idol
+  tags:
+    - 3d
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/speridlabs/idol
+  argv:
+    --workflow: workflows/triposplat_splat.json
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - clip_vision:Comfy-Org/Idol:clip_vision/dino_v3_vit_h_bf16.safetensors
+      - diffusion_models:Comfy-Org/Idol:diffusion_models/idol_fp16.safetensors
+      - vae:Comfy-Org/Idol:vae/flux2-vae.safetensors
+      - vae:Comfy-Org/Idol:vae/idol_decoder_fp16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CLIPV=dino_v3_vit_h_bf16.safetensors
+      - UNET=idol_fp16.safetensors
+      - LATENTVAE=flux2-vae.safetensors
+      - DECODER=idol_decoder_fp16.safetensors
+
+# TripoSplat (VAST, MIT, May 2026), the base model Idol was tuned from: same graph and settings
+homelab-comfyui-triposplat:
+  name: homelab-comfyui-triposplat
+  tags:
+    - 3d
+  inherits: homelab-comfyui-idol
+  url: https://huggingface.co/VAST-AI/TripoSplat
+  argv:
+    --input:
+      - tencent/Hunyuan3D-2:assets/demo.png
+    --model:
+      - background_removal:Comfy-Org/BiRefNet:background_removal/birefnet.safetensors
+      - clip_vision:VAST-AI/TripoSplat:clip_vision/dino_v3_vit_h.safetensors
+      - diffusion_models:VAST-AI/TripoSplat:diffusion_models/triposplat_fp16.safetensors
+      - vae:Comfy-Org/Idol:vae/flux2-vae.safetensors
+      - vae:VAST-AI/TripoSplat:vae/triposplat_vae_decoder_fp16.safetensors
+    --set:
+      - INPUT=demo.png
+      - BGREMOVAL=birefnet.safetensors
+      - CLIPV=dino_v3_vit_h.safetensors
+      - UNET=triposplat_fp16.safetensors
+      - LATENTVAE=flux2-vae.safetensors
+      - DECODER=triposplat_vae_decoder_fp16.safetensors

@@ -18,6 +18,11 @@ TOOLS = {
     # coding agent (mini-swe-agent) and the SWE-bench evaluation harness
     "mini-swe-agent": {"spec": "mini-swe-agent==2.4.6", "bin": "mini-extra"},
     "swebench": {"spec": "swebench==5.0.2", "bin": "swebench"},
+    # Decision Index (decision models: typed choice / yes-no / score questions), the public suite's rebuild and
+    # scoring kit; its http engine talks to benchmarks/decision's /v1/systemone server
+    "decision-index": {"spec": "decision-index[rebuild] @ git+https://github.com/apolinario/decision-index"
+                               "@25c6ec7b6b5f44a216c63c3a700de3a9c6d6699d",
+                       "bin": "decision-index"},
 }
 
 PYTHON = "3.12"

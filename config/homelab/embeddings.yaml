@@ -1,0 +1,375 @@
+# =============================================================================
+# Homelab — embeddings and reranking (retrieval / RAG)   [DRAFT, not in all.yaml]
+#
+# vLLM's pooling runner (vllm serve --runner pooling), milabench runs the server, the client is
+# benchmarks/retrieval (vllm bench serve with the pooling backends + a retrieval-quality pass). One server per
+# model; every load point is its own result (<bench>.<pass>), with its power and memory.
+#
+#   homelab-embed-*    /v1/embeddings
+#     query-c1       1 query of 32 tokens per request, 1 in flight          single-query latency (p50 / p99)
+#     query-c32      the same, 32 in flight                                 online query QPS
+#     doc512-b32     32 documents x 512 tokens per request, 4 in flight     indexing throughput (docs/s, tok/s)
+#     doc512-b256    256 x 512, 2 in flight                                 the same, big client batches
+#     doc2k-b32      32 x 2048, 2 in flight                                 long chunks
+#     doc8k-b4       4 x 8000, 2 in flight                                  whole documents (model max 8k for bge-m3 / embeddinggemma)
+#     retrieval      SciFact + NFCorpus (BEIR, MTEB's copies, pinned, full corpora): nDCG@10 / recall@100 / MRR@10,
+#                    exact cosine search; also the time to index the real corpus (index_docs_per_s)
+#   homelab-rerank-*   /v1/rerank (one query + N documents per request)
+#     rr-d16-c1      query 32 tok + 16 docs x 256 tok, 1 in flight          rerank latency, small candidate set
+#     rr-d100-c1     + 100 docs x 256 tok, 1 in flight                       the usual RAG top-100 rerank latency
+#     rr-d100-c4     the same, 4 in flight                                   pairs/s under load
+#     retrieval      SciFact: rerank a BM25 top-50 (BM25 computed by the client, no model): nDCG@10 vs BM25's
+#
+# Requests are real text (OpenHermes cut to exact token counts, --retrieval-text real), like the LLM passes.
+# --num-prompts counts documents (vLLM's convention for batched pooling requests): a pass sends num_prompts / batch
+# requests. Metrics per pass (pass_summary): docs_per_s, total_throughput (input tok/s), request_throughput,
+# e2el_ms p50 / p90 / p99 (ttft_ms_* = the same: nothing streams), plus the usual power / energy / memory.
+#
+# Memory: vLLM reserves --gpu-memory-utilization of the (unified) memory up front, the report's "peak memory" is
+# that reservation; pooling models keep no KV cache between requests, 0.30 (~36 GB) is plenty up to 8B.
+#
+# Quantization: runtime FP8 (--quantization fp8, the same checkpoint) for the 8B embedder and the 27B one, NVIDIA's own
+# NVFP4 checkpoint for Nemotron-3.5-Embed-1B (vs its BF16). Third-party embedding quants on the hub are unvalidated
+# (no published scores): not used.
+#
+#   milabench run --config homelab/embeddings.yaml [--select embed | rerank | embed-large]
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_retrieval:
+  inherits: _defaults
+  definition: ../../benchmarks/retrieval
+  group: serving
+  install_group: homelab-serving
+  enabled: false  # only leaf jobs enable
+  num_machines: 1
+  max_duration: 3600
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - homelab
+    - monogpu
+    - retrieval
+    - vllm
+  voir:
+    options:
+      stop: 1000000
+      gpu_poll: 0.5
+  server:
+    backend: vllm
+    argv:
+      --served-model-name: model
+      --runner: pooling
+      --gpu-memory-utilization: 0.30
+      --max-model-len: 8192
+      # pooling runs whole sequences (no chunked prefill): >= --max-model-len; 32k = ~100 (query, 256-token doc) pairs a step
+      --max-num-batched-tokens: 32768
+      --max-num-seqs: 256
+      --no-enable-prefix-caching: true
+  client:
+    argv:
+      --served-model-name: model
+      --request-rate: inf
+      --dataset-name: random
+      --random-range-ratio: 0.0
+      --retrieval-text: real
+      --label: homelab
+      --ready-check-timeout-sec: 3600  # first run downloads the weights
+
+# --- embedding models: /v1/embeddings ---
+_embed:
+  inherits: _retrieval
+  tags:
+    - embed
+  client:
+    argv:
+      --backend: openai-embeddings
+      --endpoint: /v1/embeddings
+    passes:
+      - {name: query-c1,    argv: {--max-concurrency: 1,  --num-warmups: 4,  --num-prompts: 200,  --random-batch-size: 1,   --random-input-len: 32}}
+      - {name: query-c32,   argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 2000, --random-batch-size: 1,   --random-input-len: 32}}
+      - {name: doc512-b32,  argv: {--max-concurrency: 4,  --num-warmups: 4,  --num-prompts: 1024, --random-batch-size: 32,  --random-input-len: 512}}
+      - {name: doc512-b256, argv: {--max-concurrency: 2,  --num-warmups: 2,  --num-prompts: 2048, --random-batch-size: 256, --random-input-len: 512}}
+      - {name: doc2k-b32,   argv: {--max-concurrency: 2,  --num-warmups: 2,  --num-prompts: 256,  --random-batch-size: 32,  --random-input-len: 2048}}
+      - {name: doc8k-b4,    argv: {--max-concurrency: 2,  --num-warmups: 2,  --num-prompts: 64,   --random-batch-size: 4,   --random-input-len: 8000}}
+      - {name: retrieval, retrieval: {mode: embed, datasets: [scifact, nfcorpus], batch: 64, workers: 4}}
+    # the retrieval pass' defaults, merged under its own keys: each model's query / document format ({task}: MTEB's
+    # instruction for the dataset). Leaves set only this, not the pass list.
+    retrieval: {query_prompt: "{query}", doc_prompt: "{title} {text}"}
+
+# --- rerankers: /v1/rerank ---
+_rerank:
+  inherits: _retrieval
+  tags:
+    - rerank
+  client:
+    argv:
+      --backend: vllm-rerank
+      --endpoint: /v1/rerank
+      --rerank-query-len: 32
+    passes:
+      - {name: rr-d16-c1,  argv: {--max-concurrency: 1, --num-warmups: 1, --num-prompts: 512,  --random-batch-size: 16,  --random-input-len: 256}}
+      - {name: rr-d100-c1, argv: {--max-concurrency: 1, --num-warmups: 1, --num-prompts: 1600, --random-batch-size: 100, --random-input-len: 256}}
+      - {name: rr-d100-c4, argv: {--max-concurrency: 4, --num-warmups: 4, --num-prompts: 3200, --random-batch-size: 100, --random-input-len: 256}}
+      - {name: retrieval, retrieval: {mode: rerank, datasets: [scifact], rerank_top_k: 50, workers: 4, doc_prompt: "{title} {text}"}}
+
+# =============================================================================
+# Embedders
+# =============================================================================
+
+# BGE-M3 (568M, XLM-R encoder, MIT): the classic multilingual baseline every RAG stack knows. No safetensors in the
+# repo: the full download is 4.6 GB (pytorch .bin + onnx copy).
+homelab-embed-bge-m3:
+  inherits: _embed
+  enabled: true
+  weight: 1
+  tags: [baseline]
+  url: https://huggingface.co/BAAI/bge-m3
+  server:
+    argv:
+      BAAI/bge-m3: true
+  client:
+    argv:
+      --model: BAAI/bge-m3
+
+# EmbeddingGemma 2 (744M, Apache-2.0, Sep 2026): Google's small on-device embedder (text/image/audio/video),
+# native vLLM arch (EmbeddingGemma2Model), mean pooling, 8k context. Prompts from its model card.
+homelab-embed-embeddinggemma2:
+  inherits: _embed
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/google/embeddinggemma-2
+  server:
+    argv:
+      google/embeddinggemma-2: true
+  client:
+    argv:
+      --model: google/embeddinggemma-2
+    retrieval: {query_prompt: "task: search result | query: {query}", doc_prompt: "title: {title} | text: {text}"}
+
+# Qwen3-Embedding (Apache-2.0): the reference open family (MMTEB 64.3 / 70.6 for 0.6B / 8B), last-token pooling;
+# vLLM converts the causal LM (Qwen3ForCausalLM) to an embedder with --runner pooling.
+_h_embed_qwen3:
+  inherits: _embed
+  client:
+    retrieval: {query_prompt: "Instruct: {task}\nQuery:{query}", doc_prompt: "{title} {text}"}
+
+# 0.6B: the small/fast point of the family (1.2 GB)
+homelab-embed-qwen3-0.6b:
+  inherits: _h_embed_qwen3
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+  server:
+    argv:
+      Qwen/Qwen3-Embedding-0.6B: true
+  client:
+    argv:
+      --model: Qwen/Qwen3-Embedding-0.6B
+
+# 8B bf16 (15 GB) and the same weights quantized to FP8 when they load: the quantization comparison (speed, energy,
+# and the retrieval pass for the quality cost)
+_h_embed_qwen3_8b:
+  inherits: _h_embed_qwen3
+  max_duration: 5400
+  url: https://huggingface.co/Qwen/Qwen3-Embedding-8B
+  server:
+    argv:
+      Qwen/Qwen3-Embedding-8B: true
+  client:
+    argv:
+      --model: Qwen/Qwen3-Embedding-8B
+
+homelab-embed-qwen3-8b-bf16:
+  inherits: _h_embed_qwen3_8b
+  enabled: true
+  weight: 1
+  tags: [bf16, quant-compare]
+
+homelab-embed-qwen3-8b-fp8-runtime:
+  inherits: _h_embed_qwen3_8b
+  enabled: true
+  weight: 1
+  tags: [fp8, quant-compare]
+  server:
+    argv:
+      --quantization: fp8
+
+# Harrier-OSS v1 (Microsoft, MIT, Mar 2026): multilingual MTEB v2 leader at release (0.6B: 69.0, 27B: 74.3).
+# Last-token pooling (sentence-transformers config); queries take "Instruct: ...\nQuery: ...", documents nothing.
+_h_embed_harrier:
+  inherits: _embed
+  client:
+    retrieval: {query_prompt: "Instruct: {task}\nQuery: {query}", doc_prompt: "{title} {text}"}
+
+# 0.6B (Qwen3 backbone, 1.2 GB): same size as Qwen3-Embedding-0.6B, +4.7 MTEB v2 points
+homelab-embed-harrier-0.6b:
+  inherits: _h_embed_harrier
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/microsoft/harrier-oss-v1-0.6b
+  server:
+    argv:
+      microsoft/harrier-oss-v1-0.6b: true
+  client:
+    argv:
+      --model: microsoft/harrier-oss-v1-0.6b
+
+# 27B (Gemma-3 backbone, 54 GB bf16): the top of the open leaderboard and the largest point that fits.
+# Off by default (disk): tag embed-large. bf16 and runtime FP8 from the same download.
+_h_embed_harrier_27b:
+  inherits: _h_embed_harrier
+  max_duration: 10800
+  tags: [embed-large]
+  url: https://huggingface.co/microsoft/harrier-oss-v1-27b
+  server:
+    argv:
+      microsoft/harrier-oss-v1-27b: true
+      --gpu-memory-utilization: 0.60
+  client:
+    argv:
+      --model: microsoft/harrier-oss-v1-27b
+
+homelab-embed-harrier-27b-bf16:
+  inherits: _h_embed_harrier_27b
+  enabled: false  # 54 GB download: enable once disk is cleared
+  weight: 1
+  tags: [bf16, quant-compare]
+
+homelab-embed-harrier-27b-fp8-runtime:
+  inherits: _h_embed_harrier_27b
+  enabled: false  # same download as -bf16
+  weight: 1
+  tags: [fp8, quant-compare]
+  server:
+    argv:
+      --quantization: fp8
+
+# Nemotron-3.5-Embed (NVIDIA, OpenMDW-1.1, Oct 2026): multimodal (Pixtral + bidirectional Ministral-3), mean pooling,
+# the ViDoRe v3 leader; text served through /v1/embeddings. Model card tested on vLLM 0.32 / transformers 5.19
+# (we have 0.33 / 5.20.2). The card formats inputs with the chat template ("query:" / "passage:"); plain-string
+# prompts here: check the retrieval pass against the card's numbers before trusting its quality.
+_h_embed_nemotron35:
+  inherits: _embed
+  client:
+    retrieval: {query_prompt: "query: {query}", doc_prompt: "passage: {title} {text}"}
+
+# 1B: NVIDIA's own NVFP4 checkpoint (compressed-tensors, Blackwell FP4 kernels) vs its BF16 original
+homelab-embed-nemotron35-1b-bf16:
+  inherits: _h_embed_nemotron35
+  enabled: true
+  weight: 1
+  tags: [bf16, quant-compare]
+  url: https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16
+  server:
+    argv:
+      nvidia/Nemotron-3.5-Embed-1B-BF16: true
+  client:
+    argv:
+      --model: nvidia/Nemotron-3.5-Embed-1B-BF16
+
+homelab-embed-nemotron35-1b-nvfp4:
+  inherits: _h_embed_nemotron35
+  enabled: true
+  weight: 1
+  tags: [nvfp4, quant-compare]
+  url: https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-NVFP4
+  server:
+    argv:
+      nvidia/Nemotron-3.5-Embed-1B-NVFP4: true
+  client:
+    argv:
+      --model: nvidia/Nemotron-3.5-Embed-1B-NVFP4
+
+# 8B (16.8 GB): same size as Qwen3-Embedding-8B, a different backbone (bidirectional Ministral-3)
+homelab-embed-nemotron35-8b:
+  inherits: _h_embed_nemotron35
+  enabled: false  # 16.8 GB: tag embed-large, after the 1B pair validates the arch on vLLM 0.33
+  weight: 1
+  max_duration: 5400
+  tags: [bf16, embed-large]
+  url: https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16
+  server:
+    argv:
+      nvidia/Nemotron-3.5-Embed-8B-BF16: true
+  client:
+    argv:
+      --model: nvidia/Nemotron-3.5-Embed-8B-BF16
+
+# =============================================================================
+# Rerankers
+# =============================================================================
+
+# bge-reranker-v2-m3 (568M cross-encoder, Apache-2.0): the classic baseline, native XLMRobertaForSequenceClassification
+homelab-rerank-bge-v2-m3:
+  inherits: _rerank
+  enabled: true
+  weight: 1
+  tags: [baseline]
+  url: https://huggingface.co/BAAI/bge-reranker-v2-m3
+  server:
+    argv:
+      BAAI/bge-reranker-v2-m3: true
+  client:
+    argv:
+      --model: BAAI/bge-reranker-v2-m3
+
+# Qwen3-Reranker (Apache-2.0): a causal LM scored on the "yes" / "no" logits. vLLM turns it into a classifier
+# (hf_overrides, vLLM's documented recipe) and formats each pair with the reranker's prompt (templates/, from vLLM's
+# examples; default instruction "Given a web search query, retrieve relevant passages that answer the query").
+_h_rerank_qwen3:
+  inherits: _rerank
+  server:
+    argv:
+      --hf-overrides: '{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      --chat-template: templates/qwen3_reranker.jinja
+
+# 0.6B (1.2 GB): the small/fast point
+homelab-rerank-qwen3-0.6b:
+  inherits: _h_rerank_qwen3
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Qwen/Qwen3-Reranker-0.6B
+  server:
+    argv:
+      Qwen/Qwen3-Reranker-0.6B: true
+  client:
+    argv:
+      --model: Qwen/Qwen3-Reranker-0.6B
+
+# 8B (16.4 GB): the strongest open text reranker of the family
+homelab-rerank-qwen3-8b:
+  inherits: _h_rerank_qwen3
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  url: https://huggingface.co/Qwen/Qwen3-Reranker-8B
+  server:
+    argv:
+      Qwen/Qwen3-Reranker-8B: true
+  client:
+    argv:
+      --model: Qwen/Qwen3-Reranker-8B
+
+# Nemotron-3.5-Rerank-8B (NVIDIA, OpenMDW-1.1, Oct 2026; ViDoRe v3.1 reranking leader): bidirectional Ministral-3
+# classifier. Its card serves it with the tokenizer's own chat template written to a file and a pooler config:
+# prepare.py writes a missing --chat-template file from the model's tokenizer.
+homelab-rerank-nemotron35-8b:
+  inherits: _rerank
+  enabled: false  # 16.8 GB, untested on vLLM 0.33: tag embed-large
+  weight: 1
+  max_duration: 5400
+  tags: [embed-large]
+  url: https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16
+  server:
+    argv:
+      nvidia/Nemotron-3.5-Rerank-8B-BF16: true
+      --pooler-config: '{"seq_pooling_type": "MEAN", "use_activation": false}'
+      --chat-template: templates/nemotron35_rerank.jinja
+  client:
+    argv:
+      --model: nvidia/Nemotron-3.5-Rerank-8B-BF16

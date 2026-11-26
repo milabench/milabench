@@ -136,7 +136,7 @@ def test_quality_summary_from_results_file():
     results = {
         "tasks": [{"id": "gsm8k", "label": "GSM8K", "off": {"k": 90, "n": 132, "acc": 68.18, "ci": [60.0, 75.4]}},
                   {"id": "ifeval", "label": "IFEval", "on": {"k": 40, "n": 55, "acc": 72.7, "ci": [59.8, 82.7]}}],
-        "logprobs": {"ppl": 6.1, "windows": 60},
+        "logprobs": {"ppl-wiki": {"label": "wikitext-2", "ppl": 8.5, "windows": 4}, "ppl-c4": {"ppl": 12.0}},
         "caveats": ["some caveat"],
     }
     pushed = []
@@ -144,6 +144,7 @@ def test_quality_summary_from_results_file():
     assert [(s["task"], s["thinking"]) for s in out] == [("gsm8k", "off"), ("ifeval", "on"), ("logprobs", "off")]
     assert out[0]["scores"]["acc"] == pytest.approx(0.6818) and out[0]["ci95"] == pytest.approx([0.6, 0.754])
     assert len(pushed) == 3 and all("eval_summary" in p for p in pushed)
+    assert out[2]["scores"] == {"ppl-wiki": 8.5, "ppl-c4": 12.0}
 
 
 def test_scoring_passes_are_not_rate_passes(monkeypatch):
@@ -196,3 +197,55 @@ def test_container_env_points_every_tool_at_podman(monkeypatch):
     assert env == {"MSWEA_DOCKER_EXECUTABLE": "podman", "QUALITYBENCH_CONTAINER": "podman",
                    "DOCKER_HOST": "unix:///run/user/1/podman/podman.sock"}
     assert tools.container_env("docker")["QUALITYBENCH_CONTAINER"] == "docker"
+
+
+def test_llamacpp_benches_drop_logprobs(monkeypatch):
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({
+        "definition": "/src/benchmarks/llamacpp", "server": {"argv": {"--mode": "quality", "--ctx-size": 131072}}}))
+    backend, argv = quality._server_section()
+    assert backend == "llamacpp"
+    kept, dropped = quality.supported_tasks(["gsm8k", "logprobs"], backend, argv)
+    assert kept == ["gsm8k"] and "logprobs" in dropped
+
+
+def test_later_passes_wait_less_for_the_server(monkeypatch):
+    """the first pass may download the weights; by a later pass the server is up, or dead"""
+    passes = [{"name": "single", "argv": {}}, {"name": "conc8", "argv": {}}, {"name": "q", "quality": {}}]
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({"client": {"passes": passes}}))
+    argv = ["--model", "m", "--ready-check-timeout-sec", "3600", "--port", "8000"]
+    assert benchserve.later_pass_ready_timeout(argv, "single") == argv
+    assert benchserve.later_pass_ready_timeout(argv, None) == argv
+    later = benchserve.later_pass_ready_timeout(argv, "conc8")
+    assert benchserve._flag(later, "--ready-check-timeout-sec") == "300" and later.count("--ready-check-timeout-sec") == 1
+    assert benchserve._flag(later, "--port") == "8000"
+    assert benchserve._flag(benchserve.later_pass_ready_timeout(["--ready-check-timeout-sec=3600"], "q"),
+                            "--ready-check-timeout-sec") == "300"
+    monkeypatch.setenv("MILABENCH_LATER_PASS_READY_TIMEOUT", "7200")
+    assert benchserve.later_pass_ready_timeout(argv, "conc8") == argv
+
+
+def test_quality_deadline_from_max_duration(monkeypatch):
+    import datetime
+
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({"max_duration": 7200}))
+    at = datetime.datetime.fromisoformat(quality.default_deadline())
+    left = (at - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+    assert 7200 - 900 - 5 < left <= 7200 - 900
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({"max_duration": 600}))  # short: half of it
+    at = datetime.datetime.fromisoformat(quality.default_deadline())
+    assert 295 < (at - datetime.datetime.now(datetime.timezone.utc)).total_seconds() <= 300
+    # the limit runs from the benchmark's start: an hour into a 90 min limit, 30 min are left
+    import time
+    monkeypatch.setenv("MILABENCH_STARTED_AT", str(time.time() - 3600))
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({"max_duration": 5400}))
+    at = datetime.datetime.fromisoformat(quality.default_deadline())
+    assert 900 - 5 < (at - datetime.datetime.now(datetime.timezone.utc)).total_seconds() <= 900
+    monkeypatch.setenv("MILABENCH_CONFIG", json.dumps({}))
+    assert quality.default_deadline() is None
+
+
+def test_single_mode_run_keeps_its_thinking_label():
+    """QualityBench files a thinking-on run's scores under "off": the summary says what was run"""
+    results = {"tasks": [{"id": "gsm8k", "label": "GSM8K", "off": {"k": 124, "n": 132, "acc": 93.9, "ci": [88.5, 96.9]}}]}
+    out = quality.summarize(results, name="b.quality", thinking="on", path="x.thinking-on.json", push=lambda **k: None)
+    assert out[0]["thinking"] == "on"

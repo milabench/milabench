@@ -1,4 +1,5 @@
 import asyncio
+import time
 import os
 import traceback
 from contextlib import contextmanager
@@ -135,6 +136,8 @@ async def execute_command(
                 delay = pack.config.get("max_duration", timeout_delay)
                 max_delay = get_executor_timeout(max(max_delay, delay))
 
+            # max_duration runs from here: the benchmark's processes read it (MILABENCH_STARTED_AT) to fit in
+            pack.started_at = time.time()
             fut = asyncio.create_task(execute(pack, *argv, **{**_kwargs, **kwargs}))
             packs[fut] = pack
             coro.append(fut)

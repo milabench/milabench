@@ -583,6 +583,9 @@ class Package(BasePackage):
         env["MILABENCH_CONFIG"] = json.dumps(self.config)
         # directory of this run (runs/<run_name>), next to the voir .data file
         env["MILABENCH_DIR_RUN"] = str(self.logdir)
+        # when the benchmark started (its max_duration runs from there), see commands/executors.py
+        if getattr(self, "started_at", None):
+            env["MILABENCH_STARTED_AT"] = str(self.started_at)
         # wandb writes its run data in $WANDB_DIR/wandb (default: the cwd, i.e. the benchmark's code folder)
         env["WANDB_DIR"] = os.environ.get("WANDB_DIR", str(self.logdir))
 

@@ -1,0 +1,151 @@
+# =============================================================================
+# DRAFT (2026-11-16) — Homelab, exploration: Terminal-Bench 2.0 on the coding-agent candidates
+#
+# For each agent candidate (coding-agent.yaml: same model, engine flags, 64k context, prefix caching, the
+# model's reasoning parser), one pass: Harbor's Terminus-2 on the 89 Terminal-Bench 2.0 tasks, 4 at a time,
+# in podman (benchmate/benchserve/terminalbench.py). Task images: ghcr.io/milabench/terminal-bench (multi-arch,
+# rebuilt for arm64 by github.com/milabench/container).
+#
+#   milabench run --config homelab/terminalbench.yaml --select homelab-tb2-<model>
+#   smoke test (3 easy tasks): --override on terminalbench.tasks=smoke, or the -smoke entry below
+#
+# Not in all.yaml. A full pass is ~4-10 h per model (agent timeouts 10 min - 3.3 h per task; 41 h serial).
+# Disk: the task images are ~100 GB once pulled (pulled on first use; `pull: true` pulls them all in prepare).
+# Later: folded into a one-shot, hardware-independent quality suite config (one reproducible run of every
+# quality pass); this file is for exploring settings until then.
+# =============================================================================
+
+include:
+  - coding-agent.yaml
+
+_tb2_settings:
+  client:
+    passes: &tb2_passes
+      - name: terminalbench
+        terminalbench:
+          tasks: full
+          harness: terminus-2
+          attempts: 1
+          workers: 4
+          timeout_multiplier: 1.0
+          thinking: null
+          temperature: 0.6
+          max_tokens: 16384
+          context: 65536
+    smoke_passes: &tb2_smoke
+      - name: terminalbench
+        terminalbench: {tasks: smoke, harness: terminus-2, attempts: 1, workers: 3, max_tokens: 8192, context: 65536}
+
+# --- smoke test: the 3 easy tasks on a small, fast candidate -----------------
+homelab-tb2-smoke-qwen36-35b-a3b-nvfp4-mtp:
+  inherits: homelab-agent-qwen36-35b-a3b-nvfp4-mtp
+  max_duration: 7200
+  tags: [agent, terminalbench, smoke]
+  client:
+    passes: *tb2_smoke
+
+# --- one entry per coding-agent candidate; run the current top 8 with --select --------
+homelab-tb2-qwen36-35b-a3b-nvfp4-mtp:
+  inherits: homelab-agent-qwen36-35b-a3b-nvfp4-mtp
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-qwen3-coder-30b-a3b-awq:
+  inherits: homelab-agent-qwen3-coder-30b-a3b-awq
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-nemotron3-nano-30b-a3b-nvfp4:
+  inherits: homelab-agent-nemotron3-nano-30b-a3b-nvfp4
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-gemma4-26b-a4b-nvfp4-mtp:
+  inherits: homelab-agent-gemma4-26b-a4b-nvfp4-mtp
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-qwen38-27b-nvfp4-dflash2:
+  inherits: homelab-agent-qwen38-27b-nvfp4-dflash2
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-qwen36-27b-nvfp4:
+  inherits: homelab-agent-qwen36-27b-nvfp4
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-gptoss-120b-mxfp4:
+  inherits: homelab-agent-gptoss-120b-mxfp4
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-qwen3-coder-next-nvfp4:
+  inherits: homelab-agent-qwen3-coder-next-nvfp4
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-nemotron35-bolt-74b-a9b-24gb-dflash:
+  inherits: homelab-agent-nemotron35-bolt-74b-a9b-24gb-dflash
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-nemotron3-super-120b-a12b-nvfp4-mtp:
+  inherits: homelab-agent-nemotron3-super-120b-a12b-nvfp4-mtp
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-gemma4-31b-nvfp4-mtp:
+  inherits: homelab-agent-gemma4-31b-nvfp4-mtp
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-kimi-linear-48b-a3b-awq:
+  inherits: homelab-agent-kimi-linear-48b-a3b-awq
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-muse-glimmer-30b-nvfp4-dflash:
+  inherits: homelab-agent-muse-glimmer-30b-nvfp4-dflash
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-exaone45-33b-awq-mtp:
+  inherits: homelab-agent-exaone45-33b-awq-mtp
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes
+
+homelab-tb2-inkling2-mini-dspark:
+  inherits: homelab-agent-inkling2-mini-dspark
+  max_duration: 172800
+  tags: [agent, terminalbench]
+  client:
+    passes: *tb2_passes

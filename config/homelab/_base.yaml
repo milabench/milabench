@@ -111,10 +111,10 @@ _serving:
       - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
       - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
       - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
-      # accuracy on the same server: QualityBench quick tier (every tenth pinned item, greedy), thinking off.
+      # accuracy on the same server, before the 32-user pass (the heaviest: a crash there then costs only it): QualityBench quick tier (every tenth pinned item, greedy), thinking off.
       # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...)
       - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
 
 _serving_vllm:
   inherits: _serving
@@ -133,7 +133,8 @@ _serving_vllm:
       --max-logprobs: 64
 
 # vLLM on a 32 GB card (e.g. Arc Pro B70): bf16 activations, 8k context, FP8 KV cache (twice the KV
-# pool: what holds throughput up under concurrency), 1024 in / 1024 out at 1 / 8 / 32 streams.
+# pool: what holds throughput up under concurrency). Same passes as every serving bench (_serving):
+# one pass set everywhere, so a column of the report is one workload.
 # Graph mode (CUDA graphs, xpu-graph on vLLM >= 0.31): no --enforce-eager unless a model needs it.
 _serving_vllm_32gb:
   inherits: _serving_vllm
@@ -143,16 +144,6 @@ _serving_vllm_32gb:
       --dtype: bfloat16
       --max-model-len: 8192
       --max-num-batched-tokens: 8192
-  client:
-    argv:
-      --random-range-ratio: 0.2
-    passes:
-      - {name: conc1,  argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 5,   --random-input-len: 1024, --random-output-len: 1024}}
-      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 1024}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 1024}}
-      # accuracy on the same server: QualityBench quick tier (every tenth pinned item, greedy), thinking off.
-      # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...)
-      - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
 
 # llama.cpp (--backend native: build-cuda / build-hip / build-sycl for the arch, or vulkan; binaries
 # under $MILABENCH_LLAMACPP_ROOT). The client runs in the homelab-serving venv (vLLM).
@@ -190,9 +181,10 @@ _llamacpp_serving:
     - monogpu
   client:
     argv:
+      # the serving benches' single / conc8 shape: 1k-token prompt, 512 tokens out, fixed lengths
       --random-input-len: 1024
-      --random-output-len: 1024
-      --random-range-ratio: 0.2
+      --random-output-len: 512
+      --random-range-ratio: 0.0
       --ignore-eos: true
       --label: homelab
       # real text, not random token ids: random ids change the measured performance
@@ -230,3 +222,24 @@ _omni:
       --warmup: 1
       --max-steps: 31  # must exceed voir stop (30) so voir closes its final step
       --ready-check-timeout-sec: 3600
+
+# QualityBench against llama-server (benchmarks/llamacpp --mode quality): one bench per GGUF model, on the
+# arch's native backend. 16 slots of 8k context (QualityBench sends 16 requests at a time); llama-server has
+# no prompt logprobs, so no perplexity. --jinja: the model's own chat template (thinking on / off).
+_llamacpp_quality:
+  inherits: _llamacpp_serving
+  max_duration: 7200
+  tags:
+    - quality
+  server:
+    argv:
+      --mode: quality
+      --backend: native
+      --jinja: true
+      --parallel: 16
+      --ctx-size: 131072
+      --quality-tier: quick
+      --quality-thinking: "off"
+      # llama-server drops a request after --timeout s (default 600): a reasoning answer (up to 32k tokens at
+      # ~10-20 tok/s per slot) takes longer, lm-eval then sees "Server disconnected"
+      --timeout: 7200

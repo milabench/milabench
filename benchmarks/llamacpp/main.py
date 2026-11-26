@@ -9,6 +9,11 @@ vLLM packs, so the numbers are directly comparable and report as tok/s.
 
 `micro` mode runs llama-bench (pure prompt/generate token throughput).
 
+`quality` mode boots llama-server the same way and runs QualityBench against it (benchmate.benchserve.quality):
+the model's accuracy, once per GGUF (the throughput benches are a backend x concurrency matrix of the same
+weights). --quality-tier quick|full, --quality-thinking off[,on], --quality-tasks a,b (default: the suite
+without logprobs, which llama-server cannot serve).
+
 Anything after `--` in the pack argv is forwarded verbatim to
 `vllm bench serve`; unknown args before `--` are forwarded to llama-server.
 """
@@ -240,7 +245,7 @@ def main(argv=None):
     parser.add_argument("--model", default=None,
                         help="HF id used by the bench client for the tokenizer")
     parser.add_argument("--backend", default="sycl", choices=["sycl", "vulkan", "cuda", "hip", "native", "auto"])
-    parser.add_argument("--mode", default="host", choices=["host", "micro"])
+    parser.add_argument("--mode", default="host", choices=["host", "micro", "quality"])
     parser.add_argument("--device", default=os.environ.get("MILABENCH_GPU_ID", "0"))
     parser.add_argument("--llama-root", default=DEFAULT_ROOT)
     parser.add_argument("--port", type=int, default=0)
@@ -249,6 +254,14 @@ def main(argv=None):
     parser.add_argument("--pp", type=int, default=512)
     parser.add_argument("--tg", type=int, default=128)
     parser.add_argument("--repetitions", type=int, default=5)
+    # quality mode only
+    parser.add_argument("--quality-tier", default="quick", choices=["quick", "full"])
+    parser.add_argument("--quality-thinking", default="off")
+    parser.add_argument("--quality-thinking-max-tokens", type=int, default=None,
+                        help="reasoning cap thinking on (QualityBench's default: 32k); fit it in the slot's context")
+    parser.add_argument("--quality-max-tokens", type=int, default=None,
+                        help="a floor on every reply's max_tokens, thinking off too (quality.py's max_tokens)")
+    parser.add_argument("--quality-tasks", default="gsm8k,ifeval,mmlu_pro,humaneval,mbpp,lcb")
     args, rest = parser.parse_known_args(argv)
     args.backend = resolve_backend(args.backend)
     server_extra, client_argv = split_args(rest, [])
@@ -289,10 +302,52 @@ def main(argv=None):
             *client_argv,
         ]
         with monitor():
-            run_benchmark_watched(server, bench_argv)
+            if args.mode == "quality":
+                run_quality(args, port, server_slots(server_extra))
+            else:
+                run_benchmark_watched(server, bench_argv)
     finally:
         server.shutdown()
     return 0
+
+
+def quality_spec(args) -> dict:
+    spec = {"tier": args.quality_tier, "thinking": [t for t in args.quality_thinking.split(",") if t],
+            "tasks": [t for t in args.quality_tasks.split(",") if t]}
+    if args.quality_thinking_max_tokens:
+        spec["thinking_max_tokens"] = args.quality_thinking_max_tokens
+    if args.quality_max_tokens:
+        spec["max_tokens"] = args.quality_max_tokens
+    return spec
+
+
+def server_slots(server_extra) -> int | None:
+    """llama-server's --parallel (-np) from the forwarded args: how many requests it decodes at once."""
+    for i, a in enumerate(server_extra):
+        for flag in ("--parallel", "-np"):
+            if a == flag and i + 1 < len(server_extra):
+                return int(server_extra[i + 1])
+            if a.startswith(flag + "="):
+                return int(a.split("=", 1)[1])
+    return None
+
+
+def run_quality(args, port, slots=None):
+    """QualityBench against llama-server; eval_summary events per task, like the serving packs' quality pass.
+
+    QualityBench keeps up to 16 requests in flight per harness; llama-server decodes --parallel of them and queues
+    the rest, while each reply's time-to-solution window (1 h) already runs. So the harnesses send no more than
+    the server's slots: the window then measures generation, not time spent in llama-server's queue."""
+    from benchmate import benchserve
+    from benchmate.benchserve import quality
+
+    folder, name = benchserve._pass_output("qualitybench", record=False)
+    client = ["--host", "127.0.0.1", "--port", str(port), "--served-model-name", "model", "--model", args.model]
+    spec = quality_spec(args)
+    if slots:
+        spec["concurrency"] = min(slots, spec.get("concurrency") or 16)
+    quality.run(client, spec, flag=benchserve._flag, output_dir=folder, name=name,
+                push=benchserve.push_metric)
 
 
 if __name__ == "__main__":

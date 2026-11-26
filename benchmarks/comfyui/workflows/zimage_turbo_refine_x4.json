@@ -1,0 +1,221 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__INPUT__"
+    }
+  },
+  "2": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "center"
+    }
+  },
+  "3": {
+    "class_type": "ImageAddNoise",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "seed": "__SEED__",
+      "strength": 0.0
+    }
+  },
+  "4": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "__UPSCALER__"
+    }
+  },
+  "5": {
+    "class_type": "ImageUpscaleWithModel",
+    "inputs": {
+      "upscale_model": [
+        "4",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ]
+    }
+  },
+  "6": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "__UNET__",
+      "weight_dtype": "default"
+    }
+  },
+  "7": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "shift": 3.0
+    }
+  },
+  "8": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "__TE__",
+      "type": "lumina2",
+      "device": "default"
+    }
+  },
+  "9": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "__VAE__"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": "masterpiece, 8k"
+    }
+  },
+  "11": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "8",
+        0
+      ],
+      "text": ""
+    }
+  },
+  "12": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "5",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 5,
+      "cfg": 1.0,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "beta",
+      "positive": [
+        "10",
+        0
+      ],
+      "negative": [
+        "11",
+        0
+      ],
+      "latent_image": [
+        "12",
+        0
+      ],
+      "denoise": 0.33
+    }
+  },
+  "14": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "13",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    }
+  },
+  "15": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 4096,
+      "height": 4096,
+      "crop": "disabled"
+    }
+  },
+  "16": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "15",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "17": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "14",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "18": {
+    "class_type": "ImageStitch",
+    "inputs": {
+      "image1": [
+        "16",
+        0
+      ],
+      "image2": [
+        "17",
+        0
+      ],
+      "direction": "right",
+      "match_image_size": true,
+      "spacing_width": 8,
+      "spacing_color": "white"
+    }
+  },
+  "19": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "18",
+        0
+      ],
+      "filename_prefix": "milabench"
+    }
+  }
+}

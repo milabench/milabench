@@ -37,7 +37,7 @@ homelab-llm-chat:
     # bs=1 already reserves ~17.4 GB on the B70; autosizer steps down from 4.
     --batch_size: "auto_batch(4)"
 
-# --- 32 GB card (_serving_vllm_32gb): one server per model, passes conc1 / conc8 / conc32 ---
+# --- 32 GB card (_serving_vllm_32gb): one server per model, the common passes (single / fill4k / conc8 / conc32) ---
 
 # FP8: Qwen3-8B (dense) — the bring-up pack, smallest download
 _h_vllm_qwen3_8b_fp8:
@@ -83,8 +83,8 @@ homelab-vllm-llama8b-w8a8:
     - quant-compare
   weight: 1
 
-# FP8: Gemma-4 26B-A4B MoE (26.5 GB weights): a 4k context, small prefill chunks and eager mode
-# (graph capture needs memory) leave room for the KV cache on a 32 GB card
+# FP8: Gemma-4 26B-A4B MoE (26.5 GB weights): a 5k context (fill4k: 4096 in + 512 out), small prefill
+# chunks and eager mode (graph capture needs memory) leave room for the KV cache on a 32 GB card
 _h_vllm_gemma4_fp8:
   inherits: _serving_vllm_32gb
   max_duration: 7200
@@ -100,8 +100,9 @@ _h_vllm_gemma4_fp8:
     argv:
       RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic: true
       --gpu-memory-utilization: 0.95
-      --max-model-len: 4096
-      --max-num-batched-tokens: 2048
+      --max-model-len: 5120
+      # Gemma 4's image encoder needs 2496 tokens per item (vLLM refuses to start below that), even for text
+      --max-num-batched-tokens: 4096
       --enforce-eager: true
 
 homelab-vllm-gemma4-fp8:
@@ -264,6 +265,49 @@ homelab-vllm-gemma4-e4b-bf16-mtp:
     argv:
       --speculative-config: '{"model": "google/gemma-4-E4B-it-assistant", "num_speculative_tokens": 3}'
 
+# Gemma 4 E2B (instruction-tuned; ~2B effective with per-layer embeddings): the same three as E4B.
+_h_vllm_gemma4_e2b:
+  inherits: _serving_vllm_32gb
+  tags:
+    - text
+    - dense
+    - quant-compare
+  url: https://huggingface.co/google/gemma-4-E2B-it
+  client:
+    argv:
+      --model: google/gemma-4-E2B-it
+  server:
+    argv:
+      google/gemma-4-E2B-it: true
+
+homelab-vllm-gemma4-e2b-bf16:
+  inherits: _h_vllm_gemma4_e2b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+
+homelab-vllm-gemma4-e2b-fp8-runtime:
+  inherits: _h_vllm_gemma4_e2b
+  enabled: true
+  weight: 1
+  tags:
+    - fp8
+  server:
+    argv:
+      --quantization: fp8
+
+homelab-vllm-gemma4-e2b-bf16-mtp:
+  inherits: _h_vllm_gemma4_e2b
+  enabled: true
+  weight: 1
+  tags:
+    - bf16
+    - mtp
+  server:
+    argv:
+      --speculative-config: '{"model": "google/gemma-4-E2B-it-assistant", "num_speculative_tokens": 3}'
+
 # --- llama.cpp: native backend vs Vulkan, one bench per concurrency (slots are sized by it) ---
 
 homelab-llamacpp-qwen3-8b-q8:
@@ -365,6 +409,161 @@ homelab-llamacpp-gemma4-q4:
         --max-concurrency: "{concurrency}"
         --num-warmups: "{concurrency}"
         --num-prompts: "expr({concurrency} * 5)"
+
+# --- llama.cpp accuracy: QualityBench, once per GGUF model (_llamacpp_quality) ---
+homelab-llamacpp-qwen3-8b-q8-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: ggml-org/Qwen3-8B-GGUF, --file: Qwen3-8B-Q8_0.gguf, --model: Qwen/Qwen3-8B}
+
+homelab-llamacpp-gptoss-q4xl-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  max_duration: 14400  # thinking on: longer answers (2 h was cut during LiveCodeBench)
+  weight: 1
+  tags: [text]
+  server:
+    # gpt-oss always reasons (harmony: an effort level, no off switch): QualityBench's thinking-off preflight
+    # refuses it, so it is scored thinking on
+    # 4 slots: --ctx-size is split across them, and a reasoning answer needs QualityBench's 32k thinking budget
+    # (16 slots gave 8k each: "Context size has been exceeded")
+    argv: {--repo: unsloth/gpt-oss-20b-GGUF, --file: gpt-oss-20b-UD-Q4_K_XL.gguf, --model: openai/gpt-oss-20b,
+           --quality-thinking: "on", --parallel: 4}
+
+homelab-llamacpp-qwen3-30b-q4km-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF, --file: Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf,
+           --model: Qwen/Qwen3-30B-A3B-Instruct-2507}
+
+homelab-llamacpp-gemma4-q4-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: ggml-org/gemma-4-26B-A4B-it-GGUF, --file: gemma-4-26B-A4B-it-Q4_0.gguf,
+           --model: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic}
+
+# =============================================================================
+# Open 32B reasoning models from the LiveCodeBench leaderboard (added 2026-11-15): dense, always reasoning
+# (R1-style <think>, no off switch), so scored thinking on. No FP8/NVFP4 checkpoint published: llama.cpp Q8_0
+# (~35 GB, near lossless). Quality: 4 slots of 40k for 32k-token replies (as gpt-oss).
+# =============================================================================
+
+# --- OpenReasoning-Nemotron-32B (NVIDIA, Qwen2.5-32B reasoning distill; LiveCodeBench leaderboard 69.8) ---
+homelab-llamacpp-openreasoning-nemotron-32b-q8:
+  matrix:
+    backend: [native]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-openreasoning-nemotron-32b-q8-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: bartowski/nvidia_OpenReasoning-Nemotron-32B-GGUF
+        --file: nvidia_OpenReasoning-Nemotron-32B-Q8_0.gguf
+        --model: nvidia/OpenReasoning-Nemotron-32B
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-openreasoning-nemotron-32b-q8-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  max_duration: 43200  # always reasoning, dense 32B: slow
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: bartowski/nvidia_OpenReasoning-Nemotron-32B-GGUF, --file: nvidia_OpenReasoning-Nemotron-32B-Q8_0.gguf, --model: nvidia/OpenReasoning-Nemotron-32B,
+           --quality-thinking: "on", --quality-thinking-max-tokens: 32768, --parallel: 4, --ctx-size: 163840}
+
+# --- OpenCodeReasoning-Nemotron-1.1-32B (NVIDIA, code reasoning; leaderboard 66.8) ---
+homelab-llamacpp-opencodereasoning-nemotron-32b-q8:
+  matrix:
+    backend: [native]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-opencodereasoning-nemotron-32b-q8-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: mradermacher/OpenCodeReasoning-Nemotron-1.1-32B-GGUF
+        --file: OpenCodeReasoning-Nemotron-1.1-32B.Q8_0.gguf
+        --model: nvidia/OpenCodeReasoning-Nemotron-1.1-32B
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-opencodereasoning-nemotron-32b-q8-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  max_duration: 43200  # always reasoning, dense 32B: slow
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: mradermacher/OpenCodeReasoning-Nemotron-1.1-32B-GGUF, --file: OpenCodeReasoning-Nemotron-1.1-32B.Q8_0.gguf, --model: nvidia/OpenCodeReasoning-Nemotron-1.1-32B,
+           --quality-thinking: "on", --quality-thinking-max-tokens: 32768, --parallel: 4, --ctx-size: 163840}
+
+# --- XBai-o4 (MetaStone, 32B reasoning; leaderboard 65.0, medium effort) ---
+homelab-llamacpp-xbai-o4-q8:
+  matrix:
+    backend: [native]
+    concurrency: [1, 8]
+  job:
+    name: 'homelab-llamacpp-xbai-o4-q8-{backend}-conc{concurrency}'
+    tags:
+      - text
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    server:
+      argv:
+        --repo: mradermacher/XBai-o4-GGUF
+        --file: XBai-o4.Q8_0.gguf
+        --model: MetaStoneTec/XBai-o4
+        --backend: "{backend}"
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+homelab-llamacpp-xbai-o4-q8-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  max_duration: 43200  # always reasoning, dense 32B: slow
+  weight: 1
+  tags: [text]
+  server:
+    argv: {--repo: mradermacher/XBai-o4-GGUF, --file: XBai-o4.Q8_0.gguf, --model: MetaStoneTec/XBai-o4,
+           --quality-thinking: "on", --quality-thinking-max-tokens: 32768, --parallel: 4, --ctx-size: 163840}
 
 # =============================================================================
 # Serving on the regular per-arch install (_serving_vllm / _llamacpp_serving in _base.yaml):
@@ -545,6 +744,465 @@ homelab-vllm-gptoss-120b-mxfp4:
       # gpt-oss: its own attention sinks, keep the KV cache in bf16
       --kv-cache-dtype: auto
 
+# --- Qwen3-Coder-Next 80B-A3B NVFP4 (Qwen3-Next hybrid: Gated DeltaNet + attention, 44 GB of weights),
+# the successor of Qwen3-Coder-30B-A3B; non-thinking ---
+homelab-vllm-qwen3-coder-next-nvfp4:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+  url: https://huggingface.co/RedHatAI/Qwen3-Coder-Next-NVFP4
+  client:
+    argv:
+      --model: RedHatAI/Qwen3-Coder-Next-NVFP4
+  server:
+    argv:
+      RedHatAI/Qwen3-Coder-Next-NVFP4: true
+
+# --- Nemotron 3.5 Bolt 74B-A9B "24GB" (hybrid Mamba-MoE VLM, NVIDIA's native 2-bit QAT experts, 22.5 GB
+# of weights: fits a 32 GB card), NVIDIA's LiLiCorr DFlash drafter (7 draft tokens). Backends from the
+# model card (b12x: Blackwell kernels for its 2-bit experts) ---
+homelab-vllm-nemotron35-bolt-74b-a9b-24gb-dflash:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - dflash
+  url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+  client:
+    argv:
+      --model: nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+      --trust-remote-code: true
+  server:
+    argv:
+      nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB: true
+      --trust-remote-code: true
+      --linear-backend: b12x
+      --moe-backend: b12x
+      --mamba-ssm-cache-dtype: bfloat16
+      --speculative-config: '{"method": "dflash", "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr", "num_speculative_tokens": 7}'
+
+# --- Nemotron 3 Super 120B-A12B NVFP4 (hybrid Mamba-LatentMoE, 75 GB of weights: Spark-class memory),
+# its built-in MTP head (3 draft tokens; NVIDIA's Spark recipe uses the separate MTPv2 head instead).
+# MoE on Marlin as in the card's DGX Spark recipe ---
+homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  # ~1 h of throughput passes (24 tok/s for one user on a GB10) and ~50 min of quality
+  max_duration: 9000
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - mtp
+  url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+  client:
+    argv:
+      --model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+      --trust-remote-code: true
+  server:
+    argv:
+      nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4: true
+      --trust-remote-code: true
+      --moe-backend: marlin
+      --mamba-ssm-cache-dtype: float16
+      --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+
+# --- Gemma 4 31B dense NVFP4 (22 GB of weights: fits a 32 GB card), Gemma 4's MTP drafter, the dense
+# counterpart of the 26B-A4B entry ---
+homelab-vllm-gemma4-31b-nvfp4-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - nvfp4
+    - mtp
+  url: https://huggingface.co/RedHatAI/gemma-4-31B-it-NVFP4
+  client:
+    argv:
+      --model: RedHatAI/gemma-4-31B-it-NVFP4
+  server:
+    argv:
+      RedHatAI/gemma-4-31B-it-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
+
+# --- Kimi-Linear 48B-A3B AWQ 4-bit (Kimi Delta Attention: linear attention in 3 of 4 layers, so its KV
+# cache barely grows with context; 28 GB of weights) ---
+homelab-vllm-kimi-linear-48b-a3b-awq:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - awq
+  url: https://huggingface.co/cyankiwi/Kimi-Linear-48B-A3B-Instruct-AWQ-4bit
+  # tokenizer from the original repo (same tokenizer): the AWQ repo's tokenization_kimi.py still imports
+  # bytes_to_unicode from transformers.models.gpt2, gone in transformers 5 (moonshotai's copy is fixed)
+  client:
+    argv:
+      --model: cyankiwi/Kimi-Linear-48B-A3B-Instruct-AWQ-4bit
+      --tokenizer: moonshotai/Kimi-Linear-48B-A3B-Instruct
+      --trust-remote-code: true
+  server:
+    argv:
+      cyankiwi/Kimi-Linear-48B-A3B-Instruct-AWQ-4bit: true
+      --tokenizer: moonshotai/Kimi-Linear-48B-A3B-Instruct
+      --trust-remote-code: true
+      # vLLM's fp8 KV cache for Kimi's MLA layers needs fp8 prefill queries too
+      # (--attention-config '{"use_prefill_query_quantization": true}'): keep the KV cache unquantized
+      # instead, it is small (1 layer in 4 is full attention)
+      --kv-cache-dtype: auto
+
+# --- Muse Glimmer 30B dense (Meta; hybrid attention, its own Mamba-style state), NVIDIA's NVFP4 (23 GB:
+# fits a 32 GB card), Meta's DFlash drafter (16-token blocks = 15 draft tokens) ---
+homelab-vllm-muse-glimmer-30b-nvfp4-dflash:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 14400  # thinking on
+  tags:
+    - text
+    - dense
+    - nvfp4
+    - dflash
+  url: https://huggingface.co/nvidia/Muse-Glimmer-30B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Muse-Glimmer-30B-NVFP4
+      --trust-remote-code: true
+    # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
+    # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+  server:
+    argv:
+      nvidia/Muse-Glimmer-30B-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
+      # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
+      --reasoning-parser: muse_glimmer
+
+# --- Inkling 2 Mini (Thinking Machines, 2026-11-20): looped MoE, 26.4B total / 3.4B active (5.4B effective: the
+# middle 12 layers run 3 passes), trained and shipped in 4-bit (NVFP4 experts, MXFP8 last 4 layers), 20 GB, with a
+# DSpark drafter in the checkpoint. Apache 2.0. https://thinkingmachines.ai/news/inkling-2-mini/
+# No vLLM release serves it yet (Inkling2LoopForConditionalGeneration: vLLM PR #69028, >= 0.35): the server is the
+# recipe's image (https://recipes.vllm.ai/thinkingmachines/Inkling-2-Mini, arm64 + amd64) run by podman
+# (server.command), flags as in the recipe's DGX Spark config. The client stays on the homelab-serving venv.
+# podman: --replace reuses the name, so a server left over by a killed bench is removed by the next start.
+# No VLLMServer extras for a raw command: page-cache-friendly loading and the KV size are set here by hand.
+# Always reasons (its template has reasoning_effort, default 0.9 "high", and no off switch; the lowest effort
+# still reasons): scored thinking on, as Muse Glimmer. ---
+homelab-vllm-inkling2-mini-dspark:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 14400  # thinking on
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - dspark
+    - container
+  url: https://huggingface.co/thinkingmachines/Inkling-2-Mini
+  client:
+    argv:
+      --model: thinkingmachines/Inkling-2-Mini
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+  server:
+    command: [podman, run, --rm, --replace, --name, milabench-inkling2-mini, --device, nvidia.com/gpu=all,
+              --ipc=host, --network=host, -v, /opt/milabench/data/hub:/opt/milabench/data/hub,
+              -e, HF_HUB_CACHE=/opt/milabench/data/hub, -e, HF_HUB_OFFLINE=1,
+              docker.io/vllm/vllm-openai:inkling-2-mini]
+    argv:
+      thinkingmachines/Inkling-2-Mini: true
+      --tensor-parallel-size: 1
+      --speculative-config: '{"method": "dspark", "num_speculative_tokens": 7, "draft_sample_method": "probabilistic"}'
+      --reasoning-parser: inkling
+      # the recipe sets no KV dtype: its own (looped passes keep separate KV caches)
+      --kv-cache-dtype: auto
+      --safetensors-load-strategy: eager
+      --kv-cache-memory-bytes: 25769803776  # 24 GiB
+
+# --- EXAONE 4.5 33B dense (LG AI Research; VLM), LG's own AWQ 4-bit (21 GB: fits a 32 GB card), its
+# built-in MTP head (3 draft tokens), as in LG's model card. EXAONE license (its own terms) ---
+homelab-vllm-exaone45-33b-awq-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - awq
+    - mtp
+  url: https://huggingface.co/LGAI-EXAONE/EXAONE-4.5-33B-AWQ
+  client:
+    argv:
+      --model: LGAI-EXAONE/EXAONE-4.5-33B-AWQ
+  server:
+    argv:
+      LGAI-EXAONE/EXAONE-4.5-33B-AWQ: true
+      # no MTP: vLLM 0.33 drafts with EXAONE 4.5's MTP head but accepts none of it (0.0% over thousands of
+      # draft tokens, 2026-11-13: the head's weights are in the checkpoint, its loading is not), a pure slowdown
+      # (10.6 tok/s for one stream). The bench keeps its name; outputs are the same either way
+      # --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+
+# =============================================================================
+# Quantization comparisons: the same model in another format, same engine and drafter as its entry
+# above, so the speed and the QualityBench items (paired item by item) differ by the format alone.
+# =============================================================================
+
+# --- Gemma 4 31B, Google's quantization-aware-trained 4-bit (W4A16, compressed-tensors, 22 GB): the
+# 4-bit quality reference against the post-training NVFP4 of homelab-vllm-gemma4-31b-nvfp4-mtp ---
+homelab-vllm-gemma4-31b-qat-w4a16-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - w4a16
+    - qat
+    - mtp
+  url: https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct
+  client:
+    argv:
+      --model: google/gemma-4-31B-it-qat-w4a16-ct
+  server:
+    argv:
+      google/gemma-4-31B-it-qat-w4a16-ct: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
+
+# --- Gemma 4 31B FP8 block-scaled (31 GB): the 8-bit upper bound of the 4-bit entries ---
+homelab-vllm-gemma4-31b-fp8-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - fp8
+    - mtp
+  url: https://huggingface.co/RedHatAI/gemma-4-31B-it-FP8-block
+  client:
+    argv:
+      --model: RedHatAI/gemma-4-31B-it-FP8-block
+  server:
+    argv:
+      RedHatAI/gemma-4-31B-it-FP8-block: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
+
+# --- Qwen3-Coder-Next FP8, Qwen's own release (75 GB: Spark-class memory), against the NVFP4 entry ---
+homelab-vllm-qwen3-coder-next-fp8:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  tags:
+    - text
+    - moe
+    - fp8
+  url: https://huggingface.co/Qwen/Qwen3-Coder-Next-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3-Coder-Next-FP8
+  server:
+    argv:
+      Qwen/Qwen3-Coder-Next-FP8: true
+
+# --- Nemotron 3.5 Bolt 74B-A9B, community NVFP4 W4A16 of the BF16 release (NVIDIA's Nemotron NVFP4
+# recipe, ModelOpt, 48 GB; vLLM runs it on Marlin), against NVIDIA's 2-bit QAT "24GB" build. No drafter:
+# LiLiCorr was trained against the 24GB build, so compare its speed with the 24GB entry's quality only ---
+homelab-vllm-nemotron35-bolt-74b-a9b-nvfp4-w4a16:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - moe
+    - nvfp4
+    - w4a16
+  url: https://huggingface.co/sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16
+  client:
+    argv:
+      --model: sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16
+      --trust-remote-code: true
+  server:
+    argv:
+      sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16: true
+      --trust-remote-code: true
+      --mamba-ssm-cache-dtype: bfloat16
+
+# --- Qwen3.8-27B FP8, Qwen's own release (29 GB), same DFlash 2 drafter as the NVFP4 entry ---
+homelab-vllm-qwen38-27b-fp8-dflash2:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - fp8
+    - dflash
+  url: https://huggingface.co/Qwen/Qwen3.8-27B-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3.8-27B-FP8
+  server:
+    argv:
+      Qwen/Qwen3.8-27B-FP8: true
+      --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
+
+# --- Muse Glimmer 30B FP8 block-scaled (32 GB: Spark-class memory), same drafter as the NVFP4 entry ---
+homelab-vllm-muse-glimmer-30b-fp8-dflash:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 14400  # thinking on
+  tags:
+    - text
+    - dense
+    - fp8
+    - dflash
+  url: https://huggingface.co/RedHatAI/Muse-Glimmer-30B-FP8-block
+  client:
+    argv:
+      --model: RedHatAI/Muse-Glimmer-30B-FP8-block
+      --trust-remote-code: true
+    # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
+    # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+  server:
+    argv:
+      RedHatAI/Muse-Glimmer-30B-FP8-block: true
+      --trust-remote-code: true
+      --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
+      # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
+      --reasoning-parser: muse_glimmer
+
+# --- EXAONE 4.5 33B FP8, LG's own release (38 GB: Spark-class memory), same MTP head as the AWQ entry ---
+homelab-vllm-exaone45-33b-fp8-mtp:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  tags:
+    - text
+    - dense
+    - fp8
+    - mtp
+  url: https://huggingface.co/LGAI-EXAONE/EXAONE-4.5-33B-FP8
+  client:
+    argv:
+      --model: LGAI-EXAONE/EXAONE-4.5-33B-FP8
+  server:
+    argv:
+      LGAI-EXAONE/EXAONE-4.5-33B-FP8: true
+      # no MTP: vLLM 0.33 drafts with EXAONE 4.5's MTP head but accepts none of it (0.0% over thousands of
+      # draft tokens, 2026-11-13: the head's weights are in the checkpoint, its loading is not), a pure slowdown
+      # (10.6 tok/s for one stream). The bench keeps its name; outputs are the same either way
+      # --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+
+# --- Qwen3.8-27B BF16, the unquantized release (56 GB), same DFlash 2 drafter: the reference the FP8 and
+# NVFP4 entries lose against. Bandwidth-bound on a GB10 (273 GB/s): ~5 tok/s a stream before the drafter ---
+homelab-vllm-qwen38-27b-bf16-dflash2:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 14400
+  tags:
+    - text
+    - dense
+    - bf16
+    - dflash
+  url: https://huggingface.co/Qwen/Qwen3.8-27B
+  client:
+    argv:
+      --model: Qwen/Qwen3.8-27B
+  server:
+    argv:
+      Qwen/Qwen3.8-27B: true
+      --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
+
+# --- Muse Glimmer 30B BF16, the unquantized release (60 GB), same drafter: the reference for the FP8 and
+# NVFP4 entries (and no NVFP4 kernels: tells them apart from the drafter if the NVFP4 entry hangs again) ---
+homelab-vllm-muse-glimmer-30b-bf16-dflash:
+  inherits: _serving_vllm
+  enabled: true
+  weight: 1
+  max_duration: 21600  # thinking on
+  tags:
+    - text
+    - dense
+    - bf16
+    - dflash
+  url: https://huggingface.co/meta-models/Muse-Glimmer-30B
+  client:
+    argv:
+      --model: meta-models/Muse-Glimmer-30B
+      --trust-remote-code: true
+    # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
+    # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+  server:
+    argv:
+      meta-models/Muse-Glimmer-30B: true
+      --trust-remote-code: true
+      # 2 shards of ~28 GB: eager loading holds a whole shard in RAM next to its copy on the GPU (the same
+      # memory on a GB10) and memguard stopped it at 50 GB RSS (2026-11-13); mmap it instead
+      --safetensors-load-strategy: lazy
+      --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
+      # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
+      --reasoning-parser: muse_glimmer
+
+homelab-llamacpp-glm53-flash-q2-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  max_duration: 28800  # thinking on, one slot: QualityBench's deadline keeps what is scored
+  tags: [text, moe, gguf]
+  server:
+    argv:
+      --repo: unsloth/GLM-5.3-Flash-GGUF
+      --file: UD-Q2_K_XL/GLM-5.3-Flash-UD-Q2_K_XL-00001-of-00004.gguf
+      --model: zai-org/GLM-5.3-Flash
+      # GLM always reasons: QualityBench's thinking-off preflight gets reasoning and no content (2026-11-13)
+      --quality-thinking: "on"
+      --quality-thinking-max-tokens: 8192
+      # 102 GB of weights on 120 GB: 4 slots of 8k (32k of KV) ran it out of memory (memguard, conc4), so one
+      # slot of 16k, room for the prompt and 8k of reasoning
+      --parallel: 1
+      --ctx-size: 16384
+
 # --- GLM-5.3-Flash 320B-A18B, unsloth UD-Q2_K_XL (108.7 GB, 4 shards), llama.cpp on the arch's native backend.
 # Build llama.cpp once in $MILABENCH_LLAMACPP_ROOT, e.g. for CUDA:
 #   cmake -B build-cuda -DGGML_CUDA=ON && cmake --build build-cuda -j --target llama-server llama-bench ---
@@ -569,6 +1227,154 @@ homelab-llamacpp-glm53-flash-q2:
         --backend: native
         --parallel: "{concurrency}"
         --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# =============================================================================
+# Too big for vLLM on 128 GB (NVFP4: DeepSeek-V4-Flash 157 GB, Qwen3.8-Flash-Next 124 GB): unsloth
+# dynamic GGUFs on llama.cpp, like GLM-5.3-Flash above. No draft model.
+# =============================================================================
+
+# --- DeepSeek-V4-Flash-0731 (284B-A13B class, 43 layers, 256 experts top-6), UD-Q2_K_XL (90 GB, 3 shards).
+# UD-Q3_K_XL is 119 GB: no room left for the KV cache ---
+homelab-llamacpp-deepseek-v4-flash-q2-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  max_duration: 14400
+  tags: [text, moe, gguf]
+  server:
+    argv:
+      --repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
+      --file: UD-Q2_K_XL/DeepSeek-V4-Flash-0731-UD-Q2_K_XL-00001-of-00003.gguf
+      --model: deepseek-ai/DeepSeek-V4-Flash-0731
+      --parallel: 4
+      --ctx-size: 32768
+      # read the shards with direct I/O instead of mapping them: with mmap the mapped file and its GPU copy both
+      # hold memory while it loads, and the driver failed to allocate (NV_ERR_NO_MEMORY) with 25 GB still
+      # available (2026-11-23). dio bypasses the page cache (falls back to plain reads where unsupported)
+      --load-mode: dio
+
+homelab-llamacpp-deepseek-v4-flash-q2:
+  matrix:
+    concurrency: [1, 4]
+  job:
+    name: 'homelab-llamacpp-deepseek-v4-flash-q2-conc{concurrency}'
+    tags:
+      - text
+      - moe
+      - gguf
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    url: https://huggingface.co/unsloth/DeepSeek-V4-Flash-0731-GGUF
+    server:
+      argv:
+        --repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
+        --file: UD-Q2_K_XL/DeepSeek-V4-Flash-0731-UD-Q2_K_XL-00001-of-00003.gguf
+        --model: deepseek-ai/DeepSeek-V4-Flash-0731
+        --backend: native
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+        --load-mode: dio  # as -quality above
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# --- Qwen3.8-Flash-Next (48 layers, 512 experts top-10), UD-Q3_K_XL (83 GB, 4 shards) ---
+homelab-llamacpp-qwen38-flash-next-q3-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  max_duration: 14400
+  tags: [text, moe, gguf]
+  server:
+    argv:
+      --repo: unsloth/Qwen3.8-Flash-Next-GGUF
+      --file: UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00004.gguf
+      --model: Qwen/Qwen3.8-Flash-Next
+      --parallel: 4
+      --ctx-size: 32768
+
+homelab-llamacpp-qwen38-flash-next-q3:
+  matrix:
+    concurrency: [1, 4]
+  job:
+    name: 'homelab-llamacpp-qwen38-flash-next-q3-conc{concurrency}'
+    tags:
+      - text
+      - moe
+      - gguf
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    url: https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF
+    server:
+      argv:
+        --repo: unsloth/Qwen3.8-Flash-Next-GGUF
+        --file: UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00004.gguf
+        --model: Qwen/Qwen3.8-Flash-Next
+        --backend: native
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+    client:
+      argv:
+        --max-concurrency: "{concurrency}"
+        --num-warmups: "{concurrency}"
+        --num-prompts: "expr({concurrency} * 5)"
+
+# --- Step 3.5 Flash (StepFun 196B-A11B MoE, 45 layers, 288 experts top-8, Apache-2.0). ggml-org's Q4_K is 118.7 GB,
+# the whole 119.6 GB of unified memory: bartowski's Q3_K_M (90.2 GB, 3 shards) instead, DeepSeek-V4-Flash Q2's size.
+# Its KV cache is small: 3 layers in 4 attend a 512-token window, so 40k per slot costs ~2 GB. It always reasons
+# (its template opens every reply with <think>): scored thinking on, 32k budget, 4 slots of 40k. Direct-I/O load
+# (--load-mode dio, see DeepSeek-V4-Flash below) ---
+homelab-llamacpp-step35-flash-q3-quality:
+  inherits: _llamacpp_quality
+  enabled: true
+  weight: 1
+  max_duration: 43200  # thinking on: the 32B reasoning models needed ~12 h
+  tags: [text, moe, gguf]
+  server:
+    argv:
+      --repo: bartowski/stepfun-ai_Step-3.5-Flash-GGUF
+      --file: stepfun-ai_Step-3.5-Flash-Q3_K_M/stepfun-ai_Step-3.5-Flash-Q3_K_M-00001-of-00003.gguf
+      --model: stepfun-ai/Step-3.5-Flash
+      --quality-thinking: "on"
+      --quality-thinking-max-tokens: 32768
+      --parallel: 4
+      # 163840 left ~17 GB available once loaded: a driver out-of-memory at load (2026-11-25) and MemAvailable
+      # down to 5 GiB after 7 h (2026-11-24). The KV cache is unified: the 4 slots share 81920 tokens, one
+      # 32k reply still fits
+      --ctx-size: 81920
+      --load-mode: dio
+
+homelab-llamacpp-step35-flash-q3:
+  matrix:
+    concurrency: [1, 4]
+  job:
+    name: 'homelab-llamacpp-step35-flash-q3-conc{concurrency}'
+    tags:
+      - text
+      - moe
+      - gguf
+    inherits: _llamacpp_serving
+    enabled: true
+    weight: 1
+    url: https://huggingface.co/bartowski/stepfun-ai_Step-3.5-Flash-GGUF
+    server:
+      argv:
+        --repo: bartowski/stepfun-ai_Step-3.5-Flash-GGUF
+        --file: stepfun-ai_Step-3.5-Flash-Q3_K_M/stepfun-ai_Step-3.5-Flash-Q3_K_M-00001-of-00003.gguf
+        --model: stepfun-ai/Step-3.5-Flash
+        --backend: native
+        --parallel: "{concurrency}"
+        --ctx-size: "expr({concurrency} * 8192)"
+        --load-mode: dio
     client:
       argv:
         --max-concurrency: "{concurrency}"

@@ -32,11 +32,12 @@ class Arguments:
     num_workers: int = 8
     mixed_precision: str = "bf16"
     output: str = None
+    model_family: str = "sdxl"  # SimpleTuner's model_family (sdxl, flux, sd3, ...), passed through
 
 
 def build_config(args: Arguments, data_dir: Path, out_dir: Path) -> dict:
     return {
-        "model_family": "sdxl",
+        "model_family": args.model_family,
         "model_type": "lora",
         "pretrained_model_name_or_path": args.model,
         "output_dir": str(out_dir),
@@ -140,7 +141,7 @@ def main():
     env = dict(os.environ, TRACKER_DISABLED="1")
 
     seconds = diffusion.timed_run(
-        [sys.executable, "st_cli.py", "train"], cwd=repo, env=env
+        [sys.executable, "st_cli.py", "train"], cwd=repo, env=env, steps=args.steps, tool="simpletuner"
     )
 
     diffusion.report_metrics(

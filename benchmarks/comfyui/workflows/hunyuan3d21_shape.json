@@ -1,0 +1,208 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__INPUT__"
+    }
+  },
+  "2": {
+    "class_type": "ImageAddNoise",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "seed": "__SEED__",
+      "strength": 0.0
+    }
+  },
+  "3": {
+    "class_type": "LoadBackgroundRemovalModel",
+    "inputs": {
+      "bg_removal_name": "__BGREMOVAL__"
+    }
+  },
+  "4": {
+    "class_type": "RemoveBackground",
+    "inputs": {
+      "bg_removal_model": [
+        "3",
+        0
+      ],
+      "image": [
+        "2",
+        0
+      ]
+    }
+  },
+  "5": {
+    "class_type": "ImageCropToMask",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "masks": [
+        "4",
+        0
+      ],
+      "width": 1024,
+      "height": 1024,
+      "pad_factor": 1.1,
+      "grow_mask": 0,
+      "background": "#FFFFFF"
+    }
+  },
+  "6": {
+    "class_type": "ImageOnlyCheckpointLoader",
+    "inputs": {
+      "ckpt_name": "__CKPT__"
+    }
+  },
+  "7": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "shift": 1.0
+    }
+  },
+  "8": {
+    "class_type": "CLIPVisionEncode",
+    "inputs": {
+      "clip_vision": [
+        "6",
+        1
+      ],
+      "image": [
+        "5",
+        0
+      ],
+      "crop": "center"
+    }
+  },
+  "9": {
+    "class_type": "Hunyuan3Dv2Conditioning",
+    "inputs": {
+      "clip_vision_output": [
+        "8",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "EmptyLatentHunyuan3Dv2",
+    "inputs": {
+      "resolution": 4096,
+      "batch_size": 1
+    }
+  },
+  "11": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "positive": [
+        "9",
+        0
+      ],
+      "negative": [
+        "9",
+        1
+      ],
+      "latent_image": [
+        "10",
+        0
+      ],
+      "denoise": 1.0
+    }
+  },
+  "12": {
+    "class_type": "VAEDecodeHunyuan3D",
+    "inputs": {
+      "samples": [
+        "11",
+        0
+      ],
+      "vae": [
+        "6",
+        2
+      ],
+      "num_chunks": 8000,
+      "octree_resolution": 256
+    }
+  },
+  "13": {
+    "class_type": "VoxelToMesh",
+    "inputs": {
+      "voxel": [
+        "12",
+        0
+      ],
+      "algorithm": "surface net",
+      "threshold": 0.6
+    }
+  },
+  "14": {
+    "class_type": "SaveGLB",
+    "inputs": {
+      "mesh": [
+        "13",
+        0
+      ],
+      "filename_prefix": "3d/milabench"
+    }
+  },
+  "15": {
+    "class_type": "CreateCameraInfo",
+    "inputs": {
+      "mode": "orbit",
+      "mode.yaw": 35.0,
+      "mode.pitch": 20.0,
+      "mode.distance": 2.5,
+      "target_x": 0.0,
+      "target_y": 0.0,
+      "target_z": 0.0,
+      "roll": 0.0,
+      "fov": 35.0,
+      "zoom": 1.0,
+      "camera_type": "perspective"
+    }
+  },
+  "16": {
+    "class_type": "RenderMesh",
+    "inputs": {
+      "mesh": [
+        "13",
+        0
+      ],
+      "mode": "normal",
+      "width": 1024,
+      "height": 1024,
+      "background": "#848484",
+      "camera_info": [
+        "15",
+        0
+      ]
+    }
+  },
+  "17": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "16",
+        0
+      ],
+      "filename_prefix": "milabench"
+    }
+  }
+}

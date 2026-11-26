@@ -7,6 +7,7 @@ https://github.com/kohya-ss/sd-scripts.
 """
 
 import os
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,8 @@ class Arguments:
     num_workers: int = 8
     mixed_precision: str = "bf16"
     output: str = None
+    fp8_base: bool = False      # sd-scripts --fp8_base: the frozen base in fp8
+    extra_args: str = None      # more sdxl_train_network.py flags, one string (shell-split), appended as is
 
 
 def kohya_data_root(data_dir: Path, out_dir: Path) -> Path:
@@ -78,6 +81,8 @@ def build_command(args: Arguments, data_dir: Path, out_dir: Path):
         f"--output_dir={out_dir}",
         "--output_name=milabench",
         "--save_every_n_epochs=999999",
+        *(["--fp8_base"] if args.fp8_base else []),
+        *(shlex.split(args.extra_args) if args.extra_args else []),
     ]
 
 
@@ -103,7 +108,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     seconds = diffusion.timed_run(
-        build_command(args, data_dir, out_dir), cwd=repo, env=dict(os.environ)
+        build_command(args, data_dir, out_dir), cwd=repo, env=dict(os.environ), steps=args.steps, tool="kohya"
     )
 
     if not list(out_dir.glob("*.safetensors")):

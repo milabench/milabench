@@ -405,6 +405,12 @@ def prepare_passes(passes=None):
         if "swebench" in spec:
             from benchmate.benchserve import swebench
             swebench.prepare(spec["swebench"] or {})
+        if "terminalbench" in spec:
+            from benchmate.benchserve import terminalbench
+            terminalbench.prepare(spec["terminalbench"] or {})
+        if "bfcl" in spec:
+            from benchmate.benchserve import bfcl
+            bfcl.prepare(spec["bfcl"] or {})
 
 
 def needs_text_corpus(argv, passes=()) -> bool:
@@ -732,8 +738,9 @@ class PassRecorder:
 recorder = PassRecorder()
 
 
-# pass kinds that report scores (accuracy, solve rate), not a rate: lm-eval, QualityBench, SWE-bench agent
-SCORE_PASSES = ("eval", "quality", "swebench")
+# pass kinds that report scores (accuracy, solve rate), not a rate: lm-eval, QualityBench, SWE-bench agent,
+# Terminal-Bench, BFCL (bfcl.py), retrieval quality (benchmarks/retrieval's client runs those passes itself)
+SCORE_PASSES = ("eval", "quality", "swebench", "terminalbench", "bfcl", "retrieval")
 
 
 def is_score_pass(spec: dict) -> bool:
@@ -792,6 +799,23 @@ def _run_pass(bench_argv, spec, *, record, eval_tasks, **hooks):
         wait_ready(f"http://{_flag(bench_argv, '--host', '127.0.0.1')}:{_flag(bench_argv, '--port', '8000')}/v1/models",
                    float(_flag(bench_argv, "--ready-check-timeout-sec", 3600)))
         swebench.run(bench_argv, spec["swebench"] or {}, flag=_flag, output_dir=folder, name=name, push=push_metric)
+    elif "terminalbench" in spec:
+        from benchmate.benchserve import terminalbench
+
+        folder, name = _pass_output("terminalbench", record)
+        wait_ready(f"http://{_flag(bench_argv, '--host', '127.0.0.1')}:{_flag(bench_argv, '--port', '8000')}/v1/models",
+                   float(_flag(bench_argv, "--ready-check-timeout-sec", 3600)))
+        terminalbench.run(bench_argv, spec["terminalbench"] or {}, flag=_flag, output_dir=folder, name=name, push=push_metric)
+    elif "bfcl" in spec:
+        from benchmate.benchserve import bfcl
+
+        folder, name = _pass_output("bfcl", record)
+        wait_ready(f"http://{_flag(bench_argv, '--host', '127.0.0.1')}:{_flag(bench_argv, '--port', '8000')}/v1/models",
+                   float(_flag(bench_argv, "--ready-check-timeout-sec", 3600)))
+        bfcl.run(bench_argv, spec["bfcl"] or {}, flag=_flag, output_dir=folder, name=name, push=push_metric)
+    elif "retrieval" in spec:
+        # benchmarks/retrieval's main.py runs these passes; anywhere else they would fall through to a throughput run
+        raise SystemExit(f"pass {spec.get('name')!r}: retrieval passes run under benchmarks/retrieval's client")
     else:
         benchmark([*bench_argv, *_options(spec.get("argv"))], **hooks)
 
@@ -934,6 +958,32 @@ def run_benchmark_watched(server, bench_argv, passes: list[dict] | None = None, 
 # ---------------------------------------------------------------------------
 
 
+def later_pass_ready_timeout(bench_argv: list[str], pass_name: str | None) -> list[str]:
+    """Only the first pass waits the long ``--ready-check-timeout-sec`` (it may cover the weights' download
+    and the server's start). By a later pass the server has already served the first one: if it does not
+    answer within MILABENCH_LATER_PASS_READY_TIMEOUT seconds (default 300) it died, and waiting an hour per
+    remaining pass only delays the next benchmark."""
+    passes = client_passes("all") or []
+    if not pass_name or not passes or passes[0].get("name") == pass_name:
+        return bench_argv
+    cap = float(os.environ.get("MILABENCH_LATER_PASS_READY_TIMEOUT", 300))
+    current = float(_flag(bench_argv, "--ready-check-timeout-sec", 3600))
+    if current <= cap:
+        return bench_argv
+    out, skip = [], False
+    for arg in bench_argv:
+        if skip:
+            skip = False
+            continue
+        if arg == "--ready-check-timeout-sec":
+            skip = True
+            continue
+        if arg.startswith("--ready-check-timeout-sec="):
+            continue
+        out.append(arg)
+    return [*out, "--ready-check-timeout-sec", str(int(cap))]
+
+
 def main(argv=None, **kwargs):
     """`benchserve` — benchmate-instrumented `vllm bench serve` client.
 
@@ -950,6 +1000,7 @@ def main(argv=None, **kwargs):
     parser.add_argument("--mode", choices=["eval", "perf", "all"], default="all")
     parser.add_argument("--pass", dest="pass_name", default=None, help="run only this client pass")
     args, bench_argv = parser.parse_known_args(argv)
+    bench_argv = later_pass_ready_timeout(bench_argv, args.pass_name)
 
     observer, bench_monitor = make_observer()
 

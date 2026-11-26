@@ -1,0 +1,195 @@
+# =============================================================================
+# Homelab — thinking on vs off, for the models whose chat template has the switch (enable_thinking)
+#
+# text.yaml scores every model thinking off (QualityBench quick tier). This scores the same tasks thinking on, on
+# the model's own server (text.yaml's flags), so the report can set them side by side: accuracy gained, and what
+# it costs in time and energy (the accuracy pass's duration and joules, off vs on).
+#   milabench run --config homelab/thinking.yaml [--select <bench>]
+# One build per model (its fastest: accuracy belongs to the weights). The reply (reasoning + answer) is capped at
+# 32k tokens (QualityBench's default), in a 40k context; replies cut there score as wrong, the report counts them.
+# Not in all.yaml. (2026-11-14: an 8k cap cut the Qwen3.6 models on most hard items; 2026-11-15: at 24k Qwen3.6-35B
+# still ran past it on 11 of 18 LiveCodeBench problems.)
+# reply_window: the time-to-solution window, 1 h per reply (as long as QualityBench's own limits allowed before,
+# so earlier results compare): a reply not back by then scores as wrong and is not retried (2026-11-16: EXAONE 4.5
+# and Qwen3.6-27B thinking on were retrying hour-long replies from scratch).
+# preflight_retry: Gemma 4 E4B decides per prompt whether to think, and skips it on the trivial preflight one.
+# Always-thinking models are not here: gpt-oss and Muse Glimmer are scored thinking on in text.yaml already.
+# No switch in their template: Llama 3.1, Qwen3-Coder (30B, Next), Kimi-Linear.
+# Each entry names its reasoning parser: without it the reasoning stays in the reply (<think>...), and the format
+# checks (IFEval) and answer extraction fail on it (Qwen3-8B, 2026-11-14: IFEval 78 -> 40).
+# =============================================================================
+
+include:
+  - text.yaml
+
+# the one pass, shared by every entry (YAML anchor)
+_thinking_on:
+  client:
+    passes: &thinking_on_passes
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 32768, preflight_retry: true, reply_window: 3600, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb]}}
+
+homelab-vllm-qwen3-8b-fp8-think:
+  inherits: homelab-vllm-qwen3-8b-fp8
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: qwen3
+
+homelab-vllm-gemma4-e4b-bf16-mtp-think:
+  inherits: homelab-vllm-gemma4-e4b-bf16-mtp
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: gemma4
+
+homelab-vllm-gemma4-e2b-bf16-mtp-think:
+  inherits: homelab-vllm-gemma4-e2b-bf16-mtp
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: gemma4
+
+homelab-vllm-gemma4-26b-a4b-nvfp4-mtp-think:
+  inherits: homelab-vllm-gemma4-26b-a4b-nvfp4-mtp
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: gemma4
+
+homelab-vllm-gemma4-31b-nvfp4-mtp-think:
+  inherits: homelab-vllm-gemma4-31b-nvfp4-mtp
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: gemma4
+
+homelab-vllm-qwen36-35b-a3b-nvfp4-mtp-think:
+  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: qwen3
+
+homelab-vllm-qwen36-27b-nvfp4-think:
+  inherits: homelab-vllm-qwen36-27b-nvfp4
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: qwen3
+
+homelab-vllm-qwen38-27b-nvfp4-dflash2-think:
+  inherits: homelab-vllm-qwen38-27b-nvfp4-dflash2
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: qwen3
+
+homelab-vllm-nemotron3-nano-30b-a3b-nvfp4-think:
+  inherits: homelab-vllm-nemotron3-nano-30b-a3b-nvfp4
+  enabled: true
+  max_duration: 28800
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: nemotron_v3
+
+homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp-think:
+  inherits: homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: nemotron_v3
+
+homelab-vllm-nemotron35-bolt-74b-a9b-nvfp4-w4a16-think:
+  inherits: homelab-vllm-nemotron35-bolt-74b-a9b-nvfp4-w4a16
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: nemotron_v3
+
+# EXAONE 4.5: reasoning toggle in its family's template (EXAONE 4.0 had enable_thinking)
+
+homelab-vllm-exaone45-33b-awq-mtp-think:
+  inherits: homelab-vllm-exaone45-33b-awq-mtp
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: qwen3
+
+# Inkling 2 Mini: always reasons (no switch, reasoning_effort defaults to 0.9 "high"); text.yaml scores it
+# thinking on in a 16k context (8k of reasoning, as Muse Glimmer). This is the 32k-reply run the other -think
+# entries get, so its score sets beside theirs.
+homelab-vllm-inkling2-mini-dspark-think:
+  inherits: homelab-vllm-inkling2-mini-dspark
+  enabled: true
+  max_duration: 43200
+  client:
+    passes: *thinking_on_passes
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt
+      --reasoning-parser: inkling
+
+# Inkling 2 Mini "thinking off": its template has no off switch, the nearest is reasoning_effort "none" (0.0),
+# which the model card says still reasons a little. Same pass, cap and context as -think (effort 0.9, "high"),
+# so the pair is its on/off. QualityBench runs it as "on" (its "off" preflight fails on any reasoning text), with
+# the preflight retry in case effort none skips reasoning on the trivial prompt: if it never reasons at all, the
+# preflight fails within minutes and nothing else is lost.
+homelab-vllm-inkling2-mini-dspark-effort-none:
+  inherits: homelab-vllm-inkling2-mini-dspark
+  enabled: true
+  max_duration: 43200
+  client:
+    passes:
+      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 32768, preflight_retry: true, reply_window: 3600, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb]}}
+  server:
+    argv:
+      --max-model-len: 40960  # 32k of reply + the prompt, as -think
+      --reasoning-parser: inkling
+      --default-chat-template-kwargs: '{"reasoning_effort": "none"}'

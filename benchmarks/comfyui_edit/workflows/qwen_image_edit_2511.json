@@ -1,0 +1,188 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "__UNET__",
+      "weight_dtype": "default"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "__TE__",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "__VAE__"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__IMAGE__"
+    }
+  },
+  "13": {
+    "class_type": "FluxKontextImageScale",
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ]
+    }
+  },
+  "14": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "shift": 3.1
+    }
+  },
+  "15": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "model": [
+        "14",
+        0
+      ],
+      "strength": 1.0
+    }
+  },
+  "16": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "15",
+        0
+      ],
+      "lora_name": "__LORA__",
+      "strength_model": "__LORA_STRENGTH__"
+    }
+  },
+  "5": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image1": [
+        "13",
+        0
+      ],
+      "prompt": "__PROMPT__"
+    }
+  },
+  "17": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image1": [
+        "13",
+        0
+      ],
+      "prompt": ""
+    }
+  },
+  "18": {
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "inputs": {
+      "conditioning": [
+        "5",
+        0
+      ],
+      "reference_latents_method": "index_timestep_zero"
+    }
+  },
+  "19": {
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "inputs": {
+      "conditioning": [
+        "17",
+        0
+      ],
+      "reference_latents_method": "index_timestep_zero"
+    }
+  },
+  "20": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "13",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "16",
+        0
+      ],
+      "positive": [
+        "18",
+        0
+      ],
+      "negative": [
+        "19",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ],
+      "seed": "__SEED__",
+      "steps": "__STEPS__",
+      "cfg": "__CFG__",
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ],
+      "filename_prefix": "milabench_edit"
+    }
+  }
+}

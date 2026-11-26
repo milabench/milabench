@@ -12,6 +12,7 @@ def main(argv):
     parser.add_argument("--repo", required=True)
     parser.add_argument("--file", required=True)
     parser.add_argument("--model", default=None, help="HF id of the client's tokenizer")
+    parser.add_argument("--mode", default="host")
     args, _ = parser.parse_known_args(argv)
 
     from huggingface_hub import snapshot_download
@@ -28,6 +29,18 @@ def main(argv):
     # --real-text in the client argv (benchmate.benchserve)
     from benchmate.benchserve import prepare_text_corpus
     prepare_text_corpus(argv, passes=[])
+
+    if args.mode == "quality":
+        # QualityBench, its harness environments, datasets and code-task images (the runs are offline)
+        from benchmate.benchserve import quality
+        from main import quality_spec  # the run's own spec from the same options
+        q = ArgumentParser()
+        q.add_argument("--quality-tier", default="quick")
+        q.add_argument("--quality-thinking", default="off")
+        q.add_argument("--quality-tasks", default="gsm8k,ifeval,mmlu_pro,humaneval,mbpp,lcb")
+        q.add_argument("--quality-thinking-max-tokens", type=int, default=None)
+        q.add_argument("--quality-max-tokens", type=int, default=None)
+        quality.prepare(quality_spec(q.parse_known_args(argv)[0]))
     return 0
 
 

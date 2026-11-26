@@ -29,6 +29,7 @@ import json
 import os
 import re
 import statistics
+import time
 from collections import defaultdict
 
 # --- reading ----------------------------------------------------------------------------------------
@@ -61,13 +62,92 @@ def model_ids(cfg: dict) -> list[str]:
             elif key == "--speculative-config":
                 try:
                     add(json.loads(value).get("model"))
-                except (json.JSONDecodeError, AttributeError):
+                except (json.JSONDecodeError, AttributeError, TypeError):  # TypeError: set to null to turn it off
                     pass
     # single-pack benches: --model is an HF id, or ComfyUI's dest:repo:file (one or a list)
     model = (cfg.get("argv") or {}).get("--model")
     for spec in [model] if isinstance(model, str) else model or []:
         add(spec.split(":")[1] if isinstance(spec, str) and spec.count(":") >= 2 else spec)
     return ids
+
+
+QUANT_TAGS = {"fp8": "FP8", "nvfp4": "NVFP4", "mxfp4": "MXFP4", "awq": "AWQ 4-bit", "w8a8": "INT8 W8A8",
+              "bf16": "BF16", "gguf": "GGUF"}
+
+
+def describe(cfg: dict) -> dict:
+    """What a benchmark runs, in words: engine, precision, workload, and what its rate counts."""
+    definition = os.path.basename(cfg.get("definition", ""))
+    tags = set(cfg.get("tags") or [])
+    argv = cfg.get("argv") or {}
+    server = (cfg.get("server") or {}).get("argv") or {}
+    client = (cfg.get("client") or {}).get("argv") or {}
+    out = {}
+    if definition == "serving":
+        out["engine"] = {"vllm": "vLLM", "sglang": "SGLang", "atom": "ATOM"}.get((cfg.get("server") or {}).get("backend", "vllm"), "vLLM")
+        precision = [QUANT_TAGS[t] for t in sorted(tags) if t in QUANT_TAGS] or [str(server.get("--dtype", "BF16")).upper()]
+        if server.get("--quantization") == "fp8":
+            precision = ["FP8 (quantized at load)"]
+        spec = server.get("--speculative-config")
+        out["precision"] = ", ".join(precision)
+        out["workload"] = ("real-text prompts" if client.get("--real-text") else "random prompts") + \
+            (f", speculative decoding ({json.loads(spec).get('method') or 'draft model'})" if spec else "") + \
+            f", context {server.get('--max-model-len', '?')}"
+        out["metric"] = "output tokens/s, all streams"
+    elif definition == "llamacpp":
+        out["engine"] = f"llama.cpp ({server.get('--backend', '?')})"
+        out["precision"] = "GGUF " + os.path.basename(str(server.get("--file", ""))).split("-00001")[0].rsplit("-", 1)[-1].replace(".gguf", "")
+        out["workload"] = "QualityBench" if server.get("--mode") == "quality" else f"{server.get('--parallel', '?')} slots, real-text prompts"
+        out["metric"] = "output tokens/s, all streams"
+    elif definition == "inference":
+        mode = argv.get("--mode")
+        out["engine"] = "HF transformers generate()" if mode == "chat" else f"HF transformers ({mode})"
+        out["precision"] = {"chat": "BF16", "whisper": "FP16", "flux": "BF16"}.get(mode, "?")
+        out["workload"] = f"{argv.get('--dataset', '?')}, batch {str(argv.get('--batch_size', '?')).replace('auto_batch', 'auto ')}"
+        out["metric"] = {"chat": "tokens/s, prompt + generated", "whisper": "audio samples/s"}.get(mode, "items/s")
+    elif definition == "comfyui":
+        out["engine"] = "ComfyUI"
+        out["workload"] = os.path.basename(str(argv.get("--workflow", ""))).replace(".json", "")
+        out["metric"] = "generations/s (images, clips or songs)"
+    elif definition == "omni":
+        out["engine"] = "vLLM-Omni"
+        out["precision"] = "FP8 (quantized at load)" if server.get("--quantization") == "fp8" else "BF16"
+        out["workload"] = f"{client.get('--task', '?')}, {client.get('--width', '?')}x{client.get('--height', '?')}, {client.get('--steps', '?')} steps"
+        out["metric"] = "generations/s"
+    elif definition == "unsloth":
+        out["engine"] = "unsloth (LoRA fine-tune)"
+        out["metric"] = "items/s"
+    elif definition == "llm-finetune":
+        qlora = argv.get("--load_in_4bit") or "qlora" in tags
+        out["engine"] = "unsloth + TRL (" + ("QLoRA, 4-bit base" if qlora else "LoRA") + ")"
+        out["workload"] = f"sequences of {argv.get('--seq_length', '?')} tokens, LoRA rank {argv.get('--lora_r', '?')}"
+        out["metric"] = "training tokens/s"
+    elif definition in ("kohya", "aitoolkit", "simpletuner"):
+        out["engine"] = {"kohya": "kohya sd-scripts", "aitoolkit": "ai-toolkit", "simpletuner": "SimpleTuner"}[definition] + " (LoRA)"
+        out["precision"] = str(argv.get("--mixed_precision", "?")).upper()
+        out["workload"] = f"{argv.get('--steps', '?')} steps, batch {argv.get('--batch_size', '?')}, {argv.get('--resolution', '?')} px"
+        out["metric"] = "images/s"
+    elif definition in ("retrieval", "docparse", "vlm"):
+        out["engine"] = "vLLM" + (" (pooling)" if definition == "retrieval" else "")
+        precision = [QUANT_TAGS[t] for t in sorted(tags) if t in QUANT_TAGS]
+        if server.get("--quantization") == "fp8":
+            precision = ["FP8 (quantized at load)"]
+        if precision:
+            out["precision"] = ", ".join(precision)
+    elif definition == "docparse_pipeline":
+        out["engine"] = "classic OCR pipeline (no LLM)"
+    elif definition == "tts":
+        out["engine"] = "vLLM-Omni"
+        out["metric"] = "seconds of audio per second"
+    elif definition == "comfyui_edit":
+        out["engine"] = "ComfyUI"
+        out["workload"] = "image editing, " + os.path.basename(str(argv.get("--workflow", ""))).replace(".json", "")
+        out["metric"] = "edits/s"
+    elif definition == "omni_edit":
+        out["engine"] = "vLLM-Omni"
+        out["workload"] = "image editing"
+        out["metric"] = "edits/s"
+    return out
 
 
 def hf_cache() -> str:
@@ -91,7 +171,7 @@ def disk_gb(repo: str) -> float | None:
 # vLLM's own accounting of the memory it reserved (torch allocator, per engine core)
 VLLM_PATTERNS = {
     "weights_gib": re.compile(r"Model loading took ([\d.]+) Gi?B"),
-    "kv_cache_gib": re.compile(r"Available KV cache memory: ([\d.]+) Gi?B"),
+    "kv_cache_gib": re.compile(r"(?:Available KV cache memory: |reserved )([\d.]+) Gi?B(?: memory for KV Cache)?"),
     "kv_cache_tokens": re.compile(r"GPU KV cache size: ([\d,]+) tokens"),
     "max_concurrency_x": re.compile(r"Maximum concurrency for [\d,]+ tokens per request: ([\d.]+)x"),
     "cuda_graph_gib": re.compile(r"Graph capturing finished in .* took ([\d.]+) Gi?B"),
@@ -114,7 +194,9 @@ def nodemon_rows(run_dir: str, kind: str) -> list[dict]:
     for path in glob.glob(os.path.join(run_dir, "nodemon", "*", "nodes", f"*.{kind}.tsv")):
         with open(path) as f:
             for row in csv.DictReader(f, delimiter="\t"):
-                rows.append(row)
+                # a crash leaves a half-written last line (NUL bytes): skip what does not parse
+                if str(row.get("time_ms", "")).isdigit():
+                    rows.append(row)
     rows.sort(key=lambda r: int(r["time_ms"]))
     return rows
 
@@ -134,12 +216,23 @@ def num(value):
 # --- one bench / pass ---------------------------------------------------------------------------------
 
 
+TTS_KEYS = ("rtf_x", "ttfa_s", "ttft_s", "audio_seconds", "gen_seconds", "step_audio_x_realtime", "wer", "wer_words")
+EVAL_KEYS = ("suite", "task", "thinking", "mode", "tier", "samples", "correct", "errors", "scores", "ci95", "timing",
+             "latency", "concurrency", "bm25", "index_docs_per_s", "rerank_pairs_per_s", "corpus_docs", "scorer_error")
+FT_KEYS = ("model", "qlora", "seq_length", "tokens_per_step", "lora_r", "trainable_params_m", "steps", "tokens",
+           "seconds", "train_tokens_per_s", "step_time_s_p50", "step_time_s_p90", "weights_gib",
+           "torch_peak_allocated_gib", "torch_peak_reserved_gib", "system_mem_peak_gib", "loss_start", "loss_end",
+           "loss_drop", "loss_ok", "energy_j", "kwh_per_1m_tokens", "tokens_per_joule", "joules_per_token")
+
+
 def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
     cfg = meta = None
     start = end = None
     rc = None
     rates, samples = [], []
+    errors = []
     passes, evals, agents = [], [], []
+    tts, steps, finetune = defaultdict(list), {}, None
     for e in events(path):
         kind, data = e.get("event"), e.get("data")
         if kind == "config":
@@ -150,6 +243,8 @@ def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
             start = data.get("time")
         elif kind == "end":
             end, rc = data.get("time"), data.get("return_code")
+        elif kind == "line" and isinstance(data, str) and re.search(r"(Error|error:|FAILED|Traceback)", data):
+            errors.append(data.strip())
         elif kind == "data" and isinstance(data, dict):
             if "gpudata" in data:
                 for gpu in data["gpudata"].values():
@@ -160,6 +255,14 @@ def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
                 evals.append(data["eval_summary"])
             if "agent_summary" in data:
                 agents.append(data["agent_summary"])
+            if isinstance(data.get("finetune_summary"), dict):
+                finetune = data["finetune_summary"]
+            for key in TTS_KEYS:  # text-to-speech: one event per request, one per step, the WER at the end
+                if isinstance(data.get(key), (int, float)):
+                    tts[key].append(data[key])
+            for key in ("steps_per_second", "samples_per_second", "num_steps"):  # diffusion fine-tuning
+                if isinstance(data.get(key), (int, float)):
+                    steps[key] = data[key]
             for key in ("rate", "img_per_s"):
                 if key in data and isinstance(data[key], (int, float)) and data.get("task", "train") == "train":
                     rates.append((key, data[key], data.get("units")))
@@ -177,7 +280,14 @@ def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
         "start": start, "end": end, "duration_s": (end - start) if start and end else None,
         "return_code": rc, "status": "ok" if rc == 0 else ("missing-end" if rc is None else "failed"),
     }
+    if rc is None and time.time() - os.path.getmtime(path) < 900:
+        row["status"] = "running"
+    if errors and rc not in (0, None):
+        row["error"] = next((e for e in reversed(errors) if not e.startswith(("File ", "Traceback"))), errors[-1])[:300]
     row["disk_gb"] = round(sum(d for m in row["models"] if (d := disk_gb(m))), 2) or None
+    row["what"] = describe(cfg)
+    if row["what"].get("metric") and not passes:
+        row["rate_metric"] = row["what"]["metric"]
 
     # throughput
     if passes:
@@ -185,16 +295,68 @@ def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
         row.update({k: p.get(k) for k in ("output_throughput", "total_throughput", "request_throughput",
                                           "ttft_ms_p50", "ttft_ms_p99", "tpot_ms_p50", "tpot_ms_p99", "itl_ms_p50",
                                           "e2el_ms_p50", "completed", "failed", "mean_input_len", "mean_output_len")})
+        # the use-case passes' own fields (pooling: docs/s; OCR: pages/min), only when the pass has them
+        row.update({k: p[k] for k in ("docs_per_s", "docs_per_request", "e2el_ms_p90", "e2el_ms_p99", "kind",
+                                      "pages_per_min", "concurrency", "truncated") if p.get(k) is not None})
+        if p.get("duration_s") is not None:
+            row["pass_duration_s"] = p["duration_s"]
         row["window"] = (p.get("start_time"), p.get("end_time"))
     elif rates:
         values = [v for _, v, _ in rates]
-        row["rate_metric"] = rates[0][0] if rates[0][0] != "rate" else (rates[0][2] or "rate")
+        row.setdefault("rate_metric", rates[0][0] if rates[0][0] != "rate" else (rates[0][2] or "rate"))
         row["rate_mean"] = statistics.fmean(values)
         row["rate_median"] = statistics.median(values)
+    # the use cases' accuracy passes (BFCL extended, retrieval, VQA, OCR, RULER): every summary, compact
+    kept = [{k: ev[k] for k in EVAL_KEYS if ev.get(k) is not None} for ev in evals
+            if ev.get("suite") not in ("qualitybench",) and isinstance(ev.get("scores"), dict)]
+    if kept:
+        row["evals"] = kept
+    # text-to-speech (the ComfyUI / omni packs push gen_seconds too: only a pass with rtf_x or a WER is speech)
+    if not (tts.get("rtf_x") or tts.get("wer")):
+        tts = {}
+    if tts.get("rtf_x"):
+        row["tts.rtf_x"] = statistics.median(tts["rtf_x"])
+        row["tts.requests"] = len(tts["rtf_x"])
+    if tts.get("ttfa_s"):
+        ttfa = sorted(tts["ttfa_s"])
+        row["tts.ttfa_s_p50"] = statistics.median(ttfa)
+        row["tts.ttfa_s_p90"] = ttfa[min(len(ttfa) - 1, int(round(0.9 * (len(ttfa) - 1))))]
+    if tts.get("ttft_s"):
+        row["tts.ttft_s_p50"] = statistics.median(tts["ttft_s"])
+    if tts.get("audio_seconds"):
+        row["tts.audio_seconds"] = round(sum(tts["audio_seconds"]), 2)
+    if tts.get("gen_seconds"):
+        row["tts.gen_seconds"] = round(sum(tts["gen_seconds"]), 2)
+    if tts.get("step_audio_x_realtime"):
+        row["tts.x_realtime"] = statistics.fmean(tts["step_audio_x_realtime"])
+    if tts.get("wer"):
+        row["tts.wer"] = tts["wer"][-1]
+        row["tts.wer_words"] = (tts.get("wer_words") or [None])[-1]
+    # fine-tuning: LLM (finetune_summary) and diffusion (steps/s, images/s)
+    if finetune:
+        row.update({f"ft.{k}": finetune.get(k) for k in FT_KEYS if finetune.get(k) is not None})
+        if finetune.get("window_start") and finetune.get("window_end"):
+            row["window"] = (finetune["window_start"], finetune["window_end"])  # the measured steps only
+    if steps:
+        row.update({"ft.steps_per_s": steps.get("steps_per_second"), "ft.images_per_s": steps.get("samples_per_second"),
+                    "ft.steps": steps.get("num_steps")})
     # accuracy
     for ev in evals:
         task = ev.get("task")
-        key = f"acc.{ev.get('suite', 'lmeval')}.{task}" + (f".think-{ev['thinking']}" if ev.get("thinking") else "")
+        if task == "logprobs":
+            for key, value in (ev.get("scores") or {}).items():
+                if key.startswith("ppl") and isinstance(value, (int, float)):
+                    row[key.replace("ppl-", "ppl.")] = value
+            continue
+        if ev.get("suite") == "bfcl":  # per category: in row["evals"] (an acc.bfcl.* key would read as QualityBench's bfcl task)
+            continue
+        # the mode the run used (its results file is <bench>.qualitybench.thinking-<mode>.json): QualityBench files
+        # a single-mode run under "off" whatever the mode (gpt-oss, scored thinking on, came back as "off")
+        mode = re.search(r"\.thinking-(on|off)\.json$", str(ev.get("results") or ""))
+        thinking = mode.group(1) if mode else ev.get("thinking")
+        if str(row.get("bench", "")).endswith((".lcbfull", "-lcbfull")):  # the full tier (lcb-full.yaml; llama.cpp benches have no pass)
+            task = f"{task}_full"
+        key = f"acc.{ev.get('suite', 'lmeval')}.{task}" + (f".think-{thinking}" if thinking else "")
         scores = ev.get("scores") or {}
         score = scores.get("acc") if "acc" in scores else next((v for k, v in scores.items() if "acc" in k or "exact" in k), None)
         if score is not None:
@@ -276,6 +438,36 @@ def main(argv=None):
             row["status"] = "killed-oom"
         rows.append(row)
 
+    # a server that died before its clients ran (killed, failed to start) leaves only its own file: one failed
+    # row for its benchmark, so the failure shows in the report
+    for path in files:
+        first = next(events(path), {})
+        cfg = first.get("data") if first.get("event") == "config" else None
+        if not cfg or "server" not in (cfg.get("tag") or []):
+            continue
+        bench = cfg["tag"][0]
+        if any(r["bench"] == bench or r["bench"].startswith(bench + ".") for r in rows):
+            continue
+        start = end = rc = None
+        errors = []
+        for e in events(path):
+            if e.get("event") == "start":
+                start = e["data"].get("time")
+            elif e.get("event") == "end":
+                end, rc = e["data"].get("time"), e["data"].get("return_code")
+            elif e.get("event") == "line" and isinstance(e.get("data"), str) and re.search(r"(Error|error:)", e["data"]):
+                errors.append(e["data"].strip())
+        if rc in (0, None) and time.time() - os.path.getmtime(path) < 900:
+            continue  # still starting: its clients come next
+        row = {"bench": bench, "file": os.path.basename(path), "models": model_ids(cfg), "what": describe(cfg),
+               "tags": sorted(set(cfg.get("tags", []))), "start": start, "end": end, "return_code": rc,
+               "status": "failed", "error": ("server: " + errors[-1][:280]) if errors else "server stopped before its clients ran"}
+        if start and end and any(start <= k["time"] <= end + 5 for k in kills):
+            row["status"] = "killed-oom"
+            reason = next(k.get("reason") for k in kills if start <= k["time"] <= end + 5)
+            row["error"] = f"memguard: {reason}"
+        rows.append(row)
+
     json.dump(rows, open(os.path.join(out, "report.json"), "w"), indent=1)
     keys = sorted({k for r in rows for k in r}, key=lambda k: (k not in ("bench", "status"), k))
     with open(os.path.join(out, "report.csv"), "w", newline="") as f:
@@ -305,10 +497,11 @@ def write_markdown(rows, kills, path, run_dir):
     serving = [r for r in rows if r.get("output_throughput") is not None]
     if serving:
         lines += ["## Serving (per pass)", "",
-                  "| bench | disk GB | out tok/s | TTFT p50 ms | TPOT p50 ms | mem peak GiB | weights GiB | KV GiB | power W | energy kJ | tok/J |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|"]
+                  "| bench | disk GB | out tok/s | tok/s/user | TTFT p50 ms | TPOT p50 ms | mem peak GiB | weights GiB | KV GiB | power W | energy kJ | tok/J |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in serving:
             lines.append("| " + " | ".join([r["bench"], fmt(r.get("disk_gb")), fmt(r.get("output_throughput")),
+                                              fmt(r.get("tpot_ms_p50") and 1000 / r["tpot_ms_p50"]),
                                               fmt(r.get("ttft_ms_p50"), 0), fmt(r.get("tpot_ms_p50")),
                                               fmt(r.get("mem_peak_gib")), fmt(r.get("vllm.weights_gib")),
                                               fmt(r.get("vllm.kv_cache_gib")), fmt(r.get("power_mean_w")),
