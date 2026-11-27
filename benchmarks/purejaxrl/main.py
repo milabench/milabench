@@ -38,3 +38,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # The run is over and its metrics are out: skip interpreter/C++ teardown, where
+    # XLA's runtime threads can abort with "terminate called without an active
+    # exception" and turn a finished run into a failure (ppo.D0, 1x4xL40s_run_ce0bb376)
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
