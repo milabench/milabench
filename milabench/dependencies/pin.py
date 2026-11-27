@@ -142,8 +142,13 @@ def _is_optional_find_links_url(url: str) -> bool:
     return any(pattern.match(url) for pattern in _OPTIONAL_FIND_LINKS_RES)
 
 
-def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
-    """Return True if ``url`` responds without HTTP 404.
+def _find_links_url_available(url: str, timeout: float = 20.0) -> bool:
+    """Return False only when ``url`` is definitively missing (HTTP 404/410/403).
+
+    Network problems (timeouts, DNS, SSL, proxy) are *not* proof that a wheel
+    index is unpublished: dropping the URL in that case silently turns into an
+    unsatisfiable resolve for pins such as ``torch-scatter==...+pt215cu132``.
+    So on such errors the URL is kept and uv gets to try it itself.
 
     Results are cached for the process lifetime so pin/install across many
     benchmarks does not re-probe the same release page.
@@ -154,24 +159,33 @@ def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
     import urllib.error
     import urllib.request
 
-    available = False
-    try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "milabench"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            available = 200 <= getattr(resp, "status", 200) < 400
-    except urllib.error.HTTPError as e:
-        # Some hosts disallow HEAD; retry GET on 405/403 before giving up.
-        if e.code in (403, 405):
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "milabench"})
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    available = 200 <= getattr(resp, "status", 200) < 400
-            except Exception:
+    available = True
+    last_error = None
+    for method in ("HEAD", "GET", "GET"):
+        try:
+            req = urllib.request.Request(url, method=method, headers={"User-Agent": "milabench"})
+            with urllib.request.urlopen(req, timeout=timeout):
+                available = True
+                last_error = None
+                break
+        except urllib.error.HTTPError as e:
+            last_error = e
+            if e.code in (404, 410):
                 available = False
-        else:
-            available = False
-    except Exception:
-        available = False
+                break
+            # 403/405 on HEAD: retry with GET; 403 on GET means not served (PyG)
+            available = not (e.code == 403 and method == "GET")
+            if not available:
+                break
+        except Exception as e:  # network/SSL/timeout: inconclusive, retry
+            last_error = e
+            available = True
+
+    if last_error is not None and available:
+        print(
+            f"Warning: could not verify find-links {url} ({last_error!r}); keeping it",
+            flush=True,
+        )
 
     _find_links_availability_cache[url] = available
     return available
