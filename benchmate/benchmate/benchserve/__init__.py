@@ -28,7 +28,7 @@ The vllm (and numpy) imports are deferred inside functions so that benchmate
 stays importable in environments where vllm is not installed.
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 import bisect
 from collections import defaultdict
 import glob
@@ -356,7 +356,39 @@ _samples_hook = None
 
 def add_real_text_options(parser):
     # real text instead of random token ids, same lengths (--random-input-len / --random-output-len)
-    parser.add_argument("--real-text", action="store_true")
+    # --no-real-text: a pass overlay turns it off again (image passes of a VLM entry whose client argv has it)
+    parser.add_argument("--real-text", action=BooleanOptionalAction, default=False)
+    # cold: a fresh cache_salt on every request (test, warmup and measured ones), so a server with prefix
+    # caching on still prefills every prompt in full; warm: requests may reuse each other's prefixes
+    # (agent-shaped passes). auto: warm for --dataset-name prefix_repetition, cold otherwise, on vLLM only
+    parser.add_argument("--prefix-cache", choices=("auto", "cold", "warm"), default="auto")
+
+
+# set by benchmark() for the pass being run: salt every request (see --prefix-cache)
+_cold_requests = False
+
+
+def resolve_prefix_cache(args, backend: str | None) -> bool:
+    """True when every request of the pass gets its own cache_salt."""
+    mode = getattr(args, "prefix_cache", "auto")
+    if mode != "auto":
+        return mode == "cold"
+    # cache_salt is a vLLM request field: other engines may reject or ignore it
+    return args.dataset_name != "prefix_repetition" and (backend or "vllm") == "vllm"
+
+
+def _salted(request_func):
+    import dataclasses
+    import uuid
+
+    async def wrapped(request_func_input, *args, **kwargs):
+        if _cold_requests:
+            body = {**(request_func_input.extra_body or {}), "cache_salt": uuid.uuid4().hex}
+            request_func_input = dataclasses.replace(request_func_input, extra_body=body)
+        return await request_func(request_func_input, *args, **kwargs)
+
+    wrapped._milabench_salted = True
+    return wrapped
 
 
 def real_text_samples(args, tokenizer, datasets):
@@ -498,6 +530,13 @@ def _patch_vllm_bench(bench):
 
     bench.calculate_metrics = new_calculate_metrics
 
+    # --prefix-cache cold: the request functions add a fresh cache_salt (serve.py looks them up in this dict)
+    funcs = getattr(bench, "ASYNC_REQUEST_FUNCS", None)
+    if isinstance(funcs, dict):
+        for key, fn in list(funcs.items()):
+            if not getattr(fn, "_milabench_salted", False):
+                funcs[key] = _salted(fn)
+
 
 def benchmark(argv, *, samples_hook=None, parser_hook=None):
     """Run ``vllm bench serve <argv>`` in-process, instrumented.
@@ -519,7 +558,7 @@ def benchmark(argv, *, samples_hook=None, parser_hook=None):
     #
     # Other datasets: datasets.InstructCoderDataset / BlazeditDataset (coding),
     # datasets.MTBenchDataset (open ended writing), datasets.AIMODataset (reasoning)
-    global _samples_hook
+    global _samples_hook, _cold_requests
     import vllm.benchmarks.serve as bench
 
     _patch_vllm_bench(bench)
@@ -533,6 +572,10 @@ def benchmark(argv, *, samples_hook=None, parser_hook=None):
 
     print("BENCH:", " ".join(['vllm', 'bench', 'serve'] + argv))
     args = parser.parse_args(argv)
+    from benchmate.benchserve.quality import _server_section
+
+    _cold_requests = resolve_prefix_cache(args, _server_section()[0])
+    print(f"prefix cache: {'cold (cache_salt per request)' if _cold_requests else 'warm'}")
 
     bench.main(args)
     print("FINISHED")
@@ -741,6 +784,32 @@ recorder = PassRecorder()
 # pass kinds that report scores (accuracy, solve rate), not a rate: lm-eval, QualityBench, SWE-bench agent,
 # Terminal-Bench, BFCL (bfcl.py), retrieval quality (benchmarks/retrieval's client runs those passes itself)
 SCORE_PASSES = ("eval", "quality", "swebench", "terminalbench", "bfcl", "retrieval")
+
+
+def pass_context(spec: dict) -> int | None:
+    """Tokens one request of a throughput pass needs (prompt + reply), from its argv overlay; None when the pass
+    does not say (score passes, image datasets)."""
+    argv = spec.get("argv") or {}
+    if "quality" in spec or "eval" in spec:
+        return None
+
+    def num(key):
+        value = argv.get(key)
+        return int(value) if value not in (None, True, False) else 0
+
+    if argv.get("--dataset-name") == "prefix_repetition":
+        return num("--prefix-repetition-prefix-len") + num("--prefix-repetition-suffix-len") \
+            + num("--prefix-repetition-output-len") or None
+    if "--random-input-len" in argv:
+        return num("--random-input-len") + num("--random-output-len")
+    return None
+
+
+def fits_context(spec: dict, max_model_len) -> bool:
+    """A pass runs only when its requests fit the server's --max-model-len (unset: always): one pass list for
+    every deployment, the 256k point left out where the model has 131k."""
+    need = pass_context(spec)
+    return need is None or not max_model_len or need <= int(max_model_len)
 
 
 def is_score_pass(spec: dict) -> bool:

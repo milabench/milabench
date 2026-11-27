@@ -35,6 +35,9 @@ _batch_settings:
       --max-num-seqs: 256
       --max-model-len: 10240   # longdoc: 8192 in + 512 out
       --max-num-batched-tokens: 16384
+      # the LLM entries it inherits serve agents with prefix caching on: off here, as before (every document cold)
+      --enable-prefix-caching: null
+      --no-enable-prefix-caching: true
   client:
     passes: &batch_passes
       - {name: summarize, argv: {--max-concurrency: 256, --num-warmups: 256, --num-prompts: 1024, --random-input-len: 2048, --random-output-len: 256}}

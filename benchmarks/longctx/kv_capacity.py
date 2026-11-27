@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """How many long-context sessions fit next to each model: KV cache per session and sessions per context length.
 
-    <milabench venv>/bin/python benchmarks/longctx/kv_capacity.py config/homelab/longctx.yaml [--fraction 0.65] [--json out.json]
+    <milabench venv>/bin/python benchmarks/longctx/kv_capacity.py config/homelab/text.yaml [--fraction 0.65] [--json out.json]
 
 No GPU, no server: the model's config.json and weights size (HF cache, else config.json from the Hub) and the
 machine's memory. The budget is what a vLLM server gets on unified memory (milabench.commands.serving):

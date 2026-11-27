@@ -2,9 +2,15 @@
 # Run the homelab suite (config/homelab/) on this machine, with the node sampler and the memory guard.
 #
 #   nohup scripts/homelab/run.sh > $MILABENCH_BASE/runs/homelab.<stamp>.log 2>&1 &
-#   CONFIG=coding-agent.yaml scripts/homelab/run.sh ...                     # another homelab config
+#   CONFIG=vision.yaml scripts/homelab/run.sh ...                           # another homelab config
 #   RESUME=<run name> SELECT=a,b scripts/homelab/run.sh >> <log> 2>&1      # rerun benches into a run
 #   STEPS="install prepare" scripts/homelab/run.sh                          # only some steps
+#   CONFIG=/opt/work/benchdevenv/configs/x.yaml scripts/homelab/run.sh      # an ad hoc config (absolute path)
+#   QUALITY=probe scripts/homelab/run.sh ...    # quality passes at the quick tier (a tenth of the items), whatever
+#                                               # the config says (QUALITY=full: every item); use its own run name
+#   OVERRIDE="*.quality_toggle.tasks=[lcb] *.quality_toggle.thinking=[on]" scripts/homelab/run.sh ...
+#                                               # milabench --override, one per space-separated item
+#   PASSES=quality,bfcl-ext scripts/homelab/run.sh ...   # only these client passes (by name) of each bench
 #
 # Per run folder ($MILABENCH_BASE/runs/<run name>):
 #   *.data                 milabench's events (throughput, accuracy, GPU power/temperature per bench)
@@ -32,7 +38,8 @@ PY="$MILABENCH_VENV/bin/python"
 MB="$MILABENCH_VENV/bin/milabench"
 
 export MILABENCH_GPU_ARCH=${MILABENCH_GPU_ARCH:-cuda}
-export MILABENCH_CONFIG=$MILABENCH_SRC/config/homelab/${CONFIG:-all.yaml}
+CONFIG=${CONFIG:-all.yaml}
+if [[ $CONFIG == /* ]]; then export MILABENCH_CONFIG=$CONFIG; else export MILABENCH_CONFIG=$MILABENCH_SRC/config/homelab/$CONFIG; fi
 export MILABENCH_SYSTEM=${MILABENCH_SYSTEM:-$MILABENCH_BASE/data/system.yaml}
 export MILABENCH_SIZER_CONFIG=${MILABENCH_SIZER_CONFIG:-$MILABENCH_BASE/runs/scaling.yaml}
 export MILABENCH_SIZER_SAVE=${MILABENCH_SIZER_SAVE:-$MILABENCH_BASE/runs/scaling.yaml}
@@ -90,6 +97,16 @@ RUN_DIR=$MILABENCH_BASE/runs/$RUN_NAME
 STEPS=${STEPS:-install prepare run report}
 [[ -n ${RESUME:-} ]] && STEPS=${STEPS_RESUME:-run report}
 ARGS=(--base "$MILABENCH_BASE" --config "$MILABENCH_CONFIG" --system "$MILABENCH_SYSTEM")
+# switches over the whole config (milabench --override; "*" is merged over every bench)
+case ${QUALITY:-} in
+    "") ;;
+    probe|quick|full) OVERRIDE="${OVERRIDE:-} *.quality_toggle.tier=${QUALITY}" ;;
+    *) echo "QUALITY=$QUALITY: expected probe or full" >&2; exit 2 ;;
+esac
+# PASSES=a,b: only the client passes of these names (text.yaml: PASSES=quality,bfcl-ext; SELECT=<entry> reruns one report row); a bench with none left is skipped
+[[ -n ${PASSES:-} ]] && OVERRIDE="${OVERRIDE:-} *.passes_toggle=[${PASSES}]"
+read -r -a OVERRIDES <<< "${OVERRIDE:-}"  # split on spaces, no glob expansion of "*"
+for o in "${OVERRIDES[@]}"; do ARGS+=(--override "$o"); done
 SEL=()
 [[ -n ${SELECT:-} ]] && SEL=(--select "$SELECT")
 PREP_SEL=("${SEL[@]}")

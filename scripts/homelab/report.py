@@ -354,7 +354,11 @@ def read_bench(path: str, gpu_rows, mem_rows) -> dict | None:
         # a single-mode run under "off" whatever the mode (gpt-oss, scored thinking on, came back as "off")
         mode = re.search(r"\.thinking-(on|off)\.json$", str(ev.get("results") or ""))
         thinking = mode.group(1) if mode else ev.get("thinking")
-        if str(row.get("bench", "")).endswith((".lcbfull", "-lcbfull")):  # the full tier (lcb-full.yaml; llama.cpp benches have no pass)
+        bench_name = str(row.get("bench", ""))
+        if bench_name.endswith((".lcbfull", "-lcbfull")):  # the full tier (lcb-full.yaml; llama.cpp benches have no pass)
+            task = f"{task}_full"
+        # the quality pass says its tier: LiveCodeBench at the full tier is the 175 problems, wherever it ran
+        elif task == "lcb" and ev.get("tier") == "full":
             task = f"{task}_full"
         key = f"acc.{ev.get('suite', 'lmeval')}.{task}" + (f".think-{thinking}" if thinking else "")
         scores = ev.get("scores") or {}

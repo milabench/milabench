@@ -68,7 +68,11 @@ _comfyui:
 #   fill4k   1 stream, 4k in / 512 out        the same with a 4k context
 #   conc8    8 streams, 1k in / 512 out
 #   conc32  32 streams, 1k in / 512 out       aggregate throughput
-#   quality QualityBench quick tier (accuracy on the same server, see benchmate/benchserve/quality.py)
+#   quality QualityBench, full tier, on the same server (see benchmate/benchserve/quality.py): every task at
+#           every item, LiveCodeBench's 175 problems with replies up to 32k tokens. Thinking off; the LLM
+#           deployments of text.yaml (_llm_vllm) run their own pass lists (thinking modes, agent, long context).
+#           Which tasks / how many items: the task map in the pass below (quick = a fixed tenth, full = all).
+#           A smoke run: QUALITY=probe scripts/homelab/run.sh (every task quick), with its own run name.
 # Every pass first sends --num-warmups requests (= its concurrency), not measured.
 # Requests are real text (--real-text, same lengths as random): speculative decoding (MTP, DFlash2)
 # only pays off on text a model can predict, random token ids reject almost every draft.
@@ -81,7 +85,7 @@ _serving:
   install_group: homelab-serving
   enabled: false  # only leaf jobs enable
   num_machines: 1
-  max_duration: 7200
+  max_duration: 86400  # the full-tier quality pass: hours (QualityBench's deadline cuts it cleanly before this)
   plan:
     method: njobs
     n: 1
@@ -111,9 +115,17 @@ _serving:
       - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
       - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
       - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      # accuracy on the same server, before the 32-user pass (the heaviest: a crash there then costs only it): QualityBench quick tier (every tenth pinned item, greedy), thinking off.
-      # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...)
-      - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      # accuracy on the same server, before the 32-user pass (the heaviest: a crash there then costs only it).
+      # Tasks the server cannot run as configured are skipped (logprobs with speculative decoding, ...).
+      # lcb max_tokens: QualityBench caps LiveCodeBench answers at 4096 tokens with thinking off, and models that
+      # reason in their answer (Qwen3, Nemotron) lost half the problems there.
+      - name: quality
+        quality:
+          thinking: ["off"]
+          thinking_max_tokens: 32768
+          preflight_retry: true
+          reply_window: 3600
+          tasks: {gsm8k: full, ifeval: full, mmlu_pro: full, humaneval: full, mbpp: full, lcb: {tier: full, max_tokens: 32768}, logprobs: full}
       - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
 
 _serving_vllm:
@@ -125,7 +137,7 @@ _serving_vllm:
     argv:
       --served-model-name: model
       --gpu-memory-utilization: 0.90
-      --max-model-len: 16384
+      --max-model-len: 40960  # the quality pass: 32k of reply + the prompt
       --max-num-seqs: 32
       --kv-cache-dtype: fp8
       --no-enable-prefix-caching: true
@@ -139,6 +151,14 @@ _serving_vllm:
 _serving_vllm_32gb:
   inherits: _serving_vllm
   max_duration: 7200
+  # an 8k context: no room for the full pass' 32k replies, so the quick tier with the default reply limits
+  client:
+    passes:
+      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - {name: quality, quality: {tier: quick, thinking: ["off"], tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
+      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
       --dtype: bfloat16

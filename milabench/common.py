@@ -55,7 +55,8 @@ class CommonArguments:
 
 def get_multipack(args, run_name=None, overrides={}):
     override = [
-        o if re.match(pattern=r"[.\w]+=", string=o) else f"={o}" for o in args.override
+        # a key path: bench names have dashes, and "*" is the entry merged over every bench
+        o if re.match(pattern=r"[.\w*-]+=", string=o) else f"={o}" for o in args.override
     ]
 
     override.extend(

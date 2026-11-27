@@ -1,4 +1,4 @@
-"""A pinned, small RULER slice for the long-context benches (config/homelab/longctx.yaml), as lm-eval tasks.
+"""A pinned, small RULER slice for the long-context benches (config/homelab/text.yaml: the ruler pass of each LLM deployment), as lm-eval tasks.
 
 lm-eval's own RULER tasks (lm_eval/tasks/ruler) generate 500 samples per length and only at 4k unless
 ``--metadata`` is given, which the serving client's ``eval`` pass does not pass. These tasks reuse lm-eval's
@@ -41,7 +41,28 @@ def _settings(kwargs: dict) -> tuple[list[int], int]:
     unknown = sorted(set(map(int, lengths)) - set(ALL_LENGTHS))
     if unknown:
         raise ValueError(f"ruler_lengths {unknown} not in the tasks' metric_list {ALL_LENGTHS}")
-    return [int(n) for n in lengths], samples
+    # a length needs ~1k more than itself (template + answer): the ones the server's context cannot hold are
+    # dropped (reported -1), so one ruler_lengths serves every deployment
+    max_len = _server_max_model_len()
+    lengths = [int(n) for n in lengths if not max_len or int(n) + RULER_MARGIN <= max_len]
+    return lengths, samples
+
+
+RULER_MARGIN = 1024
+
+
+def _server_max_model_len() -> int | None:
+    """--max-model-len of the benchmark's server (shared section merged with the arch variant), from
+    MILABENCH_CONFIG; None outside milabench or when unset."""
+    try:
+        cfg = json.loads(os.environ.get("MILABENCH_CONFIG", "{}"))
+    except json.JSONDecodeError:
+        return None
+    arch = (cfg.get("system") or {}).get("arch", "cuda")
+    shared = (cfg.get("server") or {}).get("argv") or {}
+    variant = ((((cfg.get("variants") or {}).get(arch) or {}).get("server") or {}).get("argv")) or {}
+    value = {**shared, **variant}.get("--max-model-len")
+    return int(value) if value not in (None, True, False) else None
 
 
 def _tokenizer(kwargs: dict):

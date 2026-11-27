@@ -107,7 +107,12 @@ class Serving(Package):
     def client_passes(self) -> list[dict]:
         # same lookup as main.py: the arch variant's passes replace the shared ones
         variant = self._variant().get("client") or {}
-        return variant.get("passes") or (self.config.get("client") or {}).get("passes") or []
+        passes = variant.get("passes") or (self.config.get("client") or {}).get("passes") or []
+        # passes whose requests exceed the server's context are left out (not run, not failed)
+        from benchmate.benchserve import fits_context
+
+        max_len = (self._merged_section("server").get("argv") or {}).get("--max-model-len")
+        return [spec for spec in passes if fits_context(spec, max_len)]
 
     @property
     def argv(self):

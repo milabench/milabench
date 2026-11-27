@@ -2,9 +2,9 @@
 # Homelab — image understanding (vision-language models): document / chart / OCR question answering,
 # college-level visual questions, image description.
 #
-# Most models already in text.yaml are VLMs whose checkpoints carry the vision tower (Gemma 4, Qwen3.6 / 3.8,
-# Nemotron 3.5 Bolt, EXAONE 4.5, Muse Glimmer): each is reused here as is (same weights, engine flags and
-# drafter: no new download), with the vision passes below. Then dedicated VLMs that are not in the suite.
+# The VLMs of text.yaml's LLM deployments (Gemma 4, Qwen3.6 / 3.8, Nemotron 3.5 Bolt, EXAONE 4.5, Muse Glimmer,
+# Inkling) run these image passes in their own entry there (img1 ... vqa, same settings as below). Here: the
+# 32 GB-card set's small Gemma 4 (its own server profile), then dedicated VLMs that are not in the suite.
 #
 # benchmarks/vlm = benchmarks/serving's package (milabench runs the vLLM server) with its own client:
 #
@@ -19,7 +19,7 @@
 # Power / energy and memory: the GPU monitor of each pass (its own .data file), as for every serving bench.
 #
 #   milabench run --config homelab/vision.yaml --select vision
-# (text.yaml is included for the parents: without --select its benches run too, as with coding-agent.yaml)
+# (text.yaml is included for the parents: without --select its benches run too)
 # =============================================================================
 
 include:
@@ -84,86 +84,6 @@ homelab-vlm-gemma4-e4b-bf16:
   tags: [vision]
   server: {argv: {<<: *vision_server}}
   client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Gemma 4 26B-A4B NVFP4 (vision tower kept in BF16), MTP drafter ---
-homelab-vlm-gemma4-26b-a4b-nvfp4-mtp:
-  inherits: homelab-vllm-gemma4-26b-a4b-nvfp4-mtp
-  definition: ../../benchmarks/vlm
-  tags: [vision]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Gemma 4 31B dense: NVFP4 vs FP8 block vs Google's QAT W4A16, same drafter (format comparison with images;
-# every vision tower stays unquantized in the three) ---
-homelab-vlm-gemma4-31b-nvfp4-mtp:
-  inherits: homelab-vllm-gemma4-31b-nvfp4-mtp
-  definition: ../../benchmarks/vlm
-  tags: [vision, vision-quant-compare]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-homelab-vlm-gemma4-31b-fp8-mtp:
-  inherits: homelab-vllm-gemma4-31b-fp8-mtp
-  definition: ../../benchmarks/vlm
-  tags: [vision, vision-quant-compare]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-homelab-vlm-gemma4-31b-qat-w4a16-mtp:
-  inherits: homelab-vllm-gemma4-31b-qat-w4a16-mtp
-  definition: ../../benchmarks/vlm
-  enabled: false  # third format of the same model: on when the comparison is wanted (cached, ~40 min)
-  tags: [vision, vision-quant-compare]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Qwen3.6-35B-A3B NVFP4 (natively multimodal Qwen3.5 architecture), MTP ---
-homelab-vlm-qwen36-35b-a3b-nvfp4-mtp:
-  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
-  definition: ../../benchmarks/vlm
-  tags: [vision]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Qwen3.8-27B (Qwen's current flagship VLM size that fits): NVFP4 vs Qwen's FP8, DFlash 2 drafter ---
-homelab-vlm-qwen38-27b-nvfp4-dflash2:
-  inherits: homelab-vllm-qwen38-27b-nvfp4-dflash2
-  definition: ../../benchmarks/vlm
-  tags: [vision, vision-quant-compare]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-homelab-vlm-qwen38-27b-fp8-dflash2:
-  inherits: homelab-vllm-qwen38-27b-fp8-dflash2
-  definition: ../../benchmarks/vlm
-  tags: [vision, vision-quant-compare]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Nemotron 3.5 Bolt 74B-A9B "24GB" (2-bit QAT experts; Omni: image tower in the checkpoint), LiLiCorr ---
-homelab-vlm-nemotron35-bolt-74b-a9b-24gb-dflash:
-  inherits: homelab-vllm-nemotron35-bolt-74b-a9b-24gb-dflash
-  definition: ../../benchmarks/vlm
-  tags: [vision]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- EXAONE 4.5 33B AWQ (EXAONE license: its own terms), no MTP (see text.yaml) ---
-homelab-vlm-exaone45-33b-awq:
-  inherits: homelab-vllm-exaone45-33b-awq-mtp
-  definition: ../../benchmarks/vlm
-  tags: [vision]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes}
-
-# --- Muse Glimmer 30B NVFP4 (always reasons: larger answer budget, scored on the content after it) ---
-homelab-vlm-muse-glimmer-30b-nvfp4-dflash:
-  inherits: homelab-vllm-muse-glimmer-30b-nvfp4-dflash
-  definition: ../../benchmarks/vlm
-  max_duration: 14400
-  tags: [vision]
-  server: {argv: {<<: *vision_server}}
-  client: {argv: {<<: *vision_client}, passes: *vision_passes_reasoning}
 
 # =============================================================================
 # Dedicated VLMs not in the suite (new downloads)

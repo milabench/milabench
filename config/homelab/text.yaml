@@ -20,6 +20,211 @@
 include:
   - _base.yaml
 
+# =============================================================================
+# One entry per LLM deployment (homelab-vllm-<model>): every measurement of the report runs on that one server.
+#
+# A deployment = the weights, the engine and the server flags. A second entry exists only when one of those
+# differs (another quantization, a KV dtype comparison, the batch-tuned servers of batch.yaml, the 32 GB-card
+# set below). Reproduce a row of the report: scripts/homelab/run.sh with SELECT=<entry>; part of it only:
+# PASSES=quality,bfcl-ext (the pass names below), QUALITY=probe (QualityBench's quick tier).
+#
+# The server (_llm_vllm): the model's native context up to 262144 (131072 for gpt-oss / Muse Glimmer), prefix
+# caching on, 32 sequences, the model's tool-call and reasoning parsers; VLMs also take one image per request.
+# Prefix caching on serves the agent passes (a resent context is not prefilled again); the other speed passes
+# send a fresh cache_salt with every request (benchserve --prefix-cache, auto): each prompt is prefilled in full.
+#
+# The passes, in order (a pass that needs more context than the server has is left out, e.g. ctx256k at 131k):
+#   single / fill4k / conc8      1 / 1 / 8 streams of 1k / 4k / 1k real text in, 512 out
+#   ctx8k ... ctx256k            1 stream, an 8k-256k real-text prompt, 256 out: the prefill of a whole document
+#                                (TTFT), decode speed at that depth; conc4-32k: 4 documents of 32k at once
+#   ctx32k-1 / ctx32k-4 / ctx60k-4  agent-shaped load: 1 / 4 sessions, each a 32k / 60k shared context continued
+#                                by 1k-token turns (512 out), prefix cache warm: only the new turn is prefilled
+#   quality                      QualityBench, full tier: gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb (32k
+#                                replies), logprobs, bfcl (400 tool calls), needle (32k / 128k haystacks); hybrids
+#                                thinking off and on, always-reasoning models on, non-thinking models off
+#   bfcl-ext / bfcl-lat          BFCL categories QualityBench leaves out (every 2nd item), tool-call latency
+#   ruler                        RULER slice (multi-key / multi-value NIAH, variable tracking, HotpotQA) at
+#                                8k-128k, lengths beyond the context dropped
+#   img1 / img8 / desc1 / desc8 / vqa   VLMs only: DocVQA pages and image descriptions (1 / 8 users), accuracy on
+#                                DocVQA / ChartQA / OCRBench / MMMU slices (see vision.yaml)
+#   swebench                     mini-swe-agent on 50 SWE-bench Verified tasks, 4 at a time
+#   terminalbench                Terminus-2 on the 89 Terminal-Bench 2.0 tasks, 4 at a time (4-10 h)
+#   conc32                       32 streams, last: the heaviest load, a crash there costs only it
+# A full run: 1-3 days per model (quality in two thinking modes and Terminal-Bench are most of it).
+# Needs a container runtime (SWE-bench, Terminal-Bench, QualityBench's sandboxes).
+# =============================================================================
+
+_llm_vllm:
+  inherits: _serving_vllm
+  max_duration: 345600  # every pass of the deployment, Terminal-Bench included
+  tags: [longctx, agent]  # benchmarks/longctx/kv_capacity.py reads the longctx ones
+  longctx:
+    ruler_lengths: [8192, 32768, 65536, 131072]  # beyond --max-model-len: dropped
+    ruler_samples: 8
+  server:
+    argv:
+      --max-model-len: 262144
+      --max-num-seqs: 32
+      --no-enable-prefix-caching: null
+      --enable-prefix-caching: true
+      --enable-auto-tool-choice: true
+
+# the passes, one list per kind of model; the items are shared (anchors), the lists differ in thinking modes and
+# the image passes. Change a pass here, every deployment changes.
+_llm_passes:
+  client:
+    hybrid: &llm_hybrid
+      - &single {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
+      - &fill4k {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
+      - &conc8  {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
+      - &ctx8k     {name: ctx8k,     argv: {--max-concurrency: 1, --num-warmups: 1, --num-prompts: 4, --random-input-len: 8192,   --random-output-len: 256}}
+      - &ctx32k    {name: ctx32k,    argv: {--max-concurrency: 1, --num-warmups: 1, --num-prompts: 4, --random-input-len: 32768,  --random-output-len: 256}}
+      - &ctx64k    {name: ctx64k,    argv: {--max-concurrency: 1, --num-warmups: 0, --num-prompts: 3, --random-input-len: 65536,  --random-output-len: 256}}
+      - &ctx128k   {name: ctx128k,   argv: {--max-concurrency: 1, --num-warmups: 0, --num-prompts: 3, --random-input-len: 130048, --random-output-len: 256}}
+      - &ctx256k   {name: ctx256k,   argv: {--max-concurrency: 1, --num-warmups: 0, --num-prompts: 2, --random-input-len: 260096, --random-output-len: 256}}
+      - &conc4_32k {name: conc4-32k, argv: {--max-concurrency: 4, --num-warmups: 0, --num-prompts: 8, --random-input-len: 32768,  --random-output-len: 256}}
+      - &ctx32k_1 {name: ctx32k-1, argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 32000, --prefix-repetition-suffix-len: 1000, --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 1, --max-concurrency: 1, --num-warmups: 1, --num-prompts: 8}}
+      - &ctx32k_4 {name: ctx32k-4, argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 32000, --prefix-repetition-suffix-len: 1000, --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 4, --max-concurrency: 4, --num-warmups: 4, --num-prompts: 32}}
+      - &ctx60k_4 {name: ctx60k-4, argv: {--dataset-name: prefix_repetition, --prefix-repetition-prefix-len: 60000, --prefix-repetition-suffix-len: 1000, --prefix-repetition-output-len: 512, --prefix-repetition-num-prefixes: 4, --max-concurrency: 4, --num-warmups: 4, --num-prompts: 32}}
+      - &quality_off_on
+        name: quality
+        quality:
+          thinking: ["off", "on"]
+          thinking_max_tokens: 32768
+          preflight_retry: true
+          reply_window: 3600
+          tasks: {gsm8k: full, ifeval: full, mmlu_pro: full, humaneval: full, mbpp: full, lcb: {tier: full, max_tokens: 32768}, logprobs: full, bfcl: full, needle: full}
+      - &bfcl_ext_off {name: bfcl-ext, bfcl: {every: 2, threads: 16, thinking: ["off"]}}
+      - &bfcl_lat_off {name: bfcl-lat, bfcl: {categories: [simple_python, parallel_multiple, multi_turn_base], every: 10, threads: 1, thinking: ["off"]}}
+      # task paths relative to the serving client's cwd (benchmarks/serving or benchmarks/vlm)
+      - &ruler_off
+        name: ruler
+        eval:
+          tasks: &ruler_tasks
+            - ../longctx/eval_tasks/longctx_ruler_niah_multikey.yaml
+            - ../longctx/eval_tasks/longctx_ruler_niah_multivalue.yaml
+            - ../longctx/eval_tasks/longctx_ruler_vt.yaml
+            - ../longctx/eval_tasks/longctx_ruler_qa_hotpot.yaml
+          num_concurrent: 4
+          # every task's own answer length (30-128 tokens) is below 128; templates without the switch ignore it
+          gen_kwargs: {max_gen_toks: 128, temperature: 0, chat_template_kwargs: {enable_thinking: false}}
+          log_samples: true
+      - &swebench {name: swebench, swebench: {tier: quick, workers: 4, step_limit: 250, temperature: 0.0, config: swebench.yaml}}
+      - &terminalbench {name: terminalbench, terminalbench: {tasks: full, harness: terminus-2, attempts: 1, workers: 4, timeout_multiplier: 1.0, thinking: null, temperature: 0.6, max_tokens: 16384, context: 65536}}
+      - &conc32 {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
+
+    # hybrids that read images: the same, plus the image passes (benchmarks/vlm's client, chat endpoint)
+    hybrid_vlm: &llm_hybrid_vlm
+      - *single
+      - *fill4k
+      - *conc8
+      - *ctx8k
+      - *ctx32k
+      - *ctx64k
+      - *ctx128k
+      - *ctx256k
+      - *conc4_32k
+      - *ctx32k_1
+      - *ctx32k_4
+      - *ctx60k_4
+      - *quality_off_on
+      - *bfcl_ext_off
+      - *bfcl_lat_off
+      - *ruler_off
+      - &img1  {name: img1,  argv: {<<: &image_argv {--backend: openai-chat, --endpoint: /v1/chat/completions, --no-real-text: true, --custom-ensure-client-side-data: true, --dataset-name: custom_image},
+                                    --dataset-path: vlm/perf-doc.jsonl, --custom-output-len: 64, --max-concurrency: 1, --num-warmups: 1, --num-prompts: 16}}
+      - &img8  {name: img8,  argv: {<<: *image_argv, --dataset-path: vlm/perf-doc.jsonl, --custom-output-len: 64, --max-concurrency: 8, --num-warmups: 8, --num-prompts: 64}}
+      - &desc1 {name: desc1, argv: {<<: *image_argv, --dataset-path: vlm/perf-describe.jsonl, --custom-output-len: 256, --max-concurrency: 1, --num-warmups: 1, --num-prompts: 8}}
+      - &desc8 {name: desc8, argv: {<<: *image_argv, --dataset-path: vlm/perf-describe.jsonl, --custom-output-len: 256, --max-concurrency: 8, --num-warmups: 8, --num-prompts: 48}}
+      # ignored by templates without the switch (Gemma 4 does not think unless asked)
+      - {name: vqa, vqa: {tier: quick, concurrency: 8, max_tokens: 256, tasks: [docvqa, chartqa, ocrbench, mmmu], chat_template_kwargs: {enable_thinking: false}}}
+      - *swebench
+      - *terminalbench
+      - *conc32
+
+    # always reasoning (no off switch): thinking on everywhere, room for the reasoning before short answers
+    reasoning: &llm_reasoning
+      - *single
+      - *fill4k
+      - *conc8
+      - *ctx8k
+      - *ctx32k
+      - *ctx64k
+      - *ctx128k
+      - *ctx256k
+      - *conc4_32k
+      - *ctx32k_1
+      - *ctx32k_4
+      - *ctx60k_4
+      - &quality_on
+        name: quality
+        quality:
+          thinking: ["on"]
+          thinking_max_tokens: 32768
+          preflight_retry: true
+          reply_window: 3600
+          tasks: {gsm8k: full, ifeval: full, mmlu_pro: full, humaneval: full, mbpp: full, lcb: full, logprobs: full, bfcl: full, needle: full}
+      - &bfcl_ext_on {name: bfcl-ext, bfcl: {every: 2, threads: 16, thinking: ["on"]}}
+      - &bfcl_lat_on {name: bfcl-lat, bfcl: {categories: [simple_python, parallel_multiple, multi_turn_base], every: 10, threads: 1, thinking: ["on"]}}
+      - &ruler_on {name: ruler, eval: {tasks: *ruler_tasks, num_concurrent: 4, gen_kwargs: {max_gen_toks: 4096, temperature: 0}, log_samples: true}}
+      - *swebench
+      - *terminalbench
+      - *conc32
+
+    reasoning_vlm: &llm_reasoning_vlm
+      - *single
+      - *fill4k
+      - *conc8
+      - *ctx8k
+      - *ctx32k
+      - *ctx64k
+      - *ctx128k
+      - *ctx256k
+      - *conc4_32k
+      - *ctx32k_1
+      - *ctx32k_4
+      - *ctx60k_4
+      - *quality_on
+      - *bfcl_ext_on
+      - *bfcl_lat_on
+      - *ruler_on
+      - *img1
+      - *img8
+      - *desc1
+      - *desc8
+      - {name: vqa, vqa: {tier: quick, concurrency: 8, max_tokens: 4096, tasks: [docvqa, chartqa, ocrbench, mmmu]}}
+      - *swebench
+      - *terminalbench
+      - *conc32
+
+    # non-thinking models: thinking off everywhere
+    plain: &llm_plain
+      - *single
+      - *fill4k
+      - *conc8
+      - *ctx8k
+      - *ctx32k
+      - *ctx64k
+      - *ctx128k
+      - *ctx256k
+      - *conc4_32k
+      - *ctx32k_1
+      - *ctx32k_4
+      - *ctx60k_4
+      - name: quality
+        quality:
+          thinking: ["off"]
+          thinking_max_tokens: 32768
+          preflight_retry: true
+          reply_window: 3600
+          tasks: {gsm8k: full, ifeval: full, mmlu_pro: full, humaneval: full, mbpp: full, lcb: {tier: full, max_tokens: 32768}, logprobs: full, bfcl: full, needle: full}
+      - *bfcl_ext_off
+      - *bfcl_lat_off
+      - *ruler_off
+      - *swebench
+      - *terminalbench
+      - *conc32
+
 homelab-llm-chat:
   inherits: _inference
   tags:
@@ -575,7 +780,8 @@ homelab-llamacpp-xbai-o4-q8-quality:
 
 # --- Qwen3.6-35B-A3B NVFP4, MTP 3-token draft (its built-in MTP head) ---
 homelab-vllm-qwen36-35b-a3b-nvfp4-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -585,17 +791,21 @@ homelab-vllm-qwen36-35b-a3b-nvfp4-mtp:
     - mtp
   url: https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: nvidia/Qwen3.6-35B-A3B-NVFP4
   server:
     argv:
+      --tool-call-parser: qwen3_xml
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/Qwen3.6-35B-A3B-NVFP4: true
       --trust-remote-code: true
       --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
 
 # --- Qwen3-Coder-30B-A3B AWQ 4-bit ---
 homelab-vllm-qwen3-coder-30b-a3b-awq:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
   tags:
@@ -604,15 +814,17 @@ homelab-vllm-qwen3-coder-30b-a3b-awq:
     - awq
   url: https://huggingface.co/cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit
   client:
+    passes: *llm_plain
     argv:
       --model: cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit
   server:
     argv:
+      --tool-call-parser: qwen3_coder
       cyankiwi/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit: true
 
 # --- Nemotron 3 Nano 30B-A3B NVFP4 (hybrid Mamba-MoE) ---
 homelab-vllm-nemotron3-nano-30b-a3b-nvfp4:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
   tags:
@@ -621,18 +833,22 @@ homelab-vllm-nemotron3-nano-30b-a3b-nvfp4:
     - nvfp4
   url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
   client:
+    passes: *llm_hybrid
     argv:
       --model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
       --trust-remote-code: true
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: nemotron_v3
       nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4: true
       --trust-remote-code: true
 
 # --- Gemma 4 26B-A4B NVFP4, Gemma 4's MTP drafter (the "assistant" model; vLLM gemma4_mtp,
 # detected from the drafter's config) ---
 homelab-vllm-gemma4-26b-a4b-nvfp4-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -642,17 +858,22 @@ homelab-vllm-gemma4-26b-a4b-nvfp4-mtp:
     - mtp
   url: https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: nvidia/Gemma-4-26B-A4B-NVFP4
   server:
     argv:
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/Gemma-4-26B-A4B-NVFP4: true
       --trust-remote-code: true
       --speculative-config: '{"model": "google/gemma-4-26B-A4B-it-assistant", "num_speculative_tokens": 3}'
 
 # --- Qwen3.8-27B NVFP4, DFlash 2 block-diffusion drafter (8-token block = 7 draft tokens) ---
 homelab-vllm-qwen38-27b-nvfp4-dflash2:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -662,10 +883,14 @@ homelab-vllm-qwen38-27b-nvfp4-dflash2:
     - dflash
   url: https://huggingface.co/nvidia/Qwen3.8-27B-NVFP4
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: nvidia/Qwen3.8-27B-NVFP4
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/Qwen3.8-27B-NVFP4: true
       --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
 
@@ -702,7 +927,8 @@ homelab-sglang-qwen38-27b-nvfp4-dflash2:
 
 # --- Qwen3.6-27B NVFP4, no draft ---
 homelab-vllm-qwen36-27b-nvfp4:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -711,18 +937,21 @@ homelab-vllm-qwen36-27b-nvfp4:
     - nvfp4
   url: https://huggingface.co/nvidia/Qwen3.6-27B-NVFP4
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: nvidia/Qwen3.6-27B-NVFP4
   server:
     argv:
+      --tool-call-parser: qwen3_xml
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/Qwen3.6-27B-NVFP4: true
 
 # --- gpt-oss-120b MXFP4 (65 GB of weights), plus a 256-stream pass for the aggregate number ---
 homelab-vllm-gptoss-120b-mxfp4:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
-  max_duration: 5400
   tags:
     - text
     - moe
@@ -731,14 +960,34 @@ homelab-vllm-gptoss-120b-mxfp4:
   client:
     argv:
       --model: openai/gpt-oss-120b
+    # the reasoning list (always reasons: thinking on), RULER at low effort (its 4096-token budget holds the
+    # reasoning and the answer), and a 256-stream pass for the aggregate number
     passes:
-      - {name: single,  argv: {--max-concurrency: 1,   --num-warmups: 1,   --num-prompts: 8,    --random-input-len: 1024, --random-output-len: 512}}
-      - {name: fill4k,  argv: {--max-concurrency: 1,   --num-warmups: 1,   --num-prompts: 8,    --random-input-len: 4096, --random-output-len: 512}}
-      - {name: conc8,   argv: {--max-concurrency: 8,   --num-warmups: 8,   --num-prompts: 40,   --random-input-len: 1024, --random-output-len: 512}}
-      - {name: conc32,  argv: {--max-concurrency: 32,  --num-warmups: 32,  --num-prompts: 160,  --random-input-len: 1024, --random-output-len: 512}}
+      - *single
+      - *fill4k
+      - *conc8
+      - *ctx8k
+      - *ctx32k
+      - *ctx64k
+      - *ctx128k
+      - *ctx256k
+      - *conc4_32k
+      - *ctx32k_1
+      - *ctx32k_4
+      - *ctx60k_4
+      - *quality_on
+      - *bfcl_ext_on
+      - *bfcl_lat_on
+      - {name: ruler, eval: {tasks: *ruler_tasks, num_concurrent: 4, gen_kwargs: {max_gen_toks: 4096, temperature: 0, reasoning_effort: low}, log_samples: true}}
+      - *swebench
+      - *terminalbench
+      - *conc32
       - {name: conc256, argv: {--max-concurrency: 256, --num-warmups: 256, --num-prompts: 1024, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
+      --tool-call-parser: openai
+      --reasoning-parser: openai_gptoss
+      --max-model-len: 131072  # the model's native context
       openai/gpt-oss-120b: true
       --max-num-seqs: 256
       # gpt-oss: its own attention sinks, keep the KV cache in bf16
@@ -747,7 +996,7 @@ homelab-vllm-gptoss-120b-mxfp4:
 # --- Qwen3-Coder-Next 80B-A3B NVFP4 (Qwen3-Next hybrid: Gated DeltaNet + attention, 44 GB of weights),
 # the successor of Qwen3-Coder-30B-A3B; non-thinking ---
 homelab-vllm-qwen3-coder-next-nvfp4:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
   tags:
@@ -756,17 +1005,20 @@ homelab-vllm-qwen3-coder-next-nvfp4:
     - nvfp4
   url: https://huggingface.co/RedHatAI/Qwen3-Coder-Next-NVFP4
   client:
+    passes: *llm_plain
     argv:
       --model: RedHatAI/Qwen3-Coder-Next-NVFP4
   server:
     argv:
+      --tool-call-parser: qwen3_coder
       RedHatAI/Qwen3-Coder-Next-NVFP4: true
 
 # --- Nemotron 3.5 Bolt 74B-A9B "24GB" (hybrid Mamba-MoE VLM, NVIDIA's native 2-bit QAT experts, 22.5 GB
 # of weights: fits a 32 GB card), NVIDIA's LiLiCorr DFlash drafter (7 draft tokens). Backends from the
 # model card (b12x: Blackwell kernels for its 2-bit experts) ---
 homelab-vllm-nemotron35-bolt-74b-a9b-24gb-dflash:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -776,11 +1028,15 @@ homelab-vllm-nemotron35-bolt-74b-a9b-24gb-dflash:
     - dflash
   url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
       --trust-remote-code: true
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: nemotron_v3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB: true
       --trust-remote-code: true
       --linear-backend: b12x
@@ -792,11 +1048,10 @@ homelab-vllm-nemotron35-bolt-74b-a9b-24gb-dflash:
 # its built-in MTP head (3 draft tokens; NVIDIA's Spark recipe uses the separate MTPv2 head instead).
 # MoE on Marlin as in the card's DGX Spark recipe ---
 homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
   # ~1 h of throughput passes (24 tok/s for one user on a GB10) and ~50 min of quality
-  max_duration: 9000
   tags:
     - text
     - moe
@@ -804,11 +1059,14 @@ homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp:
     - mtp
   url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
   client:
+    passes: *llm_hybrid
     argv:
       --model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
       --trust-remote-code: true
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: nemotron_v3
       nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4: true
       --trust-remote-code: true
       --moe-backend: marlin
@@ -818,7 +1076,8 @@ homelab-vllm-nemotron3-super-120b-a12b-nvfp4-mtp:
 # --- Gemma 4 31B dense NVFP4 (22 GB of weights: fits a 32 GB card), Gemma 4's MTP drafter, the dense
 # counterpart of the 26B-A4B entry ---
 homelab-vllm-gemma4-31b-nvfp4-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -828,10 +1087,14 @@ homelab-vllm-gemma4-31b-nvfp4-mtp:
     - mtp
   url: https://huggingface.co/RedHatAI/gemma-4-31B-it-NVFP4
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: RedHatAI/gemma-4-31B-it-NVFP4
   server:
     argv:
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       RedHatAI/gemma-4-31B-it-NVFP4: true
       --trust-remote-code: true
       --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
@@ -839,7 +1102,7 @@ homelab-vllm-gemma4-31b-nvfp4-mtp:
 # --- Kimi-Linear 48B-A3B AWQ 4-bit (Kimi Delta Attention: linear attention in 3 of 4 layers, so its KV
 # cache barely grows with context; 28 GB of weights) ---
 homelab-vllm-kimi-linear-48b-a3b-awq:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
   tags:
@@ -850,12 +1113,14 @@ homelab-vllm-kimi-linear-48b-a3b-awq:
   # tokenizer from the original repo (same tokenizer): the AWQ repo's tokenization_kimi.py still imports
   # bytes_to_unicode from transformers.models.gpt2, gone in transformers 5 (moonshotai's copy is fixed)
   client:
+    passes: *llm_plain
     argv:
       --model: cyankiwi/Kimi-Linear-48B-A3B-Instruct-AWQ-4bit
       --tokenizer: moonshotai/Kimi-Linear-48B-A3B-Instruct
       --trust-remote-code: true
   server:
     argv:
+      --tool-call-parser: kimi_k2
       cyankiwi/Kimi-Linear-48B-A3B-Instruct-AWQ-4bit: true
       --tokenizer: moonshotai/Kimi-Linear-48B-A3B-Instruct
       --trust-remote-code: true
@@ -867,10 +1132,10 @@ homelab-vllm-kimi-linear-48b-a3b-awq:
 # --- Muse Glimmer 30B dense (Meta; hybrid attention, its own Mamba-style state), NVIDIA's NVFP4 (23 GB:
 # fits a 32 GB card), Meta's DFlash drafter (16-token blocks = 15 draft tokens) ---
 homelab-vllm-muse-glimmer-30b-nvfp4-dflash:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
-  max_duration: 14400  # thinking on
   tags:
     - text
     - dense
@@ -878,24 +1143,22 @@ homelab-vllm-muse-glimmer-30b-nvfp4-dflash:
     - dflash
   url: https://huggingface.co/nvidia/Muse-Glimmer-30B-NVFP4
   client:
+    passes: *llm_reasoning_vlm
     argv:
       --model: nvidia/Muse-Glimmer-30B-NVFP4
       --trust-remote-code: true
     # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
     # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
-    passes:
-      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
-      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
-      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
+      --tool-call-parser: muse_glimmer
+      --reasoning-parser: muse_glimmer
+      --max-model-len: 131072  # the model's native context
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       nvidia/Muse-Glimmer-30B-NVFP4: true
       --trust-remote-code: true
       --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
       # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
-      --reasoning-parser: muse_glimmer
 
 # --- Inkling 2 Mini (Thinking Machines, 2026-11-20): looped MoE, 26.4B total / 3.4B active (5.4B effective: the
 # middle 12 layers run 3 passes), trained and shipped in 4-bit (NVFP4 experts, MXFP8 last 4 layers), 20 GB, with a
@@ -908,10 +1171,10 @@ homelab-vllm-muse-glimmer-30b-nvfp4-dflash:
 # Always reasons (its template has reasoning_effort, default 0.9 "high", and no off switch; the lowest effort
 # still reasons): scored thinking on, as Muse Glimmer. ---
 homelab-vllm-inkling2-mini-dspark:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
-  max_duration: 14400  # thinking on
   tags:
     - text
     - moe
@@ -920,33 +1183,44 @@ homelab-vllm-inkling2-mini-dspark:
     - container
   url: https://huggingface.co/thinkingmachines/Inkling-2-Mini
   client:
+    passes: *llm_reasoning_vlm
     argv:
       --model: thinkingmachines/Inkling-2-Mini
-    passes:
-      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
-      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
-      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     command: [podman, run, --rm, --replace, --name, milabench-inkling2-mini, --device, nvidia.com/gpu=all,
               --ipc=host, --network=host, -v, /opt/milabench/data/hub:/opt/milabench/data/hub,
               -e, HF_HUB_CACHE=/opt/milabench/data/hub, -e, HF_HUB_OFFLINE=1,
               docker.io/vllm/vllm-openai:inkling-2-mini]
     argv:
+      --tool-call-parser: inkling
+      --reasoning-parser: inkling
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       thinkingmachines/Inkling-2-Mini: true
       --tensor-parallel-size: 1
       --speculative-config: '{"method": "dspark", "num_speculative_tokens": 7, "draft_sample_method": "probabilistic"}'
-      --reasoning-parser: inkling
       # the recipe sets no KV dtype: its own (looped passes keep separate KV caches)
       --kv-cache-dtype: auto
       --safetensors-load-strategy: eager
       --kv-cache-memory-bytes: 25769803776  # 24 GiB
 
+# Inkling 2 Mini at reasoning effort "none": its nearest to thinking off (the template has no off switch and the
+# model still reasons a little, so QualityBench runs it as "on"). The pair of the entry above (effort 0.9, the
+# template default). Quality only: the speed passes are the entry above's.
+homelab-vllm-inkling2-mini-dspark-effort-none:
+  inherits: homelab-vllm-inkling2-mini-dspark
+  client:
+    passes:
+      - {name: quality, quality: {thinking: ["on"], thinking_max_tokens: 32768, preflight_retry: true, reply_window: 3600,
+                                  tasks: {gsm8k: full, ifeval: full, mmlu_pro: full, humaneval: full, mbpp: full, lcb: full, logprobs: full}}}
+  server:
+    argv:
+      --default-chat-template-kwargs: '{"reasoning_effort": "none"}'
+
 # --- EXAONE 4.5 33B dense (LG AI Research; VLM), LG's own AWQ 4-bit (21 GB: fits a 32 GB card), its
 # built-in MTP head (3 draft tokens), as in LG's model card. EXAONE license (its own terms) ---
 homelab-vllm-exaone45-33b-awq-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -956,10 +1230,14 @@ homelab-vllm-exaone45-33b-awq-mtp:
     - mtp
   url: https://huggingface.co/LGAI-EXAONE/EXAONE-4.5-33B-AWQ
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: LGAI-EXAONE/EXAONE-4.5-33B-AWQ
   server:
     argv:
+      --tool-call-parser: hermes
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       LGAI-EXAONE/EXAONE-4.5-33B-AWQ: true
       # no MTP: vLLM 0.33 drafts with EXAONE 4.5's MTP head but accepts none of it (0.0% over thousands of
       # draft tokens, 2026-11-13: the head's weights are in the checkpoint, its loading is not), a pure slowdown
@@ -974,7 +1252,8 @@ homelab-vllm-exaone45-33b-awq-mtp:
 # --- Gemma 4 31B, Google's quantization-aware-trained 4-bit (W4A16, compressed-tensors, 22 GB): the
 # 4-bit quality reference against the post-training NVFP4 of homelab-vllm-gemma4-31b-nvfp4-mtp ---
 homelab-vllm-gemma4-31b-qat-w4a16-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -985,17 +1264,22 @@ homelab-vllm-gemma4-31b-qat-w4a16-mtp:
     - mtp
   url: https://huggingface.co/google/gemma-4-31B-it-qat-w4a16-ct
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: google/gemma-4-31B-it-qat-w4a16-ct
   server:
     argv:
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       google/gemma-4-31B-it-qat-w4a16-ct: true
       --trust-remote-code: true
       --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
 
 # --- Gemma 4 31B FP8 block-scaled (31 GB): the 8-bit upper bound of the 4-bit entries ---
 homelab-vllm-gemma4-31b-fp8-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -1005,37 +1289,43 @@ homelab-vllm-gemma4-31b-fp8-mtp:
     - mtp
   url: https://huggingface.co/RedHatAI/gemma-4-31B-it-FP8-block
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: RedHatAI/gemma-4-31B-it-FP8-block
   server:
     argv:
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       RedHatAI/gemma-4-31B-it-FP8-block: true
       --trust-remote-code: true
       --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
 
 # --- Qwen3-Coder-Next FP8, Qwen's own release (75 GB: Spark-class memory), against the NVFP4 entry ---
 homelab-vllm-qwen3-coder-next-fp8:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
   enabled: true
   weight: 1
-  max_duration: 5400
   tags:
     - text
     - moe
     - fp8
   url: https://huggingface.co/Qwen/Qwen3-Coder-Next-FP8
   client:
+    passes: *llm_plain
     argv:
       --model: Qwen/Qwen3-Coder-Next-FP8
   server:
     argv:
+      --tool-call-parser: qwen3_coder
       Qwen/Qwen3-Coder-Next-FP8: true
 
 # --- Nemotron 3.5 Bolt 74B-A9B, community NVFP4 W4A16 of the BF16 release (NVIDIA's Nemotron NVFP4
 # recipe, ModelOpt, 48 GB; vLLM runs it on Marlin), against NVIDIA's 2-bit QAT "24GB" build. No drafter:
 # LiLiCorr was trained against the 24GB build, so compare its speed with the 24GB entry's quality only ---
 homelab-vllm-nemotron35-bolt-74b-a9b-nvfp4-w4a16:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -1045,18 +1335,23 @@ homelab-vllm-nemotron35-bolt-74b-a9b-nvfp4-w4a16:
     - w4a16
   url: https://huggingface.co/sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16
       --trust-remote-code: true
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: nemotron_v3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       sapidlabs/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-NVFP4-W4A16: true
       --trust-remote-code: true
       --mamba-ssm-cache-dtype: bfloat16
 
 # --- Qwen3.8-27B FP8, Qwen's own release (29 GB), same DFlash 2 drafter as the NVFP4 entry ---
 homelab-vllm-qwen38-27b-fp8-dflash2:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -1066,19 +1361,23 @@ homelab-vllm-qwen38-27b-fp8-dflash2:
     - dflash
   url: https://huggingface.co/Qwen/Qwen3.8-27B-FP8
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: Qwen/Qwen3.8-27B-FP8
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       Qwen/Qwen3.8-27B-FP8: true
       --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
 
 # --- Muse Glimmer 30B FP8 block-scaled (32 GB: Spark-class memory), same drafter as the NVFP4 entry ---
 homelab-vllm-muse-glimmer-30b-fp8-dflash:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
-  max_duration: 14400  # thinking on
   tags:
     - text
     - dense
@@ -1086,28 +1385,27 @@ homelab-vllm-muse-glimmer-30b-fp8-dflash:
     - dflash
   url: https://huggingface.co/RedHatAI/Muse-Glimmer-30B-FP8-block
   client:
+    passes: *llm_reasoning_vlm
     argv:
       --model: RedHatAI/Muse-Glimmer-30B-FP8-block
       --trust-remote-code: true
     # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
     # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
-    passes:
-      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
-      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
-      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
+      --tool-call-parser: muse_glimmer
+      --reasoning-parser: muse_glimmer
+      --max-model-len: 131072  # the model's native context
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       RedHatAI/Muse-Glimmer-30B-FP8-block: true
       --trust-remote-code: true
       --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
       # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
-      --reasoning-parser: muse_glimmer
 
 # --- EXAONE 4.5 33B FP8, LG's own release (38 GB: Spark-class memory), same MTP head as the AWQ entry ---
 homelab-vllm-exaone45-33b-fp8-mtp:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
   tags:
@@ -1117,10 +1415,14 @@ homelab-vllm-exaone45-33b-fp8-mtp:
     - mtp
   url: https://huggingface.co/LGAI-EXAONE/EXAONE-4.5-33B-FP8
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: LGAI-EXAONE/EXAONE-4.5-33B-FP8
   server:
     argv:
+      --tool-call-parser: hermes
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       LGAI-EXAONE/EXAONE-4.5-33B-FP8: true
       # no MTP: vLLM 0.33 drafts with EXAONE 4.5's MTP head but accepts none of it (0.0% over thousands of
       # draft tokens, 2026-11-13: the head's weights are in the checkpoint, its loading is not), a pure slowdown
@@ -1130,10 +1432,10 @@ homelab-vllm-exaone45-33b-fp8-mtp:
 # --- Qwen3.8-27B BF16, the unquantized release (56 GB), same DFlash 2 drafter: the reference the FP8 and
 # NVFP4 entries lose against. Bandwidth-bound on a GB10 (273 GB/s): ~5 tok/s a stream before the drafter ---
 homelab-vllm-qwen38-27b-bf16-dflash2:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
-  max_duration: 14400
   tags:
     - text
     - dense
@@ -1141,20 +1443,24 @@ homelab-vllm-qwen38-27b-bf16-dflash2:
     - dflash
   url: https://huggingface.co/Qwen/Qwen3.8-27B
   client:
+    passes: *llm_hybrid_vlm
     argv:
       --model: Qwen/Qwen3.8-27B
   server:
     argv:
+      --tool-call-parser: qwen3_coder
+      --reasoning-parser: qwen3
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       Qwen/Qwen3.8-27B: true
       --speculative-config: '{"method": "dflash", "model": "z-lab/Qwen3.8-27B-DFlash2", "num_speculative_tokens": 7}'
 
 # --- Muse Glimmer 30B BF16, the unquantized release (60 GB), same drafter: the reference for the FP8 and
 # NVFP4 entries (and no NVFP4 kernels: tells them apart from the drafter if the NVFP4 entry hangs again) ---
 homelab-vllm-muse-glimmer-30b-bf16-dflash:
-  inherits: _serving_vllm
+  inherits: _llm_vllm
+  definition: ../../benchmarks/vlm  # the serving client plus the image passes
   enabled: true
   weight: 1
-  max_duration: 21600  # thinking on
   tags:
     - text
     - dense
@@ -1162,19 +1468,18 @@ homelab-vllm-muse-glimmer-30b-bf16-dflash:
     - dflash
   url: https://huggingface.co/meta-models/Muse-Glimmer-30B
   client:
+    passes: *llm_reasoning_vlm
     argv:
       --model: meta-models/Muse-Glimmer-30B
       --trust-remote-code: true
     # Muse always reasons (its channels have no off switch): QualityBench's thinking-off preflight gets
     # reasoning and no content, so it is scored thinking on, the reasoning capped to fit the 16k context
-    passes:
-      - {name: single, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 1024, --random-output-len: 512}}
-      - {name: fill4k, argv: {--max-concurrency: 1,  --num-warmups: 1,  --num-prompts: 8,   --random-input-len: 4096, --random-output-len: 512}}
-      - {name: conc8,  argv: {--max-concurrency: 8,  --num-warmups: 8,  --num-prompts: 40,  --random-input-len: 1024, --random-output-len: 512}}
-      - {name: quality, quality: {tier: quick, thinking: ["on"], thinking_max_tokens: 8192, tasks: [gsm8k, ifeval, mmlu_pro, humaneval, mbpp, lcb, logprobs]}}
-      - {name: conc32, argv: {--max-concurrency: 32, --num-warmups: 32, --num-prompts: 160, --random-input-len: 1024, --random-output-len: 512}}
   server:
     argv:
+      --tool-call-parser: muse_glimmer
+      --reasoning-parser: muse_glimmer
+      --max-model-len: 131072  # the model's native context
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'  # the image passes: one image per request
       meta-models/Muse-Glimmer-30B: true
       --trust-remote-code: true
       # 2 shards of ~28 GB: eager loading holds a whole shard in RAM next to its copy on the GPU (the same
@@ -1182,7 +1487,6 @@ homelab-vllm-muse-glimmer-30b-bf16-dflash:
       --safetensors-load-strategy: lazy
       --speculative-config: '{"method": "dflash", "model": "meta-models/Muse-Glimmer-30B-assistant", "num_speculative_tokens": 15}'
       # its chat format (channels and special tokens): without the parser the replies are fragments (" to=self")
-      --reasoning-parser: muse_glimmer
 
 homelab-llamacpp-glm53-flash-q2-quality:
   inherits: _llamacpp_quality
@@ -1380,3 +1684,98 @@ homelab-llamacpp-step35-flash-q3:
         --max-concurrency: "{concurrency}"
         --num-warmups: "{concurrency}"
         --num-prompts: "expr({concurrency} * 5)"
+
+
+# =============================================================================
+# Deployments that differ from the entry above them in one setting: their own entry, only the passes the
+# difference is about (formerly in longctx.yaml / agent.yaml)
+# =============================================================================
+
+# Qwen3.6-35B-A3B with an unquantized (bf16) KV cache: does the fp8 KV cache cost retrieval at 128k?
+homelab-vllm-qwen36-35b-a3b-nvfp4-mtp-kvbf16:
+  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
+  max_duration: 10800
+  tags: [longctx, kv-compare]
+  server:
+    argv:
+      --kv-cache-dtype: auto
+  client:
+    passes:
+      - *ctx32k
+      - *ctx128k
+      - {name: needle, quality: {tier: full, thinking: ["off"], tasks: [needle]}}
+      - *ruler_off
+
+# The 32 GB-card set at a 40k context with its tool-call parser: tool calling (BFCL) of the small models
+homelab-vllm-qwen3-8b-fp8-ctx40k:
+  inherits: homelab-vllm-qwen3-8b-fp8
+  max_duration: 7200
+  tags: [agent]
+  server:
+    argv:
+      --no-enable-prefix-caching: null
+      --enable-prefix-caching: true
+      --max-model-len: 40960
+      --max-num-seqs: 32
+      --enable-auto-tool-choice: true
+      --tool-call-parser: hermes
+      --reasoning-parser: qwen3
+  client:
+    passes:
+      - {name: quality, quality: {thinking: ["off"], tasks: {bfcl: full}}}
+
+homelab-vllm-gemma4-e4b-bf16-mtp-ctx40k:
+  inherits: homelab-vllm-gemma4-e4b-bf16-mtp
+  max_duration: 7200
+  tags: [agent]
+  server:
+    argv:
+      --no-enable-prefix-caching: null
+      --enable-prefix-caching: true
+      --max-model-len: 40960
+      --max-num-seqs: 32
+      --enable-auto-tool-choice: true
+      --tool-call-parser: gemma4
+      --reasoning-parser: gemma4
+  client:
+    passes:
+      - {name: quality, quality: {thinking: ["off"], tasks: {bfcl: full}}}
+
+# The largest open models as GGUF on llama.cpp: tool calling (llama-server --jinja parses the calls itself; the
+# template's tool format must be one llama.cpp's chat parser knows, check the first items)
+homelab-llamacpp-qwen38-flash-next-q3-bfcl:
+  inherits: homelab-llamacpp-qwen38-flash-next-q3-quality
+  max_duration: 14400
+  tags: [text, moe, gguf, agent]
+  server:
+    argv:
+      --quality-tier: full
+      --quality-tasks: bfcl
+
+homelab-llamacpp-deepseek-v4-flash-q2-bfcl:
+  inherits: homelab-llamacpp-deepseek-v4-flash-q2-quality
+  max_duration: 14400
+  tags: [text, moe, gguf, agent]
+  server:
+    argv:
+      --quality-tier: full
+      --quality-tasks: bfcl
+
+# GLM always reasons; one slot (102 GB of weights): the slowest entry
+homelab-llamacpp-glm53-flash-q2-bfcl:
+  inherits: homelab-llamacpp-glm53-flash-q2-quality
+  max_duration: 28800
+  tags: [text, moe, gguf, agent]
+  server:
+    argv:
+      --quality-tier: full
+      --quality-tasks: bfcl
+
+# A smoke test (3 easy Terminal-Bench tasks, ~15 min) on a small, fast candidate
+homelab-vllm-qwen36-35b-a3b-nvfp4-mtp-tbsmoke:
+  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
+  max_duration: 7200
+  tags: [smoke]
+  client:
+    passes:
+      - {name: terminalbench, terminalbench: {tasks: smoke, harness: terminus-2, attempts: 1, workers: 3, max_tokens: 8192, context: 65536}}
