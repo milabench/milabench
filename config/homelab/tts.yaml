@@ -1,0 +1,258 @@
+# =============================================================================
+# Homelab — text-to-speech and the voice-assistant turn (DRAFT, not included from all.yaml)
+#
+# Every model is served by vLLM-Omni (`vllm serve <model> --omni`, the homelab-omni venv: vllm 0.33.0 +
+# vllm-omni 0.33.0rc1 on aarch64) with its stock deploy file (auto-selected from the model type). The client
+# is benchmarks/tts (POST /v1/audio/speech, or /v1/chat/completions with audio out for the omni models).
+# Inputs are the pinned English texts of benchmarks/tts/texts.py (short assistant replies, narration
+# paragraphs, assistant questions); each model speaks in a preset voice or a fixed voice-design prompt
+# (no voice cloning: no reference recording to pin).
+#
+# Memory: the per-stage gpu_memory_utilization of the stock deploy files sits inside them, out of reach of
+# MILABENCH_GPU_MEMORY_FRACTION_MAX (it caps command-line flags, and each stage of a --stage-overrides JSON, not
+# the deploy file or the stages' sum): where a deploy file reserves more than ~0.72 in all (0.8 - 0.9 for
+# several), --stage-overrides lowers it so the Spark's 0.75 ceiling holds.
+#
+#   homelab-tts-kokoro-82m          Kokoro 82M            tiny, non-autoregressive: the speed floor
+#   homelab-tts-qwen3-tts-0.6b      Qwen3-TTS 0.6B        small streaming LM + 12 Hz codec
+#   homelab-tts-qwen3-tts-1.7b      Qwen3-TTS 1.7B        the most used open streaming TTS (Jan 2026)
+#   homelab-tts-voxcpm2             VoxCPM2 2B            tokenizer-free diffusion-AR (Apr 2026)
+#   homelab-tts-voxtral-4b          Voxtral 4B TTS        Mistral, preset voices
+#   homelab-tts-breeze-tts2         Breeze-TTS-2 3B       open-weights Speech Arena leader (Aug 2026)
+#   homelab-tts-higgs-audio-v3-4b   Higgs Audio v3 4B     Boson AI (Jun 2026)
+#   homelab-tts-fish-drama3         Fish Audio Drama 3    largest open TTS (~20B MoE, 41 GB), arena leader (Oct 2026)
+#   homelab-tts-omnivoice           OmniVoice             masked-diffusion non-autoregressive (Mar 2026)
+#   homelab-voice-qwen3-omni-30b    Qwen3-Omni-30B-A3B    voice assistant: text / speech in -> speech out (disabled)
+#   homelab-voice-minicpm-o-4.5     MiniCPM-o 4.5 9B      smaller omni assistant (disabled)
+#
+# Client passes (one server per model, one result per pass, <bench>.<pass>):
+#   single     1 stream, short replies, streamed PCM   time to first audio (ttfa_s), real-time factor (rtf_x)
+#   paragraph  1 stream, narration paragraphs          long-form real-time factor
+#   conc4      4 streams, short replies                aggregate throughput (rate = audio s per wall s)
+#   conc16    16 streams, short replies                the same, loaded
+#   wer        4 streams, every text once, WAV         + round-trip word error rate: openai/whisper-large-v3
+#                                                      (already cached for homelab-asr-whisper) transcribes
+#                                                      the first take of each text, after the timed steps
+# Rate of every pass = seconds of audio produced per second of wall time (x real time, all streams).
+# Energy comes from voir's GPU power samples (gpu_poll 0.5 s), memory from its memory samples.
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_tts:
+  inherits: _defaults
+  definition: ../../benchmarks/tts
+  group: tts
+  install_group: homelab-omni
+  enabled: false  # only leaf jobs enable
+  num_machines: 1
+  max_duration: 3600
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - omni
+    - audio
+    - tts
+    - homelab
+    - monogpu
+  voir:
+    options:
+      # several passes: each stops on its --max-steps
+      stop: 1000000
+      gpu_poll: 0.5
+  server:
+    backend: vllm-omni
+    argv:
+      # vllm-omni gives a stage 300 s to come up: Fish Drama 3's 15 shards took 4 min from a cold page cache, then
+      # its CUDA graph capture ran past it (2026-11-23). 20 min for every model; a healthy start is unaffected
+      --stage-init-timeout: 1200
+  client:
+    argv:
+      --mode: speech
+      --warmup: 1
+      --ready-check-timeout-sec: 3600
+    passes:
+      - {name: single,    argv: {--texts: short,     --concurrency: 1,  --max-steps: 24}}
+      - {name: paragraph, argv: {--texts: paragraph, --concurrency: 1,  --max-steps: 8}}
+      - {name: conc4,     argv: {--texts: short,     --concurrency: 4,  --max-steps: 12}}
+      - {name: conc16,    argv: {--texts: short,     --concurrency: 16, --max-steps: 6}}
+      - {name: wer,       argv: {--texts: all,       --concurrency: 4,  --max-steps: 4, --no-stream: true, --wer: true, --warmup: 0}}
+
+# --- Kokoro-82M (Apache-2.0, 0.36 GB): StyleTTS2-style, fp32, one forward per <=510-phoneme chunk.
+# Stock deploy: max_num_seqs 4, requests of a step run one after another (no batched forward yet). ---
+homelab-tts-kokoro-82m:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/hexgrad/Kokoro-82M
+  server:
+    argv:
+      hexgrad/Kokoro-82M: true
+  client:
+    argv:
+      --voice: af_heart
+
+# --- Qwen3-TTS 12 Hz (Apache-2.0): talker LM -> code2wav, async-chunk streaming (stock qwen3_tts.yaml,
+# Model Runner V2). CustomVoice checkpoints: nine preset speakers; "ryan" is a native English one. ---
+homelab-tts-qwen3-tts-0.6b:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+  server:
+    argv:
+      Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice: true
+  client:
+    argv:
+      --voice: ryan
+      --task-type: CustomVoice
+      --language: English
+
+homelab-tts-qwen3-tts-1.7b:
+  inherits: homelab-tts-qwen3-tts-0.6b
+  url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+  server:
+    argv:
+      Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice: null
+      Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice: true
+
+# --- VoxCPM2 (Apache-2.0, 5 GB): tokenizer-free diffusion-autoregressive TTS, 48 kHz. No preset voice:
+# plain text gets the model's own default voice (fixed seed per request). ---
+homelab-tts-voxcpm2:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/openbmb/VoxCPM2
+  server:
+    argv:
+      openbmb/VoxCPM2: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.3}}'
+
+# --- Voxtral-4B-TTS-2603 (CC-BY-NC-4.0, 8 GB): Mistral, generator -> audio tokenizer, preset voice
+# embeddings (voice_embedding/*.pt). Mistral-format checkpoint (params.json, tekken.json). ---
+homelab-tts-voxtral-4b:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/mistralai/Voxtral-4B-TTS-2603
+  server:
+    argv:
+      mistralai/Voxtral-4B-TTS-2603: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.4}, "1": {"gpu_memory_utilization": 0.1}}'
+  client:
+    argv:
+      --voice: neutral_female
+
+# --- Breeze-TTS-2 (BreezeBlue research & non-commercial license, 7.7 GB): top open-weights model of the
+# Speech Arena in Aug 2026. Without a reference recording it runs VoiceDesign: the voice comes from a prompt. ---
+homelab-tts-breeze-tts2:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/BreezeBlue/Breeze-TTS-2
+  server:
+    argv:
+      BreezeBlue/Breeze-TTS-2: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.4}, "1": {"gpu_memory_utilization": 0.12}}'
+  client:
+    argv:
+      --instructions: "A calm, clear adult female voice with a neutral American accent, speaking at a moderate pace."
+
+# --- Higgs Audio v3 TTS 4B (Boson research & non-commercial license, 9.3 GB): Qwen3 backbone + audio codec
+# head. Stock deploy higgs_multimodal_qwen3.yaml (= its high-throughput profile); plain text, default voice. ---
+homelab-tts-higgs-audio-v3-4b:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/bosonai/higgs-audio-v3-tts-4b
+  server:
+    argv:
+      bosonai/higgs-audio-v3-tts-4b: true
+      --trust-remote-code: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.4}, "1": {"gpu_memory_utilization": 0.15}}'
+
+# --- Fish Audio Drama 3 (Fish Audio research license, 41.5 GB bf16): Qwen3.5-MoE backbone + S2 Pro DAC codec,
+# the open-weights Speech Arena leader since Oct 2026, and the largest TTS here. Stock fish_omni.yaml: both
+# stages share the GPU through a private CUDA MPS daemon (check it starts on the GB10). ---
+homelab-tts-fish-drama3:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  max_duration: 5400
+  url: https://huggingface.co/fishaudio/drama-3
+  server:
+    argv:
+      fishaudio/drama-3: true
+      # stage 0 at 0.6 (72 GB for a ~40 GB model) left 18 GB, and the 16-stream pass crashed in its warmup
+      # (NV_ERR_NO_MEMORY, MPS RPC failure, 2026-11-25): 0.45 frees ~18 GB for the codec and activations
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.45}, "1": {"gpu_memory_utilization": 0.1}}'
+
+# --- OmniVoice (k2-fsa, 3.3 GB; code Apache-2.0, weights CC-BY-NC): masked-diffusion non-autoregressive TTS
+# (32 unmasking steps, then DAC), 600+ languages. Its deploy names openai/whisper-large-v3-turbo as an ASR helper:
+# only loaded for a reference recording without its transcript, never here. ---
+homelab-tts-omnivoice:
+  inherits: _tts
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/k2-fsa/OmniVoice
+  server:
+    argv:
+      k2-fsa/OmniVoice: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.3}}'
+
+# -----------------------------------------------------------------------------
+# Voice assistant (omni models): one turn = question in, spoken answer out, streamed over
+# /v1/chat/completions (SSE: text deltas + WAV chunks). ttfa_s = time to the first audio chunk (what the
+# user waits for), ttft_s = time to the first text token.
+#   reply      1 stream, text question -> spoken answer
+#   voice-in   1 stream, spoken question -> spoken answer: each question is first read aloud by the model
+#              itself (untimed, --audio-input self), then sent as the user's audio turn; + WER of the
+#              answer's audio against the answer's own text (does the voice say what the model wrote)
+#   conc4      4 streams, text question
+# -----------------------------------------------------------------------------
+
+_voice_omni:
+  inherits: _tts
+  max_duration: 5400
+  tags:
+    - voice
+  client:
+    argv:
+      --mode: chat
+      --max-tokens: 256
+    passes:
+      - {name: reply,    argv: {--concurrency: 1, --max-steps: 16}}
+      - {name: voice-in, argv: {--concurrency: 1, --max-steps: 16, --audio-input: self, --wer: true}}
+      - {name: conc4,    argv: {--concurrency: 4, --max-steps: 8}}
+
+# --- Qwen3-Omni-30B-A3B-Instruct (Apache-2.0, 70.5 GB bf16): thinker (MoE, 3B active) -> talker -> code2wav.
+# The stock deploy puts stages 1 and 2 on a second GPU: --stage-overrides keeps all three on device 0, the
+# fractions add up to 0.72 (under the Spark's 0.75 cap: MILABENCH_GPU_MEMORY_FRACTION_MAX clamps each stage
+# of the JSON, not their sum). DISABLED: 70 GB download, and the one-device layout is unverified. ---
+homelab-voice-qwen3-omni-30b:
+  inherits: _voice_omni
+  enabled: false
+  weight: 1
+  url: https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct
+  server:
+    argv:
+      Qwen/Qwen3-Omni-30B-A3B-Instruct: true
+      --stage-overrides: '{"0": {"devices": "0", "gpu_memory_utilization": 0.6, "max_num_seqs": 8, "max_model_len": 8192}, "1": {"devices": "0", "gpu_memory_utilization": 0.08, "max_num_seqs": 8}, "2": {"devices": "0", "gpu_memory_utilization": 0.04, "max_num_seqs": 8}}'
+
+# --- MiniCPM-o 4.5 (Apache-2.0, 20 GB): 9B omni (SigLIP + Whisper encoders, Qwen3-8B LLM, CosyVoice2-style
+# token2wav). Its stock minicpmo_4_5.yaml already puts the three stages on one GPU but reserves
+# 0.55 + 0.15 + 0.18 = 0.88: the overrides bring it to 0.72, under the Spark's 0.75 cap.
+# DISABLED: unverified; the smaller omni size point, with or instead of Qwen3-Omni. ---
+homelab-voice-minicpm-o-4.5:
+  inherits: _voice_omni
+  enabled: false
+  weight: 1
+  url: https://huggingface.co/openbmb/MiniCPM-o-4_5
+  server:
+    argv:
+      openbmb/MiniCPM-o-4_5: true
+      --trust-remote-code: true
+      --stage-overrides: '{"0": {"gpu_memory_utilization": 0.45}, "1": {"gpu_memory_utilization": 0.12}, "2": {"gpu_memory_utilization": 0.15}}'

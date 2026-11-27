@@ -1,0 +1,20 @@
+# Same venv as benchmarks/unsloth (install_group: unsloth): keep the two dependency lists compatible.
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "argklass",
+    "datasets",
+    "nvidia-ml-py",
+]
+
+[cuda]
+dependencies = [
+    "torch",
+    "unsloth",
+]
+
+[xpu]
+platform_constraints = false
+dependencies = [
+    "unsloth[intel-gpu-torch210] @ git+https://github.com/unslothai/unsloth.git",
+]

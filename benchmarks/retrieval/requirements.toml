@@ -1,0 +1,36 @@
+# Embedding / reranking serving (vLLM pooling runner). Shares the homelab-serving venv with benchmarks/serving
+# (install_group homelab-serving): the same vLLM, nothing of its own beyond what serving already installs.
+
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "torch",
+    "numpy",
+]
+
+[cuda]
+dependencies = [
+    "vllm",
+    "vllm[bench]",
+    "flashinfer-python",
+    "flashinfer-cubin",
+]
+
+[rocm]
+dependencies = [
+    "vllm",
+    "vllm[bench]",
+    "amdsmi",
+]
+
+[cpu]
+dependencies = [
+    "vllm",
+    "vllm[bench]",
+]
+
+[hpu]
+enabled = false
+
+[xpu]
+enabled = false

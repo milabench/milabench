@@ -1,0 +1,670 @@
+# =============================================================================
+# Homelab — OCR and document parsing: "how fast and how well can I digitize my documents"
+# (a PDF page or a scan -> Markdown: tables, formulas, multi-column layouts, scans, handwriting, French)
+#
+#   homelab-docparse-<model>       a served VLM (benchmarks/docparse): milabench runs vLLM, the client sends
+#                                  page images with the model's own recipe (prompt, render, sampling, output)
+#     dedicated OCR models         olmOCR-2, dots.mocr, DeepSeek-OCR-2, PaddleOCR-VL-1.6, Nanonets-OCR2,
+#                                  MinerU2.5-Pro, Granite-Docling, chandra-ocr-2, LightOnOCR-3, GLM-OCR,
+#                                  Nemotron-3.5-Parse
+#     general VLMs                 Qwen3-VL-8B, Qwen3.6-35B-A3B, Gemma 4 31B / 26B-A4B / E4B, Qwen3.5-2B
+#   homelab-docparse-<pipeline>    classic pipelines, no LLM (benchmarks/docparse_pipeline): tesseract,
+#                                  PP-OCRv6 (RapidOCR / ONNX), docling
+#
+# Every bench runs the same three client passes (one result each, <bench>.<pass>):
+#   c1        pages/min, 1 page at a time: the first 4 pages of each group of the fixed speed set (20 pages:
+#             scans, tables, formulas, multi-column, French forms)
+#   c8        pages/min, 8 pages in flight: the whole fixed speed set (56 pages)
+#   quality   the quick tier of olmOCR-bench (105 PDFs), OmniDocBench v1.6 (~90 pages), and two
+#             omni_parse_bench slices: French (103 pages: CERFA forms, French handwriting, multi-column) and
+#             handwriting (86 pages); each scored by its official scorer (benchmarks/docparse/scoring.py)
+# Speed passes push a pass_summary (pages_per_min, page latency, output tok/s) whose window gives the pass'
+# energy and peak memory; quality pushes one eval_summary per task (suite docparse, scores.acc 0-1).
+# Pages are rendered before the clock starts. The data is pinned and fetched by prepare (offline after it).
+#
+# Memory: on the GB10's unified memory the peak is what vLLM reserves, so each server gets a fixed budget
+# (--gpu-memory-utilization), sized to the model, not the 0.90 of the text benches. KV cache in the model's
+# own dtype (not FP8): OCR output is long verbatim text, and some OCR architectures do not take an FP8 KV cache.
+# =============================================================================
+
+include:
+  - _base.yaml
+
+# -----------------------------------------------------------------------------
+# Served VLMs: vLLM (homelab-serving venv, vLLM 0.33), one server per model
+# -----------------------------------------------------------------------------
+
+_docparse_vllm:
+  inherits: _serving_vllm
+  definition: ../../benchmarks/docparse
+  group: docparse
+  install_group: homelab-serving
+  max_duration: 10800
+  tags:
+    - docparse
+  server:
+    argv:
+      --kv-cache-dtype: auto
+      --max-model-len: 16384
+      --max-num-seqs: 16
+      --gpu-memory-utilization: 0.35
+      --limit-mm-per-prompt: '{"image": 1}'
+  client:
+    argv:
+      --ready-check-timeout-sec: 3600  # first run downloads the weights
+    passes:
+      - {name: c1, docparse: {mode: speed, concurrency: 1, per_group: 4}}
+      - {name: c8, docparse: {mode: speed, concurrency: 8}}
+      - {name: quality, docparse: {mode: quality, tier: quick, tasks: [olmocr, omnidocbench, opb_fr, opb_hw], concurrency: 8}}
+
+# The prompt of the general VLMs (they have no OCR prompt of their own); dedicated models use their card's.
+_docparse_vlm_general:
+  inherits: _docparse_vllm
+  tags:
+    - vlm-general
+  docparse:
+    output: markdown
+    render: {dpi: 200, long_edge: 2048}
+    max_tokens: 8192
+    temperature: 0.0
+    extra_body:
+      chat_template_kwargs: {enable_thinking: false}
+    prompt: >-
+      Convert this document page to Markdown. Transcribe all of its text exactly, in its original language
+      (do not translate), in natural reading order (columns one after the other). Write headings as Markdown
+      headings, tables as HTML tables, and equations as LaTeX ($...$ inline, $$...$$ for display equations).
+      Omit page headers, page footers and page numbers. Output only the page content, without comments.
+
+# --- olmOCR-2 7B FP8 (allenai, Apache-2.0; Qwen2.5-VL-7B fine-tune, 10.1 GB): the olmOCR-bench reference,
+# RL-trained on its unit tests ---
+homelab-docparse-olmocr2-7b-fp8:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, fp8]
+  url: https://huggingface.co/allenai/olmOCR-2-7B-1025-FP8
+  client:
+    argv:
+      --model: allenai/olmOCR-2-7B-1025-FP8
+  server:
+    argv:
+      allenai/olmOCR-2-7B-1025-FP8: true
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+  docparse:
+    # olmOCR's own pipeline: pdftoppm to a 1288 px long edge, the v4 YAML prompt before the image, first
+    # attempt at temperature 0.1, at most 8000 tokens (its retries at higher temperatures are not replayed)
+    render: {dpi: 200, long_edge: 1288}
+    text_first: true
+    output: olmocr
+    max_tokens: 8000
+    temperature: 0.1
+    prompt: >-
+      Attached is one page of a document that you must process. Just return the plain text representation of
+      this document as if you were reading it naturally. Convert equations to LateX and tables to HTML.
+
+      If there are any figures or charts, label them with the following markdown syntax
+      ![Alt text describing the contents of the figure](page_startx_starty_width_height.png)
+
+      Return your output as markdown, with a front matter section on top specifying values for the
+      primary_language, is_rotation_valid, rotation_correction, is_table, and is_diagram parameters.
+
+# --- dots.mocr (rednote / dots-studio, MIT; 3B, 6.1 GB BF16): dots.ocr's March-2026 successor, same
+# architecture; one request returns the page's layout blocks with their text ---
+homelab-docparse-dots-mocr:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/dots-studio/dots.mocr
+  client:
+    argv:
+      --model: dots-studio/dots.mocr
+  server:
+    argv:
+      dots-studio/dots.mocr: true
+      --trust-remote-code: true
+      --chat-template-content-format: string
+      --max-model-len: 32768
+  docparse:
+    render: {dpi: 200}
+    output: dots_json
+    max_tokens: 24576
+    temperature: 0.1
+    # its parser's prompt_layout_all_en, after the image placeholder its chat template expects in the text
+    prompt: |-
+      <|img|><|imgpad|><|endofimg|>Please output the layout information from the PDF image, including each layout element's bbox, its category, and the corresponding text content within the bbox.
+
+      1. Bbox format: [x1, y1, x2, y2]
+
+      2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', 'Text', 'Title'].
+
+      3. Text Extraction & Formatting Rules:
+          - Picture: For the 'Picture' category, the text field should be omitted.
+          - Formula: Format its text as LaTeX.
+          - Table: Format its text as HTML.
+          - All Others (Text, Title, etc.): Format their text as Markdown.
+
+      4. Constraints:
+          - The output text must be the original text from the image, with no translation.
+          - All layout elements must be sorted according to human reading order.
+
+      5. Final Output: The entire output must be a single JSON object.
+
+# dots.ocr (July 2025, MIT, 6.1 GB): the original the user named; same recipe. Off: dots.mocr replaces it
+homelab-docparse-dots-ocr:
+  inherits: homelab-docparse-dots-mocr
+  enabled: false
+  url: https://huggingface.co/dots-studio/dots.ocr
+  client:
+    argv:
+      --model: dots-studio/dots.ocr
+  server:
+    argv:
+      dots-studio/dots.mocr: null
+      dots-studio/dots.ocr: true
+
+# --- DeepSeek-OCR-2 (deepseek-ai, Apache-2.0; 3B MoE decoder + DeepEncoder V2, 6.8 GB BF16): optical
+# compression (few vision tokens per page), vLLM-native (DeepseekOCR2ForCausalLM) ---
+homelab-docparse-deepseek-ocr2:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/deepseek-ai/DeepSeek-OCR-2
+  client:
+    argv:
+      --model: deepseek-ai/DeepSeek-OCR-2
+  server:
+    argv:
+      deepseek-ai/DeepSeek-OCR-2: true
+      --trust-remote-code: true
+      --mm-processor-cache-gb: 0
+      # its no-repeat n-gram processor (vLLM's port), set per request below
+      --logits-processors: vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor
+  docparse:
+    render: {dpi: 144}
+    output: deepseek
+    max_tokens: 8192
+    temperature: 0.0
+    prompt: "<|grounding|>Convert the document to markdown."
+    extra_body:
+      skip_special_tokens: false
+      # ngram 40 / window 90, <td> and </td> exempt: its repository's settings
+      vllm_xargs: {ngram_size: 40, window_size: 90, whitelist_token_ids: [128821, 128822]}
+
+# DeepSeek-OCR (v1, Oct 2025, MIT, 6.7 GB): off, v2 replaces it
+homelab-docparse-deepseek-ocr:
+  inherits: homelab-docparse-deepseek-ocr2
+  enabled: false
+  url: https://huggingface.co/deepseek-ai/DeepSeek-OCR
+  client:
+    argv:
+      --model: deepseek-ai/DeepSeek-OCR
+  server:
+    argv:
+      deepseek-ai/DeepSeek-OCR-2: null
+      deepseek-ai/DeepSeek-OCR: true
+
+# --- PaddleOCR-VL 1.6 (Baidu, Apache-2.0; 0.9B, 1.9 GB BF16): a layout model (PP-DocLayoutV3, on the CPU in
+# the client) then one request per region to the served VLM: its own pipeline (adapter paddleocr_vl) ---
+homelab-docparse-paddleocr-vl16:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16, sdk]
+  url: https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6
+  client:
+    argv:
+      --model: PaddlePaddle/PaddleOCR-VL-1.6
+  server:
+    argv:
+      PaddlePaddle/PaddleOCR-VL-1.6: true
+      --trust-remote-code: true
+      --max-num-seqs: 64  # many small region requests per page
+      --max-num-batched-tokens: 16384
+      --no-enable-prefix-caching: true
+      --mm-processor-cache-gb: 0
+  docparse:
+    adapter: paddleocr_vl
+    sdk_options: {pipeline_version: v1.6}
+    render: {dpi: 144}
+    output: markdown
+
+# --- Nanonets-OCR2-3B (Nanonets; Qwen2.5-VL-3B fine-tune, 7.5 GB BF16; no license on the repo: check before
+# commercial use): forms, checkboxes, watermarks, LaTeX + HTML tables ---
+homelab-docparse-nanonets-ocr2-3b:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/nanonets/Nanonets-OCR2-3B
+  client:
+    argv:
+      --model: nanonets/Nanonets-OCR2-3B
+  server:
+    argv:
+      nanonets/Nanonets-OCR2-3B: true
+      --max-model-len: 20480
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+  docparse:
+    render: {dpi: 200, long_edge: 2048}
+    output: markdown
+    max_tokens: 15000
+    temperature: 0.0
+    extra_body: {repetition_penalty: 1.0}
+    system: You are a helpful assistant.
+    # the model card's prompt, verbatim
+    prompt: >-
+      Extract the text from the above document as if you were reading it naturally. Return the tables in html
+      format. Return the equations in LaTeX representation. If there is an image in the document and image
+      caption is not present, add a small description of the image inside the <img></img> tag; otherwise, add
+      the image caption inside <img></img>. Watermarks should be wrapped in brackets. Ex:
+      <watermark>OFFICIAL COPY</watermark>. Page numbers should be wrapped in brackets. Ex:
+      <page_number>14</page_number> or <page_number>9/22</page_number>. Prefer using ☐ and ☑ for check boxes.
+
+# --- MinerU2.5-Pro 2605 (OpenDataLab, Apache-2.0 — the 2509 release is AGPL; 1.2B, 2.3 GB BF16): two-step
+# parsing, the model finds the layout on a thumbnail then reads each block crop (mineru-vl-utils client).
+# Its vendor no-repeat logits processor (mineru_vl_utils:MinerULogitsProcessor) needs mineru-vl-utils in the
+# serving venv: not installed, so it runs without it ---
+homelab-docparse-mineru25-pro:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16, sdk]
+  url: https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B
+  client:
+    argv:
+      --model: opendatalab/MinerU2.5-Pro-2605-1.2B
+  server:
+    argv:
+      opendatalab/MinerU2.5-Pro-2605-1.2B: true
+      --max-num-seqs: 64  # one request per block
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+  docparse:
+    adapter: mineru
+    render: {dpi: 200, long_edge: 3500}
+    output: markdown
+
+# --- Granite-Docling 258M (IBM, Apache-2.0; 0.5 GB BF16): the smallest; DocTags out (docling-core makes the
+# Markdown). The "untied" revision is the one vLLM loads ---
+homelab-docparse-granite-docling-258m:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/ibm-granite/granite-docling-258M
+  client:
+    argv:
+      --model: ibm-granite/granite-docling-258M
+  server:
+    argv:
+      ibm-granite/granite-docling-258M: true
+      --revision: untied
+      --max-model-len: 8192
+      --gpu-memory-utilization: 0.2
+  docparse:
+    render: {dpi: 144}
+    output: doctags
+    max_tokens: 8192
+    temperature: 0.0
+    prompt: Convert this page to docling.
+    extra_body: {skip_special_tokens: false}
+
+# --- chandra-ocr-2 (Datalab; Qwen3.5 architecture, 10.6 GB BF16; modified OpenRAIL-M: free for research,
+# personal use and companies under $2M, not to compete with Datalab's API): best open model on
+# omni_parse_bench (Datalab's own benchmark); HTML layout blocks out ---
+homelab-docparse-chandra-ocr2:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/datalab-to/chandra-ocr-2
+  client:
+    argv:
+      --model: datalab-to/chandra-ocr-2
+  server:
+    argv:
+      datalab-to/chandra-ocr-2: true
+      --max-model-len: 18000
+      --max-num-batched-tokens: 8192
+      --mm-processor-kwargs: '{"min_pixels": 3136, "max_pixels": 6291456}'
+  docparse:
+    render: {dpi: 300}
+    output: html
+    max_tokens: 12384
+    temperature: 0.0
+    top_p: 0.1
+    extra_body:
+      chat_template_kwargs: {enable_thinking: false}
+    # its package's ocr_layout prompt (chandra.prompts), read at prepare from the pinned release
+    prompt_from: {spec: chandra-ocr==0.2.0, module: chandra.prompts, expr: "PROMPT_MAPPING['ocr_layout']"}
+
+# The same weights in FP8 (community quantization, llm-compressor FP8-dynamic, 6.5 GB). Off: a quantized
+# build of the same model, run it to see what FP8 costs in accuracy
+homelab-docparse-chandra-ocr2-fp8:
+  inherits: homelab-docparse-chandra-ocr2
+  enabled: false
+  tags: [fp8]
+  url: https://huggingface.co/dangvansam/chandra-ocr-2-FP8-dynamic
+  client:
+    argv:
+      --model: dangvansam/chandra-ocr-2-FP8-dynamic
+  server:
+    argv:
+      datalab-to/chandra-ocr-2: null
+      dangvansam/chandra-ocr-2-FP8-dynamic: true
+
+# --- LightOnOCR-3 4B (LightOn, Apache-2.0; Qwen3.5 architecture, 9.1 GB BF16): end-to-end page -> Markdown
+# (transcription mode: the image alone, no prompt); best open handwriting score on omni_parse_bench, French
+# vendor ---
+homelab-docparse-lightonocr3-4b:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/lightonai/LightOnOCR-3-4B
+  client:
+    argv:
+      --model: lightonai/LightOnOCR-3-4B
+  server:
+    argv:
+      lightonai/LightOnOCR-3-4B: true
+      --max-model-len: 24576
+  docparse:
+    # its client: poppler at 400 DPI, lowered so the page fits 5M pixels; temperature 0.1 (its benchmark)
+    render: {dpi: 400, max_pixels: 5000000}
+    output: markdown
+    max_tokens: 12288
+    temperature: 0.1
+    prompt: ""
+    extra_body:
+      chat_template_kwargs: {enable_thinking: false}
+
+# --- LightOnOCR-3 0.8B (1.7 GB BF16): the small one of the same family ---
+homelab-docparse-lightonocr3-0p8b:
+  inherits: homelab-docparse-lightonocr3-4b
+  url: https://huggingface.co/lightonai/LightOnOCR-3-0.8B
+  client:
+    argv:
+      --model: lightonai/LightOnOCR-3-0.8B
+  server:
+    argv:
+      lightonai/LightOnOCR-3-4B: null
+      lightonai/LightOnOCR-3-0.8B: true
+      --gpu-memory-utilization: 0.25
+
+# --- GLM-OCR (Z.ai, MIT; 0.9B, 2.7 GB BF16, built-in MTP head: 3-token speculative decoding). Page mode: one
+# "Text Recognition:" request per page. Its SDK first runs a layout model and sends one request per region
+# (not wired here: below what its pipeline scores, a lower bound) ---
+homelab-docparse-glm-ocr:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16, mtp, page-mode]
+  url: https://huggingface.co/zai-org/GLM-OCR
+  client:
+    argv:
+      --model: zai-org/GLM-OCR
+  server:
+    argv:
+      zai-org/GLM-OCR: true
+      --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+      --gpu-memory-utilization: 0.25
+  docparse:
+    render: {dpi: 200, long_edge: 2048}
+    output: markdown
+    max_tokens: 8192
+    temperature: 0.0
+    prompt: "Text Recognition:"
+
+# --- Nemotron-3.5-Parse (NVIDIA, OpenMDW-1.1; RADIO encoder + mBART decoder, 2.7 GB BF16): control-token
+# prompt, Markdown with boxes and classes (stripped). Its DFlash 2 drafter (subfolder dflash2/) is left out:
+# vLLM takes a drafter by path, see the decisions ---
+homelab-docparse-nemotron35-parse:
+  inherits: _docparse_vllm
+  enabled: true
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/nvidia/Nemotron-3.5-Parse
+  client:
+    argv:
+      --model: nvidia/Nemotron-3.5-Parse
+  server:
+    argv:
+      nvidia/Nemotron-3.5-Parse: true
+      --trust-remote-code: true
+      --dtype: bfloat16
+      --max-num-seqs: 64
+      --max-num-batched-tokens: 16384
+      --no-enable-prefix-caching: true
+      --gpu-memory-utilization: 0.25
+  docparse:
+    render: {dpi: 200, long_edge: 2048}
+    output: nemotron
+    max_tokens: 8744
+    # its card's sampling: temperature 0.2, top_k 50, repetition penalty 1.05
+    temperature: 0.2
+    extra_body: {top_k: 50, repetition_penalty: 1.05, skip_special_tokens: false}
+    prompt: "</s><s><predict_bbox><predict_classes><output_markdown><predict_text_in_pic>"
+
+# Unlimited-OCR-2 (Baidu, MIT, 6.7 GB): the most downloaded OCR model of 2026. Off: its published recipe is
+# SGLang with a custom chat template ("unlimited-ocr") and logit processor; vLLM registers the architecture
+# (UnlimitedOCRForCausalLM) but its chat template for vLLM is unverified
+homelab-docparse-unlimited-ocr2:
+  inherits: _docparse_vllm
+  enabled: false
+  weight: 1
+  tags: [ocr-dedicated, bf16]
+  url: https://huggingface.co/baidu/Unlimited-OCR-2
+  client:
+    argv:
+      --model: baidu/Unlimited-OCR-2
+  server:
+    argv:
+      baidu/Unlimited-OCR-2: true
+      --trust-remote-code: true
+      --no-enable-prefix-caching: true
+      --mm-processor-cache-gb: 0
+  docparse:
+    render: {dpi: 300}
+    output: markdown
+    max_tokens: 12000
+    temperature: 0.0
+    prompt: "Multi page parsing."
+
+# --- General VLMs on the same pages ---
+
+# Qwen3-VL-8B-Instruct FP8 (Qwen, Apache-2.0; 10.6 GB): the 8B general VLM, official FP8 build
+homelab-docparse-qwen3vl-8b-fp8:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [fp8, dense]
+  url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3-VL-8B-Instruct-FP8
+  server:
+    argv:
+      Qwen/Qwen3-VL-8B-Instruct-FP8: true
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+
+# Qwen3-VL-30B-A3B-Instruct FP8 (32 GB): the 30B-A3B named in the request. Off: Qwen3.6-35B-A3B below is its
+# newer equivalent, already in the cache
+homelab-docparse-qwen3vl-30b-a3b-fp8:
+  inherits: _docparse_vlm_general
+  enabled: false
+  weight: 1
+  tags: [fp8, moe]
+  url: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+  client:
+    argv:
+      --model: Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+  server:
+    argv:
+      Qwen/Qwen3-VL-30B-A3B-Instruct-FP8: true
+      --gpu-memory-utilization: 0.5
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+
+# Qwen3.6-35B-A3B NVFP4 (23.4 GB, vision tower included): the same weights and MTP draft as text.yaml's
+# homelab-vllm-qwen36-35b-a3b-nvfp4-mtp, already in the cache — newest Qwen MoE, natively multimodal
+homelab-docparse-qwen36-35b-a3b-nvfp4-mtp:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [nvfp4, moe, mtp]
+  url: https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Qwen3.6-35B-A3B-NVFP4
+  server:
+    argv:
+      nvidia/Qwen3.6-35B-A3B-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"method": "mtp", "num_speculative_tokens": 3}'
+      --gpu-memory-utilization: 0.5
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+
+# Gemma 4 26B-A4B NVFP4 (18.8 GB, vision tower included) + its MTP drafter: text.yaml's
+# homelab-vllm-gemma4-26b-a4b-nvfp4-mtp weights, in the cache
+homelab-docparse-gemma4-26b-a4b-nvfp4-mtp:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [nvfp4, moe, mtp]
+  url: https://huggingface.co/nvidia/Gemma-4-26B-A4B-NVFP4
+  client:
+    argv:
+      --model: nvidia/Gemma-4-26B-A4B-NVFP4
+  server:
+    argv:
+      nvidia/Gemma-4-26B-A4B-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-26B-A4B-it-assistant", "num_speculative_tokens": 3}'
+      --gpu-memory-utilization: 0.5
+
+# Gemma 4 31B dense NVFP4 (RedHatAI, 22 GB; its model.safetensors carries the vision tower, 356 tensors) + its MTP
+# drafter: text.yaml's homelab-vllm-gemma4-31b-nvfp4-mtp weights, in the cache. The dense counterpart of the 26B-A4B
+homelab-docparse-gemma4-31b-nvfp4-mtp:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [nvfp4, dense, mtp]
+  url: https://huggingface.co/RedHatAI/gemma-4-31B-it-NVFP4
+  client:
+    argv:
+      --model: RedHatAI/gemma-4-31B-it-NVFP4
+  server:
+    argv:
+      RedHatAI/gemma-4-31B-it-NVFP4: true
+      --trust-remote-code: true
+      --speculative-config: '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 3}'
+      --gpu-memory-utilization: 0.5
+
+# Gemma 4 E4B (BF16, 16 GB, in the cache): the small Gemma 4
+homelab-docparse-gemma4-e4b:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [bf16, dense]
+  url: https://huggingface.co/google/gemma-4-E4B-it
+  client:
+    argv:
+      --model: google/gemma-4-E4B-it
+  server:
+    argv:
+      google/gemma-4-E4B-it: true
+
+# Qwen3.5-2B (BF16, 4.6 GB): the 2B general VLM, the size of the small OCR specialists
+homelab-docparse-qwen35-2b:
+  inherits: _docparse_vlm_general
+  enabled: true
+  weight: 1
+  tags: [bf16, dense]
+  url: https://huggingface.co/Qwen/Qwen3.5-2B
+  client:
+    argv:
+      --model: Qwen/Qwen3.5-2B
+  server:
+    argv:
+      Qwen/Qwen3.5-2B: true
+      --gpu-memory-utilization: 0.25
+      --limit-mm-per-prompt: '{"image": 1, "video": 0}'
+
+# -----------------------------------------------------------------------------
+# Classic pipelines, no LLM (benchmarks/docparse_pipeline, own venv homelab-docparse): the same passes, page
+# sets and scorers. c1 / c8 = 1 / 8 worker processes, each with its own engine
+# -----------------------------------------------------------------------------
+
+_docparse_pipeline:
+  inherits: _defaults
+  definition: ../../benchmarks/docparse_pipeline
+  group: docparse_pipeline
+  install_group: homelab-docparse
+  enabled: false
+  num_machines: 1
+  max_duration: 7200
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - homelab
+    - docparse
+    - ocr-pipeline
+    - monogpu
+  voir:
+    options:
+      stop: 1000000
+      gpu_poll: 0.5
+  argv: {}
+  client:
+    passes:
+      - {name: c1, docparse: {mode: speed, concurrency: 1, per_group: 4}}
+      - {name: c8, docparse: {mode: speed, concurrency: 8}}
+      - {name: quality, docparse: {mode: quality, tier: quick, tasks: [olmocr, omnidocbench, opb_fr, opb_hw], concurrency: 8}}
+
+# Tesseract 5.5 (Apache-2.0; tesserocr wheel, tessdata_best eng + fra): CPU only, plain text
+homelab-docparse-tesseract:
+  inherits: _docparse_pipeline
+  enabled: true
+  weight: 1
+  tags: [cpu]
+  docparse:
+    engine: tesseract
+    langs: eng+fra
+    render: {dpi: 300}
+
+# PaddleOCR PP-OCRv6 medium det + multilingual rec (Apache-2.0), ONNX through RapidOCR on the CPU (PyPI has no
+# paddlepaddle GPU wheel for aarch64)
+homelab-docparse-ppocrv6:
+  inherits: _docparse_pipeline
+  enabled: true
+  weight: 1
+  tags: [cpu]
+  docparse:
+    engine: rapidocr
+    model_type: medium
+    device: cpu
+    render: {dpi: 200}
+
+# The same on the GPU (onnxruntime-gpu CUDA execution provider). Off until its aarch64 wheel is checked
+# against the GB10 (sm_121)
+homelab-docparse-ppocrv6-gpu:
+  inherits: homelab-docparse-ppocrv6
+  enabled: false
+  tags: [cuda]
+  docparse:
+    device: cuda
+
+# docling 2.150 standard pipeline (MIT): Heron layout + TableFormer on the GPU, PP-OCR (RapidOCR) where a page
+# has no text layer; a PDF's own text layer is used when it has one (docling's normal use)
+homelab-docparse-docling:
+  inherits: _docparse_pipeline
+  enabled: true
+  weight: 1
+  tags: [cuda]
+  docparse:
+    engine: docling
+    device: cuda
+    ocr: rapidocr

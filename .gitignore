@@ -40,6 +40,8 @@ benchmarks/llm/bench/original
 benchmarks/_extern/
 benchmarks/torchtitan/assets
 benchmarks/dinov2/training_metrics.json
+benchmarks/sdiffusion/kohya/output-kohya/
+benchmarks/unsloth/unsloth_compiled_cache/
 
 scripts/inventory.yaml
 output/
@@ -73,3 +75,23 @@ fjobs_*.json
 
 benchmarks/dinov2/logs/
 benchmarks/dinov2/config.yaml
+
+# Runtime config added to running benchmarks
+runtime_config.yaml
+runtime_config.yaml.lock
+fjobs_*.json
+
+
+logs/
+
+# wandb run data (now written to runs/<run_name>/wandb through WANDB_DIR)
+wandb/
+
+benchmarks/**/requirements.*.txt
+dependencies/
+
+benchmarks/megatron/slime_src/
+benchmarks/slime/Megatron-LM/
+benchmarks/serving/*.json
+benchmarks/megatron/Megatron-LM/
+benchmarks/slime/slime_src/

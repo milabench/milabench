@@ -1,0 +1,250 @@
+# =============================================================================
+# DRAFT (2026-11-23), not run yet: Homelab — decision and classifier models (choose, don't generate)
+#
+# Models built to pick among options instead of writing text: routing, triage, judging, guards. A harness calls
+# them on every step, so what matters is accuracy per millisecond and per joule, next to a general LLM doing
+# the same job. Plan and model survey: /opt/milabench/runs/decision-models-plan.md.
+#
+#   homelab-decision-*   decision models: a state (text / JSON / chat) + typed questions written at request time
+#                        (choice among N options, yes/no "noul", score), a probability for every option, no text.
+#                        Served behind POST /v1/systemone (benchmarks/decision/engine_server.py: the model's own
+#                        engine or runtime). Passes:
+#     di-quick           Decision Index 0.3 public suite (github.com/apolinario/decision-index, pinned), the
+#                        stratified 6,000-request sample, the kit's http engine, one request at a time: the index,
+#                        its 5 areas, and the per-request latency (p50 / p99)
+#     di-full            all 140,178 public requests (finalists only: _di_full entries)
+#     load-c1/c8/c32     real suite requests, 1 / 8 / 32 in flight: decisions/s and latency under load
+#   homelab-decision-lm-*  the same suite through the kit's generic engine (a causal LLM scored by the log-probability
+#                        of each option key): the general-LLM baseline the dedicated models are measured against
+#   homelab-zeroshot-*   classic zero-shot NLI cross-encoders (100-600M) on the same suite (adapter zeroshot)
+#   homelab-guard-*      safety classifiers on public safety test sets (pass kind "safety"): NEEDS the safety pass,
+#                        not written yet (all disabled)
+#
+# Each model is scored the way its card's number was measured: d3 / vela with their repos' own Decision Index
+# engine classes (d3 averages each choice over two option orders), kanana through system_one, THX-02 and
+# pplx-decider through their decide() packages. The suite is rebuilt locally (not redistributable) into
+# $MILABENCH_DECISION_INDEX (default $MILABENCH_DIR_DATA/decision-index): see benchmarks/decision/prepare.py.
+#
+# Venv: install_group homelab-decision (benchmarks/decision/requirements.in: transformers 5.17.0, as the cards).
+#   milabench run --config homelab/decision.yaml [--select decision | decision-lm | zeroshot]
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_decision:
+  inherits: _defaults
+  definition: ../../benchmarks/decision
+  group: decision
+  install_group: homelab-decision
+  enabled: false  # only leaf jobs enable
+  num_machines: 1
+  max_duration: 7200
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - inference
+    - homelab
+    - monogpu
+    - decision
+  voir:
+    options:
+      stop: 1000000
+      gpu_poll: 0.5
+  server:
+    backend: systemone
+    argv:
+      --served-model-name: model
+  client:
+    argv:
+      --served-model-name: model
+      --ready-check-timeout-sec: 3600  # the first start may compile kernels
+    passes:
+      - {name: di-quick, decision: {rows: quick}}
+      - {name: load-c1,  load: {concurrency: 1,  requests: 200}}
+      - {name: load-c8,  load: {concurrency: 8,  requests: 800}}
+      - {name: load-c32, load: {concurrency: 32, requests: 1600}}
+
+# finalists: the full public suite as well (hours for the 26B models: one request at a time). YAML anchor: a
+# finalist sets client.passes to it (milabench inherits from one parent only)
+_di_full:
+  client:
+    passes: &di_full_passes
+      - {name: di-quick, decision: {rows: quick}}
+      - {name: di-full,  decision: {rows: full}}
+      - {name: load-c1,  load: {concurrency: 1,  requests: 200}}
+      - {name: load-c8,  load: {concurrency: 8,  requests: 800}}
+      - {name: load-c32, load: {concurrency: 32, requests: 1600}}
+
+# =============================================================================
+# Decision models, smallest first (sizes: weights on disk)
+# =============================================================================
+
+# Vela 3.1 pico 150M (vLLM Semantic Router x KR Labs, UltraBERT encoder, fp32 0.6 GB, Apache-2.0): the smallest;
+# CPU-capable. Card: 47.17 on the Decision Index public part. Its repo's engine, one question per pass.
+homelab-decision-vela31-pico-150m:
+  inherits: _decision
+  enabled: true
+  max_duration: 3600
+  tags: [decision, encoder]
+  url: https://huggingface.co/vllm-sr/vela3.1-pico-150m
+  server:
+    argv:
+      vllm-sr/vela3.1-pico-150m: true
+      --adapter: kit
+      --engine: decision_index_engine:VelaEncoderEngine
+      --option: ["run={model_dir}"]
+
+# Vela 3.1 pico 380M (1.5 GB fp32). NEEDS: check its repo ships decision_index_engine.py like the 150M one.
+homelab-decision-vela31-pico-380m:
+  inherits: homelab-decision-vela31-pico-150m
+  url: https://huggingface.co/vllm-sr/vela3.1-pico-380m
+  server:
+    argv:
+      vllm-sr/vela3.1-pico-150m: null
+      vllm-sr/vela3.1-pico-380m: true
+
+# d3.1-nano (vLLM Semantic Router Decision 3.1, 2.2B incl. a 0.33B vision encoder, 4.4 GB, Apache-2.0). Card: 62.96
+# on the full public suite (all 140,178 answered). Its repo's engine: two option orders per choice, averaged.
+homelab-decision-d31-nano:
+  inherits: _decision
+  enabled: true
+  tags: [decision, d3]
+  url: https://huggingface.co/vllm-sr/d3.1-nano
+  server:
+    argv:
+      vllm-sr/d3.1-nano: true
+      --adapter: kit
+      --engine: d3_engine:D3Engine
+      --option: ["model={model_dir}"]
+
+# Kanana-2-v-decide 3B (Kakao, 3.7B incl. vision, 7.3 GB, Kanana licence): AutoModel system_one. Card: 61.12 on the
+# DI 0.4.1 public part. Card pins transformers 5.5.3. NEEDS: a check that it loads with 5.17.0 (the pack's).
+homelab-decision-kanana2-v-decide-3b:
+  inherits: _decision
+  enabled: true
+  tags: [decision]
+  url: https://huggingface.co/kakaocorp/kanana-2-v-decide-3b-2611
+  server:
+    argv:
+      kakaocorp/kanana-2-v-decide-3b-2611: true
+      --adapter: system_one
+
+# THX-02 (HAL-X, 4.5B decision model + 60M think adapter, 9.6 GB, Apache-2.0): its thx02 package, thinking off
+# (thinking needs a second, vLLM-served model), 4 option orders per choice (tta 4, its Decision Index setting).
+# Card: 63.83 direct on its own 6,018-request sample. NEEDS: check THX02.load's arguments (device).
+homelab-decision-thx02:
+  inherits: _decision
+  enabled: true
+  tags: [decision]
+  url: https://huggingface.co/HAL-X-AI/THX-02
+  server:
+    argv:
+      HAL-X-AI/THX-02: true
+      --adapter: decide
+      --engine: thx02:THX02
+      --option: ["request.tta=4", "request.think=false"]
+
+# d3-mini (4.5B, 9.1 GB) and d3-flash (8.4B, 16.8 GB): the same engine as d3.1-nano
+homelab-decision-d3-mini:
+  inherits: homelab-decision-d31-nano
+  url: https://huggingface.co/vllm-sr/d3-mini
+  server:
+    argv:
+      vllm-sr/d3.1-nano: null
+      vllm-sr/d3-mini: true
+
+homelab-decision-d3-flash:
+  inherits: homelab-decision-d31-nano
+  max_duration: 10800
+  url: https://huggingface.co/vllm-sr/d3-flash
+  server:
+    argv:
+      vllm-sr/d3.1-nano: null
+      vllm-sr/d3-flash: true
+
+# pplx-decider-flash v1.3 (Perplexity, Qwen3.5-4B base, 9.6 GB, Apache-2.0): its Decider package (non-causal
+# attention: no plain vLLM path), from the repo's source/src
+homelab-decision-pplx-decider-flash-v13:
+  inherits: _decision
+  enabled: true
+  tags: [decision]
+  url: https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.3
+  server:
+    argv:
+      perplexity-ai/pplx-decider-flash-v1.3: true
+      --adapter: decide
+      --engine: pplx_decider:Decider
+      --path: source/src
+
+# d3-ultra NVFP4 (26B, 17.2 GB): the board's best open d3 (full 70.18 in bf16), 4-bit on Blackwell. A finalist:
+# also the full suite. NEEDS: check its runtime loads the NVFP4 weights with the pack's transformers.
+homelab-decision-d3-ultra-nvfp4:
+  inherits: homelab-decision-d31-nano
+  max_duration: 86400
+  url: https://huggingface.co/vllm-sr/d3-ultra-NVFP4
+  client:
+    passes: *di_full_passes
+  server:
+    argv:
+      vllm-sr/d3.1-nano: null
+      vllm-sr/d3-ultra-NVFP4: true
+
+# Off: CC BY-NC 4.0 and two processes (vLLM + its shim); 27B bf16 55 GB / FP8 29 GB
+homelab-decision-openjev:
+  inherits: _decision
+  enabled: false
+  url: https://huggingface.co/openjev/openjev
+
+# =============================================================================
+# General-LLM baselines: the kit's generic engine (option-key log-probabilities, one forward pass per question)
+# =============================================================================
+
+homelab-decision-lm-gemma4-e2b:
+  inherits: _decision
+  enabled: true
+  max_duration: 10800
+  tags: [decision-lm]
+  url: https://huggingface.co/google/gemma-4-E2B-it
+  server:
+    argv:
+      google/gemma-4-E2B-it: true
+      --adapter: transformers
+
+homelab-decision-lm-qwen3-8b:
+  inherits: homelab-decision-lm-gemma4-e2b
+  url: https://huggingface.co/Qwen/Qwen3-8B
+  server:
+    argv:
+      google/gemma-4-E2B-it: null
+      Qwen/Qwen3-8B: true
+
+# =============================================================================
+# Classic zero-shot NLI cross-encoders on the same suite (the "before" of decision models)
+# =============================================================================
+
+homelab-zeroshot-deberta-v3-large-v2:
+  inherits: _decision
+  enabled: true
+  tags: [zeroshot, encoder]
+  url: https://huggingface.co/MoritzLaurer/deberta-v3-large-zeroshot-v2.0
+  server:
+    argv:
+      MoritzLaurer/deberta-v3-large-zeroshot-v2.0: true
+      --adapter: zeroshot
+
+homelab-zeroshot-bge-m3-v2:
+  inherits: homelab-zeroshot-deberta-v3-large-v2
+  url: https://huggingface.co/MoritzLaurer/bge-m3-zeroshot-v2.0
+  server:
+    argv:
+      MoritzLaurer/deberta-v3-large-zeroshot-v2.0: null
+      MoritzLaurer/bge-m3-zeroshot-v2.0: true
+
+# =============================================================================
+# Guards (safety classifiers). NEEDS the "safety" pass (WildGuardTest, ToxicChat, Aegis 2.0, HarmBench test sets,
+# F1 as the cards report) and a vLLM-served path per model's own prompt format; all off until then.
+#   mistralai/Shieldstral-1.0-3B (policy at request time, one token)   Qwen/Qwen3Guard-Gen-0.6B / 4B / 8B
+#   openai/gpt-oss-safeguard-20b                                         meta-llama/Llama-Prompt-Guard-2-22M / 86M (gated)
+# =============================================================================

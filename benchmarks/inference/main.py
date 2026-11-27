@@ -2,6 +2,33 @@
 from dataclasses import dataclass
 
 from datasets import load_dataset, Audio
+
+
+class SFAudio(Audio):
+    """Audio feature that uses the standard torchcodec decoder where it loads
+    (e.g. CUDA), and falls back to soundfile where it cannot (Intel's XPU
+    torch build does not export the symbols torchcodec needs)."""
+
+    def decode_example(self, value, token_per_repo_id=None):
+        from datasets import config as datasets_config
+
+        if datasets_config.TORCHCODEC_AVAILABLE:
+            return super().decode_example(value, token_per_repo_id=token_per_repo_id)
+
+        import io
+
+        import numpy as np
+        import soundfile as sf
+
+        path, data = value["path"], value["bytes"]
+        array, sr = sf.read(io.BytesIO(data) if data is not None else path, dtype="float32", always_2d=True)
+        if self.sampling_rate and sr != self.sampling_rate:
+            n = int(round(array.shape[0] * self.sampling_rate / sr))
+            x_old = np.arange(array.shape[0])
+            x_new = np.linspace(0, array.shape[0] - 1, n)
+            array = np.stack([np.interp(x_new, x_old, array[:, c]) for c in range(array.shape[1])], axis=1)
+            sr = self.sampling_rate
+        return {"array": array, "sampling_rate": sr, "path": path}
 from argklass import ArgumentParser
 from argklass.arguments import argument
 import torch
@@ -107,7 +134,7 @@ class WhisperBenchmark(InferenceBenchmark):
             name=args.subset,
             split=args.split,
         )
-        dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+        dataset = dataset.cast_column("audio", SFAudio(sampling_rate=16000))
         return observer.loader(
             self.dataloader(dataset, args), custom_step=self.custom_step
         )

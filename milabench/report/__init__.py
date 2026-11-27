@@ -727,7 +727,7 @@ def _style(df):
 
     # Format GPU efficiency map columns
     gpu_columns = set(range(16)) & set(df.columns)
-    sty = sty.applymap(_gpu_pct, subset=list(gpu_columns))
+    sty = sty.map(_gpu_pct, subset=list(gpu_columns))
 
     # sty.apply(_row, axis=1)
 
@@ -742,6 +742,6 @@ def _style(df):
     # Format performance ratios
     for col in ["perf_ratio", "perf_ratio_adj"]:
         if col in df.columns:
-            sty = sty.applymap(_ratio, subset=[col])
+            sty = sty.map(_ratio, subset=[col])
 
     return sty

@@ -1,0 +1,57 @@
+\section{Mixture-of-experts workloads}
+\label{sec:moe}
+
+\begin{question}
+  \textbf{How does GLM-5 behave at scale?} What does expert traffic cost when it leaves the node or crosses
+  switches, and what does FP8 bring?
+\end{question}
+
+Expert parallelism (EP) adds all-to-all exchanges every MoE layer. With EP$\le$4, experts stay inside a
+node (NVLink); beyond that, all-to-all traffic crosses the single HCA of each node and, at larger EP, leaf
+switches. All-to-all bandwidth across leaves is the weakest scope measured (\cref{fig:comm}).
+
+\begin{figure}[h]
+  \centering\fig{moe_scaling}
+  \caption{\syntheticnote{moe_scaling}GLM-5 MFU (on active parameters) vs.\ GPUs, by expert-parallel size, BF16 and
+    FP8. Left of the dotted line: truncated models.}
+  \label{fig:moe}
+\end{figure}
+
+\paragraph{Expert-group placement.} Keeping every EP group inside a switch (aligned) is the cheapest layout,
+but it fits on only 52 of the 66 nodes (an even number per leaf). The question is whether using every node
+pays off: more GPUs, but some groups crossing switches. \Cref{fig:expert-placement} (left) puts every run
+on one plane, with the same scale on both axes: more GPUs than aligned (x) against more total throughput
+than aligned, summed over all GPUs (y). The diagonal is throughput proportional to GPUs; below zero, a run
+delivers less in total than aligned. On the same 52 nodes (x = 0), only the node order changes, which gives
+the cost of a minority of crossing groups (mixed) and of the worst case (crossed). The run on every node is
+worth it only if it lands above zero; with $N$ nodes, that requires a per-GPU cost below $1 - 52/N$,
+i.e.\ 19\,\% at 64 nodes. The right panel shows where the extra GPUs go: the gain the extra nodes would
+bring if throughput were proportional, the cost of crossing groups (the per-GPU cost of mixed vs.\ aligned
+on the same nodes, applied to every node: an estimate) and the rest (larger scale, more simultaneous
+crossings: the remainder, an estimate too).
+
+\begin{figure}[h]
+  \centering\fig{expert_placement}
+  \caption{GLM-5 expert-group placement on Rorqual (EP8). Left: more GPUs vs.\ more total throughput than
+    the largest aligned run (52 nodes), equal scales; dotted: distance below proportional scaling. Right:
+    total throughput of the run on every node vs.\ aligned (= 100), step by step; solid: measured or
+    arithmetic, hatched: estimated. \syntheticnote{expert_placement}}
+  \label{fig:expert-placement}
+\end{figure}
+
+Every rank waits for the slowest group at each all-to-all, so a few crossing groups may cost almost as
+much as all of them. \Cref{fig:expert-groups} shows the all-to-all time of each group in the mixed runs.
+
+\begin{figure}[h]
+  \centering\fig[0.6\linewidth]{expert_groups}
+  \caption{All-to-all time per EP group in the mixed runs, inside one switch vs.\ across switches.
+    \syntheticnote{expert_groups}}
+  \label{fig:expert-groups}
+\end{figure}
+
+\placeholder{cost of mixed and crossed; total-throughput gain of every node over aligned, and whether it
+clears break-even.}
+
+\placeholder{GLM-5 configuration (layers, experts, top-$k$, EP and routing modes), output format from the
+Megatron pipeline (see \texttt{FORMAT.md}), and results. Per-rank expert load, if logged, would show
+routing imbalance.}

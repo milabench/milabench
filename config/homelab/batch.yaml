@@ -1,0 +1,89 @@
+# =============================================================================
+# Homelab — offline batch LLM jobs (summarize / classify a document set overnight), DRAFT (2026-11-16)
+#
+# Latency does not matter, only how many documents an hour the box gets through and the energy per document.
+# Each entry is a text.yaml server (same model, same engine), retuned for throughput: up to 256 sequences in
+# flight, 16k-token prefill chunks, no speculative decoding (a draft model pays at 1-32 streams, at 256 the
+# batch is compute-bound and the drafts cost more than they save). Passes (real text, --real-text; the client
+# sends every request at once, request rate inf, --max-concurrency = the server's batch: vLLM's scheduler then
+# works as in an offline LLM.generate run):
+#
+#   summarize   1024 documents of 2048 tokens -> 256-token summary, 256 in flight
+#   classify    2048 documents of 1024 tokens -> 8-token label, 256 in flight (prefill-bound)
+#   longdoc      256 documents of 8192 tokens -> 512-token summary, 64 in flight
+#
+# Each pass first sends its concurrency's worth of warmup requests (not measured), so the number is the
+# steady state of a full batch. Per pass: request_throughput (documents/s; x3600 = documents/hour),
+# output / total token throughput, energy (kJ) and tokens per joule over the pass's own window.
+# Models: the report's best quality-per-throughput builds plus a small fast one, all already in the HF cache:
+#   gemma4-26b-a4b-nvfp4   best quality x speed in the suite (MoE, 4B active: 779 tok/s at conc32)
+#   gemma4-31b-nvfp4       best dense quality (QualityBench quick: IFEval 92.7, MMLU-Pro 78)
+#   qwen36-35b-a3b-nvfp4   the other leading MoE (3B active)
+#   gemma4-e2b-fp8         small and fast (runtime FP8), the cheap end for simple classification
+# Run with: milabench run --config homelab/batch.yaml --select batch (the file includes text.yaml, whose
+# benches it inherits from: without --select it runs those too). Not in all.yaml.
+# =============================================================================
+
+include:
+  - text.yaml
+
+# throughput settings, merged into each model's own server flags (YAML anchors: one definition, every bench)
+_batch_settings:
+  server:
+    argv: &batch_server
+      --speculative-config: null
+      --max-num-seqs: 256
+      --max-model-len: 10240   # longdoc: 8192 in + 512 out
+      --max-num-batched-tokens: 16384
+      # the LLM entries it inherits serve agents with prefix caching on: off here, as before (every document cold)
+      --enable-prefix-caching: null
+      --no-enable-prefix-caching: true
+  client:
+    passes: &batch_passes
+      - {name: summarize, argv: {--max-concurrency: 256, --num-warmups: 256, --num-prompts: 1024, --random-input-len: 2048, --random-output-len: 256}}
+      - {name: classify,  argv: {--max-concurrency: 256, --num-warmups: 256, --num-prompts: 2048, --random-input-len: 1024, --random-output-len: 8}}
+      - {name: longdoc,   argv: {--max-concurrency: 64,  --num-warmups: 64,  --num-prompts: 256,  --random-input-len: 8192, --random-output-len: 512}}
+
+homelab-batch-gemma4-26b-a4b-nvfp4:
+  inherits: homelab-vllm-gemma4-26b-a4b-nvfp4-mtp
+  enabled: true
+  max_duration: 7200
+  tags: [batch]
+  server:
+    argv:
+      <<: *batch_server
+  client:
+    passes: *batch_passes
+
+homelab-batch-gemma4-31b-nvfp4:
+  inherits: homelab-vllm-gemma4-31b-nvfp4-mtp
+  enabled: true
+  max_duration: 14400  # dense 31B: prefill-bound, ~1 h of passes
+  tags: [batch]
+  server:
+    argv:
+      <<: *batch_server
+  client:
+    passes: *batch_passes
+
+homelab-batch-qwen36-35b-a3b-nvfp4:
+  inherits: homelab-vllm-qwen36-35b-a3b-nvfp4-mtp
+  enabled: true
+  max_duration: 7200
+  tags: [batch]
+  server:
+    argv:
+      <<: *batch_server
+  client:
+    passes: *batch_passes
+
+homelab-batch-gemma4-e2b-fp8:
+  inherits: homelab-vllm-gemma4-e2b-fp8-runtime
+  enabled: true
+  max_duration: 7200
+  tags: [batch]
+  server:
+    argv:
+      <<: *batch_server
+  client:
+    passes: *batch_passes

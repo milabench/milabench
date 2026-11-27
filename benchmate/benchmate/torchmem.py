@@ -1,39 +1,44 @@
-def torchmem_fetcher(device=None):
-    """Return a callable that reports allocated/reserved MiB per CUDA/ROCm device.
+def _device_namespace():
+    """Return the unified accelerator namespace via torchcompat.
 
-    Uses ``torch.cuda`` memory APIs (ROCm also exposes itself via ``torch.cuda``).
-    Each device entry includes ``allocated``, ``reserved``, ``max_allocated``,
-    and ``max_reserved``. Returns ``{}`` when CUDA/ROCm is unavailable.
+    ``torchcompat.core.device_module`` is the raw device namespace for the
+    available accelerator (``torch.cuda`` on CUDA/ROCm, ``torch.xpu`` on Intel
+    GPU), so the allocator API is identical across all of them. ``None`` when
+    torchcompat has no accelerator (e.g. CPU only).
     """
     try:
-        import torch
+        import torchcompat.core as accelerator
     except Exception:
-        return lambda: {}
+        return None
+    return getattr(accelerator, "device_module", None)
 
-    if not hasattr(torch, "cuda"):
-        return lambda: {}
+
+def torchmem_fetcher(device=None):
+    """Return a callable that reports allocated/reserved MiB per accelerator.
+
+    CUDA, ROCm and Intel XPU share a single code path through torchcompat. Each
+    device entry includes ``allocated``, ``reserved``, ``max_allocated`` and
+    ``max_reserved``. Returns ``{}`` when no accelerator exposes memory stats.
+    """
 
     def fetch():
         try:
-            if not torch.cuda.is_available():
-                return {}
-
-            # CUDA and ROCm both use the torch.cuda namespace
-            if not (torch.version.cuda or getattr(torch.version, "hip", None)):
+            namespace = _device_namespace()
+            if namespace is None or not hasattr(namespace, "memory_allocated"):
                 return {}
 
             if device is not None:
                 devices = [device]
             else:
-                devices = range(torch.cuda.device_count())
+                devices = range(namespace.device_count())
 
             result = {}
             for i in devices:
                 result[i] = {
-                    "allocated": torch.cuda.memory_allocated(i) / (1024**2),
-                    "reserved": torch.cuda.memory_reserved(i) / (1024**2),
-                    "max_allocated": torch.cuda.max_memory_allocated(i) / (1024**2),
-                    "max_reserved": torch.cuda.max_memory_reserved(i) / (1024**2),
+                    "allocated": namespace.memory_allocated(i) / (1024**2),
+                    "reserved": namespace.memory_reserved(i) / (1024**2),
+                    "max_allocated": namespace.max_memory_allocated(i) / (1024**2),
+                    "max_reserved": namespace.max_memory_reserved(i) / (1024**2),
                 }
             return result
         except Exception:

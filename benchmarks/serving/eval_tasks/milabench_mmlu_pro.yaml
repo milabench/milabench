@@ -1,0 +1,28 @@
+# Zero-shot MMLU-Pro (10 choices, harder than MMLU) for chat / reasoning models, scored on the last
+# "Answer: <letter>". Stratified sample of the 12,032 test questions: 143 per category, ~2000 (utils.py).
+task: milabench_mmlu_pro
+dataset_path: TIGER-Lab/MMLU-Pro
+output_type: generate_until
+test_split: test
+process_docs: !function utils.mmlu_pro_sample
+num_fewshot: 0
+doc_to_text: !function utils.mmlu_pro_text
+doc_to_target: answer
+generation_kwargs:
+  until: []
+  do_sample: false
+filter_list:
+  - name: answer-line
+    filter:
+      - function: regex
+        regex_pattern: "(?:Answer:\\s*\\**\\s*\\(?|\\\\boxed\\{\\(?)([A-J])\\b"
+        group_select: -1
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+metadata:
+  version: 1.0

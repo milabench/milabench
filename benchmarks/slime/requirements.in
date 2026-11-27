@@ -1,0 +1,44 @@
+voir>=0.2.19,<0.3
+torch
+transformers
+datasets
+huggingface_hub
+ray[default]
+numpy
+ninja
+packaging
+pybind11
+einops
+tensorboard
+wandb
+# Megatron-LM (NVIDIA) at the commit slime's docker image is built against
+megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@4b4acac9a1d28ea6829c8d4f566d75698a21249d
+# sglang's own imports (slime imports sglang even for train-only). sglang itself is installed
+# --no-deps by benchfile.py: its pins (cuda-tile, flash-attn-4, flashinfer, ...) are heavy and unused here
+orjson
+psutil
+pybase64
+starlette
+msgspec
+pyzmq
+IPython
+partial_json_parser
+sglang-router
+# the SGLang server process (GRPO entries) also imports these; sglang-kernel is its CUDA ops wheel
+uvloop
+torchvision
+sentencepiece
+compressed-tensors
+gguf
+openai
+xgrammar==0.2.7
+soundfile
+python-multipart
+sglang-kernel==0.4.7
+# flashinfer is imported by sglang at module load on CUDA (fp8_utils); installed --no-deps by benchfile.py
+nvidia-ml-py
+tabulate
+apache-tvm-ffi>=0.1.6,<0.2,!=0.1.8,!=0.1.8.post0
+uvicorn
+fastapi
+slime @ git+https://github.com/THUDM/slime.git@a4202e0595467d9374d9a68d45a34f45c3f8d230

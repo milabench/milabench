@@ -1,0 +1,93 @@
+# =============================================================================
+# Homelab — audio: speech recognition and audio generation
+#
+#   homelab-asr-whisper              HF transformers whisper-large-v3 on LibriSpeech
+#   homelab-comfyui-ace-step15       ComfyUI ACE-Step 1.5 turbo: 120 s song with vocals (lyrics)
+#   homelab-comfyui-stable-audio3-*  ComfyUI Stable Audio 3: 60 s instrumental (medium),
+#                                    10 s sound effect (small sfx)
+#
+# Audio generation reports one generation per step (img_per_s = songs / clips per second).
+# The workflows follow ComfyUI's workflow_templates (audio_ace_step_1_5_checkpoint,
+# audio_stable_audio_3_medium), without Stable Audio 3's optional LLM prompt expansion.
+# =============================================================================
+
+include:
+  - _base.yaml
+
+homelab-asr-whisper:
+  inherits: _inference
+  tags:
+    - audio
+    - monogpu
+  plan:
+    method: per_gpu
+  url:
+    - https://huggingface.co/openai/whisper-large-v3
+    - https://huggingface.co/datasets/openslr/librispeech_asr
+  argv:
+    --mode: whisper
+    --model: openai/whisper-large-v3
+    --dataset: openslr/librispeech_asr
+    --subset: "clean"
+    --split: "train.100"
+    # bs 64 OOMs on the 32 GB card; autosizer (run_homing.sh) steps down from 8.
+    --batch_size: "auto_batch(8)"
+
+# --- ACE-Step 1.5 turbo (Apache-2.0): all-in-one checkpoint, 10 GB (DiT + Qwen3 LM + VAE).
+# The LM writes the audio codes (generate_audio_codes), then 8 diffusion steps. ---
+homelab-comfyui-ace-step15:
+  name: homelab-comfyui-ace-step15
+  tags:
+    - audio
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Comfy-Org/ACE-Step-1.5
+  # one 120 s song per step: fewer steps than the image workflows
+  voir:
+    options:
+      stop: 10
+  argv:
+    --max-steps: 11
+    --workflow: workflows/ace_step15_turbo.json
+    --model: checkpoints:Comfy-Org/ACE-Step-1.5:checkpoints/ace_step_1.5_turbo_aio.safetensors
+    --set: CKPT=ace_step_1.5_turbo_aio.safetensors
+
+# --- Stable Audio 3 (Stability AI community license): checkpoint + T5Gemma text encoder (1.2 GB) ---
+homelab-comfyui-stable-audio3-music:
+  name: homelab-comfyui-stable-audio3-music
+  tags:
+    - audio
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Comfy-Org/stable-audio-3
+  voir:
+    options:
+      stop: 20
+  argv:
+    --max-steps: 21
+    --workflow: workflows/stable_audio3_music.json
+    --model:
+      - checkpoints:Comfy-Org/stable-audio-3:checkpoints/stable_audio_3_medium.safetensors
+      - text_encoders:Comfy-Org/stable-audio-3:text_encoders/t5gemma_b_b_ul2.safetensors
+    --set:
+      - CKPT=stable_audio_3_medium.safetensors
+      - TE=t5gemma_b_b_ul2.safetensors
+
+homelab-comfyui-stable-audio3-sfx:
+  name: homelab-comfyui-stable-audio3-sfx
+  tags:
+    - audio
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  url: https://huggingface.co/Comfy-Org/stable-audio-3
+  argv:
+    --workflow: workflows/stable_audio3_sfx.json
+    --model:
+      - checkpoints:Comfy-Org/stable-audio-3:checkpoints/stable_audio_3_small_sfx.safetensors
+      - text_encoders:Comfy-Org/stable-audio-3:text_encoders/t5gemma_b_b_ul2.safetensors
+    --set:
+      - CKPT=stable_audio_3_small_sfx.safetensors
+      - TE=t5gemma_b_b_ul2.safetensors

@@ -1,0 +1,18 @@
+_sdiffusion-aitoolkit:
+  inherits: _defaults
+  definition: .
+  install_group: sdiffusion-aitoolkit
+  install_variant: unpinned
+  tags:
+    - sdiffusion
+
+  argv:
+    --cache: "{milabench_cache}"
+    --steps: 200
+    --batch_size: 1
+
+sdiffusion-aitoolkit:
+  inherits: _sdiffusion-aitoolkit
+  num_machines: 1
+  plan:
+    method: per_gpu

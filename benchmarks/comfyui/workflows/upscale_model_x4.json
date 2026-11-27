@@ -1,0 +1,117 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__INPUT__"
+    }
+  },
+  "2": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "center"
+    }
+  },
+  "3": {
+    "class_type": "ImageAddNoise",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "seed": "__SEED__",
+      "strength": 0.0
+    }
+  },
+  "4": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "__UPSCALER__"
+    }
+  },
+  "5": {
+    "class_type": "ImageUpscaleWithModel",
+    "inputs": {
+      "upscale_model": [
+        "4",
+        0
+      ],
+      "image": [
+        "3",
+        0
+      ]
+    }
+  },
+  "6": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 4096,
+      "height": 4096,
+      "crop": "disabled"
+    }
+  },
+  "7": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "8": {
+    "class_type": "ImageCrop",
+    "inputs": {
+      "image": [
+        "5",
+        0
+      ],
+      "width": 512,
+      "height": 512,
+      "x": 1536,
+      "y": 1536
+    }
+  },
+  "9": {
+    "class_type": "ImageStitch",
+    "inputs": {
+      "image1": [
+        "7",
+        0
+      ],
+      "image2": [
+        "8",
+        0
+      ],
+      "direction": "right",
+      "match_image_size": true,
+      "spacing_width": 8,
+      "spacing_color": "white"
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "9",
+        0
+      ],
+      "filename_prefix": "milabench"
+    }
+  }
+}

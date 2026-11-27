@@ -1,0 +1,5 @@
+# Kept as fallback; real deps come from requirements.toml (arch-gated). Same install group as benchmarks/unsloth.
+torch
+argklass
+datasets
+nvidia-ml-py

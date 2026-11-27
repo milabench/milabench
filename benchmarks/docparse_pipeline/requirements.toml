@@ -1,0 +1,40 @@
+# Classic document pipelines (install_group homelab-docparse, its own venv: docling pins transformers / torch
+# extras of its own, kept out of the serving and torch venvs). The scorers run in their own venvs
+# (benchmarks/docparse/toolenv.py), installed by prepare.py.
+#
+#   docling          layout (Heron) + TableFormer on torch (CUDA on the DGX Spark: torch cu130 aarch64)
+#   rapidocr         PP-OCRv6 det / rec as ONNX models; onnxruntime-gpu has linux-aarch64 wheels (CUDA EP)
+#   tesserocr        aarch64 manylinux wheel bundling libtesseract 5.5 + leptonica (no apt package needed)
+
+[common]
+dependencies = [
+    "voir>=0.2.19,<0.3",
+    "torch",
+    "docling==2.150.1",
+    "rapidocr==3.10.0",
+    "tesserocr==2.13.0",
+    "huggingface_hub",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "aiohttp",
+]
+
+[cuda]
+dependencies = [
+    "onnxruntime-gpu==1.32.0",
+]
+
+[rocm]
+enabled = false
+
+[cpu]
+dependencies = [
+    "onnxruntime==1.32.0",
+]
+
+[hpu]
+enabled = false
+
+[xpu]
+enabled = false

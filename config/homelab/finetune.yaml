@@ -1,0 +1,204 @@
+# =============================================================================
+# Homelab — LLM fine-tuning: LoRA (bf16 base) vs QLoRA (4-bit NF4 base), small to the largest that fits
+#
+# benchmarks/llm-finetune: unsloth + TRL SFTTrainer, in the unsloth venv (install_group unsloth, shared with
+# benchmarks/unsloth / homelab-llm-ft-unsloth in all.yaml). Unlike that bench it runs under voir (GPU memory and
+# power samples for the report), packs the data into fixed blocks and times only the measured steps.
+#
+# One workload for every model (so tokens/s compare across models):
+#   data        teknium/OpenHermes-2.5 @ b8203782, the first 20k conversations, each model's chat template,
+#               packed ("wrapped") into blocks of exactly 2048 tokens
+#   step        1 sequence x 4 accumulation = 8192 tokens per optimizer step; LoRA r16 / alpha 32 on q k v o
+#               gate up down, AdamW 8-bit, lr 2e-4 linear decay, unsloth gradient checkpointing
+#   steps       10 warmup steps (not measured), then 300 measured (<= 8B) or 100 measured (27B and larger)
+#   QLoRA       --load_in_4bit: the same bf16 checkpoint quantized to NF4 at load (bitsandbytes), so a
+#               LoRA / QLoRA pair differs only in the base's precision
+#
+# Reports (finetune_summary): train tokens/s, step time p50 / p90, peak memory (torch allocator and the
+# machine's used memory: unified on a DGX Spark), energy over the measured window (NVML), J/token and
+# kWh per 1M training tokens, loss at the start / end. Loss check: the mean loss of the last 10 steps must
+# be >= 2% below the first 10, else the bench fails.
+#
+#   milabench run --config homelab/finetune.yaml [--select finetune-small | lora-vs-qlora]
+#
+# Not in all.yaml yet (draft).
+# =============================================================================
+
+include:
+  - _base.yaml
+
+_finetune:
+  inherits: _defaults
+  definition: ../../benchmarks/llm-finetune
+  group: llm-finetune
+  install_group: unsloth
+  install_variant: unpinned
+  enabled: false  # only leaf jobs enable
+  num_machines: 1
+  max_duration: 5400
+  plan:
+    method: njobs
+    n: 1
+  tags:
+    - training
+    - llm
+    - finetune
+    - homelab
+    - monogpu
+  voir:
+    options:
+      # one rate event per measured step: the script stops itself after --steps, voir must not stop it first
+      stop: 1000000
+      gpu_poll: 0.5
+  argv:
+    --dataset: teknium/OpenHermes-2.5
+    --dataset_revision: b82037821055c377bed0d495e72e46de3bc72e84
+    --num_samples: 20000
+    --seq_length: 2048
+    --batch_size: 1
+    --gradient_accumulation: 4
+    --warmup_steps: 10
+    --steps: 300
+    --lora_r: 16
+    --optim: adamw_8bit
+    --learning_rate: 2.0e-4
+
+# 27B and larger: 100 measured steps (0.8M tokens) keeps one run under ~1.5 h
+_finetune_large:
+  inherits: _finetune
+  max_duration: 9000
+  argv:
+    --steps: 100
+
+# --- Llama-3.2-1B base (cached, 2.5 GB): continuity with homelab-llm-ft-unsloth, the fast smoke point ---
+
+homelab-ft-llama32-1b-lora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [finetune-small, lora]
+  url: https://huggingface.co/unsloth/Llama-3.2-1B
+  argv:
+    --model: unsloth/Llama-3.2-1B
+    --model_revision: 9535bd9b1d1dea6acafbdc4813b728796aeb28da
+
+homelab-ft-llama32-1b-qlora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [finetune-small, qlora]
+  url: https://huggingface.co/unsloth/Llama-3.2-1B
+  argv:
+    --model: unsloth/Llama-3.2-1B
+    --model_revision: 9535bd9b1d1dea6acafbdc4813b728796aeb28da
+    --load_in_4bit: true
+
+# --- Gemma 4 E4B-it (cached, 15 GB incl. vision / audio towers): the small on-device model; text layers only ---
+
+homelab-ft-gemma4-e4b-lora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [finetune-small, lora, lora-vs-qlora]
+  url: https://huggingface.co/google/gemma-4-E4B-it
+  argv:
+    --model: google/gemma-4-E4B-it
+    --model_revision: 4ecc2ba63bcac23ba4a767fc87025b1450f84c9c
+
+homelab-ft-gemma4-e4b-qlora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [finetune-small, qlora, lora-vs-qlora]
+  url: https://huggingface.co/google/gemma-4-E4B-it
+  argv:
+    --model: google/gemma-4-E4B-it
+    --model_revision: 4ecc2ba63bcac23ba4a767fc87025b1450f84c9c
+    --load_in_4bit: true
+
+# --- Qwen3-8B (download 16.4 GB): the canonical "fine-tune an 8B" point, unsloth's most optimized dense arch ---
+
+homelab-ft-qwen3-8b-lora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [lora, lora-vs-qlora]
+  url: https://huggingface.co/Qwen/Qwen3-8B
+  argv:
+    --model: Qwen/Qwen3-8B
+    --model_revision: b968826d9c46dd6066d109eabc6255188de91218
+
+homelab-ft-qwen3-8b-qlora:
+  inherits: _finetune
+  enabled: true
+  weight: 1
+  tags: [qlora, lora-vs-qlora]
+  url: https://huggingface.co/Qwen/Qwen3-8B
+  argv:
+    --model: Qwen/Qwen3-8B
+    --model_revision: b968826d9c46dd6066d109eabc6255188de91218
+    --load_in_4bit: true
+
+# --- Muse Glimmer 30B (cached bf16, 56 GB): the largest dense model whose bf16 LoRA fits 128 GB; no download.
+# Needs transformers >= 5.15 (muse_glimmer): the unsloth venv has 5.5 -> reinstall it on unsloth >= 2026.11 ---
+
+homelab-ft-muse-glimmer-30b-lora:
+  inherits: _finetune_large
+  enabled: false  # unsloth venv: transformers 5.5 has no muse_glimmer (needs >= 5.15)
+  weight: 1
+  tags: [lora, lora-vs-qlora, large]
+  url: https://huggingface.co/meta-models/Muse-Glimmer-30B
+  argv:
+    --model: meta-models/Muse-Glimmer-30B
+    --model_revision: cec94fcfd6512f2cfe708138c32533b346ea4f69
+
+homelab-ft-muse-glimmer-30b-qlora:
+  inherits: _finetune_large
+  enabled: false  # same venv requirement as the LoRA run
+  weight: 1
+  tags: [qlora, lora-vs-qlora, large]
+  url: https://huggingface.co/meta-models/Muse-Glimmer-30B
+  argv:
+    --model: meta-models/Muse-Glimmer-30B
+    --model_revision: cec94fcfd6512f2cfe708138c32533b346ea4f69
+    --load_in_4bit: true
+
+# --- Qwen3.8-27B (the current dense leader): QLoRA from unsloth's pre-quantized NF4 build (download 22.4 GB),
+# as a 128 GB-or-less user would; the bf16 LoRA needs Qwen/Qwen3.8-27B (55.6 GB, only its config is cached).
+# Hybrid Gated-DeltaNet layers: without flash-linear-attention + causal-conv1d (not in the venv) the torch
+# fallback is slow. Needs transformers >= 5.8 (qwen3_5 is in 5.5 but Qwen3.8 checkpoints were made with 5.8). ---
+
+homelab-ft-qwen38-27b-qlora:
+  inherits: _finetune_large
+  enabled: false  # 22.4 GB download + fla / causal-conv1d kernels: user decision
+  weight: 1
+  tags: [qlora, large]
+  url: https://huggingface.co/unsloth/Qwen3.8-27B-unsloth-bnb-4bit
+  argv:
+    --model: unsloth/Qwen3.8-27B-unsloth-bnb-4bit
+    --model_revision: 8aa5f05d26b7205477066e1449e0af13f762a299
+    --load_in_4bit: true
+
+homelab-ft-qwen38-27b-lora:
+  inherits: _finetune_large
+  enabled: false  # 55.6 GB bf16 download
+  weight: 1
+  tags: [lora, large]
+  url: https://huggingface.co/Qwen/Qwen3.8-27B
+  argv:
+    --model: Qwen/Qwen3.8-27B
+    --model_revision: 37561816e66b5b9153b1b64c10968c18c1e6f4a0
+
+# --- gpt-oss-120b (MoE 117B-A5B): the largest model that trains on 128 GB, QLoRA only (unsloth NF4 build,
+# 62.1 GB download: unsloth does not train on the cached MXFP4 checkpoint directly) ---
+
+homelab-ft-gptoss-120b-qlora:
+  inherits: _finetune_large
+  enabled: false  # 62.1 GB download: user decision
+  weight: 1
+  tags: [qlora, large, moe]
+  url: https://huggingface.co/unsloth/gpt-oss-120b-unsloth-bnb-4bit
+  argv:
+    --model: unsloth/gpt-oss-120b-unsloth-bnb-4bit
+    --model_revision: 13234b7e8100cf5513ef743648c325d85facdd8c
+    --load_in_4bit: true

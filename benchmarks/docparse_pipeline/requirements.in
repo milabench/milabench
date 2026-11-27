@@ -1,0 +1,11 @@
+voir>=0.2.19,<0.3
+torch
+docling==2.150.1
+rapidocr==3.10.0
+onnxruntime-gpu==1.32.0
+tesserocr==2.13.0
+huggingface_hub
+pandas
+pyarrow
+pyyaml
+aiohttp

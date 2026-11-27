@@ -75,6 +75,10 @@ def _config_layers(config_files):
                     v.setdefault("config_base", str(config_base))
                     v.setdefault("config_file", str(config_file))
                     v.setdefault("dirs", {})
+                    # a relative definition is relative to the file that wrote it: resolve it now, so an entry
+                    # that inherits it from another folder's file (an ad hoc config) still finds the benchmark
+                    if isinstance(v.get("definition"), str):
+                        v["definition"] = str(relative_to(v["definition"], v["config_base"]))
                 yield config
 
 
@@ -110,8 +114,31 @@ def finalize_config(name, bench_config):
         if len(_monitor_tags) != 1:
             print(f"Bench {name} should have exactly one monitor tag. Found {_monitor_tags}")
 
+    apply_passes_toggle(bench_config)
+
     bench_config["tag"] = [bench_config["name"]]
     return bench_config
+
+
+def apply_passes_toggle(bench_config):
+    """``passes_toggle: [a, b]`` (e.g. ``--override '*.passes_toggle=[quality]'``): keep only the client passes
+    of these names, in the bench and its arch variants. A bench that had passes and keeps none is disabled, instead
+    of falling back to its default single run."""
+    keep = bench_config.get("passes_toggle")
+    if not keep:
+        return
+    keep = {keep} if isinstance(keep, str) else set(keep)
+    sections = [bench_config.get("client")]
+    sections += [(variant or {}).get("client") for variant in (bench_config.get("variants") or {}).values()]
+    had = kept = 0
+    for client in sections:
+        if not isinstance(client, dict) or not client.get("passes"):
+            continue
+        had += len(client["passes"])
+        client["passes"] = [spec for spec in client["passes"] if spec.get("name") in keep]
+        kept += len(client["passes"])
+    if had and not kept:
+        bench_config["enabled"] = False
 
 
 def combine_args(args, kwargs):

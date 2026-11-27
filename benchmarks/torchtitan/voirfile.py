@@ -1,123 +1,23 @@
-from dataclasses import dataclass
+"""voir instrumentation for the native TorchTitan benchmark.
+
+Same structure as the other milabench voirfiles: TorchTitan's Trainer is
+wrapped (see tt_native/instrument.py), benchmate times the steps and pushes
+one ``rate`` (global tokens/s) per measured step, plus ``loss`` and a final
+``summary`` event. The official throughput is the median of the rates.
+
+Options (milabench ``voir.options``):
+    skip          warm-up steps, not timed
+    stop          measured steps
+    stop_seconds  if > 0, measure for this long instead of ``stop`` steps
+"""
+
+from dataclasses import dataclass, replace
 
 from voir import configurable
 from voir.phase import StopProgram
-from benchmate.metrics import (
-    LazyLossPusher,
-    ManualTimedIterator,
-    default_device,
-    default_event,
-    sumggle_push,
-)
-from benchmate.monitor import get_rank, voirfile_monitor
 from benchmate.benchrun import forward_voir_file
-
-from torch_compat import ensure_torchtitan_torch_compat
-
-
-def _milabench_rank() -> int:
-    rank = get_rank()
-    return 0 if rank < 0 else rank
-
-
-class _TrainStepMetrics:
-    """CUDA-event train throughput via ManualTimedIterator (openinstruct pattern)."""
-
-    def __init__(self) -> None:
-        self.timer = ManualTimedIterator(
-            iter(()),
-            event_fn=default_event(),
-            rank=_milabench_rank(),
-            push=sumggle_push(),
-            device=default_device(),
-            earlystop=10**9,
-            raise_stop_program=False,
-        )
-        self.losses = LazyLossPusher("train")
-        self._started = False
-        self._state: dict = {}
-
-    def _ensure_started(self) -> None:
-        if self._started:
-            return
-        self.timer.start = self.timer.event_fn(enable_timing=True)
-        self.timer.start.record()
-        self._started = True
-
-    def reset_step(self) -> None:
-        self._state = {"local_tokens": 0, "loss": None}
-
-    def note_local_tokens(self, count: int) -> None:
-        self._state["local_tokens"] = int(count)
-
-    def note_loss(self, loss) -> None:
-        self._state["loss"] = loss
-
-    def finish_step(self) -> None:
-        tokens = self._state.get("local_tokens", 0)
-        if tokens > 0:
-            self._ensure_started()
-            self.timer.step(batch_override=tokens)
-            self.timer._push()
-
-        loss = self._state.get("loss")
-        if loss is not None:
-            self.losses.record(loss)
-            self.losses.push(self.timer.message_push)
-
-
-_metrics: _TrainStepMetrics | None = None
-
-
-def _install_torchtitan_metrics() -> None:
-    global _metrics
-    if _metrics is not None:
-        return
-
-    ensure_torchtitan_torch_compat()
-    from torchtitan.trainer import Trainer
-
-    _metrics = _TrainStepMetrics()
-
-    if not getattr(Trainer.train_step, "_milabench_timed", False):
-        _orig_train_step = Trainer.train_step
-
-        def _wrapped_train_step(self, data_iterator):
-            _metrics.reset_step()
-            _orig_train_step(self, data_iterator)
-            _metrics.finish_step()
-
-        _wrapped_train_step._milabench_timed = True  # type: ignore[attr-defined]
-        Trainer.train_step = _wrapped_train_step
-
-    if not getattr(Trainer.forward_backward_step, "_milabench_loss", False):
-        _orig_fwb = Trainer.forward_backward_step
-
-        def _wrapped_fwb(self, *args, **kwargs):
-            loss = _orig_fwb(self, *args, **kwargs)
-            _metrics.note_loss(loss)
-            return loss
-
-        _wrapped_fwb._milabench_loss = True  # type: ignore[attr-defined]
-        Trainer.forward_backward_step = _wrapped_fwb
-
-    try:
-        from torchtitan.observability.structured_logger import structured_logging as sl
-
-        if not getattr(sl.log_trace_scalar, "_milabench_tokens", False):
-            _orig_log_scalar = sl.log_trace_scalar
-
-            def _wrapped_log_trace_scalar(scalars, *args, **kwargs):
-                if local := scalars.get("local_valid_tokens"):
-                    _metrics.note_local_tokens(int(local))
-                return _orig_log_scalar(scalars, *args, **kwargs)
-
-            _wrapped_log_trace_scalar._milabench_tokens = True  # type: ignore[attr-defined]
-            sl.log_trace_scalar = _wrapped_log_trace_scalar
-    except ImportError:
-        pass
-
-    print("[voirfile] ManualTimedIterator metrics installed on Trainer.train_step", flush=True)
+from benchmate.metrics import sumggle_push
+from benchmate.monitor import voirfile_monitor
 
 
 @dataclass
@@ -126,20 +26,33 @@ class Config:
 
     dash: bool = False
     interval: str = "1s"
-    skip: int = 5
-    stop: int = 20
-    gpu_poll: float = 0.25
+    gpu_poll: float = 1.0
+    skip: int = 40
+    stop: int = 100
+    stop_seconds: float = 0.0
 
 
 @configurable
 def instrument_main(ov, options: Config):
     yield ov.phases.init
 
-    voirfile_monitor(ov, options)
+    # The stop is applied on every rank by the instrumented trainer at the
+    # same step. voir's own early stop acts on rank 0 only, which would leave
+    # the other ranks blocked in collectives: keep it out of reach.
+    voirfile_monitor(ov, replace(options, stop=10**9))
 
     yield ov.phases.load_script
 
-    _install_torchtitan_metrics()
+    from tt_native.instrument import TrainerInstrument, install
+
+    install(
+        TrainerInstrument(
+            skip=options.skip,
+            stop=options.stop,
+            stop_seconds=options.stop_seconds or None,
+            push=sumggle_push(),
+        )
+    )
 
     with forward_voir_file():
         try:

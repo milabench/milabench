@@ -28,10 +28,13 @@ dependencies = [
 ]
 
 [rocm]
-dependencies = []
+dependencies = [
+    # ROCm build from the milabench wheels release (FA2 only; FA3/FA4 are CUDA-only)
+    "flash-attn",
+]
 
 [hpu]
 enabled = false
 
 [xpu]
-enabled = false
+enabled = true

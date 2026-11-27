@@ -1,41 +1,47 @@
 #!/usr/bin/env python
-"""Stage tokenizers / HF weights and tiny datasets for torchtitan benches."""
+"""Download what a run reads: tokenizer/config (weights for SFT), FineWeb, SFT data.
 
-from __future__ import annotations
+Called by ``milabench prepare`` with the bench argv (same flags as main.py);
+only ``--recipe``, ``--dataset`` and ``--samples`` matter here. Needs internet
+access (run on a login node); the runs themselves are offline.
+"""
 
+import argparse
 import json
 import os
-import shutil
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
+# make_env sets the runs offline; prepare is the step that downloads.
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_DATASETS_OFFLINE"] = "0"
 
+from tt_native.assets import (  # noqa: E402
+    DEFAULT_FINEWEB_SAMPLES,
+    TOKENIZER_FILES,
+    TOKENIZER_REPO,
+    TOKENIZER_REVISION,
+    data_dir,
+    fineweb_dir,
+    tokenizer_dir,
+)
 
-# Bench name → (hf_repo_id, mode)
-BENCHES = {
-    "torchtitan-qwen3-4b-pretrain": ("Qwen/Qwen3-4B-Instruct-2507", "pretrain"),
-    "torchtitan-qwen3-4b-pretrain-smoke": ("Qwen/Qwen3-4B-Instruct-2507", "pretrain"),
-    "torchtitan-qwen3-4b-sft": ("Qwen/Qwen3-4B-Instruct-2507", "sft"),
-    "torchtitan-qwen3-4b-sft-smoke": ("Qwen/Qwen3-4B-Instruct-2507", "sft"),
-    "torchtitan-qwen3-30b-pretrain": ("Qwen/Qwen3-30B-A3B", "pretrain"),
-    "torchtitan-qwen3-30b-sft": ("Qwen/Qwen3-30B-A3B", "sft"),
-    "torchtitan-mistral-7b-pretrain": ("mistralai/Mistral-7B-v0.1", "pretrain"),
-    "torchtitan-mistral-7b-sft": ("mistralai/Mistral-7B-v0.1", "sft"),
-    "torchtitan-olmo-7b-pretrain": ("allenai/OLMo-7B-hf", "pretrain"),
-    "torchtitan-olmo-7b-sft": ("allenai/OLMo-7B-hf", "sft"),
-    "torchtitan-mixtral-8x7b-pretrain": ("mistralai/Mixtral-8x7B-v0.1", "pretrain"),
-    "torchtitan-mixtral-8x7b-sft": ("mistralai/Mixtral-8x7B-v0.1", "sft"),
-    "torchtitan-olmoe-7b-pretrain": ("allenai/OLMoE-1B-7B-0924", "pretrain"),
-    "torchtitan-olmoe-7b-sft": ("allenai/OLMoE-1B-7B-0924", "sft"),
-    "torchtitan-gemma4-26b-pretrain": ("google/gemma-4-26B-A4B", "pretrain"),
-    "torchtitan-gemma4-26b-sft": ("google/gemma-4-26B-A4B", "sft"),
-    "torchtitan-deepseek-v2-lite-pretrain": ("deepseek-ai/DeepSeek-V2-Lite", "pretrain"),
-    "torchtitan-deepseek-v2-lite-sft": ("deepseek-ai/DeepSeek-V2-Lite", "sft"),
-    "torchtitan-glm5-pretrain": ("zai-org/GLM-5", "pretrain"),
-    "torchtitan-glm5-sft": ("zai-org/GLM-5", "sft"),
+# HF backend configs (tt_configs) -> Hugging Face repo. ``*_sft`` configs
+# also need the weights; pre-training starts from scratch.
+HF_MODELS = {
+    "qwen3_4b": "Qwen/Qwen3-4B-Instruct-2507",
+    "qwen3_30b": "Qwen/Qwen3-30B-A3B",
+    "mistral_7b": "mistralai/Mistral-7B-v0.1",
+    "olmo_7b": "allenai/OLMo-7B-hf",
+    "mixtral_8x7b": "mistralai/Mixtral-8x7B-v0.1",
+    "olmoe_7b": "allenai/OLMoE-1B-7B-0924",
+    "gemma4_26b": "google/gemma-4-26B-A4B",
+    "deepseek_v2_lite": "deepseek-ai/DeepSeek-V2-Lite",
+    "glm5": "zai-org/GLM-5",
 }
 
-TOKENIZER_PATTERNS = [
+HF_PATTERNS = [
+    "config.json",
+    "generation_config.json",
     "tokenizer.json",
     "tokenizer_config.json",
     "tokenizer.model",
@@ -43,61 +49,30 @@ TOKENIZER_PATTERNS = [
     "vocab.json",
     "merges.txt",
     "special_tokens_map.json",
-    "chat_template.jinja",
     "*.jinja",
 ]
 
-CONFIG_PATTERNS = [
-    "config.json",
-    "generation_config.json",
-]
-
-WEIGHT_PATTERNS = [
-    "*.safetensors",
-    "model.safetensors.index.json",
-]
-
-
-def _config():
-    raw = os.environ.get("MILABENCH_CONFIG")
-    if not raw:
-        return {}
-    return json.loads(raw)
-
-
-def _code_dir() -> Path:
-    return Path(os.environ.get("MILABENCH_DIR_CODE", Path(__file__).resolve().parent))
-
-
-def _data_dir() -> Path:
-    return Path(os.environ["MILABENCH_DIR_DATA"])
-
-
-def _hf_token():
-    return (
-        os.environ.get("MILABENCH_HF_TOKEN")
-        or os.environ.get("HF_TOKEN")
-        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    )
-
-
-def stage_datasets(data: Path, code: Path) -> None:
-    for name in ("c4_test", "sft_test"):
-        src = code / "assets" / name
-        dst = data / name
-        if not src.exists():
-            continue
-        dst.mkdir(parents=True, exist_ok=True)
-        for item in src.iterdir():
-            target = dst / item.name
-            if not target.exists():
-                shutil.copy2(item, target)
-        print(f"Staged dataset {name} → {dst}")
-
-
+WEIGHT_PATTERNS = ["*.safetensors", "model.safetensors.index.json"]
 
 DEFAULT_SFT_CHAT_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'user' %}{{ message['content'] }}
 {% elif message['role'] == 'assistant' %}{{ message['content'] }}{% endif %}{% endfor %}"""
+
+_LOREM = (
+    "The quick brown fox jumps over the lazy dog while the benchmark measures "
+    "throughput across several training steps on a small synthetic corpus. "
+)
+
+
+def _token():
+    return os.environ.get("MILABENCH_HF_TOKEN") or os.environ.get("HF_TOKEN")
+
+
+def _hf_model(recipe: str):
+    """(repo, sft) for an HF backend recipe, None for native ones."""
+    base, _, mode = recipe.rpartition("_")
+    if base in HF_MODELS and mode in ("pretrain", "sft"):
+        return HF_MODELS[base], mode == "sft"
+    return None
 
 
 def ensure_sft_chat_template(dest: Path) -> None:
@@ -114,51 +89,81 @@ def ensure_sft_chat_template(dest: Path) -> None:
         if cfg.get("chat_template"):
             return
     jinja.write_text(DEFAULT_SFT_CHAT_TEMPLATE)
-    print(f"Wrote default SFT chat template → {jinja}")
+    print(f"Wrote default SFT chat template -> {jinja}")
 
-def download_assets(repo_id: str, mode: str, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    patterns = list(TOKENIZER_PATTERNS) + list(CONFIG_PATTERNS)
-    if mode == "sft":
-        patterns.extend(WEIGHT_PATTERNS)
 
-    token = _hf_token()
-    print(f"Downloading {repo_id} ({mode}) → {dest}")
-    print(f"  allow_patterns: {patterns}")
+def stage_sft_dataset() -> None:
+    """Synthetic single-turn chat samples (question/answer) for the SFT benches."""
+    dst = data_dir() / "sft_test"
+    target = dst / "data.json"
+    if target.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    with open(target, "w") as fp:
+        for i in range(2000):
+            sample = {
+                "question": f"Question {i}: what is {i} + {i}?",
+                "answer": f"{i} + {i} = {2 * i}. " + _LOREM,
+            }
+            fp.write(json.dumps(sample) + "\n")
+    print(f"Staged SFT dataset -> {target}")
+
+
+def download_hf_model(repo_id: str, sft: bool) -> None:
+    from huggingface_hub import snapshot_download
+
+    dest = data_dir() / "hf" / repo_id.split("/")[-1]
+    patterns = HF_PATTERNS + (WEIGHT_PATTERNS if sft else [])
     snapshot_download(
         repo_id=repo_id,
         local_dir=str(dest),
         allow_patterns=patterns,
-        token=token,
+        token=_token(),
     )
-    if mode == "sft":
+    if sft:
         ensure_sft_chat_template(dest)
-    print(f"Assets ready at {dest}")
+    print(f"{repo_id} ({'sft' if sft else 'pretrain'}) at {dest}")
+
+
+def download_native_tokenizer() -> None:
+    from huggingface_hub import snapshot_download
+
+    dest = tokenizer_dir()
+    snapshot_download(
+        repo_id=TOKENIZER_REPO,
+        revision=TOKENIZER_REVISION,
+        local_dir=str(dest),
+        allow_patterns=TOKENIZER_FILES,
+        token=_token(),
+    )
+    print(f"Tokenizer {TOKENIZER_REPO}@{TOKENIZER_REVISION[:8]} at {dest}")
 
 
 def main():
-    cfg = _config()
-    name = cfg.get("name", "")
-    code = _code_dir()
-    data = _data_dir()
-    data.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--recipe", default="qwen38")
+    parser.add_argument("--dataset", default="fineweb")
+    parser.add_argument("--samples", type=int, default=DEFAULT_FINEWEB_SAMPLES)
+    args, _ = parser.parse_known_args()
 
-    stage_datasets(data, code)
+    hf = _hf_model(args.recipe)
+    if hf is not None:
+        repo_id, sft = hf
+        # Pre-training with random tokens still builds the model from its HF config.
+        download_hf_model(repo_id, sft)
+        if sft:
+            stage_sft_dataset()
+            return
+    elif args.dataset != "random":
+        download_native_tokenizer()
 
-    if name not in BENCHES:
-        # Fall back: prepare all tokenizers for every known model (dev convenience).
-        print(f"Unknown/empty bench name {name!r}; preparing all pretrain tokenizers.")
-        seen = set()
-        for repo_id, mode in BENCHES.values():
-            if mode != "pretrain" or repo_id in seen:
-                continue
-            seen.add(repo_id)
-            download_assets(repo_id, "pretrain", data / "hf" / repo_id.split("/")[-1])
+    if args.dataset == "random":
+        print("Random tokens: no dataset to prepare")
         return
 
-    repo_id, mode = BENCHES[name]
-    dest = data / "hf" / repo_id.split("/")[-1]
-    download_assets(repo_id, mode, dest)
+    from benchmate.fineweb import prepare_fineweb
+
+    prepare_fineweb(fineweb_dir(), args.samples, token=_token())
 
 
 if __name__ == "__main__":

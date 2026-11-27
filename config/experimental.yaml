@@ -81,8 +81,9 @@ serving-qwen38-flash-next-fp8-gpus:
   definition: ../benchmarks/vllm
 
 vllm-moe-kimi-k3-2.8t-mxfp4-nodes:
-  enabled: false
-  weight: 0.0
+  enabled: true
+  weight: 1.0
+  definition: ../benchmarks/vllm
 
 vllm-moe-glm52-744b-bf16-nodes:
   enabled: false
@@ -207,3 +208,12 @@ torchtitan-deepseek-v2-lite-sft:
   enabled: true
   weight: 1.0
   definition: ../benchmarks/torchtitan
+
+# Native TorchTitan Qwen3.8: CUDA only (attn-gym's short conv is a CuTe DSL kernel).
+torchtitan-qwen38-27b-pretrain-smoke:
+  enabled: false
+  weight: 0.0
+
+torchtitan-qwen38-27b-pretrain:
+  enabled: false
+  weight: 0.0

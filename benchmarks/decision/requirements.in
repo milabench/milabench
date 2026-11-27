@@ -1,0 +1,18 @@
+# The decision models' runtimes (their cards: transformers 5.17.0, torch 2.14). torch comes from the per-arch
+# install (homelab: the CUDA 13 aarch64 build), as for the other serving packs.
+voir>=0.2.19,<0.3
+torch
+torchvision
+transformers==5.17.0
+accelerate>=1.10
+safetensors>=0.6
+huggingface_hub>=1.0
+# d3 (Gated DeltaNet layers): its GPU kernels; without them transformers runs the slower reference
+flash-linear-attention==0.5.2
+einops
+pillow>=10
+opencv-python-headless
+tokenizers>=0.21
+numpy>=1.26
+# the engine host imports the kit's Engine / Unsupported (the kit's own venv runs the client side)
+decision-index @ git+https://github.com/apolinario/decision-index@25c6ec7b6b5f44a216c63c3a700de3a9c6d6699d

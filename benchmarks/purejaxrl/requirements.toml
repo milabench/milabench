@@ -27,10 +27,10 @@ dependencies = [
 
 [rocm]
 dependencies = [
-    "jax-rocm7-plugin",
+    "jax-rocm{rocm_major}-plugin",
 ]
 
 [hpu]
 
 [xpu]
-enabled = false
+enabled = true

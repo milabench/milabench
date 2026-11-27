@@ -1,275 +1,194 @@
-"""HF checkpoint adapter for transformers-backend MoE models on milabench."""
+"""Load Hugging Face checkpoints into transformers-backend models, MoE included.
+
+TorchTitan's HFTransformerStateDictAdapter only strips the ``model.`` prefix:
+it cannot load MoE checkpoints, since the backend swaps HF MoE blocks for
+TorchTitan's grouped experts (``routed_experts.w13`` [E, 2, F, D],
+``routed_experts.w2`` [E, D, F], ``router.gate``, ``shared_experts.w13``
+[2, F, D] / ``w2``), and checkpoints spell experts per model:
+
+* per expert: ``mlp.experts.<e>.{gate,up,down}_proj`` (OLMoE, DeepSeek, Qwen3-MoE)
+  or ``block_sparse_moe.experts.<e>.{w1,w3,w2}`` (Mixtral);
+* packed: ``experts.gate_up_proj`` [E, 2F, D] / ``experts.down_proj`` (Gemma4).
+
+``to_hf`` maps every model tensor to the key the checkpoint stores (from its
+``model.safetensors.index.json``) and returns load targets that are views of
+the rank's own parameter shards: a rank requests only the experts it holds,
+and DCP writes them in place (no gathered copy of the model). ``from_hf``
+returns the model state dict those views alias.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-from collections import defaultdict
 from typing import Any
 
 import torch
+from torch.distributed.tensor import DTensor
+from torch.distributed.tensor._utils import compute_local_shape_and_global_offset
 
 from torchtitan.experiments.transformers_modeling_backend.state_dict_adapter import (
     HFTransformerStateDictAdapter,
-    hf_to_titan_moe_state_dict,
-    titan_to_hf_moe_state_dict,
-    _expert_names,
 )
 
-_TITAN_ONLY_KEY_PARTS = (
-    "expert_bias_E",
-    "tokens_per_expert_E",
+# TorchTitan-only state with no checkpoint counterpart: initialized by the model.
+_TITAN_ONLY = re.compile(r"\.(expert_bias_E|tokens_per_expert_E)$")
+
+_MOE_KEY = re.compile(
+    r"^(?P<pre>.*layers\.\d+\.)(?P<attr>[^.]+)\."
+    r"(?P<part>routed_experts\.w13|routed_experts\.w2|shared_experts\.w13|shared_experts\.w2|router\.gate)"
+    r"\.weight$"
 )
 
-_NUMBERED_EXPERT_RE = re.compile(
-    r"^layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"
-)
+# Checkpoint spellings, tried in order; {p}: layer prefix, {a}: MoE module name, {e}: expert.
+_ROUTED_PER_EXPERT = [
+    ("{p}{a}.experts.{e}.gate_proj.weight", "{p}{a}.experts.{e}.up_proj.weight", "{p}{a}.experts.{e}.down_proj.weight"),
+    ("{p}block_sparse_moe.experts.{e}.w1.weight", "{p}block_sparse_moe.experts.{e}.w3.weight", "{p}block_sparse_moe.experts.{e}.w2.weight"),
+]
+_ROUTED_PACKED = [
+    ("{p}{a}.experts.gate_up_proj", "{p}{a}.experts.down_proj"),
+    ("{p}experts.gate_up_proj", "{p}experts.down_proj"),
+]
+_SHARED = [
+    ("{p}{a}.shared_experts.gate_proj.weight", "{p}{a}.shared_experts.up_proj.weight", "{p}{a}.shared_experts.down_proj.weight"),
+    ("{p}{a}.shared_expert.gate_proj.weight", "{p}{a}.shared_expert.up_proj.weight", "{p}{a}.shared_expert.down_proj.weight"),
+    # Gemma4: the dense MLP beside the experts becomes TorchTitan's shared expert.
+    ("{p}{a}.gate_proj.weight", "{p}{a}.up_proj.weight", "{p}{a}.down_proj.weight"),
+]
+_ROUTER = ["{p}{a}.gate.weight", "{p}block_sparse_moe.gate.weight", "{p}router.proj.weight", "{p}{a}.router.weight"]
 
-_GROUPED_EXPERT_RE = re.compile(
-    r"^layers\.(\d+)\.mlp\.routed_experts\.inner_experts\.([^.]+)$"
-)
-
-_STACKED_HF_GATE_UP_RE = re.compile(
-    r"^layers\.(\d+)\.mlp\.experts\.gate_up_proj(?:\.weight)?$"
-)
-_STACKED_HF_PROJ_RE = re.compile(
-    r"^layers\.(\d+)\.mlp\.experts\.(gate_proj|up_proj|down_proj)(?:\.weight)?$"
-)
-
-
-def _with_model_prefix(hf_state_dict: dict[str, Any]) -> dict[str, Any]:
-    """Safetensors on disk use a leading ``model.``; DCP load plans must match."""
-    return {
-        k if k.startswith("model.") else f"model.{k}": v
-        for k, v in hf_state_dict.items()
-    }
+# Where the checkpoint keeps the decoder (composite VL models: Gemma4).
+_PREFIXES = ("model.", "model.language_model.", "language_model.model.")
 
 
-def _as_dense_tensor(value: Any) -> torch.Tensor | None:
-    if not isinstance(value, torch.Tensor):
+def _local_rows(value: torch.Tensor) -> tuple[torch.Tensor, int]:
+    """(local tensor, global index of its first row) for a tensor sharded on dim 0 only."""
+    if not isinstance(value, DTensor):
+        return value, 0
+    local = value.to_local()
+    shape, offset = compute_local_shape_and_global_offset(
+        value.shape, value.device_mesh, value.placements
+    )
+    if any(o != 0 for o in offset[1:]) or tuple(shape[1:]) != tuple(value.shape[1:]):
+        raise NotImplementedError(
+            f"HF load of a tensor sharded beyond dim 0 ({value.placements}): "
+            "not supported by the milabench adapter"
+        )
+    return local, offset[0]
+
+
+class MilabenchHFStateDictAdapter(HFTransformerStateDictAdapter):
+    def __init__(self, model_config, hf_assets_path: str | None):
+        super().__init__(model_config, hf_assets_path)
+        self._model_state: dict[str, Any] | None = None
+        self._disk_keys: set[str] = set()
+        index = os.path.join(hf_assets_path or "", "model.safetensors.index.json")
+        if hf_assets_path and os.path.isfile(index):
+            with open(index, encoding="utf-8") as f:
+                self._disk_keys = set(json.load(f)["weight_map"])
+
+    def _resolve(self, key: str) -> str | None:
+        """Checkpoint spelling of an HF-style key (``model.layers...``, ``lm_head...``), or None."""
+        bare = key.removeprefix("model.")
+        for candidate in (*(prefix + bare for prefix in _PREFIXES), bare):
+            if candidate in self._disk_keys:
+                return candidate
         return None
-    tensor = value
-    if hasattr(tensor, "to_local"):
-        try:
-            tensor = tensor.to_local()
-        except Exception:
-            pass
-    if hasattr(tensor, "full_tensor"):
-        try:
-            tensor = tensor.full_tensor()
-        except Exception:
-            pass
-    return tensor
 
-
-class MilabenchMoeStateDictAdapter(HFTransformerStateDictAdapter):
-    """Map HF MoE safetensors to Titan MoE modules for initial_load_in_hf."""
+    def _first(self, templates, **fmt) -> tuple[str, ...] | None:
+        for group in templates:
+            keys = tuple(self._resolve(t.format(**fmt)) for t in group)
+            if all(keys):
+                return keys
+        return None
 
     def to_hf(self, state_dict: dict[str, Any]) -> dict[str, Any]:
-        filtered = {
-            k: v
-            for k, v in state_dict.items()
-            if not any(part in k for part in _TITAN_ONLY_KEY_PARTS)
-        }
-        hf = super().to_hf(filtered)
-        hf = titan_to_hf_moe_state_dict(hf)
-        hf = self._split_grouped_experts(hf)
-        hf = self._rekey_for_hf_safetensors(hf)
-        weight_map = self._load_hf_weight_map()
-        if weight_map:
-            return self._align_to_weight_map(hf, weight_map)
-        return _with_model_prefix(hf)
+        if not self._disk_keys:
+            return super().to_hf(state_dict)
+        self._model_state = state_dict
+        targets: dict[str, Any] = {}
+        missing = []
+        for key, value in state_dict.items():
+            if _TITAN_ONLY.search(key):
+                continue
+            hf_key = key.removeprefix("model.")
+            moe = _MOE_KEY.match(hf_key)
+            if moe is None:
+                disk = self._resolve(hf_key)
+                if disk is None and hf_key == "lm_head.weight" and self._tie_word_embeddings:
+                    continue  # tied: loaded through the embedding
+                if disk is None:
+                    missing.append(key)
+                else:
+                    targets[disk] = value
+                continue
+            if not self._moe_targets(moe, value, targets):
+                missing.append(key)
+        if missing:
+            raise KeyError(
+                f"{len(missing)} model tensors have no counterpart in the checkpoint "
+                f"(first: {missing[:5]})"
+            )
+        return targets
+
+    def _moe_targets(self, moe: re.Match, value: torch.Tensor, targets: dict[str, Any]) -> bool:
+        fmt = {"p": moe["pre"], "a": moe["attr"]}
+        part = moe["part"]
+
+        if part == "router.gate":
+            disk = self._first([[t] for t in _ROUTER], **fmt)
+            if disk:
+                targets[disk[0]] = value
+            return disk is not None
+
+        if part.startswith("shared_experts"):
+            disk = self._first(_SHARED, **fmt)
+            if disk is None:
+                return False
+            gate, up, down = disk
+            if part.endswith("w2"):
+                targets[down] = value
+                return True
+            # [2, F, D]: one row per projection (FSDP may give a rank one, both or none).
+            local, start = _local_rows(value)
+            for i in range(local.shape[0]):
+                targets[(gate, up)[start + i]] = local[i]
+            return True
+
+        packed = self._first(_ROUTED_PACKED, **fmt)
+        if packed is not None:
+            gate_up, down = packed
+            if part.endswith("w2"):
+                targets[down] = value
+            elif isinstance(value, DTensor):
+                # [E, 2, F, D] and the checkpoint's [E, 2F, D] share one memory layout.
+                local = value.to_local()
+                shape = (value.shape[0], value.shape[1] * value.shape[2], value.shape[3])
+                targets[gate_up] = DTensor.from_local(
+                    local.flatten(1, 2), value.device_mesh, value.placements,
+                    run_check=False, shape=torch.Size(shape),
+                    stride=torch.empty(shape, device="meta").stride(),
+                )
+            else:
+                targets[gate_up] = value.flatten(1, 2)
+            return True
+
+        local, start = _local_rows(value)
+        for i in range(local.shape[0]):
+            disk = self._first(_ROUTED_PER_EXPERT, e=start + i, **fmt)
+            if disk is None:
+                return False
+            gate, up, down = disk
+            if part.endswith("w2"):
+                targets[down] = local[i]
+            else:
+                targets[gate], targets[up] = local[i, 0], local[i, 1]
+        return True
 
     def from_hf(self, hf_state_dict: dict[str, Any]) -> dict[str, Any]:
-        normalized = {
-            k.removeprefix("model."): v for k, v in hf_state_dict.items()
-        }
-        stacked, remaining = self._stack_numbered_experts(normalized)
-        converted = hf_to_titan_moe_state_dict(remaining)
-        converted.update(stacked)
-        renamed = {
-            re.sub(r"\.expert_bias$", ".expert_bias_E", k): v
-            for k, v in converted.items()
-        }
-        return super().from_hf(renamed)
-
-    def _load_hf_weight_map(self) -> dict[str, str] | None:
-        if not self.hf_assets_path:
-            return None
-        mapping_path = os.path.join(self.hf_assets_path, "model.safetensors.index.json")
-        if not os.path.isfile(mapping_path):
-            return None
-        with open(mapping_path, encoding="utf-8") as handle:
-            return json.load(handle).get("weight_map")
-
-    def _rekey_for_hf_safetensors(self, hf_state_dict: dict[str, Any]) -> dict[str, Any]:
-        """Expand stacked MoE tensors into numbered HF keys expected on disk."""
-        weight_map = self._load_hf_weight_map()
-        out: dict[str, Any] = {}
-        stacked: dict[tuple[str, str], torch.Tensor] = {}
-
-        for key, value in hf_state_dict.items():
-            norm = key.removeprefix("model.")
-            gate_up = _STACKED_HF_GATE_UP_RE.match(norm)
-            if gate_up:
-                dense = _as_dense_tensor(value)
-                if dense is not None and dense.ndim == 3:
-                    stacked[(gate_up.group(1), "gate_up_proj")] = dense
-                continue
-
-            proj = _STACKED_HF_PROJ_RE.match(norm)
-            if proj:
-                dense = _as_dense_tensor(value)
-                if dense is not None and dense.ndim == 3:
-                    stacked[(proj.group(1), proj.group(2))] = dense
-                continue
-
-            out[norm] = value
-
-        if not weight_map:
-            return self._split_stacked_hf_experts(out)
-
-        for ck in weight_map:
-            hf_key = ck.removeprefix("model.")
-            if hf_key in out:
-                continue
-            match = _NUMBERED_EXPERT_RE.match(hf_key)
-            if not match:
-                continue
-            layer, expert, proj = match.groups()
-            expert_idx = int(expert)
-
-            if proj in ("gate_proj", "up_proj"):
-                src = stacked.get((layer, "gate_up_proj"))
-                if src is None or expert_idx >= src.shape[0]:
-                    continue
-                half = src.shape[1] // 2
-                if proj == "gate_proj":
-                    out[hf_key] = src[expert_idx, :half, :].clone()
-                else:
-                    out[hf_key] = src[expert_idx, half:, :].clone()
-                continue
-
-            src = stacked.get((layer, "down_proj"))
-            if src is None or expert_idx >= src.shape[0]:
-                continue
-            out[hf_key] = src[expert_idx].clone()
-
-        return out
-
-    def _align_to_weight_map(
-        self, hf_state_dict: dict[str, Any], weight_map: dict[str, str]
-    ) -> dict[str, Any]:
-        """Use on-disk safetensor key spellings in the DCP load plan."""
-        by_bare = {k.removeprefix("model."): v for k, v in hf_state_dict.items()}
-        aligned: dict[str, Any] = {}
-        for ck in weight_map:
-            bare = ck.removeprefix("model.")
-            if bare in by_bare:
-                aligned[ck] = by_bare[bare]
-        return aligned
-
-    def _stack_numbered_experts(
-        self, hf_state_dict: dict[str, Any]
-    ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
-        gate_name, down_name, up_name = _expert_names()
-        proj_map = {
-            "gate_proj": gate_name,
-            "up_proj": up_name,
-            "down_proj": down_name,
-        }
-        buckets: dict[tuple[str, str], dict[int, torch.Tensor]] = defaultdict(dict)
-        remaining: dict[str, Any] = {}
-
-        for key, value in hf_state_dict.items():
-            match = _NUMBERED_EXPERT_RE.match(key)
-            if not match:
-                remaining[key] = value
-                continue
-            layer, expert, proj = match.groups()
-            titan_key = (
-                f"layers.{layer}.mlp.routed_experts.inner_experts.{proj_map[proj]}"
-            )
-            buckets[(titan_key, proj)][int(expert)] = value
-
-        stacked: dict[str, torch.Tensor] = {}
-        for (titan_key, _), experts in buckets.items():
-            ordered = [experts[i] for i in sorted(experts)]
-            stacked[titan_key] = torch.stack(ordered, dim=0)
-
-        return stacked, remaining
-
-    def _split_stacked_hf_experts(
-        self, hf_state_dict: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Split stacked HF MoE tensors into per-expert keys (fallback path)."""
-        split: dict[str, torch.Tensor] = {}
-        passthrough: dict[str, Any] = {}
-
-        for key, value in hf_state_dict.items():
-            dense = _as_dense_tensor(value)
-            if dense is None:
-                passthrough[key] = value
-                continue
-
-            norm = key.removeprefix("model.")
-            gate_up = _STACKED_HF_GATE_UP_RE.match(norm)
-            if gate_up and dense.ndim == 3:
-                layer = gate_up.group(1)
-                half = dense.shape[1] // 2
-                for expert_idx in range(dense.shape[0]):
-                    prefix = f"layers.{layer}.mlp.experts.{expert_idx}"
-                    split[f"{prefix}.gate_proj.weight"] = dense[expert_idx, :half, :]
-                    split[f"{prefix}.up_proj.weight"] = dense[expert_idx, half:, :]
-                continue
-
-            proj = _STACKED_HF_PROJ_RE.match(norm)
-            if proj and dense.ndim == 3:
-                layer, proj_name = proj.groups()
-                for expert_idx in range(dense.shape[0]):
-                    split_key = (
-                        f"layers.{layer}.mlp.experts.{expert_idx}.{proj_name}.weight"
-                    )
-                    split[split_key] = dense[expert_idx]
-                continue
-
-            passthrough[key] = value
-
-        passthrough.update(split)
-        return passthrough
-
-    def _split_grouped_experts(self, hf_state_dict: dict[str, Any]) -> dict[str, Any]:
-        split: dict[str, torch.Tensor] = {}
-        passthrough: dict[str, Any] = {}
-
-        for key, value in hf_state_dict.items():
-            match = _GROUPED_EXPERT_RE.match(key.removeprefix("model."))
-            if not match:
-                passthrough[key] = value
-                continue
-            dense = _as_dense_tensor(value)
-            if dense is None or dense.ndim != 3:
-                passthrough[key] = value
-                continue
-
-            layer, param_name = match.groups()
-            gate_name, down_name, up_name = _expert_names()
-            if param_name == gate_name:
-                proj = "gate_proj"
-            elif param_name == up_name:
-                proj = "up_proj"
-            elif param_name == down_name:
-                proj = "down_proj"
-            else:
-                passthrough[key] = value
-                continue
-
-            for expert_idx in range(dense.shape[0]):
-                split_key = (
-                    f"layers.{layer}.mlp.experts.{expert_idx}.{proj}.weight"
-                )
-                split[split_key] = dense[expert_idx]
-
-        passthrough.update(split)
-        return passthrough
+        if self._model_state is None:
+            return super().from_hf(hf_state_dict)
+        # The load targets alias the model's tensors: they already hold the weights.
+        state, self._model_state = self._model_state, None
+        return state

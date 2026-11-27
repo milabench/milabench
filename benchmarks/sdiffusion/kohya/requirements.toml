@@ -1,0 +1,20 @@
+[common]
+dependencies = [
+    "argklass",
+    "datasets",
+    "Pillow",
+    "tqdm",
+]
+
+[cuda]
+dependencies = [
+    "torch",
+    "torchvision",
+]
+
+[xpu]
+platform_constraints = false
+dependencies = [
+    "torch",
+    "torchvision",
+]

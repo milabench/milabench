@@ -102,7 +102,7 @@ def huggingface_main(args, model, config):
     if args.pretrained:
         model = LlamaForCausalLM.from_pretrained(
             config["_name_or_path"], 
-            device_map="cuda",
+            device_map=accelerator.device_type,
             torch_dtype=torch.bfloat16,
         )
     else:
