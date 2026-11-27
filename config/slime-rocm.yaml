@@ -1,0 +1,23 @@
+# slime + Megatron bring-up on ROCm (MI355X).
+#
+# Same entries as benchmarks/{slime,megatron}/dev.yaml, installed in their own venv so they cannot
+# move the shared torch venv (ATOM's transformers pin, the serving benchmarks):
+#
+#   MILABENCH_CONFIG_OVERRIDE=$PWD/milabench/config/slime-rocm.yaml bash install.sh --select <entries>
+#
+# ROCm Transformer Engine and torch_memory_saver come prebuilt from milabench/wheels
+# (GPU_BACKEND=rocm build-transformer-engine.sh / build-torch-memory-saver.sh), see slime/benchfile.py.
+#
+# Bring-up order: megatron-tiny-moe-smoke-1n, slime-qwen2.5-0.5b-sft-smoke, slime-qwen2.5-0.5b-sft-8gpu,
+# slime-qwen2.5-0.5b-grpo-smoke (needs sglang + sgl-kernel for ROCm), megatron-glm5-frozen-smoke-1n
+# (tilelang DSA / sparse MLA kernels, written for Hopper), then the -2n / -2n4g entries.
+
+include:
+  - ../benchmarks/slime/dev.yaml
+  - ../benchmarks/megatron/dev.yaml
+
+_slime:
+  install_group: slime
+
+_megatron_glm5:
+  install_group: slime

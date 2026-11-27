@@ -62,6 +62,9 @@ def _generate_argv(args, names: list) -> list:
     if base := getattr(args, "base", None):
         argv += ["--base", base]
     if exclude := getattr(args, "exclude", None):
+        # get_multipack has already split --select/--exclude into sets
+        if not isinstance(exclude, str):
+            exclude = ",".join(sorted(exclude))
         argv += ["--exclude", exclude]
     for override in getattr(args, "override", None) or []:
         argv += ["--override", override]

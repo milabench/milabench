@@ -1,0 +1,27 @@
+# Zero-shot ARC-Challenge (allenai/ai2_arc) for chat / reasoning models, scored on the last "Answer: <letter>"
+task: milabench_arc_challenge
+dataset_path: allenai/ai2_arc
+dataset_name: ARC-Challenge
+output_type: generate_until
+test_split: test
+num_fewshot: 0
+doc_to_text: "{{question.strip()}}\n\n{% for label in choices.label %}{{ 'ABCDE'[loop.index0] }}. {{choices.text[loop.index0]}}\n{% endfor %}\nThink step by step, then end your response with a final line of the form \"Answer: <letter>\"."
+doc_to_target: "{{ 'ABCDE'[answerKey|int - 1] if answerKey|string in '12345' else answerKey }}"
+generation_kwargs:
+  until: []
+  do_sample: false
+filter_list:
+  - name: answer-line
+    filter:
+      - function: regex
+        regex_pattern: "(?:Answer:\\s*\\**\\s*\\(?|\\\\boxed\\{\\(?)([A-E])\\b"
+        group_select: -1
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+metadata:
+  version: 1.0

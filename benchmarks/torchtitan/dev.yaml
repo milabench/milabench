@@ -1,8 +1,17 @@
-# Local bring-up config for torchtitan (pretrain + SFT × dense + MoE models).
+# Local bring-up config for torchtitan (pretrain + SFT): HF transformers backend
+# models and native TorchTitan Qwen3.8.
 # Usage:
 #   milabench install --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
 #   milabench prepare --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
 #   milabench run     --config benchmarks/torchtitan/dev.yaml --select torchtitan-qwen3-4b-pretrain
+#
+# argv: main.py options (tt_native/options.py); --recipe names the config
+# function in tt_configs (not --config: voir takes that flag). Measurement
+# window (voir options, tt_native/instrument.py):
+# `skip` warm-up steps, then `stop` measured steps (or `stop_seconds` when > 0).
+# The rate is global tokens/s, the score its median.
+#
+# Multi-node Qwen3.8 runs and their variants (Slurm): torchtitan_native.yaml.
 
 include:
   - ../../config/_defaults.yaml
@@ -15,353 +24,323 @@ _torchtitan:
   install_group: torch
   weight: 0.0
   max_duration: 3600
+  num_machines: 1
   tags:
     - nlp
     - llm
     - torchtitan
+    - multigpu
   plan:
     method: njobs
     n: 1
   voir:
     options:
+      skip: 5
       stop: 30
-  argv:
-    --module: tt_configs
-    --training.steps: 40
-    --metrics.log_freq: 1
+      stop_seconds: 0
+
+# HF transformers backend, pre-training from scratch on FineWeb (2048 tokens/GPU/step).
+_torchtitan_hf_pretrain:
+  inherits: _torchtitan
+  tags:
+    - pretrain
+  argv: &hf_pretrain_argv
+    --dataset: fineweb
+    --seq-len: 2048
+    --microbatch-sequences: 1
+    --compile: regions
+    --ac: selective
+
+# HF transformers backend, SFT from the HF weights (1024 tokens/GPU/step).
+_torchtitan_hf_sft:
+  inherits: _torchtitan
+  tags:
+    - sft
+  argv: &hf_sft_argv
+    --seq-len: 1024
+    --microbatch-sequences: 1
+    --compile: regions
+    --ac: selective
 
 # --- Qwen3-4B dense ---
 
 torchtitan-qwen3-4b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
-  tags:
-    - multigpu
-    - pretrain
   argv:
-    --module: tt_configs
-    --config: qwen3_4b_pretrain
-    --training.steps: 40
+    <<: *hf_pretrain_argv
+    --recipe: qwen3_4b_pretrain
+    --samples: 800_000
 
-# Short smoke for this machine (tokenizer + tiny c4_test only)
+# Short smoke on one GPU.
 torchtitan-qwen3-4b-pretrain-smoke:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
   tags:
-    - multigpu
-    - pretrain
     - smoke
   max_duration: 900
-  # Single-GPU smoke: 8-way torchrun was hanging in futex before train under the
-  # glibc-2.38 python wrapper; multi-GPU covered by openinstruct/vllm smokes.
-  devices: [0]
+  gpus_per_node: 1
   voir:
     options:
+      skip: 3
       stop: 10
-      skip: 2
   argv:
-    --module: tt_configs
-    --config: qwen3_4b_pretrain
-    --training.steps: 15
-    --training.seq_len: 512
-    --training.local_batch_size: 1
+    <<: *hf_pretrain_argv
+    --recipe: qwen3_4b_pretrain
+    --samples: 800_000
+    --seq-len: 512
 
 torchtitan-qwen3-4b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
-  tags:
-    - multigpu
-    - sft
   argv:
-    --module: tt_configs
-    --config: qwen3_4b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: qwen3_4b_sft
 
 torchtitan-qwen3-4b-sft-smoke:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft
   url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
   tags:
-    - multigpu
-    - sft
     - smoke
   max_duration: 1200
+  gpus_per_node: 1
   voir:
     options:
-      stop: 8
-      skip: 2
+      skip: 3
+      stop: 10
   argv:
-    --module: tt_configs
-    --config: qwen3_4b_sft
-    --training.steps: 10
-    --training.seq_len: 512
-    --training.local_batch_size: 1
+    <<: *hf_sft_argv
+    --recipe: qwen3_4b_sft
+    --seq-len: 512
 
 # --- Mistral-7B dense ---
 
 torchtitan-mistral-7b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain
   url: https://huggingface.co/mistralai/Mistral-7B-v0.1
-  tags:
-    - multigpu
-    - pretrain
   max_duration: 5400
   argv:
-    --module: tt_configs
-    --config: mistral_7b_pretrain
-    --training.steps: 40
+    <<: *hf_pretrain_argv
+    --recipe: mistral_7b_pretrain
+    --samples: 500_000
 
 torchtitan-mistral-7b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft
   url: https://huggingface.co/mistralai/Mistral-7B-v0.1
-  tags:
-    - multigpu
-    - sft
   max_duration: 5400
   argv:
-    --module: tt_configs
-    --config: mistral_7b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: mistral_7b_sft
 
 # --- OLMo-7B dense ---
 
 torchtitan-olmo-7b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain
   url: https://huggingface.co/allenai/OLMo-7B-hf
-  tags:
-    - multigpu
-    - pretrain
   max_duration: 5400
   argv:
-    --module: tt_configs
-    --config: olmo_7b_pretrain
-    --training.steps: 40
+    <<: *hf_pretrain_argv
+    --recipe: olmo_7b_pretrain
+    --samples: 500_000
 
 torchtitan-olmo-7b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft
   url: https://huggingface.co/allenai/OLMo-7B-hf
-  tags:
-    - multigpu
-    - sft
   max_duration: 5400
   argv:
-    --module: tt_configs
-    --config: olmo_7b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: olmo_7b_sft
+
+# --- MoE (HF backend swaps in TorchTitan's grouped-experts MoE) ---
+
+_torchtitan_hf_pretrain_moe:
+  inherits: _torchtitan_hf_pretrain
+  max_duration: 7200
+  tags:
+    - moe
+  requires_capabilities:
+    - "gpu['count'] > 1"
+
+_torchtitan_hf_sft_moe:
+  inherits: _torchtitan_hf_sft
+  max_duration: 7200
+  tags:
+    - moe
+  requires_capabilities:
+    - "gpu['count'] > 1"
 
 # --- Qwen3-30B-A3B MoE ---
 
 torchtitan-qwen3-30b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain_moe
   url: https://huggingface.co/Qwen/Qwen3-30B-A3B
-  tags:
-    - multigpu
-    - pretrain
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: qwen3_30b_pretrain
-    --training.steps: 40
-    --training.seq_len: 2048
+    <<: *hf_pretrain_argv
+    --recipe: qwen3_30b_pretrain
+    --samples: 900_000
 
 torchtitan-qwen3-30b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft_moe
   url: https://huggingface.co/Qwen/Qwen3-30B-A3B
-  tags:
-    - multigpu
-    - sft
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: qwen3_30b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: qwen3_30b_sft
 
 # --- Mixtral-8x7B MoE ---
 
 torchtitan-mixtral-8x7b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain_moe
   url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
-  tags:
-    - multigpu
-    - pretrain
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: mixtral_8x7b_pretrain
-    --training.steps: 40
-    --training.seq_len: 2048
+    <<: *hf_pretrain_argv
+    --recipe: mixtral_8x7b_pretrain
+    --samples: 300_000
 
 torchtitan-mixtral-8x7b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft_moe
   url: https://huggingface.co/mistralai/Mixtral-8x7B-v0.1
-  tags:
-    - multigpu
-    - sft
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: mixtral_8x7b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: mixtral_8x7b_sft
 
 # --- OLMoE-1B-7B MoE ---
 
 torchtitan-olmoe-7b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain_moe
   url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
-  tags:
-    - multigpu
-    - pretrain
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: olmoe_7b_pretrain
-    --training.steps: 40
-    --training.seq_len: 2048
+    <<: *hf_pretrain_argv
+    --recipe: olmoe_7b_pretrain
+    --samples: 2_300_000
 
 torchtitan-olmoe-7b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft_moe
   url: https://huggingface.co/allenai/OLMoE-1B-7B-0924
-  tags:
-    - multigpu
-    - sft
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: olmoe_7b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: olmoe_7b_sft
 
 # --- Gemma-4-26B-A4B MoE ---
 
 torchtitan-gemma4-26b-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain_moe
   url: https://huggingface.co/google/gemma-4-26B-A4B
-  tags:
-    - multigpu
-    - pretrain
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: gemma4_26b_pretrain
-    --training.steps: 40
-    --training.seq_len: 2048
+    <<: *hf_pretrain_argv
+    --recipe: gemma4_26b_pretrain
+    --samples: 800_000
 
 torchtitan-gemma4-26b-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft_moe
   url: https://huggingface.co/google/gemma-4-26B-A4B
-  tags:
-    - multigpu
-    - sft
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: gemma4_26b_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: gemma4_26b_sft
 
 # --- DeepSeek-V2-Lite MoE ---
 
 torchtitan-deepseek-v2-lite-pretrain:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_pretrain_moe
   url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
-  tags:
-    - multigpu
-    - pretrain
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: deepseek_v2_lite_pretrain
-    --training.steps: 40
-    --training.seq_len: 2048
+    <<: *hf_pretrain_argv
+    --recipe: deepseek_v2_lite_pretrain
+    --samples: 1_300_000
 
 torchtitan-deepseek-v2-lite-sft:
-  inherits: _torchtitan
+  inherits: _torchtitan_hf_sft_moe
   url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
-  tags:
-    - multigpu
-    - sft
-    - moe
-  max_duration: 7200
-  requires_capabilities:
-    - "gpu['count'] > 1"
   argv:
-    --module: tt_configs
-    --config: deepseek_v2_lite_sft
-    --training.steps: 40
+    <<: *hf_sft_argv
+    --recipe: deepseek_v2_lite_sft
 
 # --- GLM-5 MoE+DSA (FSDP+EP only) ---
 
-_glm5_torchtitan:
-  inherits: _torchtitan
+torchtitan-glm5-pretrain:
+  inherits: _torchtitan_hf_pretrain_moe
   max_duration: 14400
-  requires_capabilities:
-    - "gpu['count'] > 1"
-  env:
-    HF_HUB_OFFLINE: "1"
-    TRANSFORMERS_OFFLINE: "1"
+  voir:
+    options:
+      skip: 3
+      stop: 15
+  env: &glm5_env
     NCCL_TIMEOUT: "7200"
     TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC: "14400"
     # GLM-5 meta parallelize can run 10–30+ min on CPU with no NCCL ops; the
     # default heartbeat monitor (480s) aborts workers mid-init.
     TORCH_NCCL_ENABLE_MONITORING: "0"
     PYTHONFAULTHANDLER: "1"
-  voir:
-    options:
-      stop: 30
-      skip: 10
-
-torchtitan-glm5-pretrain:
-  inherits: _glm5_torchtitan
   url: https://huggingface.co/zai-org/GLM-5
-  tags:
-    - multigpu
-    - pretrain
-    - moe
   argv:
-    --module: tt_configs
-    --config: glm5_pretrain
-    --training.steps: 20
-    --training.seq_len: 1024
-    --parallelism.expert_parallel_degree: 8
-    --comm.init_timeout_seconds: 7200
-    --comm.train_timeout_seconds: 1800
+    <<: *hf_pretrain_argv
+    --recipe: glm5_pretrain
+    --samples: 100_000
+    --seq-len: 1024
+    --ep: 8
+    # 744B MoE init/parallelize (+ SFT checkpoint load) can take 30–60+ minutes.
+    --init-timeout-seconds: 7200
+    --train-timeout-seconds: 1800
 
 torchtitan-glm5-sft:
-  inherits: _glm5_torchtitan
+  inherits: _torchtitan_hf_sft_moe
+  max_duration: 14400
+  voir:
+    options:
+      skip: 3
+      stop: 15
+  env: *glm5_env
   url: https://huggingface.co/zai-org/GLM-5
-  tags:
-    - multigpu
-    - sft
-    - moe
   argv:
-    --module: tt_configs
-    --config: glm5_sft
-    --training.steps: 20
-    --training.seq_len: 1024
-    --parallelism.expert_parallel_degree: 8
-    --comm.init_timeout_seconds: 7200
-    --comm.train_timeout_seconds: 1800
+    <<: *hf_sft_argv
+    --recipe: glm5_sft
+    --ep: 8
+    --init-timeout-seconds: 7200
+    --train-timeout-seconds: 1800
+
+# --- Native TorchTitan Qwen3.8-27B pre-training (CUDA only: attn-gym GDN kernels) ---
+#
+# Same per-GPU settings as torchtitan_native.yaml: seq 4096, 3 sequences
+# = 12,288 tokens per GPU per step, full AC, compile regions, no CUDA graphs,
+# FSDP over all GPUs; the first 500k FineWeb documents, Qwen3.8 tokenizer,
+# packed with document masking (at most 64 per microbatch).
+
+_torchtitan_qwen38:
+  inherits: _torchtitan
+  url: https://huggingface.co/Qwen/Qwen3.8-27B
+  tags:
+    - pretrain
+  voir:
+    options:
+      skip: 40
+      stop: 100
+  argv: &qwen38_argv
+    --recipe: qwen38
+    --flavor: 27B
+    --seq-len: 4096
+    --microbatch-sequences: 3
+    --compile: regions
+    --ac: full
+    --dataset: fineweb
+    --samples: 500000
+    --max-documents: 64
+
+# First 8 layers, few steps.
+torchtitan-qwen38-27b-pretrain-smoke:
+  inherits: _torchtitan_qwen38
+  tags:
+    - smoke
+  max_duration: 1800
+  voir:
+    options:
+      skip: 5
+      stop: 10
+  argv:
+    <<: *qwen38_argv
+    --n-layers: 8
+
+# Full 27B on one node: 16 B/param of sharded training state is ~54 GB per GPU
+# on 8 GPUs (4x H100 nodes need --n-layers 16, see tt-qwen38-1node).
+torchtitan-qwen38-27b-pretrain:
+  inherits: _torchtitan_qwen38
+  argv:
+    <<: *qwen38_argv

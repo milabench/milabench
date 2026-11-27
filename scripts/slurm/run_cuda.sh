@@ -1,14 +1,19 @@
 #!/bin/bash
 
-export MILABENCH_BRANCH=main
-export CONFIG=all.yaml
+
+export MILABENCH_BRANCH=megatron
 export PYTHON_VERSION=3.12
 export MILABENCH_GPU_ARCH=cuda
-export HF_TOKEN=""
-export MILABENCH_ARGS="--select torchsrun"
+export HF_TOKEN="{{ secrets.HF_TOKEN }}"
 export MILABENCH_REPO=https://github.com/milabench/milabench.git
 export CUDA_VERSION="130"
-export PYTORCH_VERSION="2.10.0"
+# sglang==0.5.21 (slime's pinned version) requires torch==2.13.0
+export PYTORCH_VERSION="2.13.0"
+
+# torchtitan is not in all.yaml: it lives in its own config, in the milabench checkout
+export CONFIG_PATH=benchmarks/torchtitan/dev.yaml
+# quick test: smoke entries only
+export MILABENCH_ARGS="--select torchtitan-qwen3-4b-pretrain-smoke,torchtitan-qwen3-4b-sft-smoke"
 
 set -ex
 
@@ -18,7 +23,7 @@ mkdir -p $OUTPUT_DIRECTORY/meta
 scontrol show job --json $SLURM_JOB_ID | jq '.jobs[0]' > $OUTPUT_DIRECTORY/meta/info.json
 # ===
 
-module load cuda/12.6.0
+# module load cuda/12.6.0
 
 export MILABENCH_WORDIR="/tmp/$SLURM_JOB_ID/$MILABENCH_GPU_ARCH"
 export MILABENCH_BASE="$MILABENCH_WORDIR/results"
@@ -26,8 +31,10 @@ export MILABENCH_ENV="$MILABENCH_WORDIR/.env/$PYTHON_VERSION/"
 export BENCHMARK_VENV="$MILABENCH_WORDIR/results/venv/torch"
 export MILABENCH_SIZER_SAVE="$MILABENCH_WORDIR/scaling.yaml"
 export MILABENCH_HF_TOKEN="$HF_TOKEN"
+export HF_TOKEN
 export MILABENCH_SHARED="$HOME/scratch/shared"
 export MILABENCH_SOURCE="$MILABENCH_WORDIR/milabench"
+export MILABENCH_CONFIG="$MILABENCH_SOURCE/$CONFIG_PATH"
 
 mkdir -p $MILABENCH_WORDIR
 cd $MILABENCH_WORDIR
@@ -41,13 +48,17 @@ $UV pip install -e $MILABENCH_SOURCE[$MILABENCH_GPU_ARCH]
 
 milabench slurm system > $MILABENCH_WORDIR/system.yaml
 
-export MILABENCH_USE_TOML_DEPS=1 
+export MILABENCH_USE_TOML_DEPS=1
 
-milabench install --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+# the TE / sglang builds need the CUDA toolkit and a few cores
+export MAX_JOBS=${SLURM_CPUS_PER_TASK:-8}
 
-milabench prepare --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+# a failing stage must not stop the later ones: we want every issue from one job
+milabench install --config $MILABENCH_CONFIG --set cuda=$CUDA_VERSION torch=$PYTORCH_VERSION --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: install"
 
-milabench run --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS
+milabench prepare --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: prepare"
+
+milabench run --config $MILABENCH_CONFIG --system $MILABENCH_WORDIR/system.yaml $MILABENCH_ARGS || echo "STAGE FAILED: run"
 
 rsync -az $MILABENCH_WORDIR/results/runs $OUTPUT_DIRECTORY
 

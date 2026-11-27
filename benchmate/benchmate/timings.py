@@ -46,6 +46,11 @@ class StepTimer:
         self.sync = sync
         self.timesteps = 0
 
+    def start(self):
+        self.sync()
+        self.start_time = time.perf_counter()
+        self.n_size = 0
+
     def step(self, step_size):
         """Log a batch size or work that was been done"""
         self.n_size += step_size

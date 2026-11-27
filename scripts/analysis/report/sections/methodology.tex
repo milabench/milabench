@@ -1,0 +1,58 @@
+\section{Methodology}
+\label{sec:method}
+
+\paragraph{Throughput.} Each run skips 30 warm-up steps (compilation, allocator growth), then measures
+for 5 minutes, converted to a step count that all ranks agree on. Step times come from CUDA events on
+rank~0. The official throughput is the \emph{median} of the per-step global token rates, reported per
+GPU (tokens/s per GPU). Spread within a run is the 10th--90th percentile of step times.
+
+\paragraph{MFU} $= \text{FLOPs per token} \times \text{tokens/s per GPU} / \text{peak}$, with TorchTitan's
+FLOP count (6 $\times$ active parameters plus attention terms, no causal halving) and a dense BF16 peak of
+989\,TFLOPS per H100. MFU is derived from a measured rate and an analytic FLOP count.
+
+\paragraph{Placement families} (at a fixed node count):
+\textbf{S}, all nodes on one switch (ihpc316, the 12-node leaf without CPU nodes);
+\textbf{H}, 3 nodes on each of $N/3$ switches (3-node leaves; big leaves only beyond 13 switches);
+\textbf{O}, 1 node on each of $N$ switches (up to 16);
+\textbf{P}, the fewest switches (largest leaves first);
+\textbf{ALL}, every healthy node.
+S, H and O are compared at 3, 6, 9 and 12 nodes; at scale, H15--P15, H27--P27 and H48--P48 (variant
+names give the node count). Placements are written as leaves $\times$ nodes per leaf, e.g.\ $9\times3$.
+
+\paragraph{Expert-group placement} (GLM-5, Rorqual; an expert group is an expert-parallel group of 8
+GPUs = 2 nodes). Three layouts on the same 52 nodes (208 GPUs), the largest set with an even number of
+nodes on every leaf ($13\times2$ on the 3-node leaves, $12+8+6$ on the big ones): \emph{aligned}, each
+group's 2 nodes on one switch; \emph{crossed}, each group's 2 nodes on two switches; \emph{mixed}, about
+one group in four crossing, close to the share of a production job on every node. Megatron forms groups
+from consecutive ranks, so only the node order differs: model, scale, nodes and data parallelism are the
+same. A fourth run uses every healthy node in Megatron's default order (\emph{mixed, every node}): the
+largest achievable job, with more nodes and some groups crossing.
+
+Node lists are computed from the healthy nodes of the allocation by \texttt{tt\_pick\_nodes.py}.
+
+\paragraph{Traffic isolation.} Placement comparisons are only valid between runs exposed to the same
+external traffic. Three levels: \emph{alone on the cluster} (the October~30 window); \emph{reserved, one
+switch} (every node in our reservation and on one leaf: other users' traffic never shares our links);
+\emph{shared links} (the run crosses the spine, or its nodes are not reserved: other users' traffic may
+share its links). Before the window, any run spanning switches is in the last level, so preliminary
+comparisons between one switch and several mix placement with external traffic; they are not compared.
+
+\paragraph{Health checks.} Before any run, every node of the allocation is checked (GPU count, MIG, ECC,
+InfiniBand link state and rate, DCGM diagnostics, NCCL bandwidth within the node, through its NIC, in
+pairs and per leaf). Failing nodes are excluded for the rest of the allocation; a node is used whole or
+not at all.
+
+\paragraph{Measured, estimated and synthetic values.}
+\begin{itemize}[leftmargin=*, itemsep=1pt]
+  \item \emph{Measured}: filled markers, solid lines.
+  \item \emph{Estimated} (extrapolated or model-based, e.g.\ compute time scaled from a 16-layer run):
+        dashed lines or hatched bars, and ``est.'' in the label.
+  \item \emph{Synthetic} (placeholder for an experiment not run yet): hollow markers, and the figure says so.
+\end{itemize}
+Estimates never replace measurements; both are kept in the data.
+
+\paragraph{Data.} Everything is regenerated from raw results by one command
+(\texttt{scripts/analysis/analyze.py all}): milabench run data (one JSONL file per run, including failed
+runs), health-check outputs, and node telemetry (\texttt{benchmate.nodemon}: GPU clocks, throttle reasons,
+power, temperature and duty cycle, XID and ECC errors, NVLink, InfiniBand, CPU clocks, host memory and PCIe,
+sampled once a second on every node of the job). Formats: \texttt{FORMAT.md}.

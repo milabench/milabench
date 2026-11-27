@@ -4,6 +4,8 @@ dependencies = [
     "torch",
     # Required for multi-node vLLM via milabench.commands.ray.RayCluster
     "ray",
+    # accuracy passes (client.passes[].eval): lm-eval against the server's OpenAI API
+    "lm-eval[api]",
 ]
 
 [cuda]
@@ -12,8 +14,13 @@ dependencies = [
     "vllm[bench]",
     "vllm[audio]",
     "flashinfer-python",
+    # must be the same version as flashinfer-python (flashinfer refuses mismatched cubins): the
+    # version is set in the pin files (.pin/constraints.*.txt), not here (it depends on the vllm pin)
     "flashinfer-cubin",
-    # "flashinfer-jit-cache",
+    # Prebuilt flashinfer JIT modules (one provider package per GPU arch, ~1.3G): without them
+    # flashinfer compiles its torch bindings at first use (trtllm decode on B200) and needs nvcc,
+    # which compute nodes do not have. Same version as flashinfer-python, set in the pin files.
+    "flashinfer-jit-cache",
     "torchcodec",
 ]
 
@@ -24,11 +31,17 @@ dependencies = [
     "vllm[bench]",
     "vllm[audio]",
 
+    # vLLM detects the ROCm platform through amdsmi; without it `vllm serve`
+    # fails with "Failed to infer device type"
+    "amdsmi",
+
     # ATOM serving (serving-* benchmarks): install atom + amd-aiter wheels from the
     # milabench ROCm release (build with `make GPU_BACKEND=rocm atom`).
     # MoE EP may also need amd_mori.
-    "atom",
-    "amd-aiter",
+    # PyPI's `atom` is an unrelated package (0.3+); the bound keeps us on ROCm's ATOM.
+    # ATOM >= 0.1.6 needs amd-aiter >= 0.1.23 (aiter.topk_select).
+    "atom>=0.1.8,<0.2",
+    "amd-aiter>=0.1.23",
 
     # No ROCm torchcodec; platforms.toml pins torchcodec==*+cpu
     "torchcodec",

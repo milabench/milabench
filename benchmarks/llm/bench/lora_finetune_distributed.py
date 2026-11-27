@@ -726,6 +726,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                 epochs_run=self.epochs_run,
                 total_epochs=self.total_epochs,
                 max_steps_per_epoch=self.max_steps_per_epoch,
+                # needed when dir_prefix is "step" (save_every_n_steps is set in the config)
+                steps_run=self.global_step,
                 dataloader_state_dict=self._dataloader.state_dict(),
             ),
             epoch=epoch,

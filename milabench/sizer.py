@@ -108,6 +108,51 @@ def observation_memory(obs):
     return to_octet(obs["memory"])
 
 
+# Lines of a failed run that mean it ran out of GPU memory (torch CUDA / ROCm, JAX)
+OOM_MARKERS = (
+    "OutOfMemoryError",
+    "CUDA out of memory",
+    "HIP out of memory",
+    "RESOURCE_EXHAUSTED: Out of memory",
+)
+
+
+def is_oom(obs):
+    """``{batch_size: N, oom: true}``: the run at this batch size ran out of GPU memory.
+
+    It has no memory / perf columns: it is left out of the fits and bounds the batch size.
+    """
+    return bool(obs.get("oom"))
+
+
+def completed(obs):
+    """The run at this batch size completed.
+
+    ``perf: 0`` is a failed run. A row without ``perf`` completed but has no throughput
+    measured for this configuration (e.g. memory copied from the single-node variant).
+    """
+    if is_oom(obs):
+        return False
+    return "perf" not in obs or (obs["perf"] or 0) > 0
+
+
+def measured(observations):
+    """Observations of runs that completed (not the OOM markers)."""
+    return [obs for obs in observations if not is_oom(obs)]
+
+
+def oom_bound(observations):
+    """Smallest batch size that ran out of memory and that no completed run reached, or None.
+
+    An OOM at or below a batch size that later completed is outdated (code / memory changes).
+    """
+    ran = [int(obs["batch_size"]) for obs in observations if completed(obs)]
+    largest_ran = max(ran, default=0)
+    ooms = [int(obs["batch_size"]) for obs in observations if is_oom(obs)]
+    ooms = [b for b in ooms if b > largest_ran]
+    return min(ooms, default=None)
+
+
 def _max_allocated_mib(payload):
     """Max ``max_allocated`` across a torchmem/jaxmem per-device payload."""
     if not payload:
@@ -165,6 +210,23 @@ def _torch_backend_info(pack=None):
 
 
 
+def gpu_count(benchmark):
+    """GPUs a benchmark instance uses: its devices x the machines it runs on (None if unknown).
+
+    Per-GPU benchmarks use 1, the multi-GPU ones every GPU of the node, the multi-node ones every
+    GPU of every node. The memory per GPU of a sharded benchmark depends on it.
+    """
+    if isinstance(benchmark, str) or benchmark is None:
+        return None
+    config = benchmark if isinstance(benchmark, dict) else getattr(benchmark, "config", None)
+    if not isinstance(config, dict):
+        return None
+    devices = config.get("devices")
+    if not devices:
+        return None
+    return len(devices) * int(config.get("num_machines", 1) or 1)
+
+
 def _obs_mib_int(obs, key):
     """Parse ``\"1234 MiB\"`` style observation fields; return None if missing."""
     value = obs.get(key)
@@ -177,6 +239,7 @@ OBSERVATION_METADATA_KEYS = ("backend", "flavor", "torch", "torch_local")
 
 OBSERVATION_FIELD_ORDER = (
     "batch_size",
+    "oom",
     "perf",
     "cpu",
     "memory",
@@ -317,7 +380,8 @@ def _fit_torchmem_vs_batch(observations):
         _, alloc = pair
         batches.append(float(obs["batch_size"]))
         allocs.append(alloc)
-    if len(batches) < 2:
+    # two runs at the same batch size give no slope (singular fit)
+    if len(set(batches)) < 2:
         return None
     alpha, beta = np.polyfit(batches, allocs, deg=1)
     if alpha <= 0:
@@ -376,13 +440,13 @@ class Sizer:
         return mem, size
     
     def _scaling_v2(self, config):
-        data = config.get("observations", [])
+        data = measured(config.get("observations", []))
 
         data = list(sorted(data, key=lambda x: x["batch_size"]))
 
         mem = [observation_memory(v) for v in data]
         size = [float(v["batch_size"]) for v in data]
-        perf = [float(v["perf"]) for v in data]
+        perf = [float(v.get("perf") or 0) for v in data]
 
         return mem, size, perf
 
@@ -430,8 +494,8 @@ class Sizer:
         Returns ``None`` when there is not enough usable data (caller should
         keep the ``auto_batch`` default).
         """
-        if len(mem) <= 1:
-            syslog(f"Not enough data for {bench_name}")
+        if len(mem) <= 1 or len(set(size)) < 2:
+            syslog(f"Not enough data for {bench_name}: needs observations at two batch sizes")
             return None
 
         # Constant / all-zero memory (e.g. torchmem: 0 MiB) → singular LSTSQ.
@@ -472,6 +536,13 @@ class Sizer:
         if fixed is None or fit is None:
             return None
 
+        if (override := self.options.overhead_override) is not None:
+            override = str(override).strip()
+            if override.endswith("%"):
+                fixed = capacity * float(override[:-1]) / 100
+            else:
+                fixed = to_octet(override)
+
         alpha, beta = fit
         newsize_f = (capacity - fixed - beta) / alpha
         final_size = self._finalize_batch_size(newsize_f)
@@ -489,7 +560,102 @@ class Sizer:
             )
         return final_size
 
+    def _auto_size_envelope(self, envelopes, benchmark, capacity, bench_name):
+        """Batch size from the envelope of a benchmark (see build_envelope_scaling).
+
+        ``memory(B) = overhead + beta + alpha * B`` with alpha / beta the largest of the GPUs
+        measured, so the batch size is never above the one any of them would pick. The overhead
+        (CUDA / HIP context, libraries) is a share of the capacity with a floor. The batch size is
+        capped to ``max_batch`` (the linear model is not trusted far from the measurements).
+        """
+        count = gpu_count(benchmark)
+        entry = next((e for e in envelopes if e.get("gpus") == count and count is not None), None)
+        if entry is None:
+            # measured without the GPU count (older observations)
+            entry = next((e for e in envelopes if e.get("gpus") is None), None)
+        if entry is None:
+            if self.should_log(("envelope", bench_name)):
+                syslog("Sizer: no envelope of {} for {} GPU(s)", bench_name, count)
+            return None
+
+        alpha = to_octet(str(entry["alpha"]))
+        beta = max(to_octet(str(entry.get("beta", "0 MiB"))), 0.0)
+        if alpha <= 0:
+            return None
+
+        overhead = self.options.overhead_override or entry.get("overhead", "10%")
+        overhead = str(overhead).strip()
+        if overhead.endswith("%"):
+            fixed = capacity * float(overhead[:-1]) / 100
+        else:
+            fixed = to_octet(overhead)
+        if (floor := entry.get("overhead_min")) is not None:
+            fixed = max(fixed, to_octet(str(floor)))
+
+        newsize_f = (capacity - fixed - beta) / alpha
+        final_size = self._finalize_batch_size(newsize_f)
+        if (cap := entry.get("max_batch")) and final_size > int(cap):
+            final_size = self._finalize_batch_size(int(cap))
+        if self.should_log(("envelope", bench_name)):
+            syslog(
+                "Sizer: auto_size envelope for {} ({} GPUs): alpha={}/batch beta={} overhead={} "
+                "capacity={} predicted={:.2f} cap={} final={}",
+                bench_name, count, _fmt_mo(alpha), _fmt_mo(beta), _fmt_mo(fixed),
+                _fmt_mo(capacity), newsize_f, entry.get("max_batch"), final_size,
+            )
+        return final_size
+
     def auto_size(self, benchmark, capacity):
+        result = self._auto_size(benchmark, capacity)
+        config = self.benchscaling(benchmark) or {}
+        observations = config.get("observations", [])
+
+        if result is None:
+            # no fit (one batch size completed) but one ran out of memory: bisect between them
+            result = oom_bound(observations)
+            if result is None:
+                return None
+
+        ran = [
+            int(obs["batch_size"])
+            for obs in measured(observations)
+            if obs.get("batch_size") and completed(obs)
+        ]
+        result = self._bound_by_oom(result, observations, ran, config)
+
+        if not self.options.cap_observed:
+            return result
+
+        if ran and result > max(ran):
+            if self.should_log(("cap", id(config))):
+                syslog("Sizer: capped predicted batch {} to the largest observed batch {}", result, max(ran))
+            return max(ran)
+        return result
+
+    def _bound_by_oom(self, result, observations, ran, config):
+        """Stay below a batch size that ran out of memory: bisect between the largest batch that
+        completed under it and the OOM one. Each run then either completes (new observation)
+        or runs out of memory again (new, smaller OOM marker), until they meet."""
+        bad = oom_bound(observations)
+        if bad is None or result < bad:
+            return result
+
+        low = max((b for b in ran if b < bad), default=0)
+        new = self._finalize_batch_size((low + bad) / 2)
+        if new >= bad:
+            new = bad - 1
+        if new <= low:
+            # nothing left to try between them: the largest batch that completed
+            new = max(low, 1)
+
+        if self.should_log(("oom", id(config))):
+            syslog(
+                "Sizer: batch {} ran out of memory before, predicted {} -> {} (largest completed below: {})",
+                bad, result, new, low,
+            )
+        return new
+
+    def _auto_size(self, benchmark, capacity):
         capacity = self.get_capacity(capacity)
 
         if capacity is None:
@@ -498,8 +664,9 @@ class Sizer:
 
         config = self.benchscaling(benchmark)
 
+        # no profile for this benchmark: the caller keeps the configured batch size (not 1)
         if not config:
-            return 1
+            return None
 
         if isinstance(benchmark, str):
             bench_name = benchmark
@@ -513,15 +680,22 @@ class Sizer:
             mem, size = self._scaling_v1(config)
             return self._auto_size_legacy(mem, size, capacity, bench_name)
 
-        observations = config.get("observations", [])
+        observations = measured(config.get("observations", []))
         result = self._auto_size_fixed_torchmem(observations, capacity, bench_name)
         if result is not None:
             return result
 
-        mem, size, _ = self._scaling_v2(config)
-        result = self._auto_size_legacy(mem, size, capacity, bench_name)
-        if result is not None:
-            return result
+        # no measurement of this GPU: the lower bound of the GPUs we know (default.yaml)
+        if "envelope" in config:
+            result = self._auto_size_envelope(config["envelope"], benchmark, capacity, bench_name)
+            if result is not None:
+                return result
+
+        if observations:
+            mem, size, _ = self._scaling_v2(config)
+            result = self._auto_size_legacy(mem, size, capacity, bench_name)
+            if result is not None:
+                return result
 
         syslog(
             "auto_size could not fit {}; caller should keep auto_batch default",
@@ -557,8 +731,8 @@ class Sizer:
             return None
 
         # Prefer NVML ``memory`` when present so fit checks match auto_size capacity.
-        data = config["observations"]
-        data = list(sorted(data, key=lambda x: x["perf"], reverse=True))
+        data = measured(config.get("observations", []))
+        data = list(sorted(data, key=lambda x: x.get("perf") or 0, reverse=True))
 
         for obs in data:
             if obs.get("memory"):
@@ -664,6 +838,7 @@ class BenchStats:
     max_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     torchmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
     jaxmem_usage: StatStream = field(default_factory=lambda: StatStream(drop_first_obs=0))
+    oom: bool = False
 
     def max_memory_usage(self):
         for stream in (self.torchmem_usage, self.jaxmem_usage, self.max_usage):
@@ -766,6 +941,13 @@ class MemoryUsageExtractor(ValidationLayer):
         if rate := entry.data.get("rate"):
             stat.perf += rate
  
+    def on_line(self, entry):
+        if self.filepath is None or not isinstance(entry.data, str):
+            return
+
+        if any(marker in entry.data for marker in OOM_MARKERS):
+            self.benchstat(entry.pack.config["name"]).oom = True
+
     def on_stop(self, entry):
         stat = self.benchstat(entry.pack.config["name"])
         stat.early_stopped.append(True)
@@ -786,6 +968,15 @@ class MemoryUsageExtractor(ValidationLayer):
 
         if stats.batch_size.current_count <= 0 and int(stats.batch_size.avg) == 0:
             syslog("MemoryUsageExtractor: Skipping missing batch_size {}", entry)
+            return
+
+        if stats.active_count <= 0 and sum(stats.rc) != 0 and stats.oom:
+            # the sizer stays below this batch size next time
+            self.push_oom_observation(stats, entry.pack)
+            try:
+                self.save()
+            except Exception as err:
+                print(f"MemoryUsageExtractor: Could not save scaling file because of {err}")
             return
 
         if stats.max_memory_usage() == float("-inf"):
@@ -813,6 +1004,8 @@ class MemoryUsageExtractor(ValidationLayer):
             "perf": float(f"{stats.perf.avg:.2f}"),
             "time": int(time.time())
         }
+        if (count := gpu_count(pack)) is not None:
+            obs["gpus"] = count
 
         # NVML / gpudata stays in ``memory``; allocator stats get their own columns
         if stats.max_usage.current_count > 0:
@@ -822,6 +1015,23 @@ class MemoryUsageExtractor(ValidationLayer):
         if stats.jaxmem_usage.current_count > 0:
             obs["jaxmem"] = f"{int(stats.jaxmem_usage.max)} MiB"
 
+        obs.update(_torch_backend_info(pack))
+
+        observations.append(obs)
+        config["observations"] = list(sorted(observations, key=lambda x: x["batch_size"]))
+
+    def push_oom_observation(self, stats, pack=None):
+        config = self.memory.setdefault(stats.benchname, dict())
+        observations = config.setdefault("observations", [])
+
+        obs = {
+            "batch_size": int(stats.batch_size.avg),
+            "oom": True,
+            "cpu": int(stats.cpu.avg),
+            "time": int(time.time()),
+        }
+        if (count := gpu_count(pack)) is not None:
+            obs["gpus"] = count
         obs.update(_torch_backend_info(pack))
 
         observations.append(obs)
@@ -987,6 +1197,11 @@ def new_argument_resolver(pack):
         except KeyError as err:
             syslog("Couldn't resolve {} because of {}", arg, err)
             return arg
+        except (ValueError, IndexError) as err:
+            # Literal braces (jinja templates, inline JSON/python snippets)
+            # are not format fields: leave the argument untouched.
+            syslog("Couldn't format {} because of {}", arg, err)
+            return arg
 
     return auto_eval
 
@@ -1015,6 +1230,13 @@ def deduplicate_observation(scaling):
             continue
 
         observations = data.get("observations", [])
+        ooms = {}
+        for obs in observations:
+            if is_oom(obs):
+                key = int(obs["batch_size"])
+                if key not in ooms or obs.get("time", 0) > ooms[key].get("time", 0):
+                    ooms[key] = dict(obs)
+        observations = measured(observations)
         metadata_by_key = _metadata_templates_by_key(observations)
         duplicate_sets = defaultdict(list)
 
@@ -1029,7 +1251,7 @@ def deduplicate_observation(scaling):
             if len(duplicate_sets[key]) == 1:
                 data = duplicate_sets.pop(key)[0]
 
-                if data["perf"] > 0:
+                if completed(data):
                     newobs.append(data)
 
         # Merge duplicates
@@ -1043,7 +1265,7 @@ def deduplicate_observation(scaling):
             lastest_time = 0
 
             for obs in data:
-                perf = obs["perf"]
+                perf = obs.get("perf") or 0
 
                 if perf > 0:
                     if (mem := _obs_mib_int(obs, "memory")) is not None:
@@ -1092,7 +1314,7 @@ def deduplicate_observation(scaling):
                          bench, merge_mem.sd / merge_mem.avg, perf_stat.sd / perf_stat.avg)
                 
                 for obs in data:
-                    if obs["perf"] > 0:
+                    if completed(obs):
                         newobs.append(dict(obs))
 
         for obs in newobs:
@@ -1100,6 +1322,8 @@ def deduplicate_observation(scaling):
                 obs,
                 metadata_by_key.get((obs["batch_size"], obs["cpu"]), {}),
             )
+
+        newobs.extend(ooms.values())
 
         # make sure observations are sorted
         newobs = list(sorted(newobs, key=lambda x: x["batch_size"]))
@@ -1185,6 +1409,193 @@ def merge_scaling_files(*files, output="merged.yaml"):
         _dump_scaling_yaml(dict(newmem), fp)
 
     return newmem
+
+
+def _fit_total_memory_vs_batch(observations):
+    """``memory ≈ alpha·B + beta`` on the NVML memory, for observations without ``torchmem``."""
+    pairs = []
+    for obs in observations:
+        if obs.get("memory") and obs.get("batch_size"):
+            try:
+                pairs.append((float(obs["batch_size"]), to_octet(str(obs["memory"]))))
+            except ValueError:
+                continue
+    if len({b for b, _ in pairs}) < 2:
+        return None
+    alpha, beta = np.polyfit([b for b, _ in pairs], [m for _, m in pairs], deg=1)
+    if alpha <= 0:
+        return None
+    return float(alpha), float(beta)
+
+
+# GPU memory (GiB) of the GPUs of config/scaling/<GPU>.yaml, to turn their OOM markers into
+# constraints of the envelope (a batch size that ran out of memory does not fit that capacity)
+KNOWN_GPU_CAPACITY_GIB = {
+    "B200": 183, "MI355X": 288, "MI325": 256, "MI300X": 192,
+    "H100": 80, "H200": 141, "A100": 80, "L40S": 48,
+}
+
+
+def _overhead_octets(capacity, overhead, overhead_min):
+    overhead = str(overhead).strip()
+    fixed = capacity * float(overhead[:-1]) / 100 if overhead.endswith("%") else to_octet(overhead)
+    if overhead_min is not None:
+        fixed = max(fixed, to_octet(str(overhead_min)))
+    return fixed
+
+
+def build_envelope_scaling(
+    files,
+    single_gpu_margin=1.25,
+    overhead="10%",
+    overhead_min="4096 MiB",
+    cap_factor=2.0,
+    capacities=None,
+):
+    """Scaling profile for a GPU we have no measurement of: the lower bound of the GPUs we know.
+
+    ``files`` are per-GPU scaling profiles (config/scaling/<GPU>.yaml, the file name is the GPU).
+    For each benchmark and GPU count (``gpus`` of the observations, None for the older ones that
+    do not record it), the allocator memory is fitted against the batch size on every GPU, as the
+    sizer does (``torchmem ≈ alpha·B + beta``). The envelope keeps the largest alpha and beta, so
+    the batch size it gives is never above the one of any measured GPU:
+
+    - alpha x ``single_gpu_margin`` when only one GPU type was measured (no cross-GPU evidence)
+    - beta >= 0
+    - a batch size recorded as OOM on a GPU of known capacity (``capacities``, GiB) raises alpha
+      until the model says it does not fit there: the linear fit under-estimates large batches
+    - older profiles without the allocator column (NVML memory only) are used only for the
+      benchmarks no profile has allocator measurements of: their batch sizes may come from
+      older benchmark versions, they would make the others too conservative
+    - ``max_batch``: ``cap_factor`` x the largest batch size that completed on any GPU
+    - the overhead (context, libraries; not portable across GPUs) is a share of the capacity
+      with a floor, decided at runtime
+
+    Returns ``(profile, report)``; ``report`` lists every benchmark with the reason it has no
+    envelope (no torchmem measurements, a single batch size, ...).
+    """
+    from collections import OrderedDict
+
+    capacities = {**KNOWN_GPU_CAPACITY_GIB, **(capacities or {})}
+    sources = defaultdict(lambda: defaultdict(dict))  # bench -> gpus -> GPU name -> fit
+    limits = defaultdict(lambda: defaultdict(dict))   # bench -> gpus -> GPU name -> largest batch that may fit
+    report = []
+
+    for file in files:
+        gpu = os.path.splitext(os.path.basename(file))[0]
+        with open(file, "r") as fp:
+            data = yaml.safe_load(fp) or {}
+
+        for bench, section in data.items():
+            if not isinstance(section, dict):
+                continue
+            if "observations" not in section:
+                report.append((bench, gpu, "old format (no observations), ignored"))
+                continue
+
+            groups = defaultdict(list)
+            for obs in section["observations"]:
+                groups[obs.get("gpus")].append(obs)
+
+            for count, observations in groups.items():
+                done = [o for o in measured(observations) if completed(o)]
+
+                # An OOM: the limit is between the largest batch that completed under it and the OOM
+                # one; like the sizer, take the middle. Evidence even without a fit (one batch size).
+                if (bad := oom_bound(observations)) is not None:
+                    low = max((int(o["batch_size"]) for o in done if int(o["batch_size"]) < bad), default=0)
+                    limits[bench][count][gpu] = (low + bad) / 2
+
+                fit, kind = _fit_torchmem_vs_batch(done), "torchmem"
+                if fit is None:
+                    # older observations without the allocator column: fit the total (NVML) memory,
+                    # its intercept includes the overhead -> beta overestimated, on the safe side
+                    fit, kind = _fit_total_memory_vs_batch(done), "nvml"
+                if fit is None:
+                    report.append((bench, gpu, f"{count or '?'} GPUs: no fit "
+                                               f"({len(done)} completed observations)"))
+                    continue
+                alpha, beta = fit
+                sources[bench][count][gpu] = {
+                    "alpha": alpha,
+                    "beta": beta,
+                    "kind": kind,
+                    "max_ok": max(int(o["batch_size"]) for o in done),
+                    "oom": oom_bound(observations),
+                }
+
+    def mib(octets):
+        # rounded UP (0.1 MiB): rounding alpha down would make the envelope less conservative
+        import math
+        return f"{math.ceil(octets / 1024**2 * 10) / 10} MiB"
+
+    profile = OrderedDict()
+    profile["version"] = 3.0
+    for bench in sorted(sources):
+        entries = []
+        for count, by_gpu in sorted(sources[bench].items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
+            # allocator fits when there are some, the NVML ones only for coverage
+            if any(f["kind"] == "torchmem" for f in by_gpu.values()):
+                by_gpu = {g: f for g, f in by_gpu.items() if f["kind"] == "torchmem"}
+            alpha = max(f["alpha"] for f in by_gpu.values())
+            if len(by_gpu) == 1:
+                alpha *= single_gpu_margin
+            beta = max(max(f["beta"] for f in by_gpu.values()), 0.0)
+            max_ok = max(f["max_ok"] for f in by_gpu.values())
+
+            # on a GPU that ran out of memory, the model must not give more than the middle between
+            # the largest batch that completed and the OOM one, at that GPU's capacity
+            oom_notes = []
+            for gpu, limit in limits[bench].get(count, {}).items():
+                if gpu not in capacities or limit <= 0:
+                    continue
+                cap = capacities[gpu] * 1024**3
+                needed = (cap - _overhead_octets(cap, overhead, overhead_min) - beta) / limit
+                if needed > alpha:
+                    alpha = needed
+                    oom_notes.append(f"{gpu} OOM: at most bs{int(limit)} in {capacities[gpu]} GiB")
+            entries.append({
+                "gpus": count,
+                "alpha": mib(alpha),
+                "beta": mib(beta),
+                "max_batch": int(max_ok * cap_factor),
+                "overhead": overhead,
+                "overhead_min": overhead_min,
+                "sources": {
+                    gpu: f"alpha={mib(f['alpha'])} beta={mib(f['beta'])} max_ok={f['max_ok']} "
+                         f"oom={f['oom']} ({f['kind']})"
+                    for gpu, f in sorted(by_gpu.items())
+                },
+            })
+            if oom_notes:
+                entries[-1]["alpha_raised_by"] = ", ".join(oom_notes)
+        profile[bench] = {"envelope": entries}
+
+    covered = set(sources)
+    report = [r for r in report if r[0] not in covered]
+    return profile, report
+
+
+def write_envelope_scaling(profile, output, files=(), report=()):
+    header = [
+        "# Generated by `milabench tools envelope-scaling`, do not edit by hand.",
+        "#",
+        "# Used for a GPU without its own config/scaling/<GPU>.yaml: the lower bound of the GPUs below",
+        "# (largest memory per sample / static memory measured), the overhead is a share of the capacity.",
+        "#   batch = (capacity - max(overhead x capacity, overhead_min) - beta) / alpha, <= max_batch",
+        "#",
+        "# From: " + ", ".join(os.path.basename(f) for f in files),
+    ]
+    if report:
+        header.append("#")
+        header.append("# Not covered (auto sizing keeps their default batch size):")
+        for bench in sorted({b for b, _, _ in report}):
+            reasons = "; ".join(f"{gpu}: {why}" for b, gpu, why in report if b == bench)
+            header.append(f"#   {bench}: {reasons}")
+
+    with open(output, "w") as fp:
+        fp.write("\n".join(header) + "\n")
+        yaml.safe_dump(dict(profile), fp, sort_keys=False, default_flow_style=False, width=120)
 
 
 if __name__ == "__main__":
