@@ -15,7 +15,7 @@
 # uses edits[i % 8] and seed benchmate.prompts.generation_seed(i) in every model and engine; each bench keeps
 # its first 8 outputs (the warmup is edit 1), so the report can show rows = models, columns = edits.
 # Resolution: 1024x1024 out (the input's size) everywhere.
-# Steps: 20 for the undistilled models (as image-big.yaml's "matched" entries); step-distilled models at their
+# Steps: 20 for the undistilled models (as image.yaml's "matched" entries); step-distilled models at their
 # own count (klein 4, Lightning 4, Qwen 2.1 Turbo 8, H3-Image 6, Fibo turbo 4): 20 steps is not a setting
 # they are made for. Guidance: each model's template value (cfg 1 where it is distilled / has no CFG).
 # Prompt enhancers / upsamplers off everywhere (the time is the edit, not an LLM rewriting the instruction).
@@ -26,12 +26,12 @@
 #
 # enabled: false = needs a change first (see each entry's NEEDS line), or a disk choice (DISK line).
 # ComfyUI downloads its files at run time (no prepare step): pre-fetch the big ones with `hf download`.
-# Files shared with image-big.yaml (same repo + path, one copy in the HF cache): Qwen-Image 2.1 bf16 / int8 /
+# Files shared with image.yaml (same repo + path, one copy in the HF cache): Qwen-Image 2.1 bf16 / int8 /
 # qwen3vl_8b / VAE, FLUX.2 dev fp8mixed / NVFP4 / mistral fp8 / flux2-vae, FLUX 3 Klein, clip_l / t5xxl_fp16.
 # Already cached: Z-Image's qwen_3_4b (= klein 4B's text encoder, same sha256) and ae.safetensors (FLUX.1 VAE),
 # Krea 2's qwen_image_vae (= Qwen-Image-Edit's VAE, same sha256).
 # ComfyUI links files into models/<dir>/ by basename, first one wins: every FLUX.2 / FLUX 3 entry uses
-# Comfy-Org/Flux-2-Dev's flux2-vae.safetensors (as image-big's FLUX.2 entries).
+# Comfy-Org/Flux-2-Dev's flux2-vae.safetensors (as image.yaml's FLUX.2 entries).
 # =============================================================================
 
 include:
@@ -251,8 +251,8 @@ homelab-comfyui-edit-flux2-klein-9b-nvfp4:
       - GUIDANCE=4.0
 
 # FLUX.2 dev (32B + Mistral Small 3 24B encoder): the largest FLUX, the AA arena's Elo anchor. Same files as
-# image-big.yaml's homelab-comfyui-flux2-dev-fp8 (fp8mixed transformer, fp8 encoder): nothing new to download
-# once image-big has run. ~58 GB in memory.
+# image.yaml's homelab-comfyui-flux2-dev-fp8 (fp8mixed transformer, fp8 encoder): nothing new to download
+# once image.yaml's has run. ~58 GB in memory.
 homelab-comfyui-edit-flux2-dev-fp8:
   name: homelab-comfyui-edit-flux2-dev-fp8
   inherits: _comfyui_edit
@@ -278,7 +278,7 @@ homelab-comfyui-edit-flux2-dev-fp8:
       - CFG=1.0
       - GUIDANCE=4.0
 
-# NVFP4 (BFL's mixed NVFP4/BF16 transformer, as image-big's homelab-comfyui-flux2-dev-nvfp4)
+# NVFP4 (BFL's mixed NVFP4/BF16 transformer, as image.yaml's homelab-comfyui-flux2-dev-nvfp4)
 homelab-comfyui-edit-flux2-dev-nvfp4:
   name: homelab-comfyui-edit-flux2-dev-nvfp4
   inherits: homelab-comfyui-edit-flux2-dev-fp8
@@ -295,7 +295,7 @@ homelab-comfyui-edit-flux2-dev-nvfp4:
       - CFG=1.0
       - GUIDANCE=4.0
 
-# NVFP4, pure (all-NVFP4 transformer, as image-big's homelab-comfyui-flux2-dev-nvfp4-pure)
+# NVFP4, pure (all-NVFP4 transformer, as image.yaml's homelab-comfyui-flux2-dev-nvfp4-pure)
 homelab-comfyui-edit-flux2-dev-nvfp4-pure:
   name: homelab-comfyui-edit-flux2-dev-nvfp4-pure
   inherits: homelab-comfyui-edit-flux2-dev-fp8
@@ -314,7 +314,7 @@ homelab-comfyui-edit-flux2-dev-nvfp4-pure:
 
 # -----------------------------------------------------------------------------
 # FLUX.1 Kontext dev (Jun 2025, 12B): the first open edit model of the FLUX line, the baseline the others are
-# measured against. Comfy-Org fp8_scaled; clip_l / t5xxl_fp16 as image-big's FLUX.1 bf16 entry, Z-Image's ae
+# measured against. Comfy-Org fp8_scaled; clip_l / t5xxl_fp16 as image.yaml's FLUX.1 bf16 entry, Z-Image's ae
 # (cached). Template settings: guidance 2.5, 20 steps. FLUX.1 dev non-commercial license.
 # -----------------------------------------------------------------------------
 
@@ -349,8 +349,8 @@ homelab-comfyui-edit-flux1-kontext-fp8:
 # (Comfy-Org/workflow_templates); check the new nodes' widget names against /object_info after the update.
 # -----------------------------------------------------------------------------
 
-# FLUX 3 Klein (Oct 2026, 5.6B distilled + Qwen3-VL 4B): #4 open-weights on the AA editing arena; image-big's
-# files. 20 steps (image-big's matched setting; BFL's edit template: 16), prompt upsampler off.
+# FLUX 3 Klein (Oct 2026, 5.6B distilled + Qwen3-VL 4B): #4 open-weights on the AA editing arena; image.yaml's
+# files. 20 steps (image.yaml's matched setting; BFL's edit template: 16), prompt upsampler off.
 homelab-comfyui-edit-flux3-klein-bf16:
   name: homelab-comfyui-edit-flux3-klein-bf16
   inherits: _comfyui_edit
@@ -482,7 +482,7 @@ _omni_edit:
     - image-edit
   enabled: false
 
-# Qwen-Image 2.1 BF16 (QwenImage21Pipeline): image-big's homelab-omni-qwen-image-21-bf16 snapshot (33 GB)
+# Qwen-Image 2.1 BF16 (QwenImage21Pipeline): image.yaml's homelab-omni-qwen-image-21-bf16 snapshot (33 GB)
 homelab-omni-edit-qwen-image-21-bf16:
   inherits: _omni_edit
   enabled: true

@@ -88,3 +88,72 @@ homelab-omni-wan22-5b-ti2v:
       # Wan's default negative prompt (its own list is in Chinese), translated term by term
       --negative-prompt: "garish colors, overexposed, static, blurry details, subtitles, style, artwork, painting, frame, still, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands"
       --max-steps: 6
+
+# -----------------------------------------------------------------------------
+# Wan 2.2 T2V A14B (two 14B experts), more precisions: the A14B settings above. The fp8 point is
+# homelab-comfyui-wan22-a14b-t2v.
+# -----------------------------------------------------------------------------
+
+# fp16 experts, same fp8 text encoder and VAE as the fp8 entry (cached): only the experts differ
+homelab-comfyui-wan22-a14b-t2v-fp16:
+  name: homelab-comfyui-wan22-a14b-t2v-fp16
+  tags:
+    - video
+  inherits: _comfyui
+  enabled: true
+  weight: 1
+  max_duration: 10800
+  voir:
+    options:
+      stop: 4
+  argv:
+    --max-steps: 5
+    --workflow: workflows/wan22_t2v_14b.json
+    --model:
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp16.safetensors
+      - diffusion_models:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp16.safetensors
+      - text_encoders:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - vae:Comfy-Org/Wan_2.2_ComfyUI_Repackaged:split_files/vae/wan_2.1_vae.safetensors
+    --set:
+      - UNET_HIGH=wan2.2_t2v_high_noise_14B_fp16.safetensors
+      - UNET_LOW=wan2.2_t2v_low_noise_14B_fp16.safetensors
+      - TE=umt5_xxl_fp8_e4m3fn_scaled.safetensors
+      - VAE=wan_2.1_vae.safetensors
+
+# vLLM-Omni, Intel's int4 (W4A16, group 128) AutoRound experts: quantization read from the checkpoint
+homelab-omni-wan22-a14b-t2v-int4:
+  inherits: _omni
+  enabled: true
+  weight: 1
+  max_duration: 9000
+  tags:
+    - video
+  url: https://huggingface.co/Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound
+  voir:
+    options:
+      stop: 4
+  server:
+    argv:
+      Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound: true
+  client:
+    argv:
+      --task: t2v
+      --width: 640
+      --height: 640
+      --num-frames: 81
+      --fps: 16
+      --steps: 20
+      --guidance: 3.5
+      # Wan's default negative prompt (its own list is in Chinese), translated term by term
+      --negative-prompt: "garish colors, overexposed, static, blurry details, subtitles, style, artwork, painting, frame, still, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands"
+      --max-steps: 5
+
+# vLLM-Omni BF16 (loaded in bf16, ~70 GB in memory). The repo stores the experts in fp32: a 126 GB snapshot
+# (vLLM wants it complete).
+homelab-omni-wan22-a14b-t2v-bf16:
+  inherits: homelab-omni-wan22-a14b-t2v-int4
+  url: https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers
+  server:
+    argv:
+      Intel/Wan2.2-T2V-A14B-Diffusers-int4-AutoRound: null
+      Wan-AI/Wan2.2-T2V-A14B-Diffusers: true

@@ -9,6 +9,8 @@
 include:
   - text.yaml
   - image.yaml
+  - image-edit.yaml
+  - upscale.yaml
   - video.yaml
   - audio.yaml
 
