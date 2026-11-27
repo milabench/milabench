@@ -231,3 +231,69 @@ def remove_isolated_trees(pack: BasePackage) -> None:
         if os.path.isdir(path):
             shutil.rmtree(path)
             print(f"cleaned {path}")
+
+
+# --- Fingerprints: only re-prepare the benches whose prepare inputs changed -------------------
+
+# Not part of the data: requirements only change what is installed, the batch size is resized
+# per machine (the sizer) and does not change what prepare downloads.
+_FINGERPRINT_SKIP_FILES = ("requirements",)
+_FINGERPRINT_SKIP_DIRS = ("__pycache__", ".git")
+_FINGERPRINT_SKIP_ARGS = ("batch",)
+
+
+def pack_fingerprint(pack: BasePackage) -> str:
+    """Hash of what decides the content of a bench's prepare: its code folder and its argv."""
+    import hashlib
+    import json
+
+    digest = hashlib.sha256()
+    definition = XPath(pack.config["definition"])
+    for root, dirs, files in os.walk(definition):
+        dirs[:] = sorted(d for d in dirs if d not in _FINGERPRINT_SKIP_DIRS)
+        for filename in sorted(files):
+            if filename.startswith(_FINGERPRINT_SKIP_FILES) or filename.endswith(".pyc"):
+                continue
+            path = os.path.join(root, filename)
+            digest.update(os.path.relpath(path, definition).encode())
+            with open(path, "rb") as fp:
+                digest.update(hashlib.sha256(fp.read()).digest())
+
+    argv = pack.config.get("argv") or {}
+    if isinstance(argv, dict):
+        argv = {
+            str(k): str(v) for k, v in argv.items()
+            if not any(skip in str(k).lower() for skip in _FINGERPRINT_SKIP_ARGS)
+        }
+    else:
+        argv = [str(a) for a in argv]
+    digest.update(json.dumps(argv, sort_keys=True).encode())
+    return digest.hexdigest()
+
+
+def fingerprint_file(shared: str) -> str:
+    """Fingerprints of the benches in the archive, next to it: <archive>.fingerprints.json"""
+    return f"{shared}.fingerprints.json"
+
+
+def load_fingerprints(shared: str) -> dict:
+    import json
+
+    try:
+        with open(fingerprint_file(shared), "r") as fp:
+            return json.load(fp)
+    except FileNotFoundError:
+        return {}
+
+
+def save_fingerprint(shared: str, name: str, fingerprint: str) -> None:
+    """Record one bench (re-read first: keep what others wrote, atomic replace)."""
+    import json
+
+    fingerprints = load_fingerprints(shared)
+    fingerprints[name] = fingerprint
+    path = fingerprint_file(shared)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fp:
+        json.dump(fingerprints, fp, indent=2, sort_keys=True)
+    os.replace(tmp, path)

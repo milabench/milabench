@@ -4,6 +4,7 @@ import getpass
 import os
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -17,11 +18,17 @@ def gethostname(host):
     try:
         return subprocess.check_output([
             "ssh",
+            "-oBatchMode=yes",
+            "-oConnectTimeout=10",
             "-oCheckHostIP=no",
             "-oPasswordAuthentication=no",
-            "-oStrictHostKeyChecking=no", host, "cat", "/etc/hostname"], text=True).strip()
-    except:
-        print("Could not resolve hostname")
+            "-oStrictHostKeyChecking=no", host, "cat", "/etc/hostname"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        # stderr: stdout carries the generated system YAML. Falling back to
+        # the Slurm node name is fine when workers are launched with srun
+        # (some clusters refuse ssh between compute nodes, e.g. Tamia).
+        print(f"Could not resolve hostname of {host} over ssh, using {host}", file=sys.stderr)
         return host
 
 
@@ -43,7 +50,12 @@ def make_node_list_from_slurm(node_list):
 
         return node
 
-    nodes = [make_node(i, ip) for i, ip in enumerate(node_list)]
+    # One ssh per node (gethostname): run them concurrently, the sequential
+    # version took ~4 s per node (minutes for large allocations).
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(32, max(1, len(node_list)))) as pool:
+        nodes = list(pool.map(make_node, range(len(node_list)), node_list))
 
     for node in nodes:
         if node.get("main", False):

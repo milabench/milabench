@@ -32,6 +32,7 @@ _vllm:
 
 
 vllm-dense-physics-gpus:
+  max_duration: 3600
   inherits: _vllm
   # Keep per-request rows in local timeline SQLite; omit them from .data publish.
   push_request_metrics: false
@@ -102,7 +103,11 @@ vllm-moe-code-gpus:
       --served-model-name: model
       --dtype: bfloat16
       --tensor-parallel-size: "{gpu_count}"
-      --limit-mm-per-prompt: '{"image":10}' 
+      --limit-mm-per-prompt: '{"image":10}'
+      # vLLM >= 0.32 defaults to 0.92 and does not budget the sampler warmup
+      # (flashinfer top-k/top-p over Llama-4's 202k vocab, ~0.8 GiB/GPU):
+      # it OOMs right after the KV cache is allocated (1x8xH100_run_9e80e0cd)
+      --gpu-memory-utilization: 0.88
 
 _inference:
   inherits: _defaults
@@ -114,6 +119,10 @@ _inference:
 
 whisper-transcribe-single:
   inherits: _inference
+  # Rates are only flushed once the 65 early-stop batches are done (TimedIterator
+  # syncs lazily): ~6.5 min on H100, longer than the default 600s on L40S, where the
+  # run got killed with every rate still buffered (1x4xL40s_run_ce0bb376)
+  max_duration: 1800
   tags:
     - monogpu
   plan:

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import os.path as osp
 import shutil
@@ -15,6 +16,9 @@ from benchmate.progress import tqdm
 
 class PCQM4Mv2Subset(PCQM4Mv2):
     suppl_url = "http://ogb-data.stanford.edu/data/lsc/pcqm4m-v2-train.sdf.tar.gz"
+    # Same file (md5 checked) for when ogb-data.stanford.edu is unreachable
+    suppl_mirror_url = "https://huggingface.co/datasets/liuganghuggingface/moldata-pcqm4mv2/resolve/main/structures/pcqm4m-v2-train.sdf.tar.gz"
+    suppl_md5 = "fd72bce606e7ddf36c2a832badeec6ab"
 
     def __init__(
         self,
@@ -155,8 +159,16 @@ class PCQM4Mv2Subset(PCQM4Mv2):
         super().download()
 
         # Download 3D coordinates
-        file_path = download_url(self.suppl_url, self.raw_dir)
-        # md5sum: fd72bce606e7ddf36c2a832badeec6ab
+        try:
+            file_path = download_url(self.suppl_url, self.raw_dir)
+        except OSError as exc:
+            print(f"Download from {self.suppl_url} failed ({exc}), using mirror")
+            file_path = download_url(self.suppl_mirror_url, self.raw_dir)
+            with open(file_path, "rb") as f:
+                md5 = hashlib.file_digest(f, "md5").hexdigest()
+            if md5 != self.suppl_md5:
+                os.unlink(file_path)
+                raise RuntimeError(f"{file_path}: md5 {md5} != {self.suppl_md5}")
         extract_tar(file_path, osp.join(self.raw_dir, "pcqm4m-v2", "raw"), mode="r:gz")
         os.unlink(file_path)
 

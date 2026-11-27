@@ -142,8 +142,13 @@ def _is_optional_find_links_url(url: str) -> bool:
     return any(pattern.match(url) for pattern in _OPTIONAL_FIND_LINKS_RES)
 
 
-def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
-    """Return True if ``url`` responds without HTTP 404.
+def _find_links_url_available(url: str, timeout: float = 20.0) -> bool:
+    """Return False only when ``url`` is definitively missing (HTTP 404/410/403).
+
+    Network problems (timeouts, DNS, SSL, proxy) are *not* proof that a wheel
+    index is unpublished: dropping the URL in that case silently turns into an
+    unsatisfiable resolve for pins such as ``torch-scatter==...+pt215cu132``.
+    So on such errors the URL is kept and uv gets to try it itself.
 
     Results are cached for the process lifetime so pin/install across many
     benchmarks does not re-probe the same release page.
@@ -154,24 +159,33 @@ def _find_links_url_available(url: str, timeout: float = 10.0) -> bool:
     import urllib.error
     import urllib.request
 
-    available = False
-    try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "milabench"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            available = 200 <= getattr(resp, "status", 200) < 400
-    except urllib.error.HTTPError as e:
-        # Some hosts disallow HEAD; retry GET on 405/403 before giving up.
-        if e.code in (403, 405):
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "milabench"})
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    available = 200 <= getattr(resp, "status", 200) < 400
-            except Exception:
+    available = True
+    last_error = None
+    for method in ("HEAD", "GET", "GET"):
+        try:
+            req = urllib.request.Request(url, method=method, headers={"User-Agent": "milabench"})
+            with urllib.request.urlopen(req, timeout=timeout):
+                available = True
+                last_error = None
+                break
+        except urllib.error.HTTPError as e:
+            last_error = e
+            if e.code in (404, 410):
                 available = False
-        else:
-            available = False
-    except Exception:
-        available = False
+                break
+            # 403/405 on HEAD: retry with GET; 403 on GET means not served (PyG)
+            available = not (e.code == 403 and method == "GET")
+            if not available:
+                break
+        except Exception as e:  # network/SSL/timeout: inconclusive, retry
+            last_error = e
+            available = True
+
+    if last_error is not None and available:
+        print(
+            f"Warning: could not verify find-links {url} ({last_error!r}); keeping it",
+            flush=True,
+        )
 
     _find_links_availability_cache[url] = available
     return available
@@ -202,8 +216,13 @@ def _build_index_args(
         args.extend(["--extra-index-url", resolved_url])
 
     for url in idx.find_links:
-        resolved_url = url.format(**variables)
-        if _is_optional_find_links_url(resolved_url) and not _find_links_url_available(
+        resolved_url = os.path.expandvars(url.format(**variables))
+        if "://" not in resolved_url:
+            # Local wheel directory (e.g. $MILABENCH_WHEELS_DIR); skipped when
+            # the variable is unset or the combo was never built locally.
+            if not os.path.isdir(resolved_url):
+                continue
+        elif _is_optional_find_links_url(resolved_url) and not _find_links_url_available(
             resolved_url
         ):
             print(
@@ -552,6 +571,7 @@ def _compile_lockfile(
     torch_version: str,
     arch: str,
     label: str,
+    override_lines: list[str] | None = None,
 ) -> None:
     """Run ``uv pip compile`` and post-process one lockfile."""
     with tempfile.NamedTemporaryFile(
@@ -572,6 +592,7 @@ def _compile_lockfile(
                 cons_file.write(f"{line}\n")
             constraints_path = Path(cons_file.name)
 
+    overrides_path = None
     try:
         cmd = [
             "uv", "pip", "compile",
@@ -582,6 +603,13 @@ def _compile_lockfile(
         ]
         if constraints_path:
             cmd.extend(["-c", str(constraints_path)])
+        if override_lines:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", prefix="toml-overrides-", delete=False
+            ) as ovr_file:
+                ovr_file.write("\n".join(override_lines) + "\n")
+                overrides_path = Path(ovr_file.name)
+            cmd.extend(["--override", str(overrides_path)])
         if extra_compile_args:
             cmd.extend(extra_compile_args)
         cmd.append(str(deps_path))
@@ -607,6 +635,8 @@ def _compile_lockfile(
         deps_path.unlink(missing_ok=True)
         if constraints_path:
             constraints_path.unlink(missing_ok=True)
+        if overrides_path:
+            overrides_path.unlink(missing_ok=True)
 
 
 def _platform_constraint_lines(
@@ -636,10 +666,12 @@ async def pin_combination(
     from_scratch: bool = False,
     extra_compile_args: list[str] | None = None,
     arch: str = "",
+    include: set[str] | None = None,
 ) -> Path:
     """Pin one (backend, torch, arch) combination.
 
-    Writes one lockfile for every TOML bench, including ``benchmarks/vllm``.
+    Writes one lockfile for every TOML bench, including ``benchmarks/vllm``, or only for the
+    benchmark directories in ``include`` (the benchmarks of the config, see ``MultiPackage.do_pin``).
     ``[vllm.*]`` supplies the exact ``vllm==`` pin and wheel index; if that
     pair has no mapping, the bare ``vllm`` requirement is omitted.
 
@@ -661,6 +693,7 @@ async def pin_combination(
         backend,
         platform_config,
         overrides,
+        include=include,
     )
 
     vllm_mapping = platform_config.resolve_vllm(
@@ -701,6 +734,7 @@ async def pin_combination(
         torch_version=torch_version,
         arch=arch,
         label=label,
+        override_lines=platform_config.get_backend(backend).exclude_overrides(),
     )
 
     return output_file
@@ -756,7 +790,7 @@ def _filter_combinations(
     combinations: list[tuple[str, str, str, str]],
     overrides: dict[str, str] | None,
 ) -> list[tuple[str, str, str, str]]:
-    """Keep only combos matching CLI ``--set`` keys (cuda, torch, backend, …).
+    """Keep only combos matching CLI ``--set`` keys (cuda, torch, backend, arch, …).
 
     ``--set`` is otherwise ignored by discovery, which is why
     ``--set cuda=130 --set torch=2.10.0`` used to pin the full matrix.
@@ -778,11 +812,16 @@ def _filter_combinations(
         if key in overrides:
             accel_filters[key] = normalized[key]
 
-    if torch_filter is None and not accel_filters:
+    # --set arch=x86_64 restricts the [pin.discovery] platforms (e.g. no aarch64 wheels yet)
+    arch_filter = overrides.get("arch") or None
+
+    if torch_filter is None and not accel_filters and arch_filter is None:
         return combinations
 
     def keep(combo: tuple[str, str, str, str]) -> bool:
-        backend, backend_version, torch_version, _arch = combo
+        backend, backend_version, torch_version, arch = combo
+        if arch_filter is not None and arch and arch != arch_filter:
+            return False
         if torch_filter is not None and torch_version != torch_filter:
             return False
         if accel_filters:
@@ -866,6 +905,7 @@ async def pin_all(
     extra_compile_args: list[str] | None = None,
     dry_run: bool = False,
     overrides: dict[str, str] | None = None,
+    include: set[str] | None = None,
 ) -> list[Path]:
     """Pin all discovered or matrix-defined combinations.
 
@@ -881,9 +921,13 @@ async def pin_all(
         dry_run: If True, print discovered combinations without pinning.
         overrides: CLI ``--set`` filters (e.g. ``{"cuda": "130", "torch": "2.10.0"}``).
             Restricts which combinations are pinned; omitted keys stay unconstrained.
+        include: Benchmark directory names to pin (None: every TOML benchmark of benchmarks_dir).
 
     Returns:
         List of generated constraint file paths (empty if dry_run).
+
+    Raises:
+        RuntimeError: if a combination failed to pin (after trying all of them).
     """
     combinations = _get_combinations(platform_config, overrides=overrides)
 
@@ -922,6 +966,7 @@ async def pin_all(
                 pin_dir=pin_dir,
                 from_scratch=from_scratch,
                 extra_compile_args=extra_compile_args,
+                include=include,
             )
             results.append(path)
             print(f"  → {path}")
@@ -939,6 +984,10 @@ async def pin_all(
 
     if len(results) > 1:
         _extract_common_constraints(results, pin_dir)
+
+    # A failed pin must fail the command (scripts chain pin -> install)
+    if errors:
+        raise RuntimeError(f"{len(errors)}/{len(unique_combinations)} combinations failed to pin")
 
     return results
 

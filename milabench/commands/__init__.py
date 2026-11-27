@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 from copy import deepcopy
 from hashlib import md5
 from typing import Dict, Generator, List, Tuple
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 import warnings
 
 from .. import pack
+from ..alt_async import destroy
 from ..fs import XPath
 from ..merge import merge
 from ..utils import select_nodes
@@ -435,10 +437,10 @@ class WorkingDir(WrapperCommand):
     This wrapper is usefull for commands that executes remotely or inside a container where
     the environment or the working directory might be changed by the SSH command or the container.
 
-    ``env -`` starts from a clean environment, so GPU placement vars such as
-    ``CUDA_VISIBLE_DEVICES`` (set by ``PerGPU`` on the pack *after* this
-    wrapper is constructed) must be read from the current pack at argv time,
-    not baked in ``__init__``.
+    The inherited environment is kept; only the variables milabench sets are
+    passed explicitly. GPU placement vars such as ``CUDA_VISIBLE_DEVICES``
+    (set by ``PerGPU`` on the pack *after* this wrapper is constructed) must be
+    read from the current pack at argv time, not baked in ``__init__``.
     """
     #  Maybe we should wrap ALL the commands with it so it can be invariant for how it is executed 
     #  and we don't have to worry about it
@@ -452,11 +454,13 @@ class WorkingDir(WrapperCommand):
         env = {}
         extras = []
 
+        # Must match Package.make_env: HF_HOME is the data dir in prepare and
+        # run, otherwise HF caches written at prepare time are not found here.
         _merge_env(
             env,
             {
                 "XDG_CACHE_HOME": str(pack.dirs.cache),
-                "HF_HOME": str(pack.dirs.cache),
+                "HF_HOME": str(pack.dirs.data),
                 "TORCH_HOME": str(pack.dirs.cache),
             },
             source="cache dirs",
@@ -468,12 +472,32 @@ class WorkingDir(WrapperCommand):
         if nccl_ifname:
             _merge_env(env, {"NCCL_SOCKET_IFNAME": nccl_ifname}, source="network.nccl_ifname")
 
-        # `env -` clears the process environment, so re-inject system.env
-        # (resolved at system-config load; also applied via pack.make_env).
+        # System env (resolved at system-config load; also applied via pack.make_env).
         _merge_env(env, (pack.config.get("system") or {}).get("env"), source="system.env")
 
         # Bench / PerGPU env (CUDA_VISIBLE_DEVICES, NCCL overrides, ...).
         _merge_env(env, pack.config.get("env"), source="pack.env")
+
+        # Variables the pack relies on (MILABENCH_DIR_*, MILABENCH_CONFIG, ...),
+        # without overriding anything set above.
+        for key, value in pack.make_env().items():
+            env.setdefault(str(key), str(value))
+
+        # The nox session env is a full copy of os.environ: only forward what
+        # the venv changes (VIRTUAL_ENV, PATH), not the whole inherited env.
+        session_env = pack.core._nox_session.env
+        for key in ("VIRTUAL_ENV", "PATH"):
+            if key in session_env:
+                env.setdefault(key, str(session_env[key]))
+        for key, value in session_env.items():
+            if os.environ.get(key) != value:
+                env.setdefault(str(key), str(value))
+
+        # DATA_FD for use_stdout(); without it voir falls back to fd 3 (EBADF).
+        # Smuggle through stdout.
+        if self.options.get("use_stdout"):
+            env.setdefault("DATA_FD", "1")
+            env.setdefault("PYTHONUNBUFFERED", "1")
 
         # Allow callers (e.g. TorchtitanSrun.main_executor) to append extra
         # NAME=VALUE tokens after construction.
@@ -489,7 +513,6 @@ class WorkingDir(WrapperCommand):
             "env",
             "-C",
             str(pack.working_directory),
-            "-",
             *(f"{k}={v}" for k, v in env.items()),
             *extras,
         ]
@@ -572,6 +595,17 @@ class DockerRunCommand(WrapperCommand):
                 argv.append(f"{var}={self.as_container_path(env[var])}")
 
         return self.config.command(argv)
+
+
+# pack.make_env entries forwarded to the remote node by SSHCommand (paths only, no secrets)
+SSH_FORWARDED_ENV = (
+    "XDG_CACHE_HOME",
+    "TORCH_HOME",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "FLASHINFER_CACHE_DIR",
+    "FLASHINFER_WORKSPACE_BASE",
+)
 
 
 class SSHCommand(WrapperCommand):
@@ -681,6 +715,20 @@ class SSHCommand(WrapperCommand):
         #         "-",
         #         f"XDG_CACHE_HOME={str(self.pack.dirs.cache)}",
         #     ]
+
+        # Non-interactive SSH sessions skip most of ~/.bashrc (e.g. NCCL_IB_HCA
+        # set after the interactive guard), so forward system.env explicitly
+        system_env = dict((self.pack.config.get("system") or {}).get("env") or {})
+
+        # Cache locations set by pack.make_env for local runs: without them the remote process
+        # falls back to $HOME (read only on compute nodes, e.g. flashinfer >= 0.7 then fails to
+        # import: diffusion-nodes) and looks for the models outside of the prepared data folder.
+        for k in SSH_FORWARDED_ENV:
+            if k in env and k not in system_env:
+                system_env[k] = env[k]
+
+        if system_env:
+            envs = ["env", *(shlex.quote(f"{k}={v}") for k, v in system_env.items())]
 
         argv.extend(["-oPasswordAuthentication=no"])
         argv.extend(["-p", str(self.port)])
@@ -1153,6 +1201,115 @@ class SequenceCommand(ListCommand):
 
         loop._callbacks.remove(on_message)
         return error_count
+
+
+class Service(ListCommand):
+    """Run *workload* while *service* runs in the background.
+
+    The service is started first; the workload starts once ``ready()`` succeeds.
+    If the service exits before the workload is done, the workload is stopped.
+    Whatever happens, the service is stopped once the workload is done: the
+    workload does not need to know about it (no trailing stop step that a failed
+    ``SequenceCommand`` would skip).
+
+    Arguments:
+        service: long running `Command` (e.g. an inference server)
+        workload: `Command` using the service
+        ready: async callable returning True once the service can be used,
+               defaults to ``service.ready`` when the service has one
+        stop: optional `Command` run at teardown, for processes milabench
+              cannot signal directly (e.g. started through srun/ssh)
+        ready_timeout: seconds to wait for ``ready()``
+    """
+
+    def __init__(self, service: Command, workload: Command, ready=None, stop: Command = None,
+                 ready_timeout=3600, poll_interval=5, **kwargs) -> None:
+        super().__init__(service, workload, **kwargs)
+        self.service = service
+        self.workload = workload
+        self.stop = stop
+        self.ready = ready or getattr(service, "ready", None)
+        self.ready_timeout = ready_timeout
+        self.poll_interval = poll_interval
+
+    @property
+    def pack(self):
+        # the workload owns the benchmark's metrics
+        return self.workload.pack
+
+    async def wait_ready(self, service_task) -> str | None:
+        """Wait for the service, return why it is not usable or None if it is"""
+        if self.ready is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.ready_timeout
+        while True:
+            if service_task.done():
+                return "service exited before being ready"
+            if await self.ready():
+                return None
+            if loop.time() > deadline:
+                return f"service not ready after {self.ready_timeout}s"
+            await asyncio.wait({service_task}, timeout=self.poll_interval)
+
+    async def service_error(self, message):
+        pack = self.workload.pack
+        await pack.send(event="config", data=pack.config)
+        await pack.send(event="error", data={"type": "ServiceError", "message": message})
+
+    async def execute(
+        self, phase="run", timeout=False, timeout_delay=600,
+        warden=None, resource_cleaner=True, with_gpu_warden=True, **kwargs
+    ):
+        run_kwargs = {
+            **self._kwargs,
+            **kwargs,
+            "phase": phase,
+            "timeout": timeout,
+            "timeout_delay": timeout_delay,
+        }
+        error_count = 0
+        with get_or_create_warden(warden, with_gpu_warden=with_gpu_warden, resource_cleaner=resource_cleaner) as warden:
+            service_task = asyncio.create_task(self.service.execute(**run_kwargs, warden=warden))
+            try:
+                if reason := await self.wait_ready(service_task):
+                    await self.service_error(reason)
+                    return 1
+
+                workload_task = asyncio.create_task(self.workload.execute(**run_kwargs, warden=warden))
+                done, _ = await asyncio.wait({service_task, workload_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                if workload_task not in done:
+                    await self.workload.pack.message("The service exited: stopping the workload")
+                    for pack in self.workload.packs():
+                        destroy(*[proc for proc in pack.processes if proc.poll() is None])
+
+                error_count = count_command_errors(await workload_task)
+                if workload_task not in done:
+                    error_count = max(1, error_count)
+            finally:
+                if self.stop is not None:
+                    await self.stop.execute(**run_kwargs, warden=warden)
+                for pack in self.service.packs():
+                    destroy(*[proc for proc in pack.processes if proc.poll() is None])
+                try:
+                    await asyncio.wait_for(service_task, timeout=60)
+                except Exception:
+                    service_task.cancel()
+
+        return error_count
+
+    def set_run_options(self, **kwargs):
+        self.workload.set_run_options(**kwargs)
+        return self
+
+    def copy(self, pack):
+        # the service keeps its own pack
+        copy = deepcopy(self)
+        copy.workload = self.workload.copy(pack)
+        copy._executors = (copy.service, copy.workload)
+        return copy
 
 
 class PerGPU(ListCommand):
