@@ -66,10 +66,10 @@ extra-index-url = [
     "https://download.pytorch.org/whl/cu{cuda}",
 ]
 find-links = [
-    # flashinfer-cubin >= 0.7 and flashinfer-jit-cache(-sm*) are not on PyPI. Taken from the GitHub
-    # release, not the flashinfer.ai index: with unsafe-best-match uv queries an extra index for
-    # every package, and flashinfer.ai answers 429 Too Many Requests (failed installs)
-    "https://github.com/flashinfer-ai/flashinfer/releases/expanded_assets/v0.7.0.post1",
+    # milabench wheel cache for this torch/cuda combo. Also mirrors the flashinfer wheels it pins
+    # (flashinfer-cubin >= 0.7 and flashinfer-jit-cache(-sm*) are not on PyPI): the flashinfer.ai
+    # index answers 429 under uv's unsafe-best-match, and their GitHub release lists every
+    # arch/cuda variant (~9.5 GB). Mirror with scripts/mirror_flashinfer.sh when bumping flashinfer.
     "https://github.com/milabench/wheels/releases/expanded_assets/torch{torch_short}-cu{cuda}",
     "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
     "https://data.pyg.org/whl/torch-{torch}+cu{cuda}.html",
