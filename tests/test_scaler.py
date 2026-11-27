@@ -201,3 +201,93 @@ class TestAutoSizeFixedTorchmem:
             path,
         )
         assert sizer.size("bench", "6000MiB") == 64
+
+
+#
+# Envelope (config/scaling/default.yaml): the lower bound of the GPUs we measured
+#
+def _gpu_profile(path, alpha_mib, beta_mib, batches, gpus=None, oom=None):
+    """A scaling profile measured on one GPU: torchmem = alpha * B + beta, NVML 2 GiB above."""
+    obs = []
+    for b in batches:
+        torchmem = alpha_mib * b + beta_mib
+        row = {"batch_size": b, "perf": 100.0, "memory": f"{torchmem + 2048} MiB", "torchmem": f"{torchmem} MiB"}
+        if gpus is not None:
+            row["gpus"] = gpus
+        obs.append(row)
+    if oom is not None:
+        row = {"batch_size": oom, "oom": True}
+        if gpus is not None:
+            row["gpus"] = gpus
+        obs.append(row)
+    path.write_text(yaml.safe_dump({"bench": {"observations": obs}}))
+    return str(path)
+
+
+def _envelope_sizer(tmp_path, files, **kwargs):
+    from milabench.sizer import build_envelope_scaling, write_envelope_scaling
+
+    profile, report = build_envelope_scaling(files, **kwargs)
+    out = tmp_path / "default.yaml"
+    write_envelope_scaling(profile, str(out), files=files, report=report)
+    options = SizerOptions(batch_size=None, auto=True, multiple=8, overhead_override="10%")
+    return Sizer(options, str(out)), profile
+
+
+@pytest.mark.parametrize("capacity", ["40GiB", "80GiB", "180GiB", "288GiB"])
+def test_envelope_never_above_any_measured_gpu(tmp_path, capacity):
+    a = _gpu_profile(tmp_path / "GPUA.yaml", alpha_mib=300, beta_mib=4000, batches=[16, 64, 128])
+    b = _gpu_profile(tmp_path / "GPUB.yaml", alpha_mib=360, beta_mib=2000, batches=[16, 64, 128])
+    envelope, _ = _envelope_sizer(tmp_path, [a, b], cap_factor=100)
+
+    options = SizerOptions(batch_size=None, auto=True, multiple=8, overhead_override="10%")
+    bench = {"name": "bench", "devices": [0]}
+    picked = envelope.auto_size(bench, capacity)
+    assert picked is not None and picked > 0
+    for own in (a, b):
+        assert picked <= Sizer(options, own).auto_size(bench, capacity)
+
+
+def test_envelope_oom_lowers_the_batch(tmp_path):
+    # the linear model says bs432 fits 183 GiB, it ran out of memory: the envelope gives at most
+    # the middle between the largest batch that completed (232) and the OOM one
+    a = _gpu_profile(tmp_path / "B200.yaml", alpha_mib=374, beta_mib=1900, batches=[32, 232], oom=432)
+    envelope, profile = _envelope_sizer(tmp_path, [a], single_gpu_margin=1.0, cap_factor=100)
+    assert "alpha_raised_by" in profile["bench"]["envelope"][0]
+    assert envelope.auto_size({"name": "bench", "devices": [0]}, "183GiB") <= 332
+
+
+def test_envelope_matches_the_gpu_count(tmp_path):
+    one = _gpu_profile(tmp_path / "GPUA.yaml", alpha_mib=100, beta_mib=1000, batches=[8, 64], gpus=8)
+    other = _gpu_profile(tmp_path / "GPUB.yaml", alpha_mib=400, beta_mib=1000, batches=[8, 64], gpus=16)
+    envelope, profile = _envelope_sizer(tmp_path, [one, other], single_gpu_margin=1.0, cap_factor=100)
+    assert [e["gpus"] for e in profile["bench"]["envelope"]] == [8, 16]
+
+    eight = envelope.auto_size({"name": "bench", "devices": list(range(8))}, "80GiB")
+    sixteen = envelope.auto_size({"name": "bench", "devices": list(range(8)), "num_machines": 2}, "80GiB")
+    assert eight > sixteen
+    # no envelope for that GPU count, none without a count: no resize
+    assert envelope.auto_size({"name": "bench", "devices": [0]}, "80GiB") is None
+
+
+def test_envelope_caps_the_extrapolation(tmp_path):
+    a = _gpu_profile(tmp_path / "GPUA.yaml", alpha_mib=1, beta_mib=1000, batches=[8, 16])
+    envelope, _ = _envelope_sizer(tmp_path, [a], cap_factor=2.0)
+    assert envelope.auto_size({"name": "bench", "devices": [0]}, "288GiB") <= 32
+
+
+def test_envelope_single_gpu_margin(tmp_path):
+    a = _gpu_profile(tmp_path / "GPUA.yaml", alpha_mib=400, beta_mib=1000, batches=[8, 64])
+    _, profile = _envelope_sizer(tmp_path, [a], single_gpu_margin=1.25)
+    alpha = float(profile["bench"]["envelope"][0]["alpha"].split()[0])
+    assert 500.0 <= alpha <= 500.2  # 400 x 1.25, rounded up
+
+
+def test_gpu_count():
+    from milabench.sizer import gpu_count
+
+    assert gpu_count({"devices": [3]}) == 1
+    assert gpu_count({"devices": list(range(8))}) == 8
+    assert gpu_count({"devices": list(range(8)), "num_machines": 2}) == 16
+    assert gpu_count({"name": "x"}) is None
+    assert gpu_count("bench") is None
